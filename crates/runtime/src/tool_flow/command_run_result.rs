@@ -4,6 +4,7 @@ use chrono::Utc;
 
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::{PlanStatus, SessionManagement, StartCondition};
+use crate::tool_callback_sanitizer::sanitize_tool_callback_result;
 
 pub(crate) fn apply_task_attribution_to_streamed_result(
     session: &SessionManagement,
@@ -63,13 +64,18 @@ pub(crate) fn record_streamed_command_events(
     };
     let now = Utc::now();
     for (index, event) in events.iter().enumerate() {
-        let mut event = event.clone();
+        let mut event = sanitize_tool_callback_result(event);
         if !event.is_object() {
             event = serde_json::json!({ "value": event });
         }
-        let object = event
-            .as_object_mut()
-            .expect("streamed command event normalized to object");
+        let Some(object) = event.as_object_mut() else {
+            tracing::warn!(
+                session_id = %session.session_id,
+                index,
+                "streamed command event normalization produced a non-object value"
+            );
+            continue;
+        };
         object.insert(
             "type".to_string(),
             serde_json::Value::String("streamed_command_event".to_string()),
@@ -125,6 +131,7 @@ mod tests {
     #[test]
     fn streamed_command_events_are_audited_with_active_task_attribution() {
         let mut session = session();
+        let large_output = "streamed log line\n".repeat(1_000);
         session.task_plan.detailed_tasks.push(TaskStep {
             task_id: "task-aa".to_string(),
             step: 7,
@@ -152,7 +159,10 @@ mod tests {
                     "result_index": 0,
                     "step": 1,
                     "command_type": "shell_command",
-                    "success": true
+                    "success": true,
+                    "result": {
+                        "output": large_output
+                    }
                 }
             ],
             "results": [{
@@ -170,6 +180,8 @@ mod tests {
             RuntimeProviderConfig {
                 base: ProviderConfig {
                     tura_llm_name: "provider".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
                     stream: true,
                     temperature: 0.0,
                     max_tokens: 0,
@@ -205,5 +217,56 @@ mod tests {
         assert_eq!(events[0]["provider_tool_call_id"], "call_provider_1");
         assert_eq!(events[0]["task_attribution"]["task_id"], "task-aa");
         assert_eq!(events[1]["task_attribution"]["step"], 7);
+        let output = events[1]["result"]["output"]
+            .as_str()
+            .expect("streamed event output");
+        assert!(output.contains("characters truncated"), "{output}");
+        assert!(output.len() < large_output.len(), "{output}");
+    }
+
+    #[test]
+    fn streamed_command_events_wrap_scalar_values_without_panicking() {
+        let mut session = session();
+        let runtime = RuntimeManagement::new(
+            "runtime-streamed".to_string(),
+            session.session_id.clone(),
+            session.session_id.clone(),
+            RuntimeProviderConfig {
+                base: ProviderConfig {
+                    tura_llm_name: "provider".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
+                    stream: true,
+                    temperature: 0.0,
+                    max_tokens: 0,
+                    tool_choice: ToolChoice::Auto,
+                    time_out_ms: 120_000,
+                },
+                thinking: false,
+                provider_name: "provider".to_string(),
+                model_name: "model".to_string(),
+                provider_url_name: "provider".to_string(),
+                llm_provider_name: "provider".to_string(),
+            },
+            Utc::now(),
+        );
+        let streamed_result = json!({
+            "command_events": ["ready"]
+        });
+
+        record_streamed_command_events(&mut session, &runtime, &streamed_result);
+
+        let event = session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .find(|value| {
+                value.get("type").and_then(serde_json::Value::as_str)
+                    == Some("streamed_command_event")
+            })
+            .expect("streamed scalar event should be recorded");
+        assert_eq!(event["value"], "ready");
+        assert_eq!(event["runtime_id"], "runtime-streamed");
+        assert_eq!(event["event_index"], 0);
     }
 }

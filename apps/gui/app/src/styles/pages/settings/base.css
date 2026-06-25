@@ -391,6 +391,21 @@
   white-space: nowrap;
 }
 
+.segmented button.theme-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  padding: 0 var(--space-2);
+  text-align: left;
+}
+
+.theme-choice-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-actions-row {
   display: flex;
   justify-content: flex-end;

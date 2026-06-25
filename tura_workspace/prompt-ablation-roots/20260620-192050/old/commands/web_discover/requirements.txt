@@ -1,0 +1,3 @@
+ddgs
+duckduckgo-search
+yt-dlp

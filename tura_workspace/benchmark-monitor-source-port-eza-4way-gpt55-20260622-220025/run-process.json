@@ -1,0 +1,8 @@
+{
+  "run_id": "source-port-eza-4way-gpt55-20260622-220025",
+  "pid": 3908,
+  "monitor": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-4way-gpt55-20260622-220025",
+  "stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-4way-gpt55-20260622-220025\\suite.stdout.log",
+  "stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-4way-gpt55-20260622-220025\\suite.stderr.log",
+  "started": "2026-06-22T22:00:25.7214287+02:00"
+}

@@ -1,0 +1,25 @@
+{
+  "RunId": "source-port-nushell-thinking-operation-manual-goal-nopriority-20260624-113412",
+  "PID": 15972,
+  "MonitorDir": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-nushell-thinking-operation-manual-goal-nopriority-20260624-113412",
+  "Stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-nushell-thinking-operation-manual-goal-nopriority-20260624-113412\\runner.stdout.log",
+  "Stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-nushell-thinking-operation-manual-goal-nopriority-20260624-113412\\runner.stderr.log",
+  "RunRoot": "C:\\Users\\liuliu\\Documents\\tura_workspace\\target\\project-rebuild-source-port\\source-port-nushell-thinking-operation-manual-goal-nopriority-20260624-113412",
+  "Summary": "C:\\Users\\liuliu\\Documents\\tura_workspace\\target\\project-rebuild-source-port\\source-port-nushell-thinking-operation-manual-goal-nopriority-20260624-113412\\summary.json",
+  "Script": "C:\\Users\\liuliu\\Documents\\tura\\tests\\benchmark\\project-rebuild-refactor\\rust_cli_python_port_suite_defined_workflow.mjs",
+  "TuraExe": "C:\\Users\\liuliu\\Documents\\tura\\target\\debug\\tura_exec.exe",
+  "StartedAt": "2026-06-24T11:34:12.5946729+02:00",
+  "Env": {
+    "COMMAND_RUN_AGENT_AGENTS": "thinking",
+    "COMMAND_RUN_AGENT_SOURCE_PORT_TASKS": "nushell",
+    "COMMAND_RUN_AGENT_REASONING_EFFORT": "high",
+    "COMMAND_RUN_AGENT_TIMEOUT_MS": "900000",
+    "COMMAND_RUN_AGENT_TURA_MODEL": "codex/gpt-5.5",
+    "COMMAND_RUN_AGENT_TURA_GOAL": "1",
+    "TURA_GOAL_MODE": "1",
+    "COMMAND_RUN_AGENT_TEST_PROMPT_STYLE": "source-port-operation-manual",
+    "COMMAND_RUN_AGENT_SERVICE_TIER": "default",
+    "TURA_SESSION_ACCELERATION_ENABLED": "0",
+    "SOURCE_PORT_RUN_EVAL": "1"
+  }
+}

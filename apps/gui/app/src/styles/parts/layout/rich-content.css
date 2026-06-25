@@ -71,6 +71,12 @@
   line-height: 1.55;
 }
 
+.rich-text pre::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .rich-text pre code {
   padding: 0;
   border: 0;
@@ -90,23 +96,17 @@
 
 .rich-table-scroll {
   max-width: 100%;
-  max-height: min(36vh, 320px);
-  overflow: auto;
-  scrollbar-color: var(--muted) transparent;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: none;
   scrollbar-gutter: auto;
   overscroll-behavior: contain;
 }
 
 .rich-table-scroll::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
-}
-
-.rich-table-scroll::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background: var(--muted);
-  background-clip: content-box;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .rich-table-scroll:focus-visible {
@@ -115,14 +115,16 @@
 }
 
 .rich-table-scroll table {
-  min-width: max-content;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   border-spacing: 0;
   color: var(--ink);
   font-family: inherit;
   font-size: inherit;
   font-weight: 400;
-  line-height: 1.32;
+  line-height: 1.44;
+  table-layout: auto;
 }
 
 .rich-table-scroll caption {
@@ -136,39 +138,30 @@
 
 .rich-table-scroll th,
 .rich-table-scroll td {
-  min-width: 14.5rem;
-  max-width: 18rem;
-  padding: 3px 10px;
+  min-width: 10rem;
+  padding: 15px 18px;
   border: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  overflow: visible;
+  text-align: left;
+  text-overflow: clip;
   vertical-align: top;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .rich-table-scroll th:first-child,
 .rich-table-scroll td:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  min-width: 5.5rem;
-  max-width: 7rem;
-  background: var(--paper);
-  text-align: right;
+  min-width: 10rem;
+  text-align: left;
 }
 
 .rich-table-scroll th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   background: var(--paper);
-  border-bottom: 1px solid var(--line-strong);
+  border-bottom-color: color-mix(in srgb, var(--line-strong) 64%, transparent);
   color: var(--ink);
   font-weight: 700;
-}
-
-.rich-table-scroll th:first-child {
-  z-index: 3;
 }
 
 .rich-table-overflow-bar {
@@ -192,28 +185,10 @@
   bottom: 1px;
 }
 
-.rich-table-overflow-y {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 8px;
-  height: min(36vh, 320px);
-  cursor: ns-resize;
-}
-
-.rich-table-overflow-y > div {
-  right: 1px;
-  left: 1px;
-}
-
 .rich-spoiler {
   border-radius: 3px;
   background: var(--accent);
   color: transparent;
-}
-
-.rich-spoiler:hover {
-  color: var(--accent-ink);
 }
 
 .rich-local-path {
@@ -222,16 +197,12 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--link);
+  color: inherit;
   font: inherit;
   text-align: left;
   text-decoration: underline;
   word-break: break-all;
   cursor: pointer;
-}
-
-.rich-local-path:hover {
-  color: var(--accent-ink);
 }
 
 .rich-local-path:disabled {
@@ -327,12 +298,12 @@
 .rich-file-tile {
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: 1fr auto auto;
-  gap: 3px;
+  grid-template-rows: 1fr auto;
+  gap: 6px;
   width: 100%;
   min-width: 0;
   aspect-ratio: 1;
-  padding: 9px 8px 7px;
+  padding: 12px 10px;
   place-items: center;
   border: 1px solid var(--line);
   border-radius: var(--radius-small);
@@ -355,15 +326,6 @@
 .rich-file-tile:disabled {
   cursor: wait;
   opacity: 0.72;
-}
-
-.rich-file-icon {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  border-radius: var(--radius-small);
-  color: var(--muted);
 }
 
 .rich-file-name,

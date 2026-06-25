@@ -729,3 +729,314 @@ fn push_unique_env(keys: &mut Vec<String>, key: Option<&str>) {
         keys.push(key.to_string());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    #[test]
+    fn validation_url_rejects_unsafe_or_invalid_bases_and_joins_suffixes() {
+        assert_eq!(
+            validation_url(Some("https://api.example.test/v1/"), "/models"),
+            Some("https://api.example.test/v1/models".to_string())
+        );
+        assert_eq!(
+            validation_url(Some(" http://localhost:11434 "), "api/tags"),
+            Some("http://localhost:11434/api/tags".to_string())
+        );
+        assert_eq!(validation_url(None, "models"), None);
+        assert_eq!(validation_url(Some("   "), "models"), None);
+        assert_eq!(
+            validation_url(Some("https://{workspace}.example.test"), "models"),
+            None
+        );
+        assert_eq!(validation_url(Some("not a url"), "models"), None);
+    }
+
+    #[test]
+    fn provider_validation_helpers_classify_tokens_domains_and_local_providers() {
+        let provider = tura_llm_rust::ProviderCatalogConfig {
+            domains: vec!["LLM".to_string(), "productivity".to_string()],
+            ..Default::default()
+        };
+
+        assert!(provider_has_domain(&provider, "llm"));
+        assert!(provider_has_domain(&provider, "PRODUCTIVITY"));
+        assert!(!provider_has_domain(&provider, "browser"));
+        assert!(looks_like_bearer_token("aaa.bbb.ccc"));
+        assert!(looks_like_bearer_token("abcdefghijklmnopqrstuvwxyz"));
+        assert!(!looks_like_bearer_token("short-token"));
+        assert!(is_local_no_token_provider("ollama", None));
+        assert!(is_local_no_token_provider(
+            "custom",
+            Some("http://127.0.0.1:1234/v1")
+        ));
+        assert!(is_local_no_token_provider(
+            "custom",
+            Some("http://localhost:1234/v1")
+        ));
+        assert!(!is_local_no_token_provider(
+            "custom",
+            Some("https://api.example.test/v1")
+        ));
+        assert!(is_openai_compatible_provider("qwen-cn"));
+        assert!(!is_openai_compatible_provider("feishu"));
+    }
+
+    #[test]
+    fn push_unique_env_trims_skips_blank_and_preserves_first_seen_order() {
+        let mut keys = vec!["OPENAI_API_KEY".to_string()];
+
+        push_unique_env(&mut keys, None);
+        push_unique_env(&mut keys, Some("   "));
+        push_unique_env(&mut keys, Some(" OPENAI_API_KEY "));
+        push_unique_env(&mut keys, Some("OPENAI_REFRESH_TOKEN"));
+        push_unique_env(&mut keys, Some("OPENAI_REFRESH_TOKEN"));
+        push_unique_env(&mut keys, Some("OPENAI_LOGIN"));
+
+        assert_eq!(
+            keys,
+            vec![
+                "OPENAI_API_KEY".to_string(),
+                "OPENAI_REFRESH_TOKEN".to_string(),
+                "OPENAI_LOGIN".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn validation_detail_messages_are_stable_for_known_and_unknown_codes() {
+        let detail = validation_detail(
+            "provider.remote.rejected",
+            Some("OpenAI-compatible /models HTTP 401".to_string()),
+        );
+        assert_eq!(detail.code, "provider.remote.rejected");
+        assert_eq!(
+            detail.message,
+            "remote validation rejected credentials: OpenAI-compatible /models HTTP 401"
+        );
+        assert_eq!(
+            detail.value.as_deref(),
+            Some("OpenAI-compatible /models HTTP 401")
+        );
+
+        let unknown = validation_detail("provider.future.code", None);
+        assert_eq!(unknown.message, "provider validation detail");
+        assert_eq!(unknown.value, None);
+    }
+
+    #[test]
+    fn response_body_helpers_compact_permission_and_empty_cases() {
+        assert!(response_forbidden_but_authenticated(
+            r#"{"error":"missing scopes for this token"}"#
+        ));
+        assert!(response_forbidden_but_authenticated(
+            "Insufficient permissions for model list"
+        ));
+        assert!(!response_forbidden_but_authenticated(
+            "invalid or expired token"
+        ));
+        assert_eq!(truncate_validation_body(" \n\t "), "<empty response>");
+        assert_eq!(
+            truncate_validation_body("one\n two\tthree"),
+            "one two three"
+        );
+
+        let long = "x".repeat(260);
+        let truncated = truncate_validation_body(&long);
+        assert_eq!(truncated.len(), 243);
+        assert!(truncated.ends_with("..."));
+    }
+
+    #[tokio::test]
+    async fn validate_response_maps_success_warning_rejection_and_request_errors() {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(1))
+            .build()
+            .expect("client");
+
+        let ok_url = serve_http_once(200, "{}", None);
+        let ok = validate_response(client.get(ok_url), "test success").await;
+        assert!(matches!(
+            ok,
+            ProviderCredentialValidation::Passed(detail)
+                if detail.code == "provider.remote.accepted"
+                    && detail.value.as_deref() == Some("test success")
+        ));
+
+        let warning_url = serve_http_once(403, "missing scopes", None);
+        let warning = validate_response(client.get(warning_url), "test warning").await;
+        assert!(matches!(
+            warning,
+            ProviderCredentialValidation::Warning(detail)
+                if detail.code == "provider.remote.permission_limited"
+                    && detail.value.as_deref() == Some("test warning")
+        ));
+
+        let rejected_url = serve_http_once(401, "bad\n token", None);
+        let rejected = validate_response(client.get(rejected_url), "test reject").await;
+        assert!(matches!(
+            rejected,
+            ProviderCredentialValidation::Failed(detail)
+                if detail.code == "provider.remote.rejected"
+                    && detail.value.as_deref().is_some_and(|value| value.contains("HTTP 401 Unauthorized: bad token"))
+        ));
+
+        let dropped_url = serve_http_once(200, "", Some(ServerBehavior::DropWithoutResponse));
+        let failed = validate_response(client.get(dropped_url), "test drop").await;
+        assert!(matches!(
+            failed,
+            ProviderCredentialValidation::Failed(detail)
+                if detail.code == "provider.remote.request_failed"
+                    && detail.value.as_deref().is_some_and(|value| value.contains("test drop"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn remote_validation_fails_locally_before_network_for_missing_credentials() {
+        let codex_missing = validate_provider_credentials_remotely("codex", None, None, None).await;
+        assert!(matches!(
+            codex_missing,
+            ProviderCredentialValidation::Failed(detail)
+                if detail.code == "provider.credential.oauth_token_missing"
+        ));
+
+        let codex_short =
+            validate_provider_credentials_remotely("codex", None, None, Some("short")).await;
+        assert!(matches!(
+            codex_short,
+            ProviderCredentialValidation::Failed(detail)
+                if detail.code == "provider.credential.oauth_token_invalid_format"
+        ));
+
+        let openrouter_missing =
+            validate_provider_credentials_remotely("openrouter", None, None, None).await;
+        assert!(matches!(
+            openrouter_missing,
+            ProviderCredentialValidation::Failed(detail)
+                if detail.code == "provider.credential.api_key_missing"
+                    && detail.value.as_deref() == Some("OpenRouter")
+        ));
+
+        let unsupported =
+            validate_provider_credentials_remotely("perplexity", None, None, Some("token")).await;
+        assert!(matches!(
+            unsupported,
+            ProviderCredentialValidation::Unsupported(detail)
+                if detail.code == "provider.validation.public_model_list_unsupported"
+        ));
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_validation_uses_local_base_url_and_optional_bearer() {
+        let provider = tura_llm_rust::ProviderCatalogConfig {
+            api_style: "openapi".to_string(),
+            base_url: "http://127.0.0.1:0/v1".to_string(),
+            domains: vec!["llm".to_string()],
+            ..Default::default()
+        };
+        let url = serve_http_once(
+            200,
+            r#"{"data":[]}"#,
+            Some(ServerBehavior::AssertBearer("secret-key")),
+        );
+        let base_url = url.trim_end_matches("/models").to_string();
+
+        let passed = validate_provider_credentials_remotely(
+            "custom-openai",
+            Some(&provider),
+            Some(&base_url),
+            Some("secret-key"),
+        )
+        .await;
+
+        assert!(matches!(
+            passed,
+            ProviderCredentialValidation::Passed(detail)
+                if detail.code == "provider.remote.accepted"
+                    && detail.value.as_deref() == Some("OpenAI-compatible /models")
+        ));
+
+        let no_token = validate_provider_credentials_remotely(
+            "custom-openai",
+            Some(&provider),
+            Some("https://api.example.test/v1"),
+            None,
+        )
+        .await;
+        assert!(matches!(
+            no_token,
+            ProviderCredentialValidation::Failed(detail)
+                if detail.code == "provider.credential.api_key_missing"
+        ));
+
+        let no_token_url =
+            serve_http_once(200, r#"{"data":[]}"#, Some(ServerBehavior::AssertNoBearer));
+        let no_token_base_url = no_token_url.trim_end_matches("/models").to_string();
+        let local = validate_provider_credentials_remotely(
+            "ollama",
+            Some(&provider),
+            Some(&no_token_base_url),
+            None,
+        )
+        .await;
+        assert!(matches!(
+            local,
+            ProviderCredentialValidation::Passed(detail)
+                if detail.code == "provider.remote.accepted"
+        ));
+    }
+
+    enum ServerBehavior {
+        DropWithoutResponse,
+        AssertBearer(&'static str),
+        AssertNoBearer,
+    }
+
+    fn serve_http_once(
+        status: u16,
+        body: &'static str,
+        behavior: Option<ServerBehavior>,
+    ) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local server");
+        let addr = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = [0_u8; 4096];
+            let size = stream.read(&mut buffer).expect("read request");
+            let request = String::from_utf8_lossy(&buffer[..size]);
+            match behavior {
+                Some(ServerBehavior::DropWithoutResponse) => return,
+                Some(ServerBehavior::AssertBearer(expected)) => {
+                    assert!(
+                        request.contains(&format!("authorization: Bearer {expected}"))
+                            || request.contains(&format!("Authorization: Bearer {expected}")),
+                        "{request}"
+                    );
+                }
+                Some(ServerBehavior::AssertNoBearer) => {
+                    assert!(
+                        !request.to_ascii_lowercase().contains("authorization:"),
+                        "{request}"
+                    );
+                }
+                None => {}
+            }
+            let reason = match status {
+                200 => "OK",
+                401 => "Unauthorized",
+                403 => "Forbidden",
+                _ => "Test",
+            };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+        format!("http://{addr}/models")
+    }
+}

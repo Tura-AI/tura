@@ -4,6 +4,10 @@ export function isWebUrl(value: string | null | undefined): value is string {
   return typeof value === "string" && /^https?:\/\//iu.test(value.trim());
 }
 
+export function isSystemOpenUrl(value: string | null | undefined): value is string {
+  return typeof value === "string" && /^(?:https?|file):\/\//iu.test(value.trim());
+}
+
 export async function openExternalUrl(url: string): Promise<void> {
   const target = normalizeExternalUrl(url);
   if (!target) {
@@ -52,7 +56,7 @@ function handleExternalLinkClick(event: MouseEvent): void {
     return;
   }
   const target = event.target instanceof Element ? event.target.closest("a[href]") : null;
-  if (!(target instanceof HTMLAnchorElement) || !isWebUrl(target.href)) {
+  if (!(target instanceof HTMLAnchorElement) || !isSystemOpenUrl(target.href)) {
     return;
   }
   event.preventDefault();
@@ -63,7 +67,7 @@ function handleExternalLinkClick(event: MouseEvent): void {
 
 function normalizeExternalUrl(url: string): string | undefined {
   const trimmed = url.trim();
-  if (!isWebUrl(trimmed)) {
+  if (!isSystemOpenUrl(trimmed)) {
     return undefined;
   }
   return trimmed;

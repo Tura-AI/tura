@@ -1,0 +1,10 @@
+$env:COMMAND_RUN_AGENT_RUN_ID = 'source-port-composite-fullprompt-4agents-gpt55-20260622-223238'
+$env:COMMAND_RUN_AGENT_AGENTS = 'tura-fast-shll,tura-thinking-shll,tura-planning-shll,codex-main'
+$env:COMMAND_RUN_AGENT_TIMEOUT_MS = '1200000'
+$env:COMMAND_RUN_AGENT_TURA_MODEL = 'codex/gpt-5.5'
+$env:COMMAND_RUN_AGENT_CODEX_MODEL = 'gpt-5.5'
+$env:COMMAND_RUN_AGENT_PRINT_PROVIDER_LOG = '1'
+$env:COMMAND_RUN_AGENT_ALLOW_FAILURE = '1'
+$env:COMMAND_RUN_AGENT_TURA_EXE = 'C:\Users\liuliu\Documents\tura\target\debug\tura_exec.exe'
+Set-Location 'C:\Users\liuliu\Documents\tura'
+node tests\benchmark\project-rebuild-refactor\rust_cli_python_port_composite_suite.mjs

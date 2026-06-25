@@ -2,16 +2,13 @@ import {
   type PollInterval,
   type Session,
   type StartCondition,
-  type TaskManagement,
 } from "@tura/gateway-sdk";
 import CalendarClock from "lucide-solid/icons/calendar-clock";
 import CalendarDays from "lucide-solid/icons/calendar-days";
-import ChartGantt from "lucide-solid/icons/chart-gantt";
 import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
 import Columns3 from "lucide-solid/icons/columns-3";
-import MoreHorizontal from "lucide-solid/icons/ellipsis";
-import GripVertical from "lucide-solid/icons/grip-vertical";
+import GitBranch from "lucide-solid/icons/git-branch";
 import LayoutList from "lucide-solid/icons/layout-list";
 import Play from "lucide-solid/icons/play";
 import Plus from "lucide-solid/icons/plus";
@@ -29,7 +26,6 @@ import {
   defaultLocalStartAt,
   firstRunnableTask,
   formatPollIntervalEveryCompact,
-  formatPollingTaskTiming,
   formatStartCondition,
   formatTaskRemaining,
   formatTicketTime,
@@ -39,19 +35,8 @@ import {
   normalizePollInterval,
   planSessionStatus,
   sessionTaskState,
-  sortedSessionTasks,
-  taskDisplayText,
-  taskNonceId,
-  taskPlanStatus,
   taskStartCondition,
-  taskSummaryText,
 } from "../../features/plan/tasks";
-import {
-  beginComposerTaskPointerDrag,
-  type ComposerTaskDragState,
-  type TaskDropIndicator,
-} from "./plan-composer-drag";
-import { TaskRowText } from "./plan-task-row-text";
 export function PlanModeButtons(props: {
   mode: PlanMode;
   splitOpen: boolean;
@@ -63,7 +48,7 @@ export function PlanModeButtons(props: {
     label: string;
     icon: (props: { size?: number }) => JSX.Element;
   }> = [
-    { id: "gantt", label: t("gantt"), icon: ChartGantt },
+    { id: "gantt", label: t("gantt"), icon: GitBranch },
     { id: "calendar", label: t("calendar"), icon: CalendarDays },
     { id: "todo", label: t("todoList"), icon: LayoutList },
     { id: "split", label: t("splitCollaboration"), icon: Columns3 },
@@ -79,6 +64,7 @@ export function PlanModeButtons(props: {
                 "icon-action",
                 (mode.id === "split" ? props.splitOpen : props.mode === mode.id) && "selected",
               )}
+              data-plan-mode={mode.id}
               title={mode.label}
               onClick={() => (mode.id === "split" ? props.onSplit() : props.onMode(mode.id))}
             >
@@ -104,144 +90,6 @@ export function PlanTicketMeta(props: { session: Session }) {
         <span>{formatTicketTime(task().start_at)}</span>
       </Show>
     </div>
-  );
-}
-
-export function PlanComposerTaskList(props: {
-  session: Session;
-  selected_task_id?: string;
-  pulseNonceId?: string;
-  pulseToken?: number;
-  onEdit: (task: TaskManagement, value: string) => void;
-  onDelete: (task: TaskManagement) => void;
-  onRun: (task: TaskManagement) => void;
-  onCreateSession: (task: TaskManagement) => void;
-  onReorder: (tasks: TaskManagement[]) => void;
-}) {
-  const [menuNonce, setMenuNonce] = createSignal<string>();
-  const [dragNonce, setDragNonce] = createSignal<string>();
-  const [dragGhost, setDragGhost] = createSignal<ComposerTaskDragState>();
-  const [dropIndicator, setDropIndicator] = createSignal<TaskDropIndicator>();
-  const [suppressedEditNonce, setSuppressedEditNonce] = createSignal<string>();
-  const tasks = createMemo(() => sortedSessionTasks(props.session));
-  function reorderTaskTo(
-    sourceNonce: string,
-    targetNonce: string,
-    edge: TaskDropIndicator["edge"],
-  ) {
-    if (sourceNonce === targetNonce) {
-      return;
-    }
-    const current = tasks();
-    const sourceIndex = current.findIndex((task) => taskNonceId(task) === sourceNonce);
-    const targetIndex = current.findIndex((task) => taskNonceId(task) === targetNonce);
-    if (sourceIndex < 0 || targetIndex < 0) {
-      return;
-    }
-    const next = [...current];
-    const [source] = next.splice(sourceIndex, 1);
-    const targetIndexAfterRemoval = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
-    const insertIndex = edge === "after" ? targetIndexAfterRemoval + 1 : targetIndexAfterRemoval;
-    next.splice(insertIndex, 0, source);
-    props.onReorder(next);
-  }
-  function finishDrag(sourceNonce: string, moved: boolean) {
-    setDragNonce(undefined);
-    setDragGhost(undefined);
-    setDropIndicator(undefined);
-    if (moved) {
-      setSuppressedEditNonce(sourceNonce);
-      window.setTimeout(() => setSuppressedEditNonce(undefined), 0);
-    }
-  }
-  createEffect(() => {
-    if (!menuNonce()) {
-      return;
-    }
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest(".composer-task-menu") || target?.closest(".composer-task-more")) {
-        return;
-      }
-      setMenuNonce(undefined);
-    };
-    document.addEventListener("pointerdown", closeMenu);
-    onCleanup(() => document.removeEventListener("pointerdown", closeMenu));
-  });
-  return (
-    <Show when={tasks().length > 0}>
-      <section class="composer-task-list" aria-label={t("taskManagement")}>
-        <Show when={dragGhost()}>
-          {(ghost) => (
-            <div
-              class="plan-drag-ghost composer-task-drag-ghost"
-              style={{
-                left: `${ghost().x}px`,
-                top: `${ghost().y}px`,
-                width: `${ghost().width}px`,
-                height: `${ghost().height}px`,
-              }}
-              innerHTML={ghost().html}
-              aria-hidden="true"
-            />
-          )}
-        </Show>
-        <For each={tasks()}>
-          {(task, index) => {
-            const rowKey = () => taskNonceId(task) ?? `task:${index()}`;
-            const indicator = () =>
-              dropIndicator()?.nonce === taskNonceId(task) ? dropIndicator()?.edge : undefined;
-            return (
-              <PlanTaskRow
-                pulseId={rowKey()}
-                task={task}
-                dragging={dragNonce() === taskNonceId(task)}
-                dropIndicator={indicator()}
-                pulseToken={props.pulseNonceId === taskNonceId(task) ? props.pulseToken : undefined}
-                selected={Boolean(
-                  props.selected_task_id && props.selected_task_id === taskNonceId(task),
-                )}
-                menuOpen={menuNonce() === rowKey()}
-                onMenu={() => setMenuNonce(menuNonce() === rowKey() ? undefined : rowKey())}
-                onEdit={() => {
-                  if (suppressedEditNonce() === taskNonceId(task)) {
-                    return;
-                  }
-                  props.onEdit(task, taskDisplayText(task));
-                }}
-                onDelete={() => {
-                  setMenuNonce(undefined);
-                  props.onDelete(task);
-                }}
-                onRun={() => {
-                  setMenuNonce(undefined);
-                  props.onRun(task);
-                }}
-                onCreateSession={() => {
-                  setMenuNonce(undefined);
-                  props.onCreateSession(task);
-                }}
-                onPointerDragStart={(event) => {
-                  const nonce = taskNonceId(task);
-                  if (!nonce) {
-                    return;
-                  }
-                  beginComposerTaskPointerDrag({
-                    event,
-                    sourceNonce: nonce,
-                    setDragNonce,
-                    setDragGhost,
-                    setDropIndicator,
-                    onDrop: (drop) => reorderTaskTo(nonce, drop.nonce, drop.edge),
-                    onFinish: (moved) => finishDrag(nonce, moved),
-                  });
-                }}
-              />
-            );
-          }}
-        </For>
-      </section>
-    </Show>
   );
 }
 
@@ -279,177 +127,6 @@ export function shouldShowPlanFeedbackPrompt(session: Session, composerText: str
     return true;
   }
   return status === "todo" && !firstRunnableTask(session) && composerText.trim().length > 0;
-}
-
-const taskRowPulseSignatureCache = new Map<string, string>();
-export function PlanTaskRow(props: {
-  pulseId: string;
-  task: TaskManagement;
-  dragging?: boolean;
-  dropIndicator?: TaskDropIndicator["edge"];
-  pulseToken?: number;
-  selected: boolean;
-  menuOpen: boolean;
-  onMenu: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onRun: () => void;
-  onCreateSession: () => void;
-  onPointerDragStart: (event: PointerEvent) => void;
-}) {
-  let moreButton: HTMLButtonElement | undefined;
-  const [menuRect, setMenuRect] = createSignal({ left: 0, top: 0 });
-  const [textPulse, setTextPulse] = createSignal(false);
-  let textPulseTimer: number | undefined;
-  let lastPulseToken: number | undefined;
-  const summaryText = createMemo(() => taskSummaryText(props.task));
-  const status = createMemo(() => taskPlanStatus(props.task));
-  const activeStatus = createMemo(() => {
-    const value = status();
-    return value === "doing" || value === "question" ? value : undefined;
-  });
-  const taskPulseSignature = createMemo(() => `${summaryText()}\n${taskDisplayText(props.task)}`);
-  const scheduleText = createMemo(() => {
-    const startCondition = taskStartCondition(props.task);
-    return startCondition === "user_action"
-      ? t("sessionIdle")
-      : formatStartCondition(startCondition);
-  });
-  const remainingText = createMemo(() => {
-    if (taskStartCondition(props.task) !== "polling_task") {
-      return formatTaskRemaining(props.task);
-    }
-    return formatPollingTaskTiming(props.task);
-  });
-  function updateMenuPosition() {
-    const rect = moreButton?.getBoundingClientRect();
-    if (!rect) {
-      return;
-    }
-    const width = 146;
-    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
-    setMenuRect({ left, top: rect.top - 6 });
-  }
-  createEffect(() => {
-    if (!props.menuOpen) {
-      return;
-    }
-    updateMenuPosition();
-    window.addEventListener("resize", updateMenuPosition);
-    window.addEventListener("scroll", updateMenuPosition, true);
-    onCleanup(() => {
-      window.removeEventListener("resize", updateMenuPosition);
-      window.removeEventListener("scroll", updateMenuPosition, true);
-    });
-  });
-  createEffect(() => {
-    taskRowPulseSignatureCache.set(props.pulseId, taskPulseSignature());
-  });
-  createEffect(() => {
-    const token = props.pulseToken;
-    if (token === undefined || token === lastPulseToken) {
-      return;
-    }
-    lastPulseToken = token;
-    setTextPulse(false);
-    if (textPulseTimer) {
-      window.clearTimeout(textPulseTimer);
-    }
-    requestAnimationFrame(() => setTextPulse(true));
-    textPulseTimer = window.setTimeout(() => setTextPulse(false), 700);
-  });
-  onCleanup(() => {
-    if (textPulseTimer) {
-      window.clearTimeout(textPulseTimer);
-    }
-  });
-  return (
-    <div
-      class={classNames(
-        "composer-task-row-wrap",
-        props.dragging && "dragging",
-        props.dropIndicator === "before" && "drop-before",
-        props.dropIndicator === "after" && "drop-after",
-      )}
-      data-task-nonce={taskNonceId(props.task)}
-      onPointerDown={props.onPointerDragStart}
-    >
-      <span class="composer-task-drag-handle" aria-hidden="true">
-        <GripVertical size={14} />
-      </span>
-      <button
-        type="button"
-        class={classNames("composer-task-row", props.selected && "selected")}
-        onClick={props.onEdit}
-      >
-        <span
-          class={classNames(
-            "composer-task-title",
-            activeStatus() && "has-status",
-            textPulse() && "task-text-pulse",
-          )}
-        >
-          <Show when={activeStatus()}>
-            {(status) => (
-              <span
-                class={classNames(
-                  "plan-status-indicator",
-                  "composer-task-status",
-                  `status-${status()}`,
-                )}
-                aria-hidden="true"
-              />
-            )}
-          </Show>
-          <span class="composer-task-title-text">
-            <TaskRowText text={summaryText()} />
-          </span>
-        </span>
-        <small class={classNames("composer-task-meta", remainingText() && "has-countdown")}>
-          <Show when={scheduleText()}>
-            <span class="composer-task-condition">{scheduleText()}</span>
-          </Show>
-          <Show when={remainingText()}>
-            <span class="composer-task-countdown">{remainingText()}</span>
-          </Show>
-        </small>
-      </button>
-      <button
-        ref={moreButton}
-        class="composer-task-more"
-        type="button"
-        title="更多"
-        onClick={(event) => {
-          event.stopPropagation();
-          updateMenuPosition();
-          props.onMenu();
-        }}
-      >
-        <MoreHorizontal size={15} />
-      </button>
-      <Show when={props.menuOpen}>
-        <Portal>
-          <div
-            class="composer-task-menu"
-            style={{
-              left: `${menuRect().left}px`,
-              top: `${menuRect().top}px`,
-            }}
-          >
-            <button type="button" onClick={props.onDelete}>
-              删除
-            </button>
-            <button type="button" onClick={props.onRun}>
-              {t("runNow")}
-            </button>
-            <button type="button" onClick={props.onCreateSession}>
-              创建新会话
-            </button>
-          </div>
-        </Portal>
-      </Show>
-    </div>
-  );
 }
 
 export function formatPollInterval(interval: PollInterval): string {

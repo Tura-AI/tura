@@ -1,6 +1,6 @@
 use crate::state_machine::agent_management::{
-    AgentCapabilityItem, AgentManagement, AgentPersonaItem, AgentPromptItem, AgentState,
-    ProviderConfig, ToolChoice, ValidatorConfig,
+    AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ProviderConfig, ToolChoice,
+    ValidatorConfig,
 };
 use crate::state_machine::session_management::SessionManagement;
 use chrono::Utc;
@@ -9,8 +9,7 @@ use std::path::{Path, PathBuf};
 use tura_agents::coding_agent::{CodingAgent, CodingAgentProviderConfig, CodingAgentToolChoice};
 
 const PROJECT_ROOT_ENV: &str = "TURA_PROJECT_ROOT";
-const DEFAULT_PERSONA_NAME: &str = "tura";
-const DEFAULT_CODING_AGENT_NAME: &str = "fast";
+const DEFAULT_CODING_AGENT_NAME: &str = "balanced";
 
 pub fn activate_agent_with_loader(
     session: &SessionManagement,
@@ -36,23 +35,11 @@ pub fn activate_agents_by_session_type(
             &coding_prompts_directory,
         )?
     } else {
-        match session.session_topic.as_str() {
-            "coding" | "programming" | "development" | "testing" => create_coding_agent(
-                &project_directory,
-                &capabilities_directory,
-                &coding_prompts_directory,
-            )?,
-            "general" => create_general_agent(
-                &project_directory,
-                &capabilities_directory,
-                &coding_prompts_directory,
-            )?,
-            _ => create_general_agent(
-                &project_directory,
-                &capabilities_directory,
-                &coding_prompts_directory,
-            )?,
-        }
+        create_coding_agent(
+            &project_directory,
+            &capabilities_directory,
+            &coding_prompts_directory,
+        )?
     };
     agents.push(agent);
     Ok(agents)
@@ -68,19 +55,29 @@ fn create_agent_by_name(
         return Ok(agent);
     }
     match agent_name {
-        "thinking-planning" | "coding_agent_planning" | "coding_agent" | "coding" => {
-            create_coding_agent(project_directory, capabilities_directory, prompts_directory)
-        }
-        "thinking" | "fast" | "fast-text-only" | "coding_agent_fast" | "coding_agent_instant" => {
+        "thoughtful"
+        | "thinking-planning"
+        | "coding_agent_planning"
+        | "coding_agent"
+        | "coding"
+        | "balanced"
+        | "thinking"
+        | "direct"
+        | "fast"
+        | "direct-text-only"
+        | "fast-text-only"
+        | "coding_agent_fast"
+        | "coding_agent_thinking" => {
             let canonical_name = match agent_name {
-                "coding_agent_fast" => "fast",
-                "coding_agent_instant" => "fast-text-only",
+                "thinking-planning" | "coding_agent_planning" | "coding_agent" | "coding" => {
+                    "thoughtful"
+                }
+                "thinking" | "coding_agent_thinking" => "balanced",
+                "fast" | "coding_agent_fast" => "direct",
+                "fast-text-only" => "direct-text-only",
                 other => other,
             };
-            if let Some(agent) = load_agent_from_registry(project_directory, agent_name)? {
-                Ok(agent)
-            } else if let Some(agent) = load_agent_from_registry(project_directory, canonical_name)?
-            {
+            if let Some(agent) = load_agent_from_registry(project_directory, canonical_name)? {
                 Ok(agent)
             } else {
                 let mut agent = create_coding_agent(
@@ -90,13 +87,25 @@ fn create_agent_by_name(
                 )?;
                 agent.agent_id = generate_agent_id(canonical_name);
                 agent.agent_name = canonical_name.to_string();
-                if canonical_name == "thinking" {
+                agent.reflection = canonical_name == "thoughtful";
+                agent.agent_prompt.clear();
+                agent.add_prompt(
+                    AgentPromptItem {
+                        agent_prompt: canonical_name.to_string(),
+                        prompt_directory: prompts_directory.to_path_buf(),
+                    },
+                    Utc::now(),
+                );
+                if canonical_name == "balanced" || canonical_name == "thoughtful" {
                     agent
                         .agent_capabilities
                         .retain(|capability| capability.capability_name != "planning");
                 }
-                if canonical_name == "fast-text-only" {
+                if canonical_name == "direct" || canonical_name == "direct-text-only" {
                     agent.provider.tura_llm_name = "fast".to_string();
+                    agent.provider.default_model_tier = Some("fast".to_string());
+                }
+                if canonical_name == "direct-text-only" {
                     agent
                         .agent_capabilities
                         .retain(|capability| capability.capability_name != "read_media");
@@ -138,6 +147,7 @@ fn create_coding_agent(
         None,
         true,
         false,
+        false,
         provider,
         validator,
         now,
@@ -161,14 +171,12 @@ fn create_coding_agent(
             now,
         );
     }
-    add_default_persona(&mut agent, project_directory, now);
-
     Ok(agent)
 }
 
 fn create_general_agent(
     project_directory: &Path,
-    capabilities_directory: &Path,
+    _capabilities_directory: &Path,
     prompts_directory: &Path,
 ) -> Result<AgentManagement, String> {
     if let Some(agent) = load_agent_from_registry(project_directory, "general")? {
@@ -178,6 +186,8 @@ fn create_general_agent(
     let now = Utc::now();
     let provider = ProviderConfig {
         tura_llm_name: "fast".to_string(),
+        default_model_tier: Some("fast".to_string()),
+        current_model: None,
         stream: true,
         temperature: 0.7,
         max_tokens: 0,
@@ -196,18 +206,11 @@ fn create_general_agent(
         None,
         true,
         false,
+        false,
         provider,
         validator,
         now,
     );
-    agent.add_capability(
-        AgentCapabilityItem {
-            capability_name: "command_run".to_string(),
-            capability_directory: capabilities_directory.to_path_buf(),
-        },
-        now,
-    );
-
     agent.add_prompt(
         AgentPromptItem {
             agent_prompt: "general".to_string(),
@@ -215,8 +218,6 @@ fn create_general_agent(
         },
         now,
     );
-    add_default_persona(&mut agent, project_directory, now);
-
     Ok(agent)
 }
 
@@ -229,6 +230,8 @@ pub(crate) fn provider_config_from_coding_agent(
 ) -> ProviderConfig {
     ProviderConfig {
         tura_llm_name: config.tura_llm_name,
+        default_model_tier: config.default_model_tier,
+        current_model: config.current_model,
         stream: true,
         temperature: config.temperature,
         max_tokens: config.max_tokens,
@@ -249,9 +252,9 @@ struct AgentRegistryEntry {
     report_to_user: bool,
     #[serde(default)]
     default_config: bool,
-    provider: ProviderConfig,
     #[serde(default)]
-    agent_persona: Vec<AgentPersonaItem>,
+    reflection: bool,
+    provider: ProviderConfig,
     agent_prompt: Vec<AgentPromptItem>,
     agent_capabilities: Vec<AgentCapabilityItem>,
     validator: ValidatorConfig,
@@ -322,6 +325,7 @@ fn build_agent_from_registry_entry(
         entry.parent_agent_id,
         entry.report_to_user,
         entry.default_config,
+        entry.reflection,
         entry.provider,
         entry.validator,
         now,
@@ -335,23 +339,6 @@ fn build_agent_from_registry_entry(
             },
             now,
         );
-    }
-
-    if entry.agent_persona.is_empty() {
-        add_default_persona(&mut agent, project_directory, now);
-    } else {
-        for persona in entry.agent_persona {
-            agent.add_persona(
-                AgentPersonaItem {
-                    persona_name: persona.persona_name,
-                    persona_directory: resolve_project_path(
-                        project_directory,
-                        persona.persona_directory,
-                    ),
-                },
-                now,
-            );
-        }
     }
 
     for capability in entry.agent_capabilities {
@@ -368,28 +355,6 @@ fn build_agent_from_registry_entry(
     }
 
     Ok(agent)
-}
-
-fn add_default_persona(
-    agent: &mut AgentManagement,
-    project_directory: &Path,
-    now: chrono::DateTime<Utc>,
-) {
-    agent.add_persona(
-        AgentPersonaItem {
-            persona_name: DEFAULT_PERSONA_NAME.to_string(),
-            persona_directory: persona_prompt_directory(project_directory, DEFAULT_PERSONA_NAME),
-        },
-        now,
-    );
-}
-
-fn persona_prompt_directory(project_directory: &Path, persona_name: &str) -> PathBuf {
-    project_directory
-        .join("personas")
-        .join("src")
-        .join(persona_name)
-        .join("prompt")
 }
 
 fn resolve_project_path(project_directory: &Path, path: PathBuf) -> PathBuf {
@@ -461,9 +426,221 @@ pub fn initialize_agent_state_machine(
             crate::state_machine::session_management::SessionState::Cancelled => {
                 agent.state = AgentState::Failed;
             }
+            crate::state_machine::session_management::SessionState::Interrupted => {
+                agent.state = AgentState::Failed;
+            }
         }
         agent.updated_at = now;
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_agent_from_registry_entry, initialize_agent_state_machine,
+        provider_config_from_coding_agent, resolve_project_path, AgentRegistryEntry,
+    };
+    use crate::state_machine::agent_management::{
+        AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ProviderConfig,
+        ToolChoice, ValidatorConfig,
+    };
+    use crate::state_machine::session_management::{SessionInput, SessionManagement, SessionState};
+    use chrono::Utc;
+    use std::path::{Path, PathBuf};
+    use tura_agents::coding_agent::{CodingAgentProviderConfig, CodingAgentToolChoice};
+
+    fn provider_config() -> ProviderConfig {
+        ProviderConfig {
+            tura_llm_name: "fast".to_string(),
+            default_model_tier: Some("fast".to_string()),
+            current_model: None,
+            stream: true,
+            temperature: 0.0,
+            max_tokens: 1024,
+            tool_choice: ToolChoice::Auto,
+            time_out_ms: 30_000,
+        }
+    }
+
+    fn validator_config() -> ValidatorConfig {
+        ValidatorConfig {
+            need_validator: false,
+            validator_name: None,
+        }
+    }
+
+    fn agent(name: &str) -> AgentManagement {
+        let now = Utc::now();
+        AgentManagement::new(
+            format!("{name}-id"),
+            name.to_string(),
+            PathBuf::from("agents").join(name),
+            None,
+            true,
+            false,
+            false,
+            provider_config(),
+            validator_config(),
+            now,
+        )
+    }
+
+    fn session_in_state(state: SessionState) -> SessionManagement {
+        let now = Utc::now();
+        let mut session = SessionManagement::new(
+            "session-agent-router".to_string(),
+            "Agent Router".to_string(),
+            PathBuf::from("workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "hello".to_string(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "goal".to_string(),
+            now,
+        );
+        session.state = state;
+        session
+    }
+
+    #[test]
+    fn provider_config_from_coding_agent_maps_tool_choice_and_keeps_timeout() {
+        for (choice, expected) in [
+            (CodingAgentToolChoice::Auto, ToolChoice::Auto),
+            (CodingAgentToolChoice::Strict, ToolChoice::Strict),
+            (CodingAgentToolChoice::Disable, ToolChoice::Disable),
+        ] {
+            let config = provider_config_from_coding_agent(CodingAgentProviderConfig {
+                tura_llm_name: "thinking".to_string(),
+                default_model_tier: Some("thinking".to_string()),
+                current_model: None,
+                stream: false,
+                temperature: 0.3,
+                max_tokens: 4096,
+                tool_choice: choice,
+                time_out_ms: 1234,
+            });
+
+            assert_eq!(config.tura_llm_name, "thinking");
+            assert_eq!(config.default_model_tier.as_deref(), Some("thinking"));
+            assert!(
+                config.stream,
+                "runtime provider config must force streaming"
+            );
+            assert_eq!(config.temperature, 0.3);
+            assert_eq!(config.max_tokens, 4096);
+            assert_eq!(config.tool_choice, expected);
+            assert_eq!(config.time_out_ms, 1234);
+        }
+    }
+
+    #[test]
+    fn registry_entry_build_resolves_relative_paths_without_persona_binding() {
+        let project = Path::new("C:/repo/tura");
+        let entry = AgentRegistryEntry {
+            agent_name: "custom".to_string(),
+            agent_directory: PathBuf::from("agents/custom"),
+            parent_agent_id: Some("parent".to_string()),
+            report_to_user: false,
+            default_config: true,
+            reflection: false,
+            provider: provider_config(),
+            agent_prompt: vec![AgentPromptItem {
+                agent_prompt: "prompt".to_string(),
+                prompt_directory: PathBuf::from("prompts/custom"),
+            }],
+            agent_capabilities: vec![AgentCapabilityItem {
+                capability_name: "command_run".to_string(),
+                capability_directory: PathBuf::from("crates/tools/src"),
+            }],
+            validator: validator_config(),
+        };
+
+        let agent =
+            build_agent_from_registry_entry(project, entry).expect("registry entry should build");
+
+        assert_eq!(agent.agent_name, "custom");
+        assert_eq!(agent.parent_agent_id.as_deref(), Some("parent"));
+        assert!(!agent.report_to_user);
+        assert!(agent.default_config);
+        assert_eq!(agent.agent_directory, project.join("agents/custom"));
+        assert_eq!(
+            agent.agent_prompt[0].prompt_directory,
+            project.join("prompts/custom")
+        );
+        assert_eq!(
+            agent.agent_capabilities[0].capability_directory,
+            project.join("crates/tools/src")
+        );
+    }
+
+    #[test]
+    fn registry_entry_build_maps_reflection_flag() {
+        let project = Path::new("C:/repo/tura");
+        let entry = AgentRegistryEntry {
+            agent_name: "reflective".to_string(),
+            agent_directory: PathBuf::from("agents/reflective"),
+            parent_agent_id: None,
+            report_to_user: true,
+            default_config: false,
+            reflection: true,
+            provider: provider_config(),
+            agent_prompt: Vec::new(),
+            agent_capabilities: Vec::new(),
+            validator: validator_config(),
+        };
+
+        let agent =
+            build_agent_from_registry_entry(project, entry).expect("registry entry should build");
+
+        assert!(agent.reflection);
+    }
+
+    #[test]
+    fn project_path_resolution_keeps_absolute_paths_and_roots_relative_paths() {
+        let project = Path::new("C:/repo/tura");
+        let absolute = if cfg!(windows) {
+            PathBuf::from("C:/external/agent")
+        } else {
+            PathBuf::from("/external/agent")
+        };
+
+        assert_eq!(
+            resolve_project_path(project, PathBuf::from("agents/custom")),
+            project.join("agents/custom")
+        );
+        assert_eq!(resolve_project_path(project, absolute.clone()), absolute);
+    }
+
+    #[test]
+    fn initialize_agent_state_machine_maps_session_states_to_agent_states() {
+        for (session_state, expected_agent_state) in [
+            (SessionState::Created, AgentState::Idle),
+            (SessionState::Running, AgentState::Idle),
+            (SessionState::Paused, AgentState::Waiting),
+            (SessionState::Completed, AgentState::Completed),
+            (SessionState::Failed, AgentState::Failed),
+            (SessionState::Cancelled, AgentState::Failed),
+            (SessionState::Interrupted, AgentState::Failed),
+        ] {
+            let mut agents = vec![agent("agent-a"), agent("agent-b")];
+            let session = session_in_state(session_state);
+
+            initialize_agent_state_machine(&mut agents, &session)
+                .expect("agent state initialization should succeed");
+
+            assert!(
+                agents
+                    .iter()
+                    .all(|agent| agent.state == expected_agent_state),
+                "session state {session_state:?} should map all agents to {expected_agent_state:?}"
+            );
+        }
+    }
 }

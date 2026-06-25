@@ -11,6 +11,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import { t, type TextKey } from "../../i18n";
 import { classNames } from "../../state/format";
 import { type AppState } from "../../state/global-store";
+import { openExternalUrl } from "../../utils/external-url";
 
 import {
   copyText,
@@ -264,7 +265,16 @@ function ProviderAuthMethods(props: {
                 </Show>
                 <Show when={methodUsesTokenInput(method) && method.api_key_url}>
                   {(url) => (
-                    <a class="provider-api-page-link" href={url()} target="_blank" rel="noreferrer">
+                    <a
+                      class="provider-api-page-link"
+                      href={url()}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void openExternalUrl(url());
+                      }}
+                    >
                       <LinkIcon size={14} strokeWidth={1.7} />
                       {t("providerApiPage")}
                     </a>

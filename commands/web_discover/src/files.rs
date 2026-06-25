@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+pub(super) const DEFAULT_DOWNLOAD_DIR: &str = ".tura/media";
+
 pub(super) fn downloaded_file_value(
     path: &Path,
     session_dir: &Path,
@@ -28,14 +30,7 @@ pub(super) fn resolve_download_dir(
     args: &WebDiscoverArgs,
     session_dir: &Path,
 ) -> Result<PathBuf, String> {
-    let default_dir = match args.kind.as_str() {
-        "website" => "web",
-        "image" => "media/image",
-        "video" => "media/video",
-        "audio" => "media/audio",
-        _ => "media",
-    };
-    let raw = args.download_dir.as_deref().unwrap_or(default_dir);
+    let raw = args.download_dir.as_deref().unwrap_or(DEFAULT_DOWNLOAD_DIR);
     let path = PathBuf::from(raw);
     let resolved = if path.is_absolute() {
         path
@@ -43,6 +38,10 @@ pub(super) fn resolve_download_dir(
         session_dir.join(path)
     };
     Ok(resolved)
+}
+
+pub(super) fn download_dir_arg_or_default(args: &WebDiscoverArgs) -> &str {
+    args.download_dir.as_deref().unwrap_or(DEFAULT_DOWNLOAD_DIR)
 }
 
 pub(super) fn relative_or_display(path: &Path, session_dir: &Path) -> String {
@@ -102,11 +101,11 @@ pub(super) fn write_unique_download(
         {
             Ok(mut file) => {
                 file.write_all(bytes)
-                    .map_err(|err| format!("failed to write image: {err}"))?;
+                    .map_err(|err| format!("failed to write download: {err}"))?;
                 return Ok(path);
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(format!("failed to write image: {err}")),
+            Err(err) => return Err(format!("failed to write download: {err}")),
         }
     }
     Err(format!(
@@ -127,6 +126,9 @@ pub(super) fn move_unique_download(
             format!("-{copy}")
         };
         let path = output_dir.join(format!("{base_name}{suffix}.{extension}"));
+        if path.exists() {
+            continue;
+        }
         match std::fs::rename(source, &path) {
             Ok(()) => return Ok(path),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,

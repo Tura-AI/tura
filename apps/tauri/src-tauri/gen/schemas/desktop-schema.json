@@ -177,10 +177,16 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Allow the GUI shell to start the local Tura gateway process.",
+          "description": "Allow the tura_gui shell to open web URLs in the system default browser.",
+          "type": "string",
+          "const": "allow-open-external-url",
+          "markdownDescription": "Allow the tura_gui shell to open web URLs in the system default browser."
+        },
+        {
+          "description": "Allow the tura_gui shell to start the local tura_gateway process.",
           "type": "string",
           "const": "allow-start-gateway",
-          "markdownDescription": "Allow the GUI shell to start the local Tura gateway process."
+          "markdownDescription": "Allow the tura_gui shell to start the local tura_gateway process."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",

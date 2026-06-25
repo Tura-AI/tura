@@ -20,7 +20,7 @@ import { PlanComposerControls } from "./plan/plan-composer";
 export function ConversationEmptyView(props: {
   state: AppState;
   slashCommands: Command[];
-  onWorkspace: (directory: string) => void;
+  onWorkspace: (directory: string) => void | Promise<void>;
   onCreateWorkspace: (name: string) => void | Promise<void>;
   onPickDirectory: () => Promise<void>;
   onComposerText: (value: string) => void;
@@ -115,7 +115,7 @@ export function NewSessionWorkspacePicker(props: {
   query: string;
   defaultDirectory: string;
   onQuery: (value: string) => void;
-  onWorkspace: (directory: string) => void;
+  onWorkspace: (directory: string) => void | Promise<void>;
   onCreateWorkspace: () => void;
   onPickDirectory: () => Promise<void>;
 }) {
@@ -179,7 +179,7 @@ export function NewSessionWorkspacePicker(props: {
                     samePath(project.worktree, props.directory) && "selected",
                   )}
                   onClick={() => {
-                    props.onWorkspace(project.worktree);
+                    void props.onWorkspace(project.worktree);
                     setOpen(false);
                   }}
                   title={project.worktree}
@@ -203,7 +203,7 @@ export function NewSessionWorkspacePicker(props: {
             <button
               type="button"
               onClick={() => {
-                props.onWorkspace(props.defaultDirectory);
+                void props.onWorkspace(props.defaultDirectory);
                 setOpen(false);
               }}
             >

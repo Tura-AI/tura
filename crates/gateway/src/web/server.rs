@@ -6,7 +6,9 @@ use axum::{
     Router,
 };
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::{Path, PathBuf};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber;
 
 // ============================================================================
@@ -28,18 +30,12 @@ pub fn build_router() -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    let router = Router::new()
         // Global
         .route("/global/health", get(api::global::health))
-        .route("/global/event", get(api::global::global_event))
         .route("/event", get(api::global::global_event))
-        .route("/global/sync-event", get(api::global::sync_event))
-        .route("/global/config", get(api::global::get_config))
-        .route("/global/config", patch(api::global::patch_config))
         .route("/model_config", get(api::global::get_tura_config))
         .route("/model_config", put(api::global::put_tura_config))
-        .route("/gui_config", get(api::global::get_gui_config))
-        .route("/gui_config", put(api::global::put_gui_config))
         // Multica-compatible product surface
         .route("/api/config", get(api::product::public_config))
         .route("/api/me", get(api::product::current_user))
@@ -94,7 +90,16 @@ pub fn build_router() -> Router {
             "/session-log/{sessionID}/records",
             get(api::session_log::session_log_records),
         )
-        .route("/session/{sessionID}", patch(api::session::update_session))
+        .route(
+            "/session/{sessionID}",
+            get(api::session::get_session)
+                .patch(api::session::update_session)
+                .delete(api::session::delete_session),
+        )
+        .route(
+            "/session/{sessionID}/fork",
+            post(api::session::fork_session),
+        )
         .route(
             "/session/{sessionID}/task-management",
             patch(api::session::update_session_task_management),
@@ -108,20 +113,16 @@ pub fn build_router() -> Router {
             get(api::session::list_messages),
         )
         .route(
-            "/session/{sessionID}/message/agent",
-            post(api::session::send_agent_message),
+            "/session/{sessionID}/events",
+            get(api::global::session_event),
         )
         .route(
             "/session/{sessionID}/prompt_async",
             post(api::session::prompt_async),
         )
-        .route(
-            "/session/{sessionID}/user-commands",
-            get(api::session::session_user_commands)
-                .post(api::session::append_session_user_command),
-        )
         .route("/file", get(api::file::list_files))
         .route("/file/content", get(api::file::get_file_content))
+        .route("/file/media", get(api::file::get_file_media))
         .route("/file/open", post(api::file::open_file))
         .route("/file/open-location", post(api::file::open_file_location))
         // Provider
@@ -181,24 +182,66 @@ pub fn build_router() -> Router {
         .route("/tool/{toolID}/config", patch(api::tool::patch_tool_config))
         .route("/service/status", get(api::service::get_service_status))
         // Path
-        .route("/path", get(api::path::get_paths))
-        // TUI compatibility routes
-        .route("/tui/submit-prompt", post(api::session::tui_action))
-        .route("/tui/select-session", post(api::session::create_session))
-        .route("/tui/append-prompt", post(api::session::tui_action))
-        .route("/tui/clear-prompt", post(api::session::tui_action))
-        .route("/tui/control/next", post(api::session::tui_action))
-        .route("/tui/control/response", post(api::session::tui_action))
-        .route("/tui/execute-command", post(api::session::tui_action))
-        .route("/tui/open-help", post(api::session::tui_action))
-        .route("/tui/open-models", post(api::session::tui_action))
-        .route("/tui/open-sessions", post(api::session::tui_action))
-        .route("/tui/open-themes", post(api::session::tui_action))
-        .route("/tui/publish", post(api::session::tui_action))
-        .route("/tui/show-toast", post(api::session::tui_action))
-        // Experimental
-        .route("/experimental/session", get(api::session::list_sessions))
-        .layer(cors)
+        .route("/path", get(api::path::get_paths));
+
+    // Serve the packaged web GUI (Vite SPA build) as a fallback for any path
+    // the API routes above don't claim. The API uses explicit, non-root paths,
+    // so static assets (`/`, `/index.html`, `/assets/...`) and client-side
+    // routes (`/:workspace/...`) all fall through to here. Unknown deep paths
+    // are rewritten to index.html so SPA routing works on hard reloads.
+    let router = match gui_dist_dir() {
+        Some(dir) => {
+            let index = dir.join("index.html");
+            println!("🖥️ Serving web GUI from {}", dir.display());
+            router.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
+        }
+        None => router,
+    };
+
+    router.layer(cors)
+}
+
+/// Resolve the directory holding the built web GUI (`index.html` + `assets/`).
+///
+/// Honors `TURA_GUI_DIST` first, then release-style `tura_gui/` next to the gateway
+/// executable, then repository development build locations. Returns `None`
+/// when no built GUI is present so the gateway runs as a pure API server.
+fn gui_dist_dir() -> Option<PathBuf> {
+    gui_dist_candidates()
+        .into_iter()
+        .find(|dir| dir.join("index.html").is_file())
+}
+
+fn gui_dist_candidates() -> Vec<PathBuf> {
+    gui_dist_candidates_for(
+        std::env::var_os("TURA_GUI_DIST").map(PathBuf::from),
+        std::env::current_exe().ok(),
+        std::env::var_os("TURA_PROJECT_ROOT").map(PathBuf::from),
+        std::env::current_dir().ok(),
+    )
+}
+
+fn gui_dist_candidates_for(
+    explicit: Option<PathBuf>,
+    exe_path: Option<PathBuf>,
+    project_root: Option<PathBuf>,
+    current_dir: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = explicit {
+        candidates.push(dir);
+    }
+    if let Some(exe_dir) = exe_path.as_deref().and_then(Path::parent) {
+        candidates.push(exe_dir.join("tura_gui"));
+    }
+    if let Some(root) = project_root {
+        candidates.push(root.join("apps").join("gui").join("app").join("dist"));
+        candidates.push(root.join("tura_gui"));
+    }
+    if let Some(cwd) = current_dir {
+        candidates.push(cwd.join("tura_gui"));
+    }
+    candidates
 }
 
 fn build_oauth_callback_router() -> Router {
@@ -227,8 +270,8 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     api::session::start_task_scheduler();
     api::provider::start_provider_auth_scheduler();
 
-    println!("🚀 Gateway server starting on http://{}", addr);
-    println!("📡 Health check: http://{}/global/health", addr);
+    println!("🚀 Gateway server starting on http://{addr}");
+    println!("📡 Health check: http://{addr}/global/health");
 
     start_openai_oauth_callback_server(port).await;
 
@@ -276,9 +319,39 @@ pub fn local_bind_addr(port: u16) -> SocketAddr {
 #[tokio::main]
 pub async fn main() {
     let port = std::env::var("PORT")
-        .unwrap_or_else(|_| "4096".to_string())
-        .parse::<u16>()
-        .unwrap_or(4096);
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .unwrap_or(4156);
 
-    run_server(port).await.expect("Server error");
+    if let Err(error) = run_server(port).await {
+        eprintln!("gateway server stopped with error: {error}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gui_dist_candidates_for;
+    use std::path::PathBuf;
+
+    #[test]
+    fn gui_dist_candidates_cover_release_and_repo_builds() {
+        let candidates = gui_dist_candidates_for(
+            Some(PathBuf::from("explicit")),
+            Some(PathBuf::from("target/release/tura_gateway")),
+            Some(PathBuf::from("repo")),
+            Some(PathBuf::from("cwd")),
+        );
+
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("explicit"),
+                PathBuf::from("target/release/tura_gui"),
+                PathBuf::from("repo/apps/gui/app/dist"),
+                PathBuf::from("repo/tura_gui"),
+                PathBuf::from("cwd/tura_gui"),
+            ]
+        );
+    }
 }

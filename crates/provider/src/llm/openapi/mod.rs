@@ -19,7 +19,9 @@ mod response;
 
 pub(crate) use chat::force_search;
 pub use chat::{call, call_with_stream_events, embed, embed_for_provider};
-pub(crate) use response::{codex_oauth_call, responses_api_key_call};
+pub(crate) use response::{
+    codex_oauth_call, normalize_codex_response_event_content, responses_api_key_call,
+};
 
 #[cfg(test)]
 pub(crate) use chat::process_chat_stream_line_for_test;

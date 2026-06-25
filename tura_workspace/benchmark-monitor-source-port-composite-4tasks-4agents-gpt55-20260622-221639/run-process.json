@@ -1,0 +1,9 @@
+{
+  "run_id": "source-port-composite-4tasks-4agents-gpt55-20260622-221639",
+  "pid": 12016,
+  "monitor": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-4tasks-4agents-gpt55-20260622-221639",
+  "stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-4tasks-4agents-gpt55-20260622-221639\\suite.stdout.log",
+  "stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-4tasks-4agents-gpt55-20260622-221639\\suite.stderr.log",
+  "script": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-4tasks-4agents-gpt55-20260622-221639\\run-suite.ps1",
+  "started": "2026-06-22T22:16:39.7656429+02:00"
+}

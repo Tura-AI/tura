@@ -3,11 +3,17 @@
     "title": "Tura 终端客户端",
     "usage": [
       "tura [OPTIONS]                         打开交互式 TUI",
+      "tura [OPTIONS] exec [PROMPT...]        运行 Rust CLI 前门",
       "tura [OPTIONS] run [PROMPT...]         运行非交互提示",
+      "tura [OPTIONS] bash|zsh|shll [PROMPT...]",
       "tura [OPTIONS] <command> --help        显示命令帮助"
     ],
     "commands": [
       { "name": "run", "summary": "通过网关发送提示并流式输出回答" },
+      { "name": "exec", "summary": "转发到 Rust CLI 前门（tura_exec）" },
+      { "name": "bash", "summary": "以 bash 覆盖本次命令工具入口" },
+      { "name": "zsh", "summary": "以 zsh 覆盖本次命令工具入口" },
+      { "name": "shll", "summary": "以 shell_command 覆盖本次命令工具入口" },
       { "name": "resume", "summary": "显示已有会话或追加后续提示" },
       { "name": "session", "summary": "列出或显示会话" },
       { "name": "config", "summary": "读取或更新工作区会话配置" },
@@ -17,12 +23,15 @@
       { "name": "project", "summary": "查看或创建网关工作区" },
       { "name": "file", "summary": "列出、读取、打开或定位工作区文件" },
       { "name": "command", "summary": "列出或执行网关命令" },
-      { "name": "inspect", "summary": "显示网关服务、路径和会话日志状态" },
+      { "name": "inspect", "summary": "显示网关服务、路径和会话" },
       { "name": "gateway", "summary": "直接调用任意网关 HTTP 端点" },
       { "name": "completion", "summary": "为 bash、zsh 或 fish 生成 shell 补全" }
     ],
     "options": [
-      { "flags": "--gateway-url URL", "summary": "网关基础 URL；默认 TURA_GATEWAY_URL 或 http://127.0.0.1:4096" },
+      {
+        "flags": "--gateway-url URL",
+        "summary": "网关基础 URL；默认 TURA_GATEWAY_URL 或 http://127.0.0.1:4126"
+      },
       { "flags": "--cwd PATH", "summary": "发送给网关的工作区目录" },
       { "flags": "--json", "summary": "支持时输出 JSON" },
       { "flags": "--color MODE", "summary": "auto、always 或 never" },
@@ -36,6 +45,9 @@
         "title": "示例",
         "lines": [
           "tura run \"Inspect the workspace and summarize the architecture\"",
+          "tura exec \"Inspect the workspace using the Rust CLI front\"",
+          "tura zsh \"Inspect shell startup files with zsh semantics\"",
+          "tura run --shll \"Use the system shell_command surface\"",
           "tura run --model openai/gpt-5 --output ndjson \"Fix the failing test\"",
           "tura session list --json",
           "tura provider list --json"
@@ -45,7 +57,10 @@
   },
   "run": {
     "title": "运行提示",
-    "usage": ["tura [OPTIONS] run [PROMPT...] [RUN_OPTIONS]"],
+    "usage": [
+      "tura [OPTIONS] run [PROMPT...] [RUN_OPTIONS]",
+      "tura [OPTIONS] bash|zsh|shll [PROMPT...] [RUN_OPTIONS]"
+    ],
     "options": [
       { "flags": "--session ID", "summary": "把提示追加到已有会话" },
       { "flags": "-m, --model PROVIDER/MODEL", "summary": "本次请求的模型覆盖" },
@@ -55,15 +70,22 @@
       { "flags": "--model-variant LEVEL", "summary": "推理/模型规格覆盖" },
       { "flags": "--model-acceleration", "summary": "启用优先/加速路由" },
       { "flags": "--no-model-acceleration", "summary": "禁用优先/加速路由" },
+      { "flags": "--bash, --zsh, --shll", "summary": "覆盖本次提示使用的命令运行 shell 入口" },
       { "flags": "--output text|json|ndjson", "summary": "输出格式" },
       { "flags": "--stream, --no-stream", "summary": "流式监听网关事件或轮询完成" },
       { "flags": "--timeout SEC", "summary": "轮次中止前的超时秒数（默认 600）" },
-      { "flags": "-c, --config KEY=VALUE", "summary": "运行时覆盖，例如 model=gpt-5" }
+      {
+        "flags": "-c, --config KEY=VALUE",
+        "summary": "运行时覆盖，例如 model=gpt-5 或 command_run_shell=zsh"
+      }
     ]
   },
   "resume": {
     "title": "继续会话",
-    "usage": ["tura [OPTIONS] resume SESSION_ID [PROMPT...]", "tura [OPTIONS] resume --last [PROMPT...]"],
+    "usage": [
+      "tura [OPTIONS] resume SESSION_ID [PROMPT...]",
+      "tura [OPTIONS] resume --last [PROMPT...]"
+    ],
     "options": [
       { "flags": "--last", "summary": "选择最近更新的会话" },
       { "flags": "--output text|json|ndjson", "summary": "发送后续提示时的输出模式" },
@@ -92,7 +114,9 @@
     "sections": [
       {
         "title": "说明",
-        "lines": ["会话配置使用 /session/config；模型档位使用 GUI 共享的 /model_config provider_config.json。"]
+        "lines": [
+          "会话配置使用 /session/config；默认模型 tier 配置使用 GUI 共享的 /model_config provider_config.json。"
+        ]
       }
     ]
   },
@@ -115,7 +139,7 @@
       "tura [OPTIONS] agent create AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent update AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent delete AGENT_ID [--json]",
-      "tura [OPTIONS] agent tier AGENT_ID [TIER] [--reasoning LEVEL] [--priority|--no-priority]"
+      "tura [OPTIONS] agent model AGENT_ID [PROVIDER/MODEL] [--reasoning LEVEL] [--priority|--no-priority]"
     ],
     "sections": [
       { "title": "示例", "lines": ["tura run -a AGENT_ID -m PROVIDER/MODEL -p \"prompt\""] }
@@ -156,16 +180,18 @@
   },
   "command": {
     "title": "命令注册表",
-    "usage": ["tura [OPTIONS] command list [--json]", "tura [OPTIONS] command run COMMAND [ARGS...] [--json]"]
+    "usage": [
+      "tura [OPTIONS] command list [--json]",
+      "tura [OPTIONS] command run COMMAND [ARGS...] [--json]"
+    ]
   },
   "inspect": {
     "title": "检查网关状态",
     "usage": [
       "tura [OPTIONS] inspect status [--json]",
       "tura [OPTIONS] inspect paths [--json]",
-      "tura [OPTIONS] inspect logs workspaces [--json]",
-      "tura [OPTIONS] inspect logs sessions [--json]",
-      "tura [OPTIONS] inspect logs records SESSION_ID"
+      "tura [OPTIONS] inspect sessions [--json]",
+      "tura [OPTIONS] inspect messages SESSION_ID [--json]"
     ]
   },
   "gateway": {

@@ -1,105 +1,162 @@
 # Tura
 
-Tura is a local AI coding system built around a Rust workspace. It provides a
-direct Rust CLI, an HTTP/SSE gateway, router-managed background processes,
-agent/persona orchestration, provider integration, command execution tools, a
-TypeScript terminal client, and a Bun/Solid GUI.
+Tura is a local AI coding system for long, tool-heavy engineering work. It is
+built around a Rust runtime, a single compact `command_run` tool surface,
+runtime operation manuals, durable task state, local session history, and
+first-class CLI/TUI/GUI clients.
 
-The repository is organized by ownership boundaries: Rust crates own runtime,
-gateway, provider, router, tools, agents, and session logging; `apps/tui` and
-`apps/gui` provide the interactive clients; `scripts/` owns install, build,
-startup, and CLI launcher registration.
+It is not trying to be another chat box that sprays code into a repo and calls
+that progress. Tura is aimed at the parts of agentic coding people complain
+about most: loops that forget the goal, prompt bloat, scattered tool calls,
+"AI slop" patches, weak verification, and assistants that have no maintenance
+sense.
 
-## Quick Start
+Rust builds use the pinned toolchain in `rust-toolchain.toml`. The repository is
+licensed under AGPL-3.0-or-later; see `LICENSE`.
 
-Production install builds release binaries into `bin/` and registers the
-`tura-tui` / `tura-gateway` launchers on PATH:
+## Try It
+
+Full setup, build, launcher, CI, and release commands live in the dedicated
+[install and start guide](docs/getting-started.md). The shortest local path is:
 
 ```powershell
 .\scripts\install.ps1
+.\scripts\build-release.ps1
+.\scripts\register-cli.ps1
+tura exec "Inspect this workspace and summarize what makes it unusual"
 ```
 
 ```bash
 ./scripts/install.sh
+./scripts/build-release.sh
+scripts/register-cli.sh
+tura exec "Inspect this workspace and summarize what makes it unusual"
 ```
 
-Development install builds debug binaries in `target/debug` and keeps frontend
-artifacts in their source workspaces:
+## Why Tura Exists
 
-```powershell
-.\scripts\install.ps1 -Dev
+Most coding agents expose many tools directly to the model, keep enormous
+prompt surfaces alive forever, and rely on the model to remember how to be a
+good engineer. Tura moves more of that into runtime structure:
+
+- One model-visible `command_run` tool batches shell, patch, media, web, and
+  task-state operations through a step scheduler.
+- Runtime prompt manuals are injected by task type, not permanently pasted into
+  every prompt.
+- `task_status` tracks active work, questions, completion, and compact
+  handoffs as structured state, and the runtime prompt tells agents to define a
+  missing task type before starting work.
+- Context checkpoints keep long tasks alive without dragging the whole old
+  transcript through every future provider call.
+- The tools crate owns file locks, command safety, schema normalization, shell
+  process handling, media reading, web discovery, and command output shaping.
+- Benchmarks and business tests are first-class repo citizens rather than
+  afterthought scripts.
+
+The result is a coding assistant that is designed to be cheaper in tokens,
+faster in command-heavy loops, harder to derail, and more useful on work that
+needs taste, verification, and maintenance judgement.
+
+## Feature Map
+
+| Problem people complain about | Tura answer | Details |
+| --- | --- | --- |
+| Tool-call spam and repeated schema overhead | `command_run` exposes one compact tool, then schedules many internal commands by step | [Command Run](docs/command-run.md) |
+| Prompt bloat from every skill, every time | Runtime prompt manuals are selected by `task_type` and persisted as session records | [Runtime Prompts vs Skills](docs/runtime-prompts-vs-skills.md) |
+| Long tasks that loop, forget, or declare victory early | Structured task state, explicit completion rules, retry prompts, and compact handoffs | [Long Task Loop](docs/long-task-loop.md) |
+| "AI slop" code that only satisfies the visible prompt | Repo rules, business tests, typed runners, command safety, and verification pressure | [Rules](docs/rules.md), [Tests](tests/README.md) |
+| Agents that cannot inspect media, web pages, or reusable assets without bloating context | `read_media`, `web_discover`, and `generate_media` return compact artifacts, summaries, and downloaded asset folders | [Tools Crate](crates/tools/ARCHITECTURE.md) |
+| Benchmarks nobody can reproduce | Benchmark harnesses collect usage, command counts, wall time, provider time, and artifacts | [Benchmarks](tests/benchmark/README.md) |
+
+## Command Run Is The Bet
+
+`command_run` is the main trick. Instead of asking the provider to juggle a
+large menu of tools, Tura shows one compact schema and lets the model submit a
+batch:
+
+```json
+{
+  "commands": [
+    { "command_type": "shell_command", "command_line": "rg -n \"TODO\" crates", "step": 1 },
+    { "command_type": "shell_command", "command_line": "rg --files crates/runtime/src", "step": 1 },
+    { "command_type": "apply_patch", "command_line": "*** Begin Patch\n...\n*** End Patch", "step": 2 },
+    { "command_type": "shell_command", "command_line": "cargo test -p runtime --lib", "step": 3 },
+    { "command_type": "task_status", "command_line": "{\"status\":\"done\"}", "step": 4 }
+  ]
+}
 ```
 
-```bash
-./scripts/install.sh dev
-```
+That matters for token economics. A normal multi-tool loop pays for repeated
+tool schemas, separate tool calls, repeated command narration, and callback
+history. Tura keeps the provider-facing surface small, groups independent reads
+in one step, streams command progress, and normalizes results before they become
+future context. In command-heavy workflows this is the path to 70%+ token
+reduction compared with direct multi-tool chatter; the exact number depends on
+the provider, task, and benchmark mix.
 
-Run a direct CLI prompt:
+Start with [docs/command-run.md](docs/command-run.md), then inspect the source:
+[schema](crates/tools/src/command_run/schema.json),
+[handler](crates/tools/src/command_run/handler.rs),
+[tool catalog injection](crates/runtime/src/manas/tool_catalog.rs), and
+[streamed command handling](crates/runtime/src/provider_flow/streamed_command_run.rs).
 
-```powershell
-.\scripts\start.ps1 "Inspect the workspace"
-```
+## Runtime Prompts Are Not Skills
 
-```bash
-./scripts/start.sh "Inspect the workspace"
-```
+Skills are external capability packs: instructions, tools, assets, or connector
+knowledge that the agent may load because the environment exposes them.
+Runtime prompt manuals are Tura's internal operating manuals. They are selected
+by task type (`debug`, `frontend`, `visual`, `refactoring`, `new_build`, and
+others), persisted into session history, and can extend the active
+`command_run` command set.
 
-Start the gateway, TUI, GUI, or desktop shell:
+This lets Tura keep the base agent small while still giving a frontend task
+frontend taste, a refactor task source-port discipline, and a visual task media
+tools. See [Runtime Prompts vs Skills](docs/runtime-prompts-vs-skills.md).
 
-```powershell
-.\scripts\start.ps1 -Gateway -Port 4096
-.\scripts\start.ps1 -Tui --help
-.\scripts\start.ps1 -Gui
-.\scripts\start.ps1 -Desktop
-```
+## Long Tasks Need State, Not Vibes
 
-```bash
-./scripts/start.sh --gateway --port 4096
-./scripts/start.sh --tui --help
-./scripts/start.sh --gui
-./scripts/start.sh --desktop
-```
+Tura treats long work as a state-machine problem:
 
-Launcher maintenance:
+- `task_status` records whether work is doing, blocked by a question, or done.
+- Provider retries explicitly say that transient failures are not completion.
+- Compact context is a structured handoff, not a fuzzy summary.
+- Runtime manuals can be reinserted after compaction so the next turn keeps the
+  same operating discipline.
+- Final replies are separated from internal status updates, so user-visible
+  communication does not disappear into tool output.
 
-```powershell
-.\scripts\register-cli.ps1
-.\scripts\unregister-cli.ps1
-```
+The practical goal is a two-minute-scale compression window: when context gets
+crowded, the agent should spend a short, bounded turn creating a useful handoff
+instead of spending the next hour slowly degrading. See
+[Long Task Loop](docs/long-task-loop.md).
 
-```bash
-./scripts/register-cli.sh
-./scripts/unregister-cli.sh
-```
+## Benchmarks And Tests
 
-## Benchmarks
+The repo has ordinary tests, business flows, OS/process tests, release-entry
+tests, live provider checks, performance pressure tests, and benchmark harnesses.
+The benchmark scripts under [tests/benchmark](tests/benchmark/README.md) measure
+the things that matter for agent work: token usage, command executions, wall
+time, provider time, artifacts, browser checks, and task score.
 
-The benchmark suite lives under `tests/business/`. It contains manual,
-long-running business benchmarks for frontend repair, ProgramBench-style
-cleanroom rebuilds, SWE-bench-style issue patching, source-port rewrites, media
-research, and TUI flows.
+Useful entry points:
 
-For development, benchmark and debug flows should use the dev install path and
-debug gateway binaries (`target/debug`), not production `bin/` packaging.
+- [Command-run pressure test](crates/tools/tests/performance/command_run_pressure_test.rs)
+- [Command-run business flow](crates/tools/tests/business/command_run_current_flow.rs)
+- [Source-port benchmark harness](tests/benchmark/project-rebuild-refactor/rust_cli_python_port_suite.mjs)
+- [Defined-workflow source-port harness](tests/benchmark/project-rebuild-refactor/rust_cli_python_port_suite_defined_workflow.mjs)
+- [PDF cost comparison benchmark](tests/benchmark/media-presentation/ogas_pdf_cost_comparison.mjs)
 
-```powershell
-.\scripts\install.ps1 -Dev
-$env:COMMAND_RUN_AGENT_SMOKE_ONLY='1'
-node .\tests\business\frontend-playwright\react_ops_board_playwright_repair_lite.mjs
-```
+## Project Map
 
-```bash
-./scripts/install.sh dev
-COMMAND_RUN_AGENT_SMOKE_ONLY=1 node ./tests/business/frontend-playwright/react_ops_board_playwright_repair_lite.mjs
-```
-
-## More Information
-
-- [Full operational overview](docs/overview.md)
+- [Install and start](docs/getting-started.md)
+- [Operational overview](docs/overview.md)
 - [Architecture boundaries](ARCHITECTURE.md)
-- [Scripts architecture](scripts/ARCHITECTURE.md)
-- [Business benchmark guide](tests/business/README.md)
+- [Command Run](docs/command-run.md)
+- [Runtime Prompts vs Skills](docs/runtime-prompts-vs-skills.md)
+- [Long Task Loop](docs/long-task-loop.md)
+- [Tools crate](crates/tools/ARCHITECTURE.md)
+- [Benchmark guide](tests/benchmark/README.md)
 - [Test guide](tests/README.md)
+- [Business test guide](tests/business/README.md)
 - [TUI guide](apps/tui/README.md)
 - [GUI guide](apps/gui/README.md)
-- [Project roles](docs/roles.md)

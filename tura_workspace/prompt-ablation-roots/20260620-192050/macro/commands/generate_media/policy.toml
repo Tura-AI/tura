@@ -1,0 +1,6 @@
+read_only = false
+network = true
+
+[configurable]
+provider_order = { default = "replicate_z_image_turbo,chatgpt_image_2,gemini_3_1_flash,grok3", enum = ["replicate_z_image_turbo,chatgpt_image_2,gemini_3_1_flash,grok3", "chatgpt_image_2,replicate_z_image_turbo,gemini_3_1_flash,grok3", "gemini_3_1_flash,chatgpt_image_2,replicate_z_image_turbo,grok3", "grok3,chatgpt_image_2,replicate_z_image_turbo,gemini_3_1_flash"] }
+speech_provider_order = { default = "qwen_dashscope,azure_edge_tts,replicate_qwen3_tts,azure_speech,openai_tts,elevenlabs,replicate_chatterbox", enum = ["qwen_dashscope,openai_tts,elevenlabs,azure_speech,azure_edge_tts,replicate_qwen3_tts,replicate_chatterbox", "qwen_dashscope,azure_edge_tts,replicate_qwen3_tts,azure_speech,openai_tts,elevenlabs,replicate_chatterbox", "azure_edge_tts,azure_speech,openai_tts,qwen_dashscope,elevenlabs,replicate_qwen3_tts,replicate_chatterbox", "replicate_qwen3_tts,replicate_chatterbox,openai_tts,qwen_dashscope,elevenlabs,azure_edge_tts,azure_speech"] }

@@ -12,7 +12,7 @@ import type {
   HealthResponse,
   FileInfo,
   Message,
-  MessageListItem,
+  MessageListInput,
   PathResponse,
   ProviderAuthActionResponse,
   ProviderAuthInput,
@@ -63,7 +63,7 @@ export class GatewayClient {
     this.baseUrl = normalizeBaseUrl(options.baseUrl ?? defaultGatewayUrl());
     this.directory = options.directory;
     this.fetchImpl = options.fetch ?? resolveFetch();
-    this.timeoutMs = options.timeoutMs ?? 5_000;
+    this.timeoutMs = options.timeoutMs ?? 20_000;
   }
 
   withDirectory(directory?: string): GatewayClient {
@@ -163,9 +163,22 @@ export class GatewayClient {
         page: 0,
         page_size: input.limit ?? 100,
       })
-        .then((response) => response.sessions.map(sessionFromLogSnapshot))
+        .then((response) => {
+          const sessions = response.sessions.map(sessionFromLogSnapshot);
+          if (sessions.length > 0) {
+            return sessions;
+          }
+          return this.get<Session[]>(
+            "/session",
+            {
+              limit: input.limit,
+              includeChildren: true,
+            },
+            true,
+          );
+        })
         .catch(() =>
-          this.get(
+          this.get<Session[]>(
             "/session",
             {
               limit: input.limit,
@@ -239,13 +252,13 @@ export class GatewayClient {
     });
   }
 
-  async messages(sessionId: string): Promise<Message[]> {
-    const items = await this.get<MessageListItem[]>(
-      `/session/${encodeURIComponent(sessionId)}/message`,
-    );
-    return items
-      .map(normalizeMessageListItem)
-      .filter((message): message is Message => !!message?.id);
+  async messages(sessionId: string, input: MessageListInput = {}): Promise<Message[]> {
+    const response = await this.get<unknown>(`/session/${encodeURIComponent(sessionId)}/message`, {
+      limit: input.limit,
+      before: input.before,
+      after: input.after,
+    });
+    return normalizeMessagesResponse(response);
   }
 
   async promptAsync(sessionId: string, payload: PromptAsyncRequest): Promise<void> {
@@ -495,8 +508,14 @@ export function defaultGatewayUrl(): string {
   const fromVite = meta.env?.VITE_TURA_GATEWAY_URL;
   return (
     [fromQuery, fromWindow, fromVite].find((value) => isValidGatewayUrl(value)) ||
-    "http://127.0.0.1:4096"
+    defaultLocalGatewayUrl()
   );
+}
+
+function defaultLocalGatewayUrl(): string {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
+    ? "http://127.0.0.1:4156"
+    : "http://127.0.0.1:4126";
 }
 
 function sessionFromLogSnapshot(snapshot: SessionLogSnapshot): Session {
@@ -512,6 +531,25 @@ function sessionFromLogSnapshot(snapshot: SessionLogSnapshot): Session {
     task_management: snapshot.task_management as Session["task_management"],
     plan_summary: readString(snapshot.task_management, "plan_summary"),
   };
+}
+
+function normalizeMessagesResponse(value: unknown): Message[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const info = record.info;
+    if (
+      info &&
+      typeof info === "object" &&
+      typeof (info as Record<string, unknown>).id === "string"
+    ) {
+      const message = { ...(info as Record<string, unknown>) } as Message;
+      if (Array.isArray(record.parts)) message.parts = record.parts as Message["parts"];
+      return [message];
+    }
+    return typeof record.id === "string" ? [record as Message] : [];
+  });
 }
 
 function normalizeSessionStatus(status?: string | null): Session["status"] {
@@ -670,16 +708,6 @@ async function readResponseBody(response: Response): Promise<unknown> {
   } catch {
     return text;
   }
-}
-
-function normalizeMessageListItem(item: MessageListItem): Message | undefined {
-  if ("info" in item) {
-    return {
-      ...item.info,
-      parts: item.parts ?? item.info.parts ?? [],
-    };
-  }
-  return item;
 }
 
 function timeoutSignal(

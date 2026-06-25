@@ -1,0 +1,7 @@
+{
+  "id": "visual",
+  "display_name": "Visual Operation Manual",
+  "description": "Use for visual design, media-heavy webpages, UI visual systems, visual asset preparation, and static layout polish. Use editorial for slide decks, presentations, visual PDFs, print documents, and static document exports.",
+  "father_ids": [],
+  "capabilities": ["web_discover", "generate_media", "read_media"]
+}

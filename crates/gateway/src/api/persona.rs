@@ -1,4 +1,5 @@
-use crate::api::{registry, types::BadRequestError};
+use crate::api::registry;
+use crate::contracts::{BadRequestError, UpsertPersonaRequest};
 use axum::{extract::Path, http::StatusCode, Json};
 
 pub async fn list_personas() -> Json<Vec<tura_persona::store::StoredPersona>> {
@@ -19,18 +20,6 @@ pub async fn get_persona(
                 format!("persona `{persona_id}` not found"),
             )
         })
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct UpsertPersonaRequest {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub config: Option<tura_persona::store::PersonaConfig>,
-    #[serde(default)]
-    pub persona: Option<String>,
-    #[serde(default)]
-    pub communication_style: Option<String>,
 }
 
 pub async fn create_persona(

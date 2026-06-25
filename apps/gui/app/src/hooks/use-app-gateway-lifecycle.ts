@@ -1,14 +1,21 @@
-import { connectGatewayEvents, errorMessage, type GatewayClient } from "@tura/gateway-sdk";
+import {
+  connectGatewayEvents,
+  errorMessage,
+  type GatewayClient,
+  type Project,
+  type SessionLogWorkspace,
+} from "@tura/gateway-sdk";
 import { createEffect, createMemo, onCleanup, onMount, type Accessor, type Setter } from "solid-js";
 import {
   GATEWAY_CONNECT_TIMEOUT_MS,
+  GATEWAY_HEALTH_TIMEOUT_MS,
   isGatewayTimeoutError,
   tryStartGateway,
   waitForGatewayHealth,
 } from "../app-gateway-startup";
 import { clampNumber, mergeSessions, normalizeThemeMode } from "../app-state-utils";
 import { DEFAULT_AGENT_ID, DEFAULT_MODEL_ID } from "../config/defaults";
-import { t } from "../i18n";
+import { setLanguage, t } from "../i18n";
 import { applyGatewayEvent } from "../state/event-reducer";
 import type { AppState } from "../state/global-store";
 import {
@@ -19,6 +26,7 @@ import {
   samePath,
   shortWorkspaceLabel,
 } from "../utils/app-format";
+import { workspaceModelFromConfig } from "../utils/runtime-model";
 import { safe } from "../utils/safe";
 import { configToDraft, defaultModel, providerIdFromModel, recordToDraft } from "../utils/settings";
 
@@ -26,7 +34,7 @@ function gatewayArray<T>(value: T[] | unknown): T[] {
   return Array.isArray(value) ? value : [];
 }
 
-const BOOTSTRAP_REQUEST_TIMEOUT_MS = 1_800;
+const BOOTSTRAP_REQUEST_TIMEOUT_MS = 20_000;
 
 export function useAppGatewayLifecycle(options: {
   state: Accessor<AppState>;
@@ -34,11 +42,20 @@ export function useAppGatewayLifecycle(options: {
   gatewayUrl: Accessor<string>;
   rootClient: Accessor<GatewayClient>;
   forceNewSession: boolean;
+  disableGatewayAutostart?: boolean;
   e2eFixture?: string;
   openSession: (sessionId: string) => Promise<void>;
 }) {
-  const { state, setState, gatewayUrl, rootClient, forceNewSession, e2eFixture, openSession } =
-    options;
+  const {
+    state,
+    setState,
+    gatewayUrl,
+    rootClient,
+    forceNewSession,
+    disableGatewayAutostart,
+    e2eFixture,
+    openSession,
+  } = options;
   const connection = createMemo(() => state().connection);
 
   createEffect(() => {
@@ -90,18 +107,19 @@ export function useAppGatewayLifecycle(options: {
     }
   });
 
-  async function hydrate(startAttempt = 0): Promise<void> {
+  async function hydrate(): Promise<void> {
     setState((previous) => ({
       ...previous,
       loading: true,
+      sessionsLoading: true,
       connection: "connecting",
       error: undefined,
       gatewayStartupNotice: previous.gatewayStartupNotice,
     }));
-    if (startAttempt === 0) {
+    if (!disableGatewayAutostart) {
       const started = await tryStartGateway(gatewayUrl(), setState);
       if (started) {
-        await waitForGatewayHealth(gatewayUrl(), 5_000, setState);
+        await waitForGatewayHealth(gatewayUrl(), GATEWAY_HEALTH_TIMEOUT_MS, setState);
       }
     }
     const client = rootClient();
@@ -125,6 +143,9 @@ export function useAppGatewayLifecycle(options: {
           bootstrapSafe(() => client.currentProject(), fallbackCurrentProject),
           bootstrapSafe(() => client.projects(), []),
         ]);
+      const sessionLogWorkspaces = await bootstrapSafe(() => client.sessionLogWorkspaces(), {
+        workspaces: [],
+      });
       const [productConfig, me, workspaces, productIssues, productProjects] = await Promise.all([
         bootstrapSafe(() => client.productConfig(), undefined),
         bootstrapSafe(() => client.me(), undefined),
@@ -136,19 +157,14 @@ export function useAppGatewayLifecycle(options: {
         ...paths,
         directory: paths.directory || currentProject.project?.worktree || paths.worktree,
       });
-      const workspaceProjects = projects.some((project) => samePath(project.worktree, directory))
-        ? projects
-        : [
-            {
-              id: directory,
-              name: shortWorkspaceLabel(directory),
-              worktree: directory,
-            },
-            ...projects,
-          ];
+      const workspaceProjects = mergeWorkspaceProjects(
+        projects,
+        sessionLogWorkspaces.workspaces,
+        directory,
+      );
       const scoped = client.withDirectory(directory);
       const [
-        sessionsResult,
+        sessions,
         providers,
         agentsResult,
         personasResult,
@@ -156,7 +172,7 @@ export function useAppGatewayLifecycle(options: {
         filesResult,
         workspaceConfig,
       ] = await Promise.all([
-        bootstrapSafe(() => scoped.sessions({ limit: 100 }), []),
+        withTimeout(scoped.sessions({ limit: 100 }), BOOTSTRAP_REQUEST_TIMEOUT_MS),
         bootstrapSafe(() => scoped.providers(), undefined),
         bootstrapSafe(() => scoped.agents(), []),
         bootstrapSafe(() => scoped.personas(), []),
@@ -164,7 +180,6 @@ export function useAppGatewayLifecycle(options: {
         bootstrapSafe(() => scoped.files(), []),
         bootstrapSafe(() => scoped.workspaceConfig(), {}),
       ]);
-      const sessions = gatewayArray<AppState["sessions"][number]>(sessionsResult);
       const agents = gatewayArray<AppState["agents"][number]>(agentsResult);
       const personas = gatewayArray<AppState["personas"][number]>(personasResult);
       const commands = gatewayArray<AppState["commands"][number]>(commandsResult);
@@ -184,13 +199,19 @@ export function useAppGatewayLifecycle(options: {
       const selectedSessionId = forceNewSession
         ? undefined
         : (state().selectedSessionId ?? sessions[0]?.id);
-      const configuredModel = readConfigString(workspaceConfig, "model") ?? config.model;
+      const configuredModel = workspaceModelFromConfig(workspaceConfig) ?? config.model;
       const configuredAgent = readConfigString(workspaceConfig, "active_agent") ?? config.agent;
       const configuredVariant = readConfigString(workspaceConfig, "model_variant");
+      const configuredLanguage = readConfigString(workspaceConfig, "language") ?? config.language;
+      const effectiveWorkspaceConfig =
+        configuredLanguage && !readConfigString(workspaceConfig, "language")
+          ? { ...workspaceConfig, language: configuredLanguage }
+          : workspaceConfig;
       const configuredAcceleration = readConfigBoolean(
         workspaceConfig,
         "model_acceleration_enabled",
       );
+      setLanguage(configuredLanguage);
       setState((previous) => ({
         ...previous,
         health,
@@ -204,8 +225,8 @@ export function useAppGatewayLifecycle(options: {
         config,
         modelConfig,
         configDraft: configToDraft(config),
-        workspaceConfig,
-        workspaceConfigDraft: recordToDraft(workspaceConfig),
+        workspaceConfig: effectiveWorkspaceConfig,
+        workspaceConfigDraft: recordToDraft(effectiveWorkspaceConfig),
         currentProject,
         projects: workspaceProjects,
         directory,
@@ -217,7 +238,9 @@ export function useAppGatewayLifecycle(options: {
         personas,
         commands,
         files,
-        selectedSessionId: previous.selectedSessionId ?? selectedSessionId,
+        selectedSessionId: forceNewSession
+          ? undefined
+          : (previous.selectedSessionId ?? selectedSessionId),
         selectedAgent: previous.selectedAgent ?? configuredAgent ?? DEFAULT_AGENT_ID,
         selectedModel:
           previous.selectedModel ?? configuredModel ?? defaultModel(providers) ?? DEFAULT_MODEL_ID,
@@ -239,7 +262,7 @@ export function useAppGatewayLifecycle(options: {
           : clampNumber(config.main_font_size, 11, 15, 12),
         codeFontSize: previous.bootstrapped
           ? previous.codeFontSize
-          : clampNumber(config.code_font_size, 9, 15, 11),
+          : clampNumber(config.code_font_size, 10, 15, 12),
         modelVariant: previous.bootstrapped
           ? previous.modelVariant
           : (configuredVariant ?? previous.modelVariant ?? "medium"),
@@ -247,6 +270,7 @@ export function useAppGatewayLifecycle(options: {
           ? previous.accelerationEnabled
           : (configuredAcceleration ?? previous.accelerationEnabled ?? true),
         loading: false,
+        sessionsLoading: false,
         bootstrapped: true,
         connection: "connected",
         gatewayStartupNotice: undefined,
@@ -256,16 +280,10 @@ export function useAppGatewayLifecycle(options: {
         await openSession(selectedSessionId);
       }
     } catch (error) {
-      if (isGatewayTimeoutError(error) && startAttempt < 1) {
-        const started = await tryStartGateway(gatewayUrl(), setState);
-        if (started) {
-          await waitForGatewayHealth(gatewayUrl(), 5_000, setState);
-          return hydrate(startAttempt + 1);
-        }
-      }
       setState((previous) => ({
         ...previous,
         loading: false,
+        sessionsLoading: false,
         bootstrapped: true,
         connection: "disconnected",
         gatewayStartupNotice: undefined,
@@ -273,9 +291,53 @@ export function useAppGatewayLifecycle(options: {
       }));
     }
   }
+
 }
 
-async function bootstrapSafe<T>(run: () => Promise<T>, fallback: T): Promise<T> {
+function mergeWorkspaceProjects(
+  projects: Project[],
+  workspaces: SessionLogWorkspace[],
+  directory: string,
+): Project[] {
+  const merged: Project[] = [];
+  const push = (project: Project) => {
+    if (!project.worktree) {
+      return;
+    }
+    const existingIndex = merged.findIndex((item) => samePath(item.worktree, project.worktree));
+    if (existingIndex >= 0) {
+      merged[existingIndex] = { ...merged[existingIndex], ...project };
+      return;
+    }
+    merged.push(project);
+  };
+  push({
+    id: directory,
+    name: shortWorkspaceLabel(directory),
+    worktree: directory,
+  });
+  for (const workspace of workspaces) {
+    push({
+      id: workspace.directory,
+      name: shortWorkspaceLabel(workspace.directory),
+      worktree: workspace.directory,
+      time: {
+        created: workspace.last_updated_at,
+        updated: workspace.last_updated_at,
+        initialized: null,
+      },
+    });
+  }
+  for (const project of projects) {
+    push(project);
+  }
+  return merged;
+}
+
+async function bootstrapSafe<T>(
+  run: () => Promise<T>,
+  fallback: T,
+): Promise<T> {
   return safe(() => withTimeout(run(), BOOTSTRAP_REQUEST_TIMEOUT_MS), fallback);
 }
 

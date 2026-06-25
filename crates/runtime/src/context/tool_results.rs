@@ -1,43 +1,71 @@
+use super::char_budget::{
+    context_output_byte_budget, formatted_truncate_text, COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS,
+    CONTEXT_OUTPUT_MAX_CHARS,
+};
 use super::command_run_streams::{command_run_display_command, command_run_llm_streams};
 use super::text_truncate::command_run_truncate_text;
-use super::token_budget::{
-    context_output_byte_budget, formatted_truncate_text, APPROX_CHARS_PER_TOKEN,
-    COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS, CONTEXT_OUTPUT_MAX_TOKENS,
-};
 use crate::state_machine::session_management::SessionManagement;
 
-use super::media::command_run_media_content_items_for_context;
+use super::media::{command_run_media_content_items_for_context, strip_read_media_payload_data};
 
-fn strip_command_run_context_noise(value: serde_json::Value) -> serde_json::Value {
+pub(super) fn strip_context_reporting_fields(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => serde_json::Value::Object(
             map.into_iter()
-                .filter(|(key, _)| {
-                    !matches!(
-                        key.as_str(),
-                        "step_summary"
-                            | "last_tool_call_status"
-                            | "last_tool_call_summary"
-                            | "summary"
-                            | "description"
-                            | "interface"
-                            | "used_prompt"
-                            | "notes"
-                            | "receipt"
-                            | "should_register_tool"
-                    )
-                })
-                .map(|(key, value)| (key, strip_command_run_context_noise(value)))
+                .filter(|(key, _)| !is_context_reporting_field(key))
+                .map(|(key, value)| (key, strip_context_reporting_fields(value)))
                 .collect(),
         ),
         serde_json::Value::Array(items) => serde_json::Value::Array(
             items
                 .into_iter()
-                .map(strip_command_run_context_noise)
+                .map(strip_context_reporting_fields)
                 .collect(),
         ),
         other => other,
     }
+}
+
+fn is_context_reporting_field(key: &str) -> bool {
+    matches!(
+        key,
+        "task_group"
+            | "step_summary"
+            | "last_tool_call_status"
+            | "last_tool_call_summary"
+            | "summary"
+            | "description"
+            | "interface"
+            | "used_prompt"
+            | "notes"
+            | "receipt"
+            | "should_register_tool"
+            | "command_id"
+            | "command_run_id"
+            | "provider_tool_call_id"
+            | "command_index"
+            | "result_index"
+            | "command"
+            | "command_updates"
+            | "messageID"
+            | "partID"
+            | "runtimeID"
+            | "commandRunID"
+            | "commandID"
+            | "providerToolCallID"
+            | "commandIndex"
+            | "eventSeq"
+            | "createdAt"
+            | "updatedAt"
+            | "runtime_id"
+            | "created_at"
+            | "updated_at"
+            | "timestamp"
+    )
+}
+
+fn strip_command_run_context_noise(value: serde_json::Value) -> serde_json::Value {
+    strip_context_reporting_fields(value)
 }
 
 pub(super) fn last_tool_call_response_from_session(
@@ -52,11 +80,10 @@ pub(super) fn last_tool_call_response_from_session(
         .map(|value| {
             serde_json::json!({
                 "tool_name": value.get("tool_name").cloned().unwrap_or(serde_json::Value::Null),
-                "input": compact_json_for_context(value.get("input").cloned().unwrap_or(serde_json::Value::Null)),
+                "input": compact_json_for_context(strip_context_reporting_fields(value.get("input").cloned().unwrap_or(serde_json::Value::Null))),
                 "output": cached_context_output_for_tool_result(&value),
                 "success": value.get("success").cloned().unwrap_or(serde_json::Value::Bool(true)),
                 "error": cached_context_error_for_tool_result(&value),
-                "timestamp": value.get("timestamp").cloned().unwrap_or(serde_json::Value::Null),
             })
         })
 }
@@ -73,7 +100,7 @@ pub(super) fn tool_result_context_cache(value: &serde_json::Value) -> serde_json
         "version": 1,
         "sequence": value.get("sequence").cloned().unwrap_or(serde_json::Value::Null),
         "tool_name": value.get("tool_name").cloned().unwrap_or(serde_json::Value::Null),
-        "input": compact_json_for_context(value.get("input").cloned().unwrap_or(serde_json::Value::Null)),
+        "input": compact_json_for_context(strip_context_reporting_fields(value.get("input").cloned().unwrap_or(serde_json::Value::Null))),
         "output": output,
         "success": value.get("success").cloned().unwrap_or(serde_json::Value::Bool(true)),
         "error": error,
@@ -109,18 +136,20 @@ pub(super) fn immutable_tool_result_context_messages(
 
 fn command_run_responses_api_context_items(value: &serde_json::Value) -> Vec<serde_json::Value> {
     let call_id = command_run_context_call_id(value);
-    let arguments = serde_json::to_string(value.get("input").unwrap_or(&serde_json::Value::Null))
-        .unwrap_or_else(|_| "{}".to_string());
-    let mut function_call = serde_json::json!({
+    let input = strip_context_reporting_fields(
+        value
+            .get("input")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    );
+    let arguments = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
+    let function_call = serde_json::json!({
         "type": "function_call",
         "name": "command_run",
         "arguments": arguments,
         "call_id": call_id,
         "status": "completed",
     });
-    if let Some(provider_metadata) = value.get("provider_metadata") {
-        function_call["provider_metadata"] = provider_metadata.clone();
-    }
     vec![
         function_call,
         serde_json::json!({
@@ -139,14 +168,6 @@ fn command_run_function_output_context_message(value: &serde_json::Value) -> ser
 }
 
 fn command_run_context_call_id(value: &serde_json::Value) -> String {
-    if let Some(id) = value
-        .get("provider_metadata")
-        .and_then(|metadata| metadata.get("id"))
-        .and_then(serde_json::Value::as_str)
-        .filter(|id| !id.trim().is_empty())
-    {
-        return id.to_string();
-    }
     let cache_id = value
         .get("context_cache")
         .and_then(|cache| cache.get("cache_id"))
@@ -198,12 +219,23 @@ struct CommandRunContextItem {
 }
 
 pub(super) fn command_run_current_style_output_string(value: &serde_json::Value) -> Option<String> {
-    let output = value.get("output").unwrap_or(&serde_json::Value::Null);
-    let input_commands = value
-        .get("input")
-        .and_then(|input| input.get("commands"))
+    let mut output = strip_context_reporting_fields(
+        value
+            .get("output")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    );
+    strip_read_media_payload_data(&mut output);
+    let input = strip_context_reporting_fields(
+        value
+            .get("input")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    );
+    let input_commands = input
+        .get("commands")
         .and_then(|commands| commands.as_array());
-    let results = flattened_command_run_results(output)
+    let results = flattened_command_run_results(&output)
         .into_iter()
         .enumerate()
         .map(|(index, result)| {
@@ -226,7 +258,7 @@ pub(super) fn command_run_current_style_output_string(value: &serde_json::Value)
             let error = result
                 .get("error")
                 .and_then(serde_json::Value::as_str)
-                .map(|error| formatted_truncate_text(error, COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS));
+                .map(|error| formatted_truncate_text(error, COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS));
             CommandRunContextItem {
                 step: result
                     .get("step")
@@ -255,18 +287,18 @@ fn compact_command_run_result_output(
     match value {
         serde_json::Value::String(text) => serde_json::Value::String(command_run_truncate_text(
             &text,
-            COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS,
+            COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS,
             command_line_from_input(input),
         )),
         other => {
             let serialized =
                 serde_json::to_string_pretty(&other).unwrap_or_else(|_| other.to_string());
-            if serialized.len() <= COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS * APPROX_CHARS_PER_TOKEN {
+            if serialized.len() <= COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS {
                 other
             } else {
                 serde_json::Value::String(command_run_truncate_text(
                     &serialized,
-                    COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS,
+                    COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS,
                     command_line_from_input(input),
                 ))
             }
@@ -281,7 +313,7 @@ fn command_run_model_output_value(
     if let Some(text) = value.get("output").and_then(serde_json::Value::as_str) {
         return serde_json::Value::String(command_run_truncate_text(
             text,
-            COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS,
+            COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS,
             command_line_from_input(input),
         ));
     }
@@ -303,7 +335,7 @@ fn immutable_tool_result_context_item(value: &serde_json::Value) -> serde_json::
             .cloned()
             .unwrap_or(serde_json::Value::Null),
         "tool_name": value.get("tool_name").cloned().unwrap_or(serde_json::Value::Null),
-        "input": compact_json_for_context(value.get("input").cloned().unwrap_or(serde_json::Value::Null)),
+        "input": compact_json_for_context(strip_context_reporting_fields(value.get("input").cloned().unwrap_or(serde_json::Value::Null))),
         "output": cached_context_output_for_tool_result(value),
         "success": value.get("success").cloned().unwrap_or(serde_json::Value::Bool(true)),
         "error": cached_context_error_for_tool_result(value),
@@ -357,13 +389,21 @@ fn context_output_for_tool_result(value: &serde_json::Value) -> serde_json::Valu
 }
 
 pub(super) fn command_run_summary_for_context(value: &serde_json::Value) -> serde_json::Value {
-    let output = value
-        .get("output")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    let input_commands = value
-        .get("input")
-        .and_then(|input| input.get("commands"))
+    let mut output = strip_context_reporting_fields(
+        value
+            .get("output")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    );
+    strip_read_media_payload_data(&mut output);
+    let input = strip_context_reporting_fields(
+        value
+            .get("input")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    );
+    let input_commands = input
+        .get("commands")
         .and_then(|commands| commands.as_array());
     let flattened = flattened_command_run_results(&output);
     if flattened.is_empty() {
@@ -457,24 +497,7 @@ fn command_run_result_transcript(
 }
 
 pub(super) fn strip_tool_reporting_fields(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => serde_json::Value::Object(
-            map.into_iter()
-                .filter(|(key, _)| {
-                    key != "step_summary"
-                        && key != "last_tool_call_status"
-                        && key != "last_tool_call_summary"
-                        && key != "summary"
-                        && key != "description"
-                })
-                .map(|(key, value)| (key, strip_tool_reporting_fields(value)))
-                .collect(),
-        ),
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.into_iter().map(strip_tool_reporting_fields).collect())
-        }
-        other => other,
-    }
+    strip_context_reporting_fields(value)
 }
 
 fn compact_json_for_context(value: serde_json::Value) -> serde_json::Value {
@@ -484,7 +507,7 @@ fn compact_json_for_context(value: serde_json::Value) -> serde_json::Value {
     }
     serde_json::Value::String(formatted_truncate_text(
         &serialized,
-        CONTEXT_OUTPUT_MAX_TOKENS,
+        CONTEXT_OUTPUT_MAX_CHARS,
     ))
 }
 
@@ -499,7 +522,7 @@ fn compact_json_to_string(value: &serde_json::Value) -> String {
 mod tests {
     use super::{
         command_run_function_output_for_context, command_run_responses_api_context_items,
-        command_run_summary_for_context,
+        command_run_summary_for_context, tool_result_context_cache,
     };
     use serde_json::json;
 
@@ -536,10 +559,11 @@ mod tests {
     }
 
     #[test]
-    fn command_run_context_uses_provider_tool_call_id() {
-        let messages = command_run_responses_api_context_items(&json!({
+    fn command_run_context_uses_stable_cache_call_id() {
+        let mut value = json!({
             "tool_name": "command_run",
             "provider_metadata": { "id": "call_provider_123" },
+            "context_cache": { "cache_id": "abc123stable" },
             "input": {
                 "commands": [
                     { "step": 1, "command_type": "shell_command", "command_line": "echo ok" }
@@ -557,10 +581,13 @@ mod tests {
                     }
                 }]
             }
-        }));
+        });
+        let messages = command_run_responses_api_context_items(&value);
 
-        assert_eq!(messages[0]["call_id"], "call_provider_123");
-        assert_eq!(messages[1]["call_id"], "call_provider_123");
+        assert_eq!(messages[0]["call_id"], "call_abc123stable");
+        assert_eq!(messages[1]["call_id"], "call_abc123stable");
+        assert!(messages[0].get("provider_metadata").is_none());
+        value["context_cache"] = tool_result_context_cache(&value);
         assert!(command_run_function_output_for_context(&json!({
             "tool_name": "command_run",
             "output": {
@@ -577,5 +604,129 @@ mod tests {
             }
         }))
         .contains("Exit code: 0"));
+    }
+
+    #[test]
+    fn command_run_context_cache_ignores_runtime_reporting_fields() {
+        let base = json!({
+            "type": "tool_result",
+            "tool_name": "command_run",
+            "sequence": 7,
+            "input": {
+                "commands": [{
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "command_line": "echo ok",
+                    "command_id": "runtime-a:call-a:0",
+                    "command_run_id": "runtime-a",
+                    "provider_tool_call_id": "call-a",
+                    "command_index": 0,
+                    "createdAt": 1,
+                    "updatedAt": 2
+                }]
+            },
+            "output": {
+                "command_updates": [{
+                    "messageID": "message-a",
+                    "partID": "part-a",
+                    "runtimeID": "runtime-a",
+                    "commandRunID": "runtime-a",
+                    "commandID": "runtime-a:call-a:0",
+                    "providerToolCallID": "call-a",
+                    "commandIndex": 0,
+                    "eventSeq": 20,
+                    "createdAt": 1,
+                    "updatedAt": 2,
+                    "command": {
+                        "command_id": "runtime-a:call-a:0",
+                        "command_run_id": "runtime-a",
+                        "provider_tool_call_id": "call-a",
+                        "command_index": 0,
+                        "command_type": "shell_command",
+                        "command_line": "echo ok"
+                    }
+                }],
+                "results": [{
+                    "step": 1,
+                    "success": true,
+                    "command_id": "runtime-a:call-a:0",
+                    "command_run_id": "runtime-a",
+                    "provider_tool_call_id": "call-a",
+                    "command_index": 0,
+                    "result_index": 0,
+                    "runtime_id": "runtime-a",
+                    "timestamp": "2026-06-20T00:00:00Z",
+                    "command": {
+                        "command_id": "runtime-a:call-a:0",
+                        "command_run_id": "runtime-a",
+                        "provider_tool_call_id": "call-a",
+                        "command_index": 0,
+                        "command_type": "shell_command",
+                        "command_line": "echo ok"
+                    },
+                    "response": {
+                        "ok": true,
+                        "exit_code": 0,
+                        "stdout": "ok\n",
+                        "stderr": ""
+                    }
+                }]
+            },
+            "success": true,
+            "error": null,
+            "runtime_id": "runtime-a",
+            "provider_metadata": { "id": "call-provider-a" },
+            "timestamp": "2026-06-20T00:00:00Z"
+        });
+        let mut variant = base.clone();
+        variant["input"]["commands"][0]["command_id"] = json!("runtime-b:call-b:0");
+        variant["input"]["commands"][0]["command_run_id"] = json!("runtime-b");
+        variant["input"]["commands"][0]["provider_tool_call_id"] = json!("call-b");
+        variant["input"]["commands"][0]["updatedAt"] = json!(99);
+        variant["output"]["command_updates"][0]["messageID"] = json!("message-b");
+        variant["output"]["command_updates"][0]["runtimeID"] = json!("runtime-b");
+        variant["output"]["command_updates"][0]["commandID"] = json!("runtime-b:call-b:0");
+        variant["output"]["command_updates"][0]["providerToolCallID"] = json!("call-b");
+        variant["output"]["command_updates"][0]["updatedAt"] = json!(99);
+        variant["output"]["results"][0]["command_id"] = json!("runtime-b:call-b:0");
+        variant["output"]["results"][0]["command_run_id"] = json!("runtime-b");
+        variant["output"]["results"][0]["provider_tool_call_id"] = json!("call-b");
+        variant["output"]["results"][0]["runtime_id"] = json!("runtime-b");
+        variant["output"]["results"][0]["timestamp"] = json!("2026-06-21T00:00:00Z");
+        variant["runtime_id"] = json!("runtime-b");
+        variant["provider_metadata"] = json!({ "id": "call-provider-b" });
+        variant["timestamp"] = json!("2026-06-21T00:00:00Z");
+
+        let base_cache = tool_result_context_cache(&base);
+        let variant_cache = tool_result_context_cache(&variant);
+        assert_eq!(base_cache["cache_id"], variant_cache["cache_id"]);
+
+        let mut with_cache = base;
+        with_cache["context_cache"] = base_cache;
+        let context = serde_json::to_string(&command_run_responses_api_context_items(&with_cache))
+            .expect("context messages should serialize");
+        for forbidden in [
+            "command_id",
+            "command_run_id",
+            "provider_tool_call_id",
+            "command_index",
+            "result_index",
+            "command_updates",
+            "messageID",
+            "partID",
+            "runtimeID",
+            "commandID",
+            "providerToolCallID",
+            "createdAt",
+            "updatedAt",
+            "runtime_id",
+            "timestamp",
+            "call-provider-a",
+        ] {
+            assert!(
+                !context.contains(forbidden),
+                "context should not contain volatile field/value {forbidden}: {context}"
+            );
+        }
     }
 }

@@ -132,6 +132,7 @@ fn normalize_responses_tool_item_for_chat(message: &Value) -> Vec<Value> {
         Some("function_call") => {
             let call_id = message
                 .get("call_id")
+                .or_else(|| message.get("id"))
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("call_command_run");
@@ -193,5 +194,184 @@ fn normalize_responses_tool_item_for_chat(message: &Value) -> Vec<Value> {
             items
         }
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_routing_keeps_openai_and_anthropic_native_but_fixes_assistant_null_content() {
+        let messages = vec![
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "call_1"}]}),
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+        ];
+
+        for provider in ["openai", "OpenAI", "anthropic", "ANTHROPIC"] {
+            let normalized = normalize_messages_for_provider(provider, &messages);
+
+            assert_eq!(normalized.len(), 2, "{provider}");
+            assert_eq!(normalized[0]["role"], "assistant", "{provider}");
+            assert_eq!(normalized[0]["content"], "", "{provider}");
+            assert_eq!(normalized[0]["tool_calls"][0]["id"], "call_1", "{provider}");
+            assert_eq!(normalized[1], messages[1], "{provider}");
+        }
+    }
+
+    #[test]
+    fn openai_compatible_chat_normalization_skips_empty_messages_and_falls_back_to_continue() {
+        let messages = vec![
+            json!({"role": "assistant", "content": null}),
+            json!({"role": "tool", "tool_call_id": "call_empty", "content": ""}),
+            json!({"role": "system", "content": "   "}),
+            json!({"role": "user", "content": []}),
+            json!({"role": "unknown"}),
+        ];
+
+        let normalized = normalize_openai_compatible_chat_messages(&messages);
+
+        assert_eq!(
+            normalized,
+            vec![json!({
+                "role": "user",
+                "content": "Continue.",
+            })]
+        );
+    }
+
+    #[test]
+    fn openai_compatible_chat_normalization_maps_roles_and_content_shapes() {
+        let messages = vec![
+            json!({"role": "developer", "content": [{"type": "input_text", "text": "Dev rules"}]}),
+            json!({"role": "system", "content": "System rules"}),
+            json!({"role": "assistant", "content": [{"type": "output_text", "text": "Done"}]}),
+            json!({"role": "tool", "tool_call_id": "call_1", "content": [{"type": "output_text", "text": "Tool output"}]}),
+            json!({"role": "user", "content": [
+                {"type": "input_text", "text": "Look"},
+                {"type": "input_image", "image_url": "data:image/png;base64,AAA"}
+            ]}),
+            json!({"content": "missing role defaults to user"}),
+        ];
+
+        let normalized = normalize_openai_compatible_chat_messages(&messages);
+
+        assert_eq!(
+            normalized[0],
+            json!({"role": "system", "content": "Dev rules"})
+        );
+        assert_eq!(
+            normalized[1],
+            json!({"role": "system", "content": "System rules"})
+        );
+        assert_eq!(
+            normalized[2],
+            json!({"role": "assistant", "content": "Done"})
+        );
+        assert_eq!(
+            normalized[3],
+            json!({"role": "tool", "tool_call_id": "call_1", "content": "Tool output"})
+        );
+        assert_eq!(normalized[4]["role"], "user");
+        assert_eq!(
+            normalized[4]["content"][0],
+            json!({"type": "text", "text": "Look"})
+        );
+        assert_eq!(normalized[4]["content"][1]["type"], "image_url");
+        assert_eq!(
+            normalized[5],
+            json!({"role": "user", "content": "missing role defaults to user"})
+        );
+    }
+
+    #[test]
+    fn function_call_items_default_missing_fields_and_stringify_object_arguments() {
+        let defaulted = normalize_responses_tool_item_for_chat(&json!({
+            "type": "function_call"
+        }));
+        assert_eq!(defaulted.len(), 1);
+        assert_eq!(defaulted[0]["role"], "assistant");
+        assert_eq!(defaulted[0]["content"], "");
+        assert_eq!(defaulted[0]["tool_calls"][0]["id"], "call_command_run");
+        assert_eq!(
+            defaulted[0]["tool_calls"][0]["function"]["name"],
+            "command_run"
+        );
+        assert_eq!(defaulted[0]["tool_calls"][0]["function"]["arguments"], "{}");
+
+        let object_args = normalize_responses_tool_item_for_chat(&json!({
+            "type": "function_call",
+            "id": "item_1",
+            "name": "custom_tool",
+            "arguments": {
+                "z": 2,
+                "a": 1
+            }
+        }));
+        assert_eq!(object_args[0]["tool_calls"][0]["id"], "item_1");
+        assert_eq!(
+            object_args[0]["tool_calls"][0]["function"]["name"],
+            "custom_tool"
+        );
+        let arguments = object_args[0]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments string");
+        let parsed: Value = serde_json::from_str(arguments).expect("arguments JSON");
+        assert_eq!(parsed, json!({"a": 1, "z": 2}));
+    }
+
+    #[test]
+    fn function_call_output_defaults_call_id_and_uses_content_when_output_is_missing() {
+        let normalized = normalize_responses_tool_item_for_chat(&json!({
+            "type": "function_call_output",
+            "content": [{"type": "output_text", "text": "fallback content"}]
+        }));
+
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0]["role"], "tool");
+        assert_eq!(normalized[0]["tool_call_id"], "call_command_run");
+        assert_eq!(normalized[0]["content"], "fallback content");
+    }
+
+    #[test]
+    fn function_call_output_adds_sidecar_media_user_message_after_tool_result() {
+        let normalized = normalize_responses_tool_item_for_chat(&json!({
+            "type": "function_call_output",
+            "call_id": "call_media",
+            "output": [
+                {"type": "output_text", "text": "media summary"},
+                {"type": "input_image", "image_url": "data:image/jpeg;base64,AAA"},
+                {"type": "input_file", "filename": "report.pdf", "file_data": "data:application/pdf;base64,BBB"}
+            ]
+        }));
+
+        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized[0]["role"], "tool");
+        assert_eq!(normalized[0]["tool_call_id"], "call_media");
+        assert_eq!(normalized[0]["content"], "media summary");
+        assert_eq!(normalized[1]["role"], "user");
+        assert_eq!(
+            normalized[1]["content"][0]["text"],
+            "Media payload from the preceding read_media tool result:"
+        );
+        assert_eq!(normalized[1]["content"][1]["type"], "image_url");
+        assert!(
+            normalized[1]["content"]
+                .as_array()
+                .expect("sidecar content")
+                .len()
+                == 2
+        );
+    }
+
+    #[test]
+    fn non_response_items_are_not_translated_as_tool_items() {
+        assert!(normalize_responses_tool_item_for_chat(&json!({
+            "type": "message",
+            "role": "user",
+            "content": "hello"
+        }))
+        .is_empty());
+        assert!(normalize_responses_tool_item_for_chat(&json!({})).is_empty());
     }
 }

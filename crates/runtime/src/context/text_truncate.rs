@@ -3,16 +3,18 @@
 //! Pure text-processing layer with no external state. Exposed only inside
 //! `context::*` via `pub(super)`.
 
-use super::token_budget::{formatted_truncate_text, APPROX_CHARS_PER_TOKEN};
+use super::char_budget::formatted_truncate_text;
+use crate::prompt_style::context_blocks;
 
 pub(super) fn environment_context_message(cwd: &std::path::Path) -> String {
-    format!(
-        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
-        cwd.display(),
+    let timezone = std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string());
+    let system_language = session_language();
+    context_blocks::environment_context(
+        cwd,
         context_shell_name(),
         chrono::Local::now().format("%Y-%m-%d"),
-        std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string()),
-        session_language()
+        &timezone,
+        &system_language,
     )
 }
 
@@ -31,49 +33,53 @@ fn context_shell_name() -> &'static str {
         .as_deref()
     {
         Some("bash") => "bash",
+        Some("zsh") => "zsh",
         Some("shell") | Some("shell_command") | Some("shll") | Some("shall") => {
             if cfg!(windows) {
                 "powershell"
+            } else if cfg!(target_os = "macos") {
+                "zsh"
             } else {
                 "bash"
             }
         }
         _ if cfg!(windows) => "powershell",
+        _ if cfg!(target_os = "macos") => "zsh",
         _ => "bash",
     }
 }
 
 pub(super) fn command_run_truncate_text(
     content: &str,
-    max_tokens: usize,
+    max_chars: usize,
     command_line: Option<&str>,
 ) -> String {
-    let effective_max_tokens = command_run_effective_max_tokens(max_tokens, command_line);
-    if content.len() <= effective_max_tokens * APPROX_CHARS_PER_TOKEN {
+    let effective_max_chars = command_run_effective_max_chars(max_chars, command_line);
+    if content.len() <= effective_max_chars {
         return content.to_string();
     }
-    truncate_marker_sections_for_command_run(content, effective_max_tokens, command_line)
+    truncate_marker_sections_for_command_run(content, effective_max_chars, command_line)
         .or_else(|| {
-            truncate_query_sections_for_command_run(content, effective_max_tokens, command_line)
+            truncate_query_sections_for_command_run(content, effective_max_chars, command_line)
         })
-        .or_else(|| truncate_ripgrep_file_sections_for_command_run(content, effective_max_tokens))
-        .unwrap_or_else(|| formatted_truncate_text(content, effective_max_tokens))
+        .or_else(|| truncate_ripgrep_file_sections_for_command_run(content, effective_max_chars))
+        .unwrap_or_else(|| formatted_truncate_text(content, effective_max_chars))
 }
 
-fn command_run_effective_max_tokens(max_tokens: usize, command_line: Option<&str>) -> usize {
+fn command_run_effective_max_chars(max_chars: usize, command_line: Option<&str>) -> usize {
     let Some(command_line) = command_line else {
-        return max_tokens;
+        return max_chars;
     };
     if extract_read_targets(command_line).len() == 1 {
-        max_tokens.saturating_mul(3)
+        max_chars.saturating_mul(3)
     } else {
-        max_tokens
+        max_chars
     }
 }
 
 fn truncate_marker_sections_for_command_run(
     content: &str,
-    max_tokens: usize,
+    max_chars: usize,
     command_line: Option<&str>,
 ) -> Option<String> {
     let mut preamble = String::new();
@@ -119,14 +125,14 @@ fn truncate_marker_sections_for_command_run(
 
     let mut output = String::new();
     if !preamble.is_empty() {
-        output.push_str(&formatted_truncate_text(&preamble, max_tokens));
+        output.push_str(&formatted_truncate_text(&preamble, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
     }
 
     for section in sections {
-        output.push_str(&formatted_truncate_text(&section, max_tokens));
+        output.push_str(&formatted_truncate_section_body(&section, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
@@ -222,16 +228,20 @@ fn extract_read_targets(command_line: &str) -> Vec<String> {
             && index + 1 < tokens.len()
         {
             let mut next = index + 1;
-            while next < tokens.len() && tokens[next].starts_with('-') {
-                next += 1;
-            }
-            if let Some(path) = tokens
-                .get(next)
-                .and_then(|value| normalize_read_target(value))
-            {
-                if !targets.iter().any(|existing| existing == &path) {
-                    targets.push(path);
+            while next < tokens.len() {
+                if tokens[next] == ";" || tokens[next] == "|" {
+                    break;
                 }
+                if tokens[next].starts_with('-') {
+                    next += 1;
+                    continue;
+                }
+                if let Some(path) = normalize_read_target(&tokens[next]) {
+                    if !targets.iter().any(|existing| existing == &path) {
+                        targets.push(path);
+                    }
+                }
+                next += 1;
             }
             index = next;
         }
@@ -290,17 +300,7 @@ fn shell_like_tokens(value: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut quote = None::<char>;
-    let mut escaped = false;
     for ch in value.chars() {
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' && quote.is_some() {
-            escaped = true;
-            continue;
-        }
         if let Some(active) = quote {
             if ch == active {
                 quote = None;
@@ -315,6 +315,9 @@ fn shell_like_tokens(value: &str) -> Vec<String> {
             if !current.is_empty() {
                 tokens.push(std::mem::take(&mut current));
             }
+            if ch == ';' {
+                tokens.push(";".to_string());
+            }
         } else {
             current.push(ch);
         }
@@ -327,7 +330,7 @@ fn shell_like_tokens(value: &str) -> Vec<String> {
 
 fn truncate_query_sections_for_command_run(
     content: &str,
-    max_tokens: usize,
+    max_chars: usize,
     command_line: Option<&str>,
 ) -> Option<String> {
     let terms = extract_query_terms(command_line?);
@@ -368,13 +371,13 @@ fn truncate_query_sections_for_command_run(
 
     let mut output = String::new();
     if !preamble.trim().is_empty() {
-        output.push_str(&formatted_truncate_text(&preamble, max_tokens));
+        output.push_str(&formatted_truncate_text(&preamble, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
     }
     for (_, section, _) in sections {
-        output.push_str(&formatted_truncate_text(&section, max_tokens));
+        output.push_str(&formatted_truncate_section_body(&section, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
@@ -470,7 +473,7 @@ fn is_query_term(value: &str) -> bool {
 
 fn truncate_ripgrep_file_sections_for_command_run(
     content: &str,
-    max_tokens: usize,
+    max_chars: usize,
 ) -> Option<String> {
     let mut preamble = String::new();
     let mut sections = Vec::<(String, String)>::new();
@@ -494,18 +497,32 @@ fn truncate_ripgrep_file_sections_for_command_run(
 
     let mut output = String::new();
     if !preamble.trim().is_empty() {
-        output.push_str(&formatted_truncate_text(&preamble, max_tokens));
+        output.push_str(&formatted_truncate_text(&preamble, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
     }
     for (_, section) in sections {
-        output.push_str(&formatted_truncate_text(&section, max_tokens));
+        output.push_str(&formatted_truncate_section_body(&section, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
     }
     Some(output)
+}
+
+fn formatted_truncate_section_body(section: &str, max_chars: usize) -> String {
+    let Some((header, body)) = section.split_once('\n') else {
+        return formatted_truncate_text(section, max_chars);
+    };
+    if !is_command_run_section_marker(&format!("{header}\n")) {
+        return formatted_truncate_text(section, max_chars);
+    }
+    if body.is_empty() {
+        return section.to_string();
+    }
+    let body = formatted_truncate_text(body, max_chars);
+    format!("{header}\n{body}")
 }
 
 fn ripgrep_result_path(line: &str) -> Option<String> {
@@ -519,4 +536,106 @@ fn ripgrep_result_path(line: &str) -> Option<String> {
         return None;
     }
     Some(path.replace('\\', "/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        extract_query_terms, extract_read_targets, ripgrep_result_path, shell_like_tokens,
+    };
+
+    #[test]
+    fn marker_truncation_rewrites_bare_file_sections_from_read_targets() {
+        let content = "Output:\nfirst-file-body-line-one\nfirst-file-body-line-two\n---FILE---\nsecond-file-body-line-one\nsecond-file-body-line-two\n";
+        let command_line = r#"cat src/first.rs src/second.rs"#;
+
+        let output =
+            super::truncate_marker_sections_for_command_run(content, 20, Some(command_line))
+                .expect("marker sections should be recognized");
+
+        assert!(
+            output.contains("---FILE--- src/first.rs"),
+            "first bare section should be labelled from the first read target: {output}"
+        );
+        assert!(
+            output.contains("---FILE--- src/second.rs"),
+            "second bare section should be labelled from the second read target: {output}"
+        );
+    }
+
+    #[test]
+    fn query_truncation_groups_multi_term_search_output() {
+        let content =
+            "intro\nalpha result line one\nnoise\nbeta result line one\nbeta result line two\n";
+        let command_line = r#"rg "alpha beta" crates/runtime"#;
+
+        let output =
+            super::truncate_query_sections_for_command_run(content, 12, Some(command_line))
+                .expect("query sections should be recognized");
+
+        assert!(output.contains("---QUERY--- alpha"), "{output}");
+        assert!(output.contains("---QUERY--- beta"), "{output}");
+        assert!(output.contains("intro"), "{output}");
+    }
+
+    #[test]
+    fn ripgrep_truncation_groups_matches_by_file() {
+        let content = "searching\nsrc/a.rs:10:alpha\nsrc/b.rs:20:beta\nsrc/a.rs:11:alpha again\n";
+
+        let output = super::truncate_ripgrep_file_sections_for_command_run(content, 14)
+            .expect("ripgrep file sections should be recognized");
+
+        assert!(output.contains("---MATCHES--- src/a.rs"), "{output}");
+        assert!(output.contains("---MATCHES--- src/b.rs"), "{output}");
+        assert!(output.contains("searching"), "{output}");
+    }
+
+    #[test]
+    fn read_targets_are_extracted_from_json_wrapped_commands() {
+        let command_line = r#"{"command":"Get-Content -LiteralPath 'src\\main.rs'; cat crates/runtime/src/lib.rs"}"#;
+
+        let targets = extract_read_targets(command_line);
+
+        assert_eq!(
+            targets,
+            vec![
+                "src/main.rs".to_string(),
+                "crates/runtime/src/lib.rs".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn shell_like_tokens_preserve_quoted_paths_and_split_semicolon_commands() {
+        let tokens = shell_like_tokens(r#"cat "src/main.rs"; rg 'hello world' crates/runtime"#);
+
+        assert_eq!(
+            tokens,
+            vec![
+                "cat".to_string(),
+                "src/main.rs".to_string(),
+                ";".to_string(),
+                "rg".to_string(),
+                "hello world".to_string(),
+                "crates/runtime".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn query_terms_reject_globs_and_keep_distinct_terms() {
+        let terms = extract_query_terms(r#"rg "alpha|**/*.rs|beta|*.md|alpha" ."#);
+
+        assert_eq!(terms, vec!["alpha".to_string(), "beta".to_string()]);
+    }
+
+    #[test]
+    fn ripgrep_result_path_accepts_windows_paths_and_rejects_non_matches() {
+        assert_eq!(
+            ripgrep_result_path(r#"src\main.rs:12:fn main()"#).as_deref(),
+            Some("src/main.rs")
+        );
+        assert_eq!(ripgrep_result_path("not-a-match"), None);
+        assert_eq!(ripgrep_result_path("README:abc:text"), None);
+    }
 }

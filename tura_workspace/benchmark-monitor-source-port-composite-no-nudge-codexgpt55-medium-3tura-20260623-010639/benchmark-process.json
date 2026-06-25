@@ -1,0 +1,10 @@
+{
+  "RunId": "source-port-composite-no-nudge-codexgpt55-medium-3tura-20260623-010639",
+  "MonitorRoot": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-no-nudge-codexgpt55-medium-3tura-20260623-010639",
+  "Stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-no-nudge-codexgpt55-medium-3tura-20260623-010639\\benchmark.stdout.log",
+  "Stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-no-nudge-codexgpt55-medium-3tura-20260623-010639\\benchmark.stderr.log",
+  "Agents": "tura-fast-shll,tura-thinking-shll,tura-planning-shll",
+  "TimeoutMs": 1200000,
+  "Pid": 13288,
+  "StartedAt": "2026-06-23T01:06:39.0864011+02:00"
+}

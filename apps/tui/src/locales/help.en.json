@@ -3,26 +3,35 @@
     "title": "Tura terminal client",
     "usage": [
       "tura [OPTIONS]                         open the interactive TUI",
+      "tura [OPTIONS] exec [PROMPT...]        run the Rust CLI front",
       "tura [OPTIONS] run [PROMPT...]         run a non-interactive prompt",
+      "tura [OPTIONS] bash|zsh|shll [PROMPT...]",
       "tura [OPTIONS] <command> --help        show command-specific help"
     ],
     "commands": [
       { "name": "run", "summary": "send a prompt through the gateway and stream the answer" },
+      { "name": "exec", "summary": "forward to the Rust CLI front (`tura_exec`)" },
+      { "name": "bash", "summary": "run a prompt with command tools forced to bash" },
+      { "name": "zsh", "summary": "run a prompt with command tools forced to zsh" },
+      { "name": "shll", "summary": "run a prompt with command tools forced to shell_command" },
       { "name": "resume", "summary": "show an existing session or append a follow-up prompt" },
       { "name": "session", "summary": "list or show sessions" },
       { "name": "config", "summary": "read or update workspace session config" },
       { "name": "provider", "summary": "list providers and inspect auth state" },
-      { "name": "agent", "summary": "list, read, create, update, or tier agents" },
+      { "name": "agent", "summary": "list, read, create, update, or set agent models" },
       { "name": "persona", "summary": "list, read, create, update, or delete personas" },
       { "name": "project", "summary": "inspect or create gateway workspaces" },
       { "name": "file", "summary": "list, read, open, or reveal workspace files" },
       { "name": "command", "summary": "list or execute gateway commands" },
-      { "name": "inspect", "summary": "show gateway service, path, and session-log state" },
+      { "name": "inspect", "summary": "show gateway service, paths, and sessions" },
       { "name": "gateway", "summary": "call any gateway HTTP endpoint directly" },
       { "name": "completion", "summary": "generate shell completion for bash, zsh, or fish" }
     ],
     "options": [
-      { "flags": "--gateway-url URL", "summary": "Gateway base URL; defaults to TURA_GATEWAY_URL or http://127.0.0.1:4096" },
+      {
+        "flags": "--gateway-url URL",
+        "summary": "Gateway base URL; defaults to TURA_GATEWAY_URL or http://127.0.0.1:4126"
+      },
       { "flags": "--cwd PATH", "summary": "Workspace directory sent to gateway" },
       { "flags": "--json", "summary": "JSON output where supported" },
       { "flags": "--color MODE", "summary": "auto, always, or never" },
@@ -36,6 +45,9 @@
         "title": "Examples",
         "lines": [
           "tura run \"Inspect the workspace and summarize the architecture\"",
+          "tura exec \"Inspect the workspace using the Rust CLI front\"",
+          "tura zsh \"Inspect shell startup files with zsh semantics\"",
+          "tura run --shll \"Use the system shell_command surface\"",
           "tura run --model openai/gpt-5 --output ndjson \"Fix the failing test\"",
           "tura session list --json",
           "tura provider list --json"
@@ -45,7 +57,10 @@
   },
   "run": {
     "title": "Run a prompt",
-    "usage": ["tura [OPTIONS] run [PROMPT...] [RUN_OPTIONS]"],
+    "usage": [
+      "tura [OPTIONS] run [PROMPT...] [RUN_OPTIONS]",
+      "tura [OPTIONS] bash|zsh|shll [PROMPT...] [RUN_OPTIONS]"
+    ],
     "options": [
       { "flags": "--session ID", "summary": "append the prompt to an existing session" },
       { "flags": "-m, --model PROVIDER/MODEL", "summary": "request-scoped model override" },
@@ -55,18 +70,34 @@
       { "flags": "--model-variant LEVEL", "summary": "reasoning/model variant override" },
       { "flags": "--model-acceleration", "summary": "enable priority/accelerated routing" },
       { "flags": "--no-model-acceleration", "summary": "disable priority/accelerated routing" },
+      {
+        "flags": "--bash, --zsh, --shll",
+        "summary": "force the command-run shell surface for this prompt"
+      },
       { "flags": "--output text|json|ndjson", "summary": "output format" },
-      { "flags": "--stream, --no-stream", "summary": "stream gateway events or poll for completion" },
+      {
+        "flags": "--stream, --no-stream",
+        "summary": "stream gateway events or poll for completion"
+      },
       { "flags": "--timeout SEC", "summary": "timeout before aborting the turn (default 600)" },
-      { "flags": "-c, --config KEY=VALUE", "summary": "runtime override, for example model=gpt-5" }
+      {
+        "flags": "-c, --config KEY=VALUE",
+        "summary": "runtime override, for example model=gpt-5 or command_run_shell=zsh"
+      }
     ]
   },
   "resume": {
     "title": "Resume a session",
-    "usage": ["tura [OPTIONS] resume SESSION_ID [PROMPT...]", "tura [OPTIONS] resume --last [PROMPT...]"],
+    "usage": [
+      "tura [OPTIONS] resume SESSION_ID [PROMPT...]",
+      "tura [OPTIONS] resume --last [PROMPT...]"
+    ],
     "options": [
       { "flags": "--last", "summary": "select the most recently updated session" },
-      { "flags": "--output text|json|ndjson", "summary": "output mode when sending a follow-up prompt" },
+      {
+        "flags": "--output text|json|ndjson",
+        "summary": "output mode when sending a follow-up prompt"
+      },
       { "flags": "--json", "summary": "alias for --output json" }
     ]
   },
@@ -92,7 +123,9 @@
     "sections": [
       {
         "title": "Notes",
-        "lines": ["Session config uses /session/config; model tiers use the shared GUI /model_config provider_config.json."]
+        "lines": [
+          "Session config uses /session/config; default model tier config uses the shared GUI /model_config provider_config.json."
+        ]
       }
     ]
   },
@@ -115,7 +148,7 @@
       "tura [OPTIONS] agent create AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent update AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent delete AGENT_ID [--json]",
-      "tura [OPTIONS] agent tier AGENT_ID [TIER] [--reasoning LEVEL] [--priority|--no-priority]"
+      "tura [OPTIONS] agent model AGENT_ID [PROVIDER/MODEL] [--reasoning LEVEL] [--priority|--no-priority]"
     ],
     "sections": [
       { "title": "Example", "lines": ["tura run -a AGENT_ID -m PROVIDER/MODEL -p \"prompt\""] }
@@ -156,16 +189,18 @@
   },
   "command": {
     "title": "Command registry",
-    "usage": ["tura [OPTIONS] command list [--json]", "tura [OPTIONS] command run COMMAND [ARGS...] [--json]"]
+    "usage": [
+      "tura [OPTIONS] command list [--json]",
+      "tura [OPTIONS] command run COMMAND [ARGS...] [--json]"
+    ]
   },
   "inspect": {
     "title": "Inspect gateway state",
     "usage": [
       "tura [OPTIONS] inspect status [--json]",
       "tura [OPTIONS] inspect paths [--json]",
-      "tura [OPTIONS] inspect logs workspaces [--json]",
-      "tura [OPTIONS] inspect logs sessions [--json]",
-      "tura [OPTIONS] inspect logs records SESSION_ID"
+      "tura [OPTIONS] inspect sessions [--json]",
+      "tura [OPTIONS] inspect messages SESSION_ID [--json]"
     ]
   },
   "gateway": {
@@ -176,7 +211,10 @@
       "tura [OPTIONS] gateway PATCH /session/SESSION_ID --data '{\"name\":\"New name\"}'"
     ],
     "options": [
-      { "flags": "-d, --data JSON", "summary": "JSON request body for POST, PATCH, PUT, and DELETE" }
+      {
+        "flags": "-d, --data JSON",
+        "summary": "JSON request body for POST, PATCH, PUT, and DELETE"
+      }
     ]
   }
 }

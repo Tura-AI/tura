@@ -15,6 +15,10 @@ import {
   taskStartAt,
   taskStartCondition,
 } from "../features/plan/tasks";
+
+const DEFAULT_WORKSPACE_NAME = "tura_workspace";
+const DOCUMENTS_DIRECTORY_NAMES = ["Documents", "文档"];
+
 export function copyText(value: string): void {
   if (typeof navigator !== "undefined" && navigator.clipboard) {
     void navigator.clipboard.writeText(value);
@@ -85,11 +89,24 @@ export function defaultWorkspaceDirectory(paths?: Partial<PathResponse>): string
   }
   const home = paths?.home?.trim();
   if (!home) {
-    return "tura workspace";
+    return DEFAULT_WORKSPACE_NAME;
   }
-  const separator = home.includes("\\") ? "\\" : "/";
+  return joinPath(documentDirectoryFromHome(home), DEFAULT_WORKSPACE_NAME);
+}
+
+function documentDirectoryFromHome(home: string): string {
   const root = home.replace(/[\\/]+$/u, "");
-  return `${root}${separator}Documents${separator}tura workspace`;
+  const parts = root.replaceAll("\\", "/").split("/").filter(Boolean);
+  const last = parts.at(-1)?.toLowerCase();
+  if (last && DOCUMENTS_DIRECTORY_NAMES.some((name) => name.toLowerCase() === last)) {
+    return root;
+  }
+  return joinPath(root, DOCUMENTS_DIRECTORY_NAMES[0]);
+}
+
+function joinPath(root: string, child: string): string {
+  const separator = root.includes("\\") ? "\\" : "/";
+  return `${root.replace(/[\\/]+$/u, "")}${separator}${child}`;
 }
 
 export function fixtureFiles(fixture: string | undefined, path = ""): FileInfo[] {

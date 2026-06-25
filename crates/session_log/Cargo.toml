@@ -9,18 +9,51 @@ license.workspace = true
 name = "session_log"
 path = "src/lib.rs"
 
+[[test]]
+name = "router_adopts_live_session_db_flow"
+path = "tests/os_testing/router_adopts_live_session_db_flow.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "session_db_discards_dirty_queue_flow"
+path = "tests/os_testing/session_db_discards_dirty_queue_flow.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "process_management_test"
+path = "tests/os_testing/process_management_test.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "process_lifecycle_e2e"
+path = "tests/os_testing/process_lifecycle_e2e.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "store_concurrency_test"
+path = "tests/performance/store_concurrency_test.rs"
+required-features = ["performance-tests"]
+
+[[bin]]
+name = "tura_session_db"
+path = "src/bin/tura_session_db.rs"
+
+[features]
+business-tests = []
+performance-tests = []
+os-tests = []
+
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
 fs2.workspace = true
-postgres.workspace = true
-postgresql_embedded.workspace = true
-r2d2.workspace = true
-r2d2_postgres.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+tura_path.workspace = true
 
 [dev-dependencies]
+sysinfo.workspace = true
 tempfile.workspace = true
 uuid.workspace = true

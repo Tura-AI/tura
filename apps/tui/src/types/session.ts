@@ -2,8 +2,19 @@ import type { JsonObject } from "./common.js";
 
 export type SessionStatusValue = "idle" | "busy" | "error";
 
+export interface SessionUsage {
+  context_tokens?: {
+    input?: number;
+    limit?: number;
+  } | null;
+  tokens?: unknown;
+  cost?: number | null;
+  currency?: string | null;
+}
+
 export interface Session {
   id: string;
+  draft?: boolean;
   name?: string | null;
   parent_id?: string | null;
   created_at?: number;
@@ -12,29 +23,34 @@ export interface Session {
   model?: string | null;
   agent?: string | null;
   session_type?: string | null;
-  lsp?: unknown;
   auto_session_name?: boolean;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
+  force_planning?: boolean;
   model_variant?: string | null;
   model_acceleration_enabled?: boolean;
+  disable_permission_restrictions?: boolean;
   status?: SessionStatusValue;
   message_count?: number;
+  task_management?: unknown;
+  context_tokens?: {
+    input?: number;
+    limit?: number;
+  } | null;
+  usage?: SessionUsage | null;
+  plan_summary?: string | null;
   session_display_name?: string | null;
 }
 
 export interface MessagePart {
   id: string;
   sessionID?: string;
-  session_id?: string;
   messageID?: string;
-  message_id?: string;
   type: string;
   text?: string | null;
   content?: string | null;
   metadata?: unknown;
   callID?: string | null;
-  call_id?: string | null;
   tool?: string | null;
   state?: unknown;
 }
@@ -42,24 +58,16 @@ export interface MessagePart {
 export interface Message {
   id: string;
   sessionID?: string;
-  session_id?: string;
   parentID?: string | null;
-  parent_id?: string | null;
   role: "user" | "assistant" | "system";
   parts: MessagePart[];
   created_at?: number;
   updated_at?: number;
-  time?: { created?: number; updated?: number };
+  time?: { created: number; updated: number };
   cost?: number;
   providerID?: string;
   modelID?: string;
   tokens?: unknown;
-}
-
-export interface MessageEnvelope {
-  info?: Message;
-  parts?: MessagePart[];
-  [key: string]: unknown;
 }
 
 export interface CreateSessionRequest {
@@ -71,7 +79,15 @@ export interface CreateSessionRequest {
   model_acceleration_enabled?: boolean;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
+  force_planning?: boolean;
   auto_session_name?: boolean;
+}
+
+export interface ForkSessionRequest {
+  directory?: string;
+  model?: string;
+  agent?: string;
+  copy_context?: boolean;
 }
 
 export interface PromptPayload {
@@ -91,14 +107,30 @@ export interface RunResult {
   finalText: string;
   messages: Message[];
   usage: unknown | null;
+  metadata: RunResultMetadata;
+}
+
+export interface RunResultMetadata {
+  input_token_usage: number;
+  input_token_cache: number;
+  provider_time_ms: number;
+  total_time_ms: number;
+  commands: number;
+  failed_commands: number;
+  tps: number;
+  turns: number;
 }
 
 export function sessionTitle(session: Session): string {
   return (session.session_display_name || session.name || session.id || "New Session").toString();
 }
 
+export function isDraftSession(session: Session | undefined): boolean {
+  return session?.draft === true;
+}
+
 export function sessionUpdatedAt(session: Session): number {
-  return session.updated_at ?? 0;
+  return session.updated_at ?? session.created_at ?? 0;
 }
 
 export function sessionStatusText(status: unknown): SessionStatusValue {
@@ -120,23 +152,16 @@ export function sessionDirectory(session: Session): string {
   return session.directory ?? "";
 }
 
-export function normalizeMessage(value: Message | MessageEnvelope): Message {
-  if ("info" in value && value.info) {
-    return { ...value.info, parts: value.parts ?? value.info.parts ?? [] };
-  }
-  return value as Message;
-}
-
 export function messageSessionID(message: Message): string {
-  return message.sessionID ?? message.session_id ?? "";
+  return message.sessionID ?? "";
 }
 
 export function partMessageID(part: MessagePart): string {
-  return part.messageID ?? part.message_id ?? "";
+  return part.messageID ?? "";
 }
 
 export function partSessionID(part: MessagePart): string {
-  return part.sessionID ?? part.session_id ?? "";
+  return part.sessionID ?? "";
 }
 
 export function messageText(message: Message): string {
@@ -148,16 +173,20 @@ export function messageText(message: Message): string {
 }
 
 export function messageSortValue(message: Message): number {
-  return (
-    message.created_at ?? message.time?.created ?? message.updated_at ?? message.time?.updated ?? 0
-  );
+  return message.created_at as number;
 }
 
 export function lastAssistantText(messages: Message[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
+  const ordered = messages
+    .map((message, index) => ({ message, index }))
+    .sort(
+      (left, right) =>
+        messageSortValue(right.message) - messageSortValue(left.message) ||
+        right.index - left.index,
+    );
+  for (const { message } of ordered) {
     if (message.role === "assistant") {
-      const text = messageText(message).trim();
+      const text = assistantResultText(message).trim();
       if (isUserFacingAssistantText(text)) return text;
     }
   }
@@ -168,8 +197,50 @@ export function hasUserFacingAssistantText(messages: Message[], startIndex = 0):
   return messages
     .slice(startIndex)
     .some(
-      (message) => message.role === "assistant" && isUserFacingAssistantText(messageText(message)),
+      (message) =>
+        message.role === "assistant" && isUserFacingAssistantText(assistantResultText(message)),
     );
+}
+
+function assistantResultText(message: Message): string {
+  const text = messageText(message).trim();
+  if (text) return text;
+  return (message.parts ?? []).map(partResultText).filter(Boolean).join("");
+}
+
+function partResultText(part: MessagePart): string {
+  for (const value of [part.state, part.metadata]) {
+    const output = userFacingOutputText(value);
+    if (output) return output;
+  }
+  return "";
+}
+
+function userFacingOutputText(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value.map(userFacingOutputText).filter(Boolean).join("");
+  }
+  if (typeof value !== "object") return "";
+  const object = value as JsonObject;
+  for (const key of [
+    "task_status",
+    "output",
+    "text",
+    "content",
+    "finalText",
+    "final_text",
+    "message",
+  ]) {
+    const output = userFacingOutputText(object[key]);
+    if (output) return output;
+  }
+  for (const key of ["task_group", "summary", "status", "label"]) {
+    const output = userFacingOutputText(object[key]);
+    if (output) return output;
+  }
+  return "";
 }
 
 function isUserFacingAssistantText(value: string): boolean {

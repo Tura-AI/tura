@@ -173,8 +173,20 @@ button.section-title:focus-visible {
 }
 
 .workspace-children {
+  --session-inline-offset: 4ch;
   gap: 2px;
   margin: var(--space-1) 0 var(--space-3);
+}
+
+.rail-session-loading {
+  display: grid;
+  min-height: 36px;
+  padding-left: calc(var(--space-3) + var(--session-inline-offset));
+  align-items: center;
+}
+
+.rail-session-loading .loading-bar {
+  height: 10px;
 }
 
 .child-row {
@@ -204,7 +216,14 @@ button.section-title:focus-visible {
 }
 
 .workspace-children .session-row {
-  padding-left: calc(var(--space-3) + (var(--session-depth, 0) * 2ch));
+  padding-left: calc(
+    var(--space-3) + var(--session-inline-offset) + (var(--session-depth, 0) * 2ch)
+  );
+}
+
+.workspace-children > .rail-empty,
+.workspace-children .rail-more {
+  padding-left: calc(var(--space-3) + var(--session-inline-offset));
 }
 
 .session-row {

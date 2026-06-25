@@ -3,8 +3,8 @@
 //! This is the shared core for codex (OAuth) and the API-key Responses
 //! sub-providers — `chatgpt` (OpenAI), `grok` (xAI), `qwen` (DashScope
 //! international). All of them speak the same request/stream shape; the few
-//! per-provider divergences are captured by [`ResponsesProfile`] (the "额外一层"
-//! quirk layer).
+//! per-provider divergences are captured by [`ResponsesProfile`] as a small
+//! provider quirk layer.
 
 use serde_json::{json, Value};
 use std::time::Instant;
@@ -12,7 +12,7 @@ use std::time::Instant;
 use super::common::{
     insert_opt, message_content_text, normalized_reasoning_effort, normalized_service_tier,
 };
-use crate::metrics::{extract_openapi_metrics, fill_missing_estimated_usage};
+use crate::metrics::extract_openapi_metrics;
 use crate::streaming::{next_provider_stream_chunk, send_provider_request_first_response};
 use crate::tura_llm::{
     normalize_response_content, CostDetails, ProviderResponse, ProviderStreamEvent,
@@ -72,17 +72,12 @@ pub(crate) async fn codex_oauth_call(
     }
 
     let data = parse_codex_response_stream(resp, stream_events).await?;
+    validate_responses_status("codex", &data)?;
     let mut content = normalize_codex_response_content(&data);
     if let Some(text) = content.as_str() {
         content = Value::String(strip_json_fence(text));
     }
     let mut metrics = extract_openapi_metrics(&data, options.context_window);
-    fill_missing_estimated_usage(
-        &mut metrics,
-        &payload,
-        &content,
-        "codex_oauth_stream_returned_before_provider_usage",
-    );
     metrics.cost = CostDetails::default();
     metrics.provider_request_id = req_id;
     Ok(ProviderResponse {
@@ -135,17 +130,12 @@ pub(crate) async fn responses_api_key_call(
     }
 
     let data = parse_codex_response_stream(resp, stream_events).await?;
+    validate_responses_status(profile.provider, &data)?;
     let mut content = normalize_codex_response_content(&data);
     if let Some(text) = content.as_str() {
         content = Value::String(strip_json_fence(text));
     }
     let mut metrics = extract_openapi_metrics(&data, options.context_window);
-    fill_missing_estimated_usage(
-        &mut metrics,
-        &payload,
-        &content,
-        "responses_stream_returned_before_provider_usage",
-    );
     metrics.provider_request_id = req_id;
     Ok(ProviderResponse {
         content,
@@ -160,7 +150,7 @@ fn codex_cli_user_agent() -> String {
 
 /// Per-provider behaviour of the shared Responses-API payload builder. Codex
 /// (OAuth) and the API-key Responses tier (`chatgpt`, `grok`, `qwen`) share the
-/// same request shape; the few divergences live here ("额外一层"/quirk layer).
+/// same request shape; the few divergences live in this quirk layer.
 #[derive(Clone, Copy)]
 struct ResponsesProfile {
     /// Provider id, used for quirk dispatch and diagnostics.
@@ -435,6 +425,17 @@ fn process_codex_sse_line(
         if output_event {
             sink(ProviderStreamEvent::ProviderOutputStarted);
         }
+        if value.get("type").and_then(Value::as_str) == Some("response.output_text.delta") {
+            if let Some(delta) = value
+                .get("delta")
+                .and_then(Value::as_str)
+                .filter(|delta| !delta.is_empty())
+            {
+                sink(ProviderStreamEvent::TextDelta {
+                    text: delta.to_string(),
+                });
+            }
+        }
         for event in command_collector.push_event(&value) {
             sink(event);
         }
@@ -501,6 +502,25 @@ fn build_codex_stream_root(
     root
 }
 
+fn validate_responses_status(provider: &str, data: &Value) -> Result<(), TuraError> {
+    let Some(status) = data.get("status").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if matches!(status, "completed" | "in_progress" | "queued") {
+        return Ok(());
+    }
+
+    let detail = data
+        .get("incomplete_details")
+        .or_else(|| data.get("error"))
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "no detail".to_string());
+    Err(TuraError::ProviderRequest {
+        provider: provider.to_string(),
+        message: format!("responses api returned status '{status}': {detail}"),
+    })
+}
+
 fn openai_codex_endpoint() -> String {
     std::env::var("OPENAI_CODEX_ENDPOINT")
         .ok()
@@ -518,6 +538,13 @@ fn codex_input_role(role: &str) -> &str {
 }
 
 pub(crate) fn normalize_codex_response_content(data: &Value) -> Value {
+    if let Some(content) = normalize_codex_response_event_content(data) {
+        return content;
+    }
+    normalize_response_content(data)
+}
+
+pub(crate) fn normalize_codex_response_event_content(data: &Value) -> Option<Value> {
     let tool_calls = complete_codex_tool_calls(data);
     if !tool_calls.is_empty() {
         let mut object = serde_json::Map::new();
@@ -527,11 +554,11 @@ pub(crate) fn normalize_codex_response_content(data: &Value) -> Value {
             }
         }
         object.insert("tool_calls".to_string(), Value::Array(tool_calls));
-        return Value::Object(object);
+        return Some(Value::Object(object));
     }
 
     if let Some(text) = data.get("output_text").and_then(Value::as_str) {
-        return Value::String(text.to_string());
+        return Some(Value::String(text.to_string()));
     }
     if let Some(text) = data
         .get("output")
@@ -551,9 +578,9 @@ pub(crate) fn normalize_codex_response_content(data: &Value) -> Value {
                 .or_else(|| content.get("content").and_then(Value::as_str))
         })
     {
-        return Value::String(text.to_string());
+        return Some(Value::String(text.to_string()));
     }
-    normalize_response_content(data)
+    None
 }
 
 fn codex_tool_schema(tool: &Value) -> Value {

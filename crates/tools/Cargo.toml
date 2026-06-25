@@ -11,11 +11,39 @@ path = "src/lib.rs"
 
 [[test]]
 name = "web_discover_live_provider_check"
-path = "tests/web_discover_live_provider_check.rs"
+path = "tests/live/web_discover_live_provider_check.rs"
 required-features = ["live-tests"]
 
+[[test]]
+name = "command_run_current_flow"
+path = "tests/business/command_run_current_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "command_interceptor_e2e"
+path = "tests/business/command_interceptor_e2e.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "command_interceptor_static_flow"
+path = "tests/business/command_interceptor_static_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "command_run_shell_process_hooks"
+path = "tests/os_testing/command_run_shell_process_hooks.rs"
+required-features = ["os-tests"]
+
 [features]
+business-tests = []
 live-tests = []
+os-tests = []
+performance-tests = []
+
+[[test]]
+name = "command_run_pressure_test"
+path = "tests/performance/command_run_pressure_test.rs"
+required-features = ["performance-tests"]
 
 [dependencies]
 async-trait.workspace = true
@@ -24,7 +52,11 @@ regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+toml.workspace = true
 provider.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 [dev-dependencies]
 image.workspace = true

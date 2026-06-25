@@ -14,6 +14,7 @@ export type ToolRecord = {
   output: string;
   status: string;
   durationMs?: number;
+  timeoutMs?: number;
   exitCode?: number;
 };
 
@@ -61,17 +62,29 @@ export function toolStatus(state: JsonRecord): string {
 
 export function toolDurationMs(part: MessagePart): number | undefined {
   const state = asRecord(part.state);
-  const direct = numberField(state, "duration_ms") || numberField(state, "durationMs");
-  if (direct) {
+  const direct = numberField(state, "duration_ms") ?? numberField(state, "durationMs");
+  if (direct !== undefined) {
     return direct;
   }
+  const status = toolStatus(state);
   const time = asRecord(state.time);
   const started =
-    numberField(time, "start") || numberField(time, "started") || numberField(state, "started_at");
+    numberField(time, "start") ??
+    numberField(time, "started") ??
+    numberField(state, "started_at") ??
+    numberField(state, "created_at") ??
+    numberField(state, "createdAt");
   const ended =
-    numberField(time, "end") || numberField(time, "ended") || numberField(state, "completed_at");
-  if (started) {
-    return Math.max(0, normalizeEpochMs(ended ?? Date.now()) - normalizeEpochMs(started));
+    numberField(time, "end") ??
+    numberField(time, "ended") ??
+    numberField(state, "completed_at") ??
+    numberField(state, "updated_at") ??
+    numberField(state, "updatedAt");
+  if (started !== undefined && isRunningStatus(status)) {
+    return Math.max(0, Date.now() - normalizeEpochMs(started));
+  }
+  if (started && ended) {
+    return Math.max(0, normalizeEpochMs(ended) - normalizeEpochMs(started));
   }
   return undefined;
 }
@@ -99,6 +112,11 @@ export function formatDuration(ms?: number): string {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
+export function formatCommandTiming(durationMs?: number, timeoutMs?: number): string {
+  const duration = formatCompactDuration(durationMs);
+  return timeoutMs === undefined ? duration : `${duration}/${formatCompactDuration(timeoutMs)}`;
+}
+
 export function toolOutput(part?: MessagePart): string {
   if (!part) {
     return "";
@@ -116,45 +134,31 @@ export function toolOutput(part?: MessagePart): string {
 }
 
 export function toolRecords(parts: MessagePart[]): ToolRecord[] {
-  const sharedSpecs = parts.flatMap((part) => commandSpecs(asRecord(part.state)));
-  let specCursor = 0;
-  const recordsByPart = parts.map((part) => {
-    const state = asRecord(part.state);
-    const streamed = streamedResults(state);
-    const specs =
-      streamed.length > 0 ? sharedSpecs.slice(specCursor, specCursor + streamed.length) : [];
-    if (streamed.length > 0 && part.tool !== "runtime") {
-      specCursor += streamed.length;
-    }
-    return {
-      part,
-      records: toolPartRecords(part, specs),
-    };
-  });
-  const nonRuntimeRecords = visibleToolRecords(
-    recordsByPart.filter(({ part }) => part.tool !== "runtime").flatMap(({ records }) => records),
-  );
-  const runtimeRecords = visibleToolRecords(
-    recordsByPart.flatMap(({ part, records }) =>
-      part.tool === "runtime" && !records.every(isRawRuntimeRecord) ? records : [],
-    ),
-  );
-  const visibleRecords = nonRuntimeRecords.length > 0 ? nonRuntimeRecords : runtimeRecords;
-  return visibleRecords.length > 0
-    ? visibleRecords
-    : parts
-        .map((part) => fallbackRecord(part))
-        .filter((record) => !isCommandRunWrapper(record) && !isRuntimeWrapper(record));
+  return parts
+    .filter((part) => isToolPart(part) && part.tool !== "runtime")
+    .flatMap((part) => toolPartRecords(part))
+    .filter((record) => !isCommandRunWrapper(record) && !isRuntimeWrapper(record));
 }
 
-export function toolPartRecords(part: MessagePart, providedSpecs: JsonRecord[] = []): ToolRecord[] {
+export function toolPartRecords(part: MessagePart): ToolRecord[] {
   const state = asRecord(part.state);
   const streamed = streamedResults(state);
-  const localSpecs = commandSpecs(state);
-  const specs = localSpecs.length > 0 ? localSpecs : providedSpecs;
-  if (streamed.length > 0) {
-    return streamed.map((value, index) =>
-      commandRecord(part, asRecord(value), specs[index], index),
+  const specs = commandSpecs(state);
+  if (specs.length > 0) {
+    const resultsById = new Map(
+      streamed
+        .map(asRecord)
+        .flatMap((result) => commandRecordKeys(result).map((key) => [key, result] as const))
+        .filter((entry): entry is [string, JsonRecord] => Boolean(entry[0])),
+    );
+    return specs
+      .map((spec, index) => ({ result: resultForSpec(resultsById, spec), spec, index }))
+      .map(({ result, spec, index }) => commandRecord(part, result ?? spec, spec, index));
+  }
+  const visibleStreamed = streamed.map((value, index) => ({ result: asRecord(value), index }));
+  if (visibleStreamed.length > 0) {
+    return visibleStreamed.map(({ result, index }) =>
+      commandRecord(part, result, undefined, index),
     );
   }
   const patchRecords = patchRecordsFromState(part, state);
@@ -167,11 +171,11 @@ export function toolPartRecords(part: MessagePart, providedSpecs: JsonRecord[] =
 function streamedResults(state: JsonRecord): unknown[] {
   const output = state.output;
   const parsedOutput = typeof output === "string" ? parseJsonRecord(output) : asRecord(output);
-  return [
+  return uniqueCommandRecords([
     ...arrayField(asRecord(state.streamed_command_run_result), "results"),
     ...arrayField(asRecord(parsedOutput.streamed_command_run_result), "results"),
     ...arrayField(parsedOutput, "results"),
-  ];
+  ]);
 }
 
 export function diffLines(text: string): Array<{ kind: "add" | "del" | "ctx"; text: string }> {
@@ -194,15 +198,15 @@ function commandRecord(
   spec: JsonRecord | undefined,
   index: number,
 ): ToolRecord {
-  const rawCommand = normalizeCommandLine(
+  const commandSource =
     stringField(result, "command_line") ||
-      stringField(spec ?? {}, "command_line") ||
-      stringField(result, "command") ||
-      stringField(spec ?? {}, "command") ||
-      stringField(result, "command_type") ||
-      part.tool ||
-      "command",
-  );
+    stringField(spec ?? {}, "command_line") ||
+    stringField(result, "command") ||
+    stringField(spec ?? {}, "command") ||
+    stringField(result, "command_type") ||
+    part.tool ||
+    "command";
+  const rawCommand = normalizeCommandLine(commandSource);
   const commandType =
     stringField(result, "command_type") ||
     stringField(spec ?? {}, "command_type") ||
@@ -213,8 +217,9 @@ function commandRecord(
   const exitCode =
     numberField(result, "exit_code") ?? numberField(result, "exitCode") ?? exitCodeFromText(output);
   const status = result.success === false ? "failed" : toolStatusFromResult(result, exitCode);
+  const recordId = commandRecordID(result) ?? commandRecordID(spec) ?? `record-${index}`;
   return {
-    id: `${part.id}:record-${index}`,
+    id: `${part.id}:${recordId}`,
     partId: part.id,
     groupId: toolGroupId(part),
     kind: isPatchCommand(commandType, rawCommand) ? "patch" : "command",
@@ -222,11 +227,8 @@ function commandRecord(
     command,
     output,
     status,
-    durationMs:
-      numberField(result, "duration_ms") ??
-      numberField(result, "durationMs") ??
-      durationFromText(output) ??
-      fallbackDurationMs(status),
+    durationMs: commandDurationMs(result, spec, status, output),
+    timeoutMs: commandTimeoutMs(result, spec, commandSource),
     exitCode,
   };
 }
@@ -249,6 +251,7 @@ function patchRecordsFromState(part: MessagePart, state: JsonRecord): ToolRecord
       status: toolStatus(state),
       durationMs:
         toolDurationMs(part) ?? durationFromText(output) ?? fallbackDurationMs(toolStatus(state)),
+      timeoutMs: commandTimeoutMs(state, undefined, command),
       exitCode:
         numberField(state, "exit_code") ??
         numberField(state, "exitCode") ??
@@ -272,32 +275,103 @@ function fallbackRecord(part: MessagePart): ToolRecord {
     status: toolStatus(state),
     durationMs:
       toolDurationMs(part) ?? durationFromText(output) ?? fallbackDurationMs(toolStatus(state)),
+    timeoutMs: commandTimeoutMs(state, undefined, command),
     exitCode:
       numberField(state, "exit_code") ?? numberField(state, "exitCode") ?? exitCodeFromText(output),
   };
 }
 
 function commandSpecs(state: JsonRecord): JsonRecord[] {
-  const direct = [
+  return uniqueCommandRecords([
     ...arrayField(asRecord(state.input), "commands").map(asRecord),
+    ...arrayField(state, "commands").map(asRecord),
     ...arrayField(asRecord(asRecord(state.metadata).input), "commands").map(asRecord),
-  ];
-  const calls = arrayField(asRecord(state.provider_content), "tool_calls");
-  const specs: JsonRecord[] = [...direct];
-  for (const call of calls) {
-    const functionCall = asRecord(asRecord(call).function);
-    if (stringField(functionCall, "name") !== "command_run") {
+  ]).map(asRecord);
+}
+
+function commandRecordID(record: JsonRecord | undefined): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  return stringField(record, "command_id") || stringField(record, "commandID");
+}
+
+function uniqueCommandRecords(records: unknown[]): unknown[] {
+  const seen = new Map<string, number>();
+  const next: unknown[] = [];
+  for (const record of records) {
+    const keys = commandRecordKeys(record);
+    if (keys.length === 0) {
+      next.push(record);
       continue;
     }
-    const raw = functionCall.arguments;
-    try {
-      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-      specs.push(...arrayField(asRecord(parsed), "commands").map(asRecord));
-    } catch {
-      // Command specs are helpful labels only; streamed results still render without them.
+    const existingIndex = keys
+      .map((key) => seen.get(key))
+      .find((index): index is number => index !== undefined);
+    if (existingIndex === undefined) {
+      for (const key of keys) {
+        seen.set(key, next.length);
+      }
+      next.push(record);
+      continue;
+    }
+    next[existingIndex] = { ...asRecord(next[existingIndex]), ...asRecord(record) };
+    for (const key of commandRecordKeys(next[existingIndex])) {
+      seen.set(key, existingIndex);
     }
   }
-  return specs;
+  return next;
+}
+
+function resultForSpec(
+  resultsById: Map<string, JsonRecord>,
+  spec: JsonRecord,
+): JsonRecord | undefined {
+  for (const key of commandRecordKeys(spec)) {
+    const result = resultsById.get(key);
+    if (result) {
+      return result;
+    }
+  }
+  return undefined;
+}
+
+function commandRecordKeys(record: unknown): string[] {
+  const value = asRecord(record);
+  const command = asRecord(value.command);
+  const keys = new Set<string>();
+  const id = commandRecordID(value) || commandRecordID(command);
+  if (id) {
+    keys.add(`id:${id}`);
+  }
+
+  const provider =
+    stringField(value, "provider_tool_call_id") ||
+    stringField(value, "providerToolCallID") ||
+    stringField(command, "provider_tool_call_id") ||
+    stringField(command, "providerToolCallID");
+  const index =
+    numberField(value, "command_index") ??
+    numberField(value, "commandIndex") ??
+    numberField(command, "command_index") ??
+    numberField(command, "commandIndex");
+  if (provider && index !== undefined) {
+    keys.add(`provider:${provider}:${index}`);
+  }
+  const step = numberField(value, "step") ?? numberField(command, "step");
+  const commandLine =
+    stringField(value, "command_line") ||
+    stringField(command, "command_line") ||
+    stringField(value, "command");
+  const commandType =
+    stringField(value, "command_type") ||
+    stringField(command, "command_type") ||
+    stringField(value, "name") ||
+    stringField(command, "name");
+  if (step !== undefined && commandLine) {
+    keys.add(`step:${step}:${commandType ?? ""}:${commandLine}`);
+  }
+  return [...keys];
 }
 
 function toolGroupId(part: MessagePart): string | undefined {
@@ -332,12 +406,16 @@ function normalizeCommandLine(value: string): string {
   }
 }
 
-function isRawRuntimeRecord(record: ToolRecord): boolean {
-  return (
-    record.kind === "tool" &&
-    record.title.toLowerCase().includes("runtime") &&
-    record.output.trim().startsWith("{")
-  );
+function parsedCommandLine(value: string): JsonRecord {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{")) {
+    return {};
+  }
+  try {
+    return asRecord(JSON.parse(trimmed));
+  } catch {
+    return {};
+  }
 }
 
 function isCommandRunWrapper(record: ToolRecord): boolean {
@@ -350,24 +428,6 @@ function isRuntimeWrapper(record: ToolRecord): boolean {
     record.command.trim() === "runtime" &&
     record.title.trim() === "runtime  runtime"
   );
-}
-
-function visibleToolRecords(records: ToolRecord[]): ToolRecord[] {
-  return dedupeRecords(
-    records.filter((record) => !isCommandRunWrapper(record) && !isRuntimeWrapper(record)),
-  );
-}
-
-function dedupeRecords(records: ToolRecord[]): ToolRecord[] {
-  const seen = new Set<string>();
-  return records.filter((record) => {
-    const key = `${record.kind}:${record.title}:${record.command}:${record.output.slice(0, 256)}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
 }
 
 function toolStatusFromResult(result: JsonRecord, exitCode?: number): string {
@@ -523,6 +583,73 @@ function fallbackDurationMs(status: string): number | undefined {
     : undefined;
 }
 
+function commandDurationMs(
+  result: JsonRecord,
+  spec: JsonRecord | undefined,
+  status: string,
+  output: string,
+): number | undefined {
+  return (
+    numberField(result, "duration_ms") ??
+    numberField(result, "durationMs") ??
+    numberField(spec ?? {}, "duration_ms") ??
+    numberField(spec ?? {}, "durationMs") ??
+    durationFromTimeFields(result, status) ??
+    durationFromTimeFields(spec ?? {}, status) ??
+    durationFromText(output) ??
+    fallbackDurationMs(status)
+  );
+}
+
+function commandTimeoutMs(
+  result: JsonRecord,
+  spec: JsonRecord | undefined,
+  rawCommand: string,
+): number | undefined {
+  const resultCommand = asRecord(result.command);
+  const specCommand = asRecord(spec?.command);
+  const parsed = parsedCommandLine(rawCommand);
+  return (
+    numberField(result, "timeout_ms") ??
+    numberField(result, "timeoutMs") ??
+    numberField(resultCommand, "timeout_ms") ??
+    numberField(resultCommand, "timeoutMs") ??
+    numberField(spec ?? {}, "timeout_ms") ??
+    numberField(spec ?? {}, "timeoutMs") ??
+    numberField(specCommand, "timeout_ms") ??
+    numberField(specCommand, "timeoutMs") ??
+    numberField(parsed, "timeout_ms") ??
+    numberField(parsed, "timeoutMs")
+  );
+}
+
+function durationFromTimeFields(record: JsonRecord, status: string): number | undefined {
+  const time = asRecord(record.time);
+  const started =
+    numberField(time, "start") ??
+    numberField(time, "started") ??
+    numberField(record, "started_at") ??
+    numberField(record, "created_at") ??
+    numberField(record, "createdAt");
+  const ended =
+    numberField(time, "end") ??
+    numberField(time, "ended") ??
+    numberField(record, "completed_at") ??
+    numberField(record, "updated_at") ??
+    numberField(record, "updatedAt");
+  if (started !== undefined && isRunningStatus(status)) {
+    return Math.max(0, Date.now() - normalizeEpochMs(started));
+  }
+  if (started !== undefined && ended !== undefined) {
+    return Math.max(0, normalizeEpochMs(ended) - normalizeEpochMs(started));
+  }
+  return undefined;
+}
+
+function isRunningStatus(status: string): boolean {
+  return status === "running" || status === "in_progress";
+}
+
 function durationFromText(text: string): number | undefined {
   const match = text.match(/Wall time:\s*([\d.]+)\s*(ms|milliseconds?|s|sec|seconds?)/iu);
   if (!match) {
@@ -534,6 +661,22 @@ function durationFromText(text: string): number | undefined {
   }
   const unit = match[2].toLowerCase();
   return unit.startsWith("ms") || unit.startsWith("millisecond") ? value : value * 1000;
+}
+
+function formatCompactDuration(ms?: number): string {
+  if (ms === undefined) {
+    return "0s";
+  }
+  if (ms < 1000) {
+    return `${Math.max(0.1, Math.round(ms / 100) / 10).toFixed(1)}s`;
+  }
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes}m` : `${minutes}m${rest}s`;
 }
 
 function exitCodeFromText(text: string): number | undefined {

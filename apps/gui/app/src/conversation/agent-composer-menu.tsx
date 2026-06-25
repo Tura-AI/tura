@@ -12,6 +12,7 @@ export function AgentComposerMenu(props: {
   agents: Agent[];
   modelConfig?: TuraConfigResponse;
   selectedAgent?: string;
+  selectedModel?: string;
   onAgent: (agentId: string) => void;
   onSettings: (section: SettingsSection) => void;
 }) {
@@ -22,6 +23,13 @@ export function AgentComposerMenu(props: {
   const visibleAgents = createMemo(() => visibleConfigurableAgents(props.agents));
   const selectedAgent = createMemo(
     () => visibleAgents().find((agent) => agent.name === props.selectedAgent) ?? visibleAgents()[0],
+  );
+  const selectedModelText = createMemo(() =>
+    props.selectedModel
+      ? runtimeModelText(props.selectedModel, props.modelConfig)
+      : selectedAgent()
+        ? agentModelText(selectedAgent()!, props.modelConfig)
+        : "",
   );
 
   function updateMenuPosition() {
@@ -78,10 +86,10 @@ export function AgentComposerMenu(props: {
         type="button"
         class="plan-trigger-button agent-trigger-button"
         onClick={() => setOpen(!open())}
-        title={agentDisplayName(selectedAgent()) || t("agent")}
+        title={selectedModelText() || agentDisplayName(selectedAgent()) || t("agent")}
       >
         <Show when={selectedAgent()}>{(agent) => <AgentIcon agent={agent()} />}</Show>
-        <span>{agentDisplayName(selectedAgent()) || t("agent")}</span>
+        <span>{selectedModelText() || t("model")}</span>
         <ChevronDown size={13} strokeWidth={1.8} />
       </button>
       <Show when={open()}>
@@ -134,33 +142,88 @@ export function AgentComposerMenu(props: {
 }
 
 function agentModelText(agent: Agent, modelConfig: TuraConfigResponse | undefined): string {
-  const directModel =
+  const currentModel = agentCurrentModel(agent);
+  if (currentModel) {
+    const [provider, ...modelParts] = currentModel.split("/");
+    return namedModelText(modelConfig, provider, modelParts.join("/")) ?? currentModel;
+  }
+  const directModel = namedModelText(modelConfig, agent.model?.providerID, agent.model?.modelID);
+  if (directModel) {
+    return directModel;
+  }
+  const directModelId =
     agent.model?.providerID && agent.model.modelID
       ? `${agent.model.providerID}/${agent.model.modelID}`
       : "";
-  if (directModel) {
-    return directModel;
+  if (directModelId) {
+    return directModelId;
   }
   const tier = agentTier(agent);
   return modelForTier(modelConfig, tier) ?? tier;
 }
 
-function agentTier(agent: Agent): string {
-  return readProviderTier(agent.options.provider) ?? readProviderTier(agent.options) ?? "thinking";
+function runtimeModelText(model: string, modelConfig: TuraConfigResponse | undefined): string {
+  const [provider, ...modelParts] = model.split("/");
+  const modelId = modelParts.join("/");
+  return namedModelText(modelConfig, provider, modelId) ?? model;
 }
 
-function readProviderTier(value: unknown): string | undefined {
+function agentTier(agent: Agent): string {
+  return (
+    readDefaultModelTier(agent.options.provider) ??
+    readDefaultModelTier(agent.options) ??
+    "thinking"
+  );
+}
+
+function readDefaultModelTier(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
-  const tier = (value as Record<string, unknown>).tura_llm_name;
+  const record = value as Record<string, unknown>;
+  const tier = record.default_model_tier ?? record.tura_llm_name;
   return typeof tier === "string" ? tier : undefined;
+}
+
+function agentCurrentModel(agent: Agent): string | undefined {
+  const provider = readCurrentModel(agent.options.provider) ?? readCurrentModel(agent.options);
+  if (provider) {
+    return provider;
+  }
+  return undefined;
+}
+
+function readCurrentModel(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const current = (value as Record<string, unknown>).current_model;
+  return typeof current === "string" && current.includes("/") ? current : undefined;
 }
 
 function modelForTier(
   modelConfig: TuraConfigResponse | undefined,
   tier: string,
 ): string | undefined {
-  const current = modelConfig?.tiers.find((item) => item.tier === tier)?.current;
-  return current?.provider && current.model ? `${current.provider}/${current.model}` : undefined;
+  const current = modelConfig?.tiers?.find((item) => item.tier === tier)?.current;
+  return (
+    namedModelText(modelConfig, current?.provider, current?.model) ??
+    (current?.provider && current.model ? `${current.provider}/${current.model}` : undefined)
+  );
+}
+
+function namedModelText(
+  modelConfig: TuraConfigResponse | undefined,
+  provider: string | undefined,
+  model: string | undefined,
+): string | undefined {
+  if (!provider || !model) {
+    return undefined;
+  }
+  const option = (modelConfig?.tiers ?? [])
+    .flatMap((tier) => tier.options)
+    .find((item) => item.provider === provider && item.model === model);
+  const providerName = option?.provider_name || provider;
+  const modelName = option?.model_name || model;
+  return `${providerName}/${modelName}`;
 }

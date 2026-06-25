@@ -1,169 +1,88 @@
-use crate::prompt_style::{compact_context, task_status, user_new_command, PromptBuilder};
-use crate::state_machine::session_management::{
-    PlanStatus, SessionManagement, StartCondition, TaskStep,
+use std::{
+    io::{BufRead, BufReader, Write},
+    net::{SocketAddr, TcpStream},
+    time::Instant,
 };
 
-pub(crate) fn messages_for_turn(
+use crate::context::user_input_content_value;
+use crate::profile_timings;
+use crate::prompt_style::{
+    context_blocks, runtime_prompt_manual, tail_injection, task_status, user_new_command,
+    PromptBuilder,
+};
+use crate::state_machine::session_management::{
+    ContextTokenStats, PlanStatus, SessionManagement, StartCondition, TaskStep,
+};
+
+pub(crate) struct TurnMessages {
+    pub messages: Vec<serde_json::Value>,
+    pub context_tokens: ContextTokenStats,
+}
+
+pub(crate) fn messages_for_turn_with_context_limit(
     current_messages: &[serde_json::Value],
-    session: &SessionManagement,
-    original_user_task: &str,
-) -> Vec<serde_json::Value> {
+    session: &mut SessionManagement,
+    _original_user_task: &str,
+    context_limit_tokens: u64,
+) -> TurnMessages {
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let clone_start = Instant::now();
     let mut messages = current_messages.to_vec();
-    if should_append_original_user_task(&messages, original_user_task) {
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": original_user_task.trim(),
-        }));
-    }
-    if let Some(content) = user_new_command_message(&session.session_id) {
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": content,
-        }));
-    }
-    if approximate_message_tokens(&messages) >= compact_context_token_threshold() {
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": compact_context_required_message(),
-        }));
-    }
-    messages
-}
-
-fn should_append_original_user_task(
-    messages: &[serde_json::Value],
-    original_user_task: &str,
-) -> bool {
-    let task = original_user_task.trim();
-    if task.is_empty() {
-        return false;
-    }
-    !messages.iter().any(|message| {
-        message.get("role").and_then(serde_json::Value::as_str) == Some("user")
-            && message
-                .get("content")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                == Some(task)
-    })
-}
-
-fn approximate_message_tokens(messages: &[serde_json::Value]) -> usize {
-    messages
-        .iter()
-        .map(|message| estimate_message_model_visible_chars(message) / 4)
-        .sum()
-}
-
-fn estimate_message_model_visible_chars(message: &serde_json::Value) -> usize {
-    let raw = serde_json::to_string(message).unwrap_or_default().len();
-    let mut media_payload_chars = 0usize;
-    let mut media_replacement_chars = 0usize;
-    accumulate_media_payload_estimate_adjustment(
-        message,
-        &mut media_payload_chars,
-        &mut media_replacement_chars,
+    profile_timings::log_elapsed(
+        "messages_for_turn.clone_current_messages",
+        clone_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "input_message_count": current_messages.len(),
+            "output_message_count": messages.len(),
+            "input_messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(current_messages)
+            } else {
+                0
+            },
+        }),
     );
-    raw.saturating_sub(media_payload_chars)
-        .saturating_add(media_replacement_chars)
-}
-
-fn accumulate_media_payload_estimate_adjustment(
-    value: &serde_json::Value,
-    payload_chars: &mut usize,
-    replacement_chars: &mut usize,
-) {
-    match value {
-        serde_json::Value::Object(object) => {
-            if object.get("type").and_then(serde_json::Value::as_str) == Some("input_image") {
-                if let Some(image_url) = object.get("image_url").and_then(serde_json::Value::as_str)
-                {
-                    if let Some(payload) = parse_base64_media_data_url(image_url, "image/") {
-                        *payload_chars = payload_chars.saturating_add(payload.len());
-                        *replacement_chars = replacement_chars.saturating_add(4096);
-                    }
-                }
-            }
-            if object.get("type").and_then(serde_json::Value::as_str) == Some("input_audio") {
-                if let Some(payload) = object
-                    .get("input_audio")
-                    .and_then(|input_audio| input_audio.get("data"))
-                    .and_then(serde_json::Value::as_str)
-                {
-                    *payload_chars = payload_chars.saturating_add(payload.len());
-                    *replacement_chars = replacement_chars.saturating_add(8192);
-                }
-                if let Some(audio_url) = object
-                    .get("audio_url")
-                    .or_else(|| object.get("input_audio"))
-                    .and_then(|audio| audio.get("url"))
-                    .and_then(serde_json::Value::as_str)
-                {
-                    if let Some(payload) = parse_base64_media_data_url(audio_url, "audio/") {
-                        *payload_chars = payload_chars.saturating_add(payload.len());
-                        *replacement_chars = replacement_chars.saturating_add(8192);
-                    }
-                }
-            }
-            for child in object.values() {
-                accumulate_media_payload_estimate_adjustment(
-                    child,
-                    payload_chars,
-                    replacement_chars,
-                );
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                accumulate_media_payload_estimate_adjustment(
-                    item,
-                    payload_chars,
-                    replacement_chars,
-                );
-            }
-        }
-        _ => {}
+    let user_command_start = Instant::now();
+    let user_commands = fetch_user_commands(&session.session_id);
+    if !user_commands.is_empty() {
+        record_user_new_commands(session, &user_commands);
+        append_user_new_command_messages(&mut messages, &user_commands);
+    }
+    let user_command = user_new_command_message_from_commands(&user_commands);
+    profile_timings::log_elapsed(
+        "messages_for_turn.user_new_command_message",
+        user_command_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "has_user_command": user_command.is_some(),
+        }),
+    );
+    if let Some(content) = user_command {
+        tail_injection::append_tail_prompt(
+            &mut messages,
+            tail_injection::TailPrompt::developer(content),
+        );
+    }
+    profile_timings::log_elapsed(
+        "messages_for_turn.total",
+        total_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "message_count": messages.len(),
+            "context_limit_tokens": context_limit_tokens,
+        }),
+    );
+    TurnMessages {
+        messages,
+        context_tokens: ContextTokenStats {
+            input: session.context_tokens.input,
+            limit: context_limit_tokens,
+        },
     }
 }
 
-fn parse_base64_media_data_url<'a>(url: &'a str, mime_prefix: &str) -> Option<&'a str> {
-    if !url
-        .get(.."data:".len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
-    {
-        return None;
-    }
-    let comma_index = url.find(',')?;
-    let metadata = &url[..comma_index];
-    let payload = &url[comma_index + 1..];
-    let metadata_without_scheme = &metadata["data:".len()..];
-    let mut metadata_parts = metadata_without_scheme.split(';');
-    let mime_type = metadata_parts.next().unwrap_or_default();
-    let has_base64_marker = metadata_parts.any(|part| part.eq_ignore_ascii_case("base64"));
-    if !mime_type
-        .get(..mime_prefix.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(mime_prefix))
-    {
-        return None;
-    }
-    has_base64_marker.then_some(payload)
-}
-
-fn compact_context_token_threshold() -> usize {
-    std::env::var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .unwrap_or(220_000)
-}
-
-fn compact_context_required_message() -> String {
-    PromptBuilder::new()
-        .part(compact_context::COMPACT_CONTEXT_REQUIRED)
-        .render()
-}
-
-pub(super) fn user_new_command_message(session_id: &str) -> Option<String> {
-    let commands = fetch_user_commands(session_id);
+fn user_new_command_message_from_commands(commands: &[String]) -> Option<String> {
     if commands.is_empty() {
         return None;
     }
@@ -181,119 +100,129 @@ pub(super) fn user_new_command_message(session_id: &str) -> Option<String> {
     )
 }
 
+fn append_user_new_command_messages(messages: &mut Vec<serde_json::Value>, commands: &[String]) {
+    for command in commands.iter().map(|command| command.trim()) {
+        if command.is_empty() {
+            continue;
+        }
+        messages.push(serde_json::json!({
+            "role": "developer",
+            "content": user_input_content_value(command),
+        }));
+    }
+}
+
+fn record_user_new_commands(session: &mut SessionManagement, commands: &[String]) {
+    for command in commands.iter().map(|command| command.trim()) {
+        if command.is_empty() {
+            continue;
+        }
+        let now = chrono::Utc::now();
+        let record = serde_json::json!({
+            "type": "user",
+            "role": "developer",
+            "content": user_input_content_value(command),
+            "created_at": now.timestamp_millis(),
+            "updated_at": now.timestamp_millis(),
+            "timestamp": now.to_rfc3339(),
+        });
+        session.push_log(
+            serde_json::to_string(&record).unwrap_or_else(|_| "message: user".to_string()),
+            now,
+        );
+    }
+}
+
 pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
-    if std::env::var("TURA_DISABLE_GATEWAY_CALLBACKS")
-        .ok()
-        .as_deref()
-        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    {
+    if super::constants::gateway_callbacks_disabled() {
         return Vec::new();
     }
-    let endpoint = format!(
-        "{}/session/{}/user-commands",
-        gateway_base_url(),
-        url_escape(session_id)
-    );
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    else {
-        return Vec::new();
-    };
-    runtime
-        .block_on(async move {
-            let response = reqwest::Client::new()
-                .get(endpoint)
-                .timeout(std::time::Duration::from_secs(2))
-                .send()
-                .await
-                .ok()?;
-            if !response.status().is_success() {
-                return None;
-            }
-            let value = response.json::<serde_json::Value>().await.ok()?;
-            Some(
-                value
-                    .get("commands")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|item| item.as_str())
-                    .map(str::trim)
-                    .filter(|item| !item.is_empty())
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .unwrap_or_default()
+    fetch_user_commands_from_router(session_id).unwrap_or_default()
 }
 
-fn gateway_base_url() -> String {
-    std::env::var("TURA_GATEWAY_URL")
-        .or_else(|_| std::env::var("GATEWAY_BASE_URL"))
-        .unwrap_or_else(|_| {
-            let port = std::env::var("TURA_GATEWAY_PORT")
-                .ok()
-                .and_then(|value| value.parse::<u16>().ok())
-                .unwrap_or(4096);
-            format!("http://127.0.0.1:{port}")
-        })
-        .trim_end_matches('/')
-        .to_string()
+fn fetch_user_commands_from_router(session_id: &str) -> Option<Vec<String>> {
+    let addr = std::env::var("TURA_ROUTER_ADDR")
+        .ok()
+        .and_then(|addr| addr.trim().parse::<SocketAddr>().ok())?;
+    let target_session_id = user_command_router_session_id(session_id);
+    let request = serde_json::json!({
+        "request_id": format!("runtime-user-commands-{}-{}", std::process::id(), chrono::Utc::now().timestamp_millis()),
+        "kind": "call",
+        "method": "session.take_user_commands",
+        "payload": {
+            "session_id": target_session_id,
+            "root_session_id": target_session_id,
+        },
+        "deadline_ms": user_command_fetch_timeout().as_millis() as u64,
+    });
+    let timeout = user_command_fetch_timeout();
+    let mut stream = TcpStream::connect_timeout(&addr, timeout).ok()?;
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    stream
+        .write_all(format!("{request}\n").as_bytes())
+        .and_then(|_| stream.flush())
+        .ok()?;
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line).ok()?;
+    let response = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
+    if !response.get("ok").and_then(serde_json::Value::as_bool)? {
+        return None;
+    }
+    Some(
+        response
+            .pointer("/payload/commands")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.as_str())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+    )
 }
 
-fn url_escape(value: &str) -> String {
-    value
-        .bytes()
-        .flat_map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                vec![byte as char]
-            }
-            _ => format!("%{byte:02X}").chars().collect(),
-        })
-        .collect()
+fn user_command_router_session_id(session_id: &str) -> String {
+    std::env::var("TURA_PARENT_SESSION_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| session_id.to_string())
 }
 
-/// Inject the short task_status reminder when the model keeps doing workspace
-/// work (command_run turns) without ever writing or settling the task state.
-/// Used by the runtime loop after N consecutive no-write command_run turns.
-pub(crate) fn push_task_status_nudge(messages: &mut Vec<serde_json::Value>) {
-    messages.push(serde_json::json!({
-        "role": "system",
-        "content": task_status::TASK_STATUS,
-    }));
+fn user_command_fetch_timeout() -> std::time::Duration {
+    std::env::var("TURA_USER_COMMAND_FETCH_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(std::time::Duration::from_millis)
+        .unwrap_or_else(|| std::time::Duration::from_millis(100))
 }
 
 pub(crate) fn push_no_tool_task_status_retry_message(
     messages: &mut Vec<serde_json::Value>,
     session: &SessionManagement,
 ) {
-    let content = PromptBuilder::new()
-        .part(task_status::planning_objective_context(&planning_objective_block(
-            session,
-        )))
-        .part("If user feedback, missing information, permissions, credentials, or keys are required, call command_run with task_status status question. If the task is complete and verified, call command_run with task_status status done. If work remains, continue with command_run.")
-        .render();
-    messages.push(serde_json::json!({
-        "role": "system",
-        "content": content,
-    }));
+    let operation_manual = runtime_prompt_manual::active_operation_manual_text(session);
+    let content = task_status::no_tool_retry(
+        &planning_objective_block(session),
+        operation_manual.as_deref(),
+    );
+    tail_injection::append_tail_prompt(messages, tail_injection::TailPrompt::developer(content));
 }
 
 pub(crate) fn planning_objective_block(session: &SessionManagement) -> String {
     let overall = session.current_objective.trim();
     let Some((_index, task)) = current_planning_task(session) else {
-        return format!("[current objective]:\n{overall}");
+        return context_blocks::current_objective_block(overall, None);
     };
-    format!(
-        "[current objective]:\n{}\n\n{}",
-        overall,
-        planning_current_task_text(task)
-    )
+    let current_task = planning_current_task_text(task);
+    context_blocks::current_objective_block(overall, Some(current_task))
 }
 
-pub(crate) fn planning_current_task_text(task: &TaskStep) -> String {
-    task.task_summary.trim().to_string()
+pub(crate) fn planning_current_task_text(task: &TaskStep) -> &str {
+    context_blocks::current_task_text(&task.task_summary)
 }
 
 fn current_planning_task(session: &SessionManagement) -> Option<(usize, &TaskStep)> {
@@ -312,16 +241,15 @@ fn current_planning_task(session: &SessionManagement) -> Option<(usize, &TaskSte
 #[cfg(test)]
 mod tests {
     use super::{
-        messages_for_turn, planning_objective_block, push_no_tool_task_status_retry_message,
+        messages_for_turn_with_context_limit, planning_objective_block,
+        push_no_tool_task_status_retry_message, record_user_new_commands,
     };
+    use crate::context::{build_messages_from_session, compact_session_context};
     use crate::state_machine::session_management::{
         PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
     use chrono::Utc;
     use std::path::PathBuf;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_session(user_input: &str) -> SessionManagement {
         let now = Utc::now();
@@ -379,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn no_tool_retry_injects_objective_context_without_original_user_task() {
+    fn no_tool_retry_injects_active_goal_instead_of_last_user_message() {
         let now = Utc::now();
         let mut session = SessionManagement::new(
             "sess-no-tool-retry".to_string(),
@@ -405,11 +333,13 @@ mod tests {
             .as_str()
             .expect("prompt message content should be a string");
 
-        assert!(content.contains("Continue working toward the active thread goal."));
-        assert!(content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"));
-        assert!(content.contains("task_status status question"));
-        assert!(content.contains("task_status status done"));
-        assert!(content.contains("continue with command_run"));
+        assert!(content.contains("Continue working toward the active thread user goal"));
+        assert!(content.contains("active_goal:\n[current objective]:\nSTATE MACHINE OBJECTIVE"));
+        assert!(content.contains("Do not infer the objective from the last user message"));
+        assert!(
+            !content.contains("The last user message in the conversation is the current objective")
+        );
+        assert!(!content.contains("ORIGINAL HUGE PROMPT"));
         assert!(!content.contains("original_user_task:"));
     }
 
@@ -448,16 +378,19 @@ mod tests {
             .as_str()
             .expect("prompt message content should be a string");
 
-        assert!(content.contains("[current objective]:\nfix the task\n\nPatch parser"));
+        assert!(
+            content.contains("active_goal:\n[current objective]:\nfix the task\n\nPatch parser")
+        );
+        assert!(
+            !content.contains("The last user message in the conversation is the current objective")
+        );
         assert!(!content.contains("original_user_task:"));
     }
 
     #[test]
-    fn messages_for_turn_injects_compact_context_prompt_above_threshold() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "10");
+    fn messages_for_turn_preserves_provider_context_tokens_without_estimating() {
         let now = Utc::now();
-        let session = SessionManagement::new(
+        let mut session = SessionManagement::new(
             "sess-compact-threshold".to_string(),
             "compact threshold".to_string(),
             PathBuf::from("C:/workspace"),
@@ -473,156 +406,81 @@ mod tests {
             "fix the task".to_string(),
             now,
         );
+        session.context_tokens.input = 1234;
 
-        let messages = messages_for_turn(
+        let turn = messages_for_turn_with_context_limit(
             &[serde_json::json!({
                 "role": "user",
                 "content": "x".repeat(100)
             })],
-            &session,
+            &mut session,
             "fix the task",
+            10,
         );
-        let joined = messages
+        let joined = turn
+            .messages
             .iter()
             .map(|message| message.to_string())
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(joined.contains("above about 220,000 tokens"));
-        assert!(joined.contains("compact_context as the final command"));
-        std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+        assert!(!joined.contains("Context checkpoint required"));
+        assert!(!joined.contains("command_type\":\"compact_context"));
+        assert_eq!(turn.context_tokens.limit, 10);
+        assert_eq!(turn.context_tokens.input, 1234);
     }
 
     #[test]
-    fn image_data_urls_are_discounted_for_compact_threshold_estimation() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "50000");
-        let now = Utc::now();
-        let session = SessionManagement::new(
-            "sess-image-estimate".to_string(),
-            "image estimate".to_string(),
-            PathBuf::from("C:/workspace"),
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "remember the image".to_string(),
-                file_input: vec![],
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "remember the image".to_string(),
-            now,
-        );
+    fn messages_for_turn_does_not_append_original_user_task_tail() {
+        let mut session = test_session("tail task");
+        let messages = messages_for_turn_with_context_limit(
+            &[
+                serde_json::json!({"role": "system", "content": "fixed system prefix"}),
+                serde_json::json!({"role": "user", "content": "x".repeat(100)}),
+            ],
+            &mut session,
+            "tail task",
+            10,
+        )
+        .messages;
 
-        let messages = messages_for_turn(
-            &[serde_json::json!({
-                "type": "function_call_output",
-                "call_id": "call_image",
-                "output": [
-                    {
-                        "type": "input_image",
-                        "image_url": format!("data:image/png;base64,{}", "A".repeat(240_000))
-                    }
-                ]
-            })],
-            &session,
-            "remember the image",
-        );
-        let joined = messages
-            .iter()
-            .map(|message| message.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(!joined.contains("above about 220,000 tokens"));
-        std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "fixed system prefix");
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().all(|message| {
+            message.get("content").and_then(serde_json::Value::as_str) != Some("tail task")
+        }));
     }
 
     #[test]
-    fn audio_payloads_are_discounted_for_compact_threshold_estimation() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "50000");
-        let now = Utc::now();
-        let session = SessionManagement::new(
-            "sess-audio-estimate".to_string(),
-            "audio estimate".to_string(),
-            PathBuf::from("C:/workspace"),
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "remember the audio".to_string(),
-                file_input: vec![],
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "remember the audio".to_string(),
-            now,
+    fn user_new_commands_record_as_user_type_developer_messages_for_compaction() {
+        let mut session = test_session("original task");
+        record_user_new_commands(
+            &mut session,
+            &[String::from("change direction and inspect the new failure")],
         );
 
-        let messages = messages_for_turn(
-            &[serde_json::json!({
-                "type": "function_call_output",
-                "call_id": "call_audio",
-                "output": [
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "format": "mp3",
-                            "data": "A".repeat(240_000)
-                        }
-                    }
-                ]
-            })],
-            &session,
-            "remember the audio",
-        );
-        let joined = messages
-            .iter()
-            .map(|message| message.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(!joined.contains("above about 220,000 tokens"));
-        std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
-    }
-
-    #[test]
-    fn messages_for_turn_injects_compact_context_prompt_at_default_220k_threshold() {
-        let now = Utc::now();
-        let session = SessionManagement::new(
-            "sess-compact-default-threshold".to_string(),
-            "compact default threshold".to_string(),
-            PathBuf::from("C:/workspace"),
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "continue the long task".to_string(),
-                file_input: vec![],
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "continue the long task".to_string(),
-            now,
-        );
-
-        let messages = messages_for_turn(
-            &[serde_json::json!({
-                "role": "user",
-                "content": "x".repeat(900_000)
-            })],
-            &session,
-            "continue the long task",
-        );
-        let last = messages
+        let log_entry = session
+            .session_log
             .last()
-            .and_then(|message| message.get("content"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
+            .expect("user new command should be recorded");
+        let value: serde_json::Value = serde_json::from_str(log_entry).expect("json log");
+        assert_eq!(value["type"], "user");
+        assert_eq!(value["role"], "developer");
+        assert_eq!(
+            value["content"],
+            "change direction and inspect the new failure"
+        );
 
-        assert!(last.contains("above about 220,000 tokens"));
-        assert!(last.contains("compact_context as the final command"));
+        compact_session_context(&mut session, "handoff").expect("compact should succeed");
+        let joined = build_messages_from_session(&session)
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("current_run/user: change direction and inspect the new failure"),
+            "{joined}"
+        );
     }
 }

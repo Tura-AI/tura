@@ -35,6 +35,7 @@ export function Composer(props: {
     x: number;
     y: number;
   }>();
+  const [composerDragDepth, setComposerDragDepth] = createSignal(0);
   const imageById = createMemo(() => new Map(props.images.map((image) => [image.id, image])));
   const attachmentsById = imageById;
   const previewImage = createMemo(() =>
@@ -54,6 +55,7 @@ export function Composer(props: {
       (!props.text.trim() && props.images.length === 0),
   );
   const textEmpty = createMemo(() => !props.text.trim() && props.images.length === 0);
+  const composerDragActive = createMemo(() => composerDragDepth() > 0);
 
   function submitFromControl() {
     if (props.running) {
@@ -133,6 +135,55 @@ export function Composer(props: {
     if (fileInput) {
       fileInput.value = "";
     }
+  }
+
+  function composerDataTransferHasFiles(dataTransfer: DataTransfer | null): boolean {
+    if (!dataTransfer) {
+      return false;
+    }
+    if (Array.from(dataTransfer.items ?? []).some((item) => item.kind === "file")) {
+      return true;
+    }
+    return dataTransfer.files.length > 0;
+  }
+
+  function handleComposerDragEnter(event: DragEvent) {
+    if (!composerDataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setComposerDragDepth((depth) => depth + 1);
+  }
+
+  function handleComposerDragOver(event: DragEvent) {
+    if (!composerDataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  }
+
+  function handleComposerDragLeave(event: DragEvent) {
+    if (!composerDataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setComposerDragDepth((depth) => Math.max(0, depth - 1));
+  }
+
+  function handleComposerDrop(event: DragEvent) {
+    if (!composerDataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setComposerDragDepth(0);
+    void attachFiles(event.dataTransfer?.files ?? null);
   }
 
   function insertComposerTokens(images: ComposerImage[]) {
@@ -302,7 +353,13 @@ export function Composer(props: {
   }
 
   return (
-    <footer class="bottom-composer composer">
+    <footer
+      class={classNames("bottom-composer composer", composerDragActive() && "composer-drag-active")}
+      onDragEnter={handleComposerDragEnter}
+      onDragOver={handleComposerDragOver}
+      onDragLeave={handleComposerDragLeave}
+      onDrop={handleComposerDrop}
+    >
       <Show when={props.slashCommands.length > 0}>
         <div class="slash-menu">
           <For each={props.slashCommands}>
@@ -315,18 +372,7 @@ export function Composer(props: {
           </For>
         </div>
       </Show>
-      <div
-        class="composer-input"
-        onDragOver={(event) => {
-          if (Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === "file")) {
-            event.preventDefault();
-          }
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          void attachFiles(event.dataTransfer?.files ?? null);
-        }}
-      >
+      <div class="composer-input">
         <div
           ref={editor}
           class="composer-rich-editor"

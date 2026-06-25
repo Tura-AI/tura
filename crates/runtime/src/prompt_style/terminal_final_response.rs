@@ -1,0 +1,1 @@
+pub const TERMINAL_FINAL_RESPONSE: &str = "The task was marked done. Now send the user-facing assistant reply directly, without calling tools and without mentioning task_status, command_run, or internal status updates.";

@@ -9,6 +9,17 @@ license.workspace = true
 name = "tura_persona"
 path = "src/lib.rs"
 
+[features]
+business-tests = []
+
+[[test]]
+name = "persona_lifecycle_flow"
+path = "tests/business/persona_lifecycle_flow.rs"
+required-features = ["business-tests"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

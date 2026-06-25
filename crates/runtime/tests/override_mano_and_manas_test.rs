@@ -32,6 +32,8 @@ fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>
     let now = Utc::now();
     let provider = ProviderConfig {
         tura_llm_name: coding_agent_provider_name(),
+        default_model_tier: None,
+        current_model: None,
         stream: true,
         temperature: 0.5,
         max_tokens: 0,
@@ -51,6 +53,7 @@ fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>
             None,
             true,
             false,
+            false,
             provider.clone(),
             validator.clone(),
             now,
@@ -60,6 +63,7 @@ fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>
             "override_executor".to_string(),
             PathBuf::from("/hardcoded/agent/two"),
             None,
+            false,
             false,
             false,
             provider,

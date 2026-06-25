@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::extract::{Json, Path, Query};
 use axum::response::{Html, IntoResponse};
 use chrono::Utc;
@@ -12,6 +10,10 @@ use oauth_exchange::{
     start_github_copilot_device_flow, wait_for_oauth_completed,
 };
 
+use crate::contracts::{
+    OAuthAuthorizeParams, OAuthAuthorizePayload, OAuthAuthorizeResponse, OAuthCallbackParams,
+    OAuthCallbackPayload, OAuthMethod, OAuthRedirectCallbackParams, ProviderAuthActionResponse,
+};
 use crate::mock::global_store;
 
 use super::oauth_support::{
@@ -20,7 +22,7 @@ use super::oauth_support::{
 };
 use super::{
     auth_update, build_provider_auth_status, persist_provider_auth, provider_auth_methods,
-    provider_display_name, validation_detail, ProviderAuthActionResponse,
+    provider_display_name, validation_detail,
 };
 
 pub async fn oauth_authorize(
@@ -161,34 +163,6 @@ pub async fn oauth_authorize(
     })
 }
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
-pub struct OAuthAuthorizeParams {
-    pub directory: Option<String>,
-    pub workspace: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct OAuthAuthorizePayload {
-    pub method: usize,
-    pub inputs: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OAuthMethod {
-    #[serde(rename = "auto")]
-    Auto,
-    #[serde(rename = "code")]
-    Code,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct OAuthAuthorizeResponse {
-    pub url: String,
-    pub method: OAuthMethod,
-    pub instructions: String,
-}
-
 pub async fn oauth_callback(
     Path(provider_id): Path<String>,
     Query(_params): Query<OAuthCallbackParams>,
@@ -264,7 +238,14 @@ async fn complete_oauth_callback(
         );
     }
 
-    let pending = has_pending.expect("pending OAuth state should exist after is_none check");
+    let Some(pending) = has_pending else {
+        return oauth_callback_response(
+            &provider_id,
+            false,
+            "provider.oauth.pending_missing",
+            "No pending OAuth login was found. Click OAuth login again, then paste the new code.",
+        );
+    };
     if matches!(pending.method.as_str(), "code" | "token" | "oauth_pkce")
         && payload
             .code
@@ -710,38 +691,329 @@ async fn finish_oauth_redirect_callback(
     ))
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct OAuthCallbackParams {
-    pub directory: Option<String>,
-    pub workspace: Option<String>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock::global_store;
+    use axum::extract::{Json, Path, Query};
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct OAuthCallbackPayload {
-    pub method: usize,
-    pub state: Option<String>,
-    pub code: Option<String>,
-}
+    fn clear_oauth(provider_id: &str) {
+        let store = global_store();
+        store.pending_oauth.write().remove(provider_id);
+        store.completed_oauth.write().remove(provider_id);
+    }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct OAuthRedirectCallbackParams {
-    pub code: Option<String>,
-    pub state: Option<String>,
-    pub error: Option<String>,
-}
+    fn set_pending(
+        provider_id: &str,
+        method: &str,
+        code: Option<&str>,
+        state: Option<&str>,
+        verifier: Option<&str>,
+    ) {
+        clear_oauth(provider_id);
+        global_store().set_oauth_state(
+            provider_id,
+            method.to_string(),
+            code.map(ToString::to_string),
+            format!("https://auth.example.test/{provider_id}"),
+            state.map(ToString::to_string),
+            verifier.map(ToString::to_string),
+        );
+    }
 
-impl OAuthRedirectCallbackParams {
-    fn has_callback_payload(&self) -> bool {
-        self.code
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-            || self
-                .state
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-            || self
-                .error
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
+    #[test]
+    fn normalize_oauth_code_accepts_plain_code_query_url_and_fragment_state() {
+        assert_eq!(
+            normalize_oauth_code("  plain-code # callback-state "),
+            NormalizedOAuthCode {
+                code: "plain-code".to_string(),
+                state: Some("callback-state".to_string()),
+                verifier: None,
+            }
+        );
+        assert_eq!(
+            normalize_oauth_code("code=direct-code&ignored=1#fragment-state"),
+            NormalizedOAuthCode {
+                code: "direct-code".to_string(),
+                state: Some("fragment-state".to_string()),
+                verifier: None,
+            }
+        );
+        assert_eq!(
+            normalize_oauth_code(
+                "https://localhost/callback?state=query-state&code=url%20code#ignored"
+            ),
+            NormalizedOAuthCode {
+                code: "url code".to_string(),
+                state: Some("query-state".to_string()),
+                verifier: None,
+            }
+        );
+    }
+
+    #[test]
+    fn normalize_oauth_code_distinguishes_pkce_verifier_from_state_fragment() {
+        let verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+        assert_eq!(
+            normalize_oauth_code(&format!("manual-code#{verifier}")),
+            NormalizedOAuthCode {
+                code: "manual-code".to_string(),
+                state: None,
+                verifier: Some(verifier.to_string()),
+            }
+        );
+
+        for value in ["short", "contains space and is long enough to be a state"] {
+            assert!(!looks_like_pkce_verifier(value));
+        }
+        assert!(looks_like_pkce_verifier(verifier));
+    }
+
+    #[test]
+    fn claude_code_oauth_token_detection_is_prefix_only_after_trim() {
+        assert!(looks_like_claude_code_oauth_token(" sk-ant-oat-token "));
+        assert!(looks_like_claude_code_oauth_token("sk-ant-ort-token"));
+        assert!(!looks_like_claude_code_oauth_token("x-sk-ant-oat-token"));
+        assert!(!looks_like_claude_code_oauth_token("sk-ant-api-token"));
+    }
+
+    #[test]
+    fn redirect_callback_payload_presence_ignores_whitespace() {
+        assert!(!OAuthRedirectCallbackParams {
+            code: Some(" ".to_string()),
+            state: None,
+            error: None,
+        }
+        .has_callback_payload());
+        assert!(OAuthRedirectCallbackParams {
+            code: None,
+            state: Some("state".to_string()),
+            error: None,
+        }
+        .has_callback_payload());
+        assert!(OAuthRedirectCallbackParams {
+            code: None,
+            state: None,
+            error: Some("access_denied".to_string()),
+        }
+        .has_callback_payload());
+    }
+
+    #[test]
+    fn oauth_callback_response_uses_stable_provider_code_level_and_detail() {
+        let response = oauth_callback_response("flow-response-provider", false, "flow.error", "no");
+        assert!(!response.ok);
+        assert_eq!(response.provider_id, "flow-response-provider");
+        assert_eq!(response.code, "flow.error");
+        assert_eq!(response.message, "no");
+        assert_eq!(response.level.as_deref(), Some("invalid"));
+        assert_eq!(response.details.len(), 1);
+        assert_eq!(response.details[0].code, "flow.error");
+        assert!(response.status.is_some());
+
+        let response = oauth_callback_response("flow-response-provider", true, "flow.ok", "yes");
+        assert!(response.ok);
+        assert_eq!(response.level.as_deref(), Some("valid"));
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_rejects_unknown_method_without_creating_pending_state() {
+        let provider_id = "flow-authorize-invalid";
+        clear_oauth(provider_id);
+
+        let Json(response) = oauth_authorize(
+            Path(provider_id.to_string()),
+            Query(OAuthAuthorizeParams::default()),
+            Json(OAuthAuthorizePayload {
+                method: 99,
+                inputs: None,
+            }),
+        )
+        .await;
+
+        assert!(response.url.is_empty());
+        assert_eq!(response.instructions, "Invalid auth method");
+        assert!(global_store().peek_oauth_state(provider_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn empty_callback_code_reports_missing_code_and_keeps_manual_pending_state() {
+        let provider_id = "flow-empty-code-token";
+        set_pending(provider_id, "token", Some("confirm"), Some("state"), None);
+
+        let response = complete_oauth_callback(
+            provider_id.to_string(),
+            OAuthCallbackPayload {
+                method: 0,
+                state: Some("state".to_string()),
+                code: Some("  ".to_string()),
+            },
+        )
+        .await;
+
+        assert!(!response.ok);
+        assert_eq!(response.code, "provider.oauth.code_missing");
+        assert!(global_store().peek_oauth_state(provider_id).is_some());
+        clear_oauth(provider_id);
+    }
+
+    #[tokio::test]
+    async fn pkce_state_mismatch_does_not_consume_pending_state() {
+        let provider_id = "flow-pkce-state-mismatch";
+        set_pending(
+            provider_id,
+            "oauth_pkce",
+            None,
+            Some("expected-state"),
+            Some("verifier"),
+        );
+
+        let response = complete_oauth_callback(
+            provider_id.to_string(),
+            OAuthCallbackPayload {
+                method: 0,
+                state: Some("wrong-state".to_string()),
+                code: Some("callback-code".to_string()),
+            },
+        )
+        .await;
+
+        assert!(!response.ok);
+        assert_eq!(response.code, "provider.oauth.state_mismatch");
+        assert_eq!(
+            global_store()
+                .peek_oauth_state(provider_id)
+                .and_then(|pending| pending.state),
+            Some("expected-state".to_string())
+        );
+        clear_oauth(provider_id);
+    }
+
+    #[tokio::test]
+    async fn manual_confirmation_code_mismatch_keeps_pending_state_for_retry() {
+        let provider_id = "flow-code-mismatch";
+        set_pending(
+            provider_id,
+            "code",
+            Some("expected-code"),
+            Some("state"),
+            None,
+        );
+
+        let response = complete_oauth_callback(
+            provider_id.to_string(),
+            OAuthCallbackPayload {
+                method: 0,
+                state: Some("state".to_string()),
+                code: Some("wrong-code".to_string()),
+            },
+        )
+        .await;
+
+        assert!(!response.ok);
+        assert_eq!(response.code, "provider.oauth.code_mismatch");
+        assert_eq!(
+            global_store()
+                .peek_oauth_state(provider_id)
+                .and_then(|pending| pending.code),
+            Some("expected-code".to_string())
+        );
+        clear_oauth(provider_id);
+    }
+
+    #[tokio::test]
+    async fn redirect_callback_error_and_missing_fields_return_html_without_state_lookup() {
+        let error = finish_oauth_redirect_callback(
+            OAuthRedirectCallbackParams {
+                code: Some("code".to_string()),
+                state: Some("state".to_string()),
+                error: Some("access_denied".to_string()),
+            },
+            None,
+        )
+        .await;
+        assert!(error.0.contains("OAuth provider returned an error"));
+
+        let missing_code = finish_oauth_redirect_callback(
+            OAuthRedirectCallbackParams {
+                code: Some(" ".to_string()),
+                state: Some("state".to_string()),
+                error: None,
+            },
+            None,
+        )
+        .await;
+        assert!(missing_code.0.contains("Missing authorization code"));
+
+        let missing_state = finish_oauth_redirect_callback(
+            OAuthRedirectCallbackParams {
+                code: Some("code".to_string()),
+                state: None,
+                error: None,
+            },
+            None,
+        )
+        .await;
+        assert!(missing_state.0.contains("Missing OAuth state"));
+    }
+
+    #[tokio::test]
+    async fn redirect_callback_rejects_unknown_state_expected_provider_and_non_pkce() {
+        let unknown_state = finish_oauth_redirect_callback(
+            OAuthRedirectCallbackParams {
+                code: Some("code".to_string()),
+                state: Some("missing-state".to_string()),
+                error: None,
+            },
+            None,
+        )
+        .await;
+        assert!(unknown_state
+            .0
+            .contains("OAuth state expired or was not found"));
+
+        let provider_id = "flow-redirect-provider";
+        set_pending(
+            provider_id,
+            "oauth_pkce",
+            None,
+            Some("redirect-state"),
+            Some("verifier"),
+        );
+        let wrong_provider = finish_oauth_redirect_callback(
+            OAuthRedirectCallbackParams {
+                code: Some("code".to_string()),
+                state: Some("redirect-state".to_string()),
+                error: None,
+            },
+            Some("other-provider".to_string()),
+        )
+        .await;
+        assert!(wrong_provider
+            .0
+            .contains("OAuth callback provider did not match the pending login"));
+        assert!(global_store().peek_oauth_state(provider_id).is_none());
+
+        let provider_id = "flow-redirect-non-pkce";
+        set_pending(
+            provider_id,
+            "token",
+            Some("confirm"),
+            Some("token-state"),
+            None,
+        );
+        let non_pkce = finish_oauth_redirect_callback(
+            OAuthRedirectCallbackParams {
+                code: Some("code".to_string()),
+                state: Some("token-state".to_string()),
+                error: None,
+            },
+            None,
+        )
+        .await;
+        assert!(non_pkce
+            .0
+            .contains("OAuth callback did not match a PKCE login"));
+        assert!(global_store().peek_oauth_state(provider_id).is_none());
     }
 }

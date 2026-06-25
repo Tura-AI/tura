@@ -1,0 +1,51 @@
+.plan-feedback-prompt {
+  z-index: 1;
+  display: grid;
+  gap: var(--space-2);
+  width: min(100%, var(--page-max));
+  margin: 0 auto var(--space-3);
+  justify-self: center;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  color: var(--muted);
+}
+
+.plan-feedback-prompt span {
+  height: 1px;
+  background: var(--line);
+}
+
+.plan-feedback-prompt p {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin: 0;
+  font-size: var(--font-small);
+}
+
+.plan-feedback-prompt.error {
+  color: var(--danger);
+}
+
+.plan-feedback-prompt.error span {
+  background: color-mix(in srgb, var(--danger) 42%, var(--line));
+}
+
+.plan-feedback-prompt small {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.plan-feedback-provider-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.plan-feedback-provider-link:hover {
+  color: var(--ink);
+}

@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default permissions for the Tura GUI shell.","local":true,"windows":["main"],"permissions":["core:default","allow-start-gateway"]}}
+{"default":{"identifier":"default","description":"Default permissions for the tura_gui shell.","local":true,"windows":["main"],"permissions":["core:default","allow-start-gateway","allow-open-external-url"]}}

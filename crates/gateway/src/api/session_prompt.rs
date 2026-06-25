@@ -7,29 +7,32 @@ pub async fn prompt_async(
     session_store().clear_cancelled(&session_id);
     let content = prompt_text(&payload).unwrap_or_else(|| "Prompt submitted".to_string());
     let session = session_store().get_session(&session_id);
+    if session.is_none() {
+        return StatusCode::NOT_FOUND;
+    }
     if session
         .as_ref()
         .is_some_and(|session| matches!(session.status, SessionStatus::Busy))
     {
-        let _ = session_store().add_message_with_ids(
+        let metadata = serde_json::json!({
+            "kind": "user_new_command",
+        });
+        let parts = prompt_message_parts(&payload);
+        let _ = session_store().add_message_with_parts(
             &session_id,
             SessionMessageRole::User,
-            content.clone(),
+            parts,
             prompt_message_id(&payload),
-            first_prompt_part_id(&payload),
-            Some(serde_json::json!({
-                "kind": "user_new_command",
-            })),
+            Some(metadata),
         );
-        session_store().append_user_command(&session_id, content);
+        append_user_command_for_runtime(&session_id, content);
         return StatusCode::NO_CONTENT;
     }
-    let _ = session_store().add_message_with_ids(
+    let user_message = session_store().add_message_with_parts(
         &session_id,
         SessionMessageRole::User,
-        content,
+        prompt_message_parts(&payload),
         prompt_message_id(&payload),
-        first_prompt_part_id(&payload),
         None,
     );
     session_store().update_session_status(&session_id, SessionStatusMano::Busy);
@@ -47,7 +50,10 @@ pub async fn prompt_async(
         session_store().get_messages(&session_id).len(),
     );
     let session_id_for_task = session_id;
-    let payload_for_task = payload;
+    let payload_for_task = user_message
+        .as_ref()
+        .map(|message| prompt_payload_with_frontend_ids(payload.clone(), message))
+        .unwrap_or(payload);
     tokio::task::spawn_blocking(move || {
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run_mano_for_prompt(session_id_for_task.clone(), payload_for_task);
@@ -77,29 +83,7 @@ pub fn start_task_scheduler() {
 }
 
 fn run_due_task_scheduler_tick() {
-    for run in session_store().claim_due_task_runs(chrono::Utc::now()) {
-        let prompt = scheduler_prompt_payload(&run.task_summary, run.start_condition);
-        let content = prompt_text(&prompt).unwrap_or_else(|| run.task_summary.clone());
-        let initial_count = session_store().get_messages(&run.session_id).len();
-        let _ = session_store().add_message_with_metadata(
-            &run.session_id,
-            SessionMessageRole::User,
-            content,
-            Some(serde_json::json!({
-                "kind": "task_scheduler",
-                "start_condition": run.start_condition,
-            })),
-        );
-        session_store().set_todos(
-            &run.session_id,
-            vec![serde_json::json!({
-                "id": format!("{}:scheduled-task", run.session_id),
-                "content": run.task_summary,
-                "status": "in_progress",
-                "priority": "medium",
-            })],
-        );
-        watch_direct_mano_messages(run.session_id.clone(), initial_count);
+    run_due_task_scheduler_tick_with_launcher(|run, prompt| {
         std::thread::spawn(move || {
             if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 run_mano_for_prompt(run.session_id.clone(), prompt);
@@ -118,7 +102,59 @@ fn run_due_task_scheduler_tick() {
                 );
             }
         });
+    });
+}
+
+fn run_due_task_scheduler_tick_with_launcher(
+    mut launch: impl FnMut(crate::session::store::ScheduledTaskRun, serde_json::Value),
+) {
+    run_due_task_scheduler_tick_for_store_with_launcher(session_store(), true, |run, prompt| {
+        launch(run, prompt);
+    });
+}
+
+fn run_due_task_scheduler_tick_for_store_with_launcher(
+    store: &crate::session::SessionStore,
+    watch_messages: bool,
+    mut launch: impl FnMut(crate::session::store::ScheduledTaskRun, serde_json::Value),
+) {
+    for run in store.claim_due_task_runs(chrono::Utc::now()) {
+        let prompt = scheduler_prompt_payload(&run.task_summary, run.start_condition);
+        let content = prompt_text(&prompt).unwrap_or_else(|| run.task_summary.clone());
+        let initial_count = store.get_messages(&run.session_id).len();
+        let _ = store.add_message_with_metadata(
+            &run.session_id,
+            SessionMessageRole::User,
+            content,
+            Some(serde_json::json!({
+                "kind": "task_scheduler",
+                "start_condition": run.start_condition,
+            })),
+        );
+        store.set_todos(
+            &run.session_id,
+            vec![serde_json::json!({
+                "id": format!("{}:scheduled-task", run.session_id),
+                "content": run.task_summary,
+                "status": "in_progress",
+                "priority": "medium",
+            })],
+        );
+        if watch_messages {
+            watch_direct_mano_messages(run.session_id.clone(), initial_count);
+        }
+        launch(run, prompt);
     }
+}
+
+#[cfg(any(feature = "business-tests", feature = "os-tests"))]
+pub fn run_due_task_scheduler_tick_for_business_test() {
+    run_due_task_scheduler_tick_with_launcher(|_, _| {});
+}
+
+#[cfg(any(feature = "business-tests", feature = "os-tests"))]
+pub fn run_due_task_scheduler_tick_for_store_business_test(store: &crate::session::SessionStore) {
+    run_due_task_scheduler_tick_for_store_with_launcher(store, false, |_, _| {});
 }
 
 fn scheduler_prompt_payload(
@@ -202,6 +238,83 @@ pub(super) fn prompt_text(payload: &serde_json::Value) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+fn prompt_message_parts(payload: &serde_json::Value) -> Vec<crate::session::MessagePart> {
+    payload
+        .get("parts")
+        .and_then(serde_json::Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(prompt_message_part)
+                .collect::<Vec<_>>()
+        })
+        .filter(|parts| !parts.is_empty())
+        .unwrap_or_else(|| {
+            vec![crate::session::MessagePart {
+                id: prompt_fallback_part_id(),
+                part_type: "text".to_string(),
+                content: Some("Prompt submitted".to_string()),
+                text: Some("Prompt submitted".to_string()),
+                metadata: None,
+                call_id: None,
+                tool: None,
+                state: None,
+            }]
+        })
+}
+
+fn prompt_message_part(part: &serde_json::Value) -> Option<crate::session::MessagePart> {
+    let part_type = part
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("text");
+    if !is_queue_prompt_part_type(part_type) {
+        return None;
+    }
+    Some(crate::session::MessagePart {
+        id: part
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(prompt_fallback_part_id),
+        part_type: part_type.to_string(),
+        content: part
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string),
+        text: part
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string),
+        metadata: part.get("metadata").cloned(),
+        call_id: part
+            .get("callID")
+            .or_else(|| part.get("call_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string),
+        tool: part
+            .get("tool")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string),
+        state: part.get("state").cloned(),
+    })
+}
+
+fn is_queue_prompt_part_type(part_type: &str) -> bool {
+    matches!(
+        part_type.trim().to_ascii_lowercase().as_str(),
+        "text" | "message" | "voice" | "audio" | "speech" | "input_audio" | "audio_url"
+    )
+}
+
+fn prompt_fallback_part_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 pub(super) fn prompt_message_id(payload: &serde_json::Value) -> Option<String> {
     payload
         .get("messageID")
@@ -217,12 +330,58 @@ pub(super) fn first_prompt_part_id(payload: &serde_json::Value) -> Option<String
         .get("parts")?
         .as_array()?
         .iter()
-        .find(|part| part.get("type").and_then(|value| value.as_str()) == Some("text"))?
+        .find(|part| {
+            part.get("type")
+                .and_then(|value| value.as_str())
+                .is_none_or(|part_type| part_type == "text")
+        })?
         .get("id")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn prompt_payload_with_frontend_ids(
+    mut payload: serde_json::Value,
+    message: &crate::session::Message,
+) -> serde_json::Value {
+    let Some(object) = payload.as_object_mut() else {
+        return payload;
+    };
+    object
+        .entry("messageID".to_string())
+        .or_insert_with(|| serde_json::Value::String(message.id.clone()));
+
+    if first_prompt_part_id(&serde_json::Value::Object(object.clone())).is_some() {
+        return payload;
+    }
+
+    let Some(part_id) = message
+        .parts
+        .iter()
+        .find(|part| part.part_type == "text")
+        .map(|part| part.id.clone())
+    else {
+        return payload;
+    };
+    if let Some(parts) = object
+        .get_mut("parts")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        if let Some(part) = parts.iter_mut().find(|part| {
+            part.get("type")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|part_type| part_type == "text")
+        }) {
+            if let Some(part_object) = part.as_object_mut() {
+                part_object
+                    .entry("id".to_string())
+                    .or_insert_with(|| serde_json::Value::String(part_id));
+            }
+        }
+    }
+    payload
 }
 
 fn prompt_runtime_context(payload: &serde_json::Value) -> Option<String> {
@@ -234,43 +393,13 @@ fn prompt_runtime_context(payload: &serde_json::Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-/// 通过 router CLI 转发一次 prompt：gateway 仅做转发 + 状态收尾，
-/// runtime 行为全部经 router→runtime worker 子进程执行，事件经现有回调通道回报。
+/// Forward one prompt through the router; the gateway only handles handoff and
+/// final state bookkeeping. Runtime work runs in router-managed worker
+/// subprocesses and reports events through the existing callback channel.
 pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
     let content = prompt_text(&payload).unwrap_or_else(|| "Prompt submitted".to_string());
     let before_count = session_store().get_messages(&session_id).len();
     let session = session_store().get_session(&session_id);
-
-    let agent = prompt_agent_override(&payload)
-        .or_else(|| session.as_ref().and_then(|session| session.agent.clone()));
-    let runtime_context = prompt_runtime_context(&payload);
-    let force_planning = session
-        .as_ref()
-        .map(|session| session.force_planning)
-        .unwrap_or(false);
-    let model_override = prompt_model_override(&payload)
-        .or_else(|| session.as_ref().and_then(|session| session.model.clone()))
-        .and_then(normalize_model_override);
-    let agent_runtime_settings = agent
-        .as_deref()
-        .and_then(agent_runtime_settings)
-        .unwrap_or_default();
-    let reasoning_effort = prompt_model_variant(&payload)
-        .or(agent_runtime_settings.reasoning_effort)
-        .or_else(|| {
-            session
-                .as_ref()
-                .and_then(|session| session.model_variant.clone())
-                .filter(|value| !value.trim().is_empty())
-        });
-    let acceleration_enabled = prompt_model_acceleration(&payload)
-        .or(agent_runtime_settings.acceleration_enabled)
-        .or_else(|| {
-            session
-                .as_ref()
-                .map(|session| session.model_acceleration_enabled)
-        })
-        .unwrap_or(false);
     let directory = session
         .as_ref()
         .and_then(|session| {
@@ -281,22 +410,81 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                 .filter(|directory| !directory.is_empty())
         })
         .or_else(|| global_store().get_current_directory());
-    let command_run_stall_guard = directory
+    let session_config = directory.as_deref().and_then(load_prompt_session_config);
+
+    let agent = prompt_agent_for_run(
+        &payload,
+        session.as_ref().and_then(|session| session.agent.clone()),
+        session_config.as_ref(),
+    );
+    let runtime_context = prompt_runtime_context(&payload);
+    let force_planning = session
+        .as_ref()
+        .map(|session| session.force_planning)
+        .unwrap_or(false);
+    let agent_runtime_settings = agent
         .as_deref()
-        .map(load_config)
-        .map(|config| config.command_run_stall_guard())
+        .and_then(|agent| agent_runtime_settings(agent, directory.as_deref()))
+        .unwrap_or_default();
+    let model_override = prompt_runtime_model_override(
+        &payload,
+        session.as_ref().and_then(|session| session.model.clone()),
+        session_config.as_ref(),
+    );
+    let reasoning_effort = prompt_model_variant(&payload)
+        .or_else(|| {
+            session_config.as_ref().and_then(|config| {
+                config.string("model_variant", |config| config.model_variant.clone())
+            })
+        })
+        .or(agent_runtime_settings.reasoning_effort)
+        .or_else(|| {
+            session
+                .as_ref()
+                .and_then(|session| session.model_variant.clone())
+                .filter(|value| !value.trim().is_empty())
+        });
+    let acceleration_enabled = prompt_model_acceleration(&payload)
+        .or_else(|| {
+            session_config.as_ref().and_then(|config| {
+                config.bool("model_acceleration_enabled", |config| {
+                    config.model_acceleration_enabled
+                })
+            })
+        })
+        .or(agent_runtime_settings.acceleration_enabled)
+        .or_else(|| {
+            session
+                .as_ref()
+                .map(|session| session.model_acceleration_enabled)
+        })
+        .unwrap_or(false);
+    let command_run_stall_guard = session_config
+        .as_ref()
+        .map(|config| config.config.command_run_stall_guard())
         .unwrap_or_else(|| TuraSessionConfig::default().command_run_stall_guard());
-    let language = directory
-        .as_deref()
-        .map(load_config)
-        .and_then(|config| config.language)
+    let command_run_shell = prompt_command_run_shell(&payload);
+    let language = session_config
+        .as_ref()
+        .and_then(|config| config.string("language", |config| config.language.clone()))
         .or_else(|| global_store().get_config().language)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    let persona = session_config
+        .as_ref()
+        .and_then(|config| config.string("active_persona", |config| config.active_persona.clone()))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
-    // worker env 契约：取代旧的进程级 with_*_env 注入，由 router 注入 runtime worker 子进程。
+    // Worker env contract: router injects these values into the runtime worker.
     let mut worker_env: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    if let Some(message_id) = prompt_message_id(&payload) {
+        worker_env.insert("TURA_FRONTEND_MESSAGE_ID".to_string(), message_id);
+    }
+    if let Some(part_id) = first_prompt_part_id(&payload) {
+        worker_env.insert("TURA_FRONTEND_PART_ID".to_string(), part_id);
+    }
     if let Some(reasoning) = reasoning_effort
         .as_deref()
         .map(str::trim)
@@ -313,8 +501,17 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
             "1".to_string(),
         );
     }
+    if let Some(shell) = command_run_shell {
+        worker_env.insert("TURA_COMMAND_RUN_SHELL".to_string(), shell);
+    }
     if let Some(language) = language {
         worker_env.insert("TURA_SESSION_LANGUAGE".to_string(), language);
+    }
+    if prompt_source_is_cli(&payload) {
+        worker_env.insert("TURA_FRONTEND_SOURCE".to_string(), "cli".to_string());
+    }
+    if let Some(persona) = persona {
+        worker_env.insert("TURA_SESSION_PERSONA".to_string(), persona);
     }
     let user_name = current_user_snapshot().name.trim().to_string();
     if !user_name.is_empty() {
@@ -328,7 +525,6 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         "TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS".to_string(),
         command_run_stall_guard.identical_checks.to_string(),
     );
-
     let turn_id =
         first_prompt_part_id(&payload).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let body = serde_json::json!({
@@ -342,8 +538,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         "worker_env": worker_env,
     });
 
-    let result = flush_session_to_session_db(&session_id)
-        .and_then(|_| forward_run_agent_to_router(&turn_id, &session_id, &body));
+    let result = forward_run_agent_to_router(&turn_id, &session_id, &body);
 
     if session_store().is_cancelled(&session_id) {
         session_store().finish_todos(&session_id, false);
@@ -362,8 +557,6 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                         info: api_message_from_store(message),
                     },
                 });
-            } else {
-                add_agent_fallback_message(&session_id, user_facing_completion_fallback(&content));
             }
         }
         Err(error) => {
@@ -377,7 +570,8 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
     }
 }
 
-/// 阻塞式提交给 gateway 持有的唯一 persistent router；gateway 不再直接 spawn runtime worker。
+/// Submit through the gateway-owned persistent router instead of spawning a
+/// runtime worker directly.
 fn forward_run_agent_to_router(
     turn_id: &str,
     session_id: &str,
@@ -389,7 +583,9 @@ fn forward_run_agent_to_router(
             session_id: session_id.to_string(),
             payload: body.clone(),
         })
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            format!("failed to enqueue turn {turn_id} for session {session_id}: {error}")
+        })?;
     if value
         .get("ok")
         .and_then(serde_json::Value::as_bool)
@@ -397,18 +593,15 @@ fn forward_run_agent_to_router(
     {
         Ok(())
     } else {
-        Err(value
+        let error = value
             .get("error")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("gateway worker returned failure")
-            .to_string())
+            .to_string();
+        Err(format!(
+            "router rejected turn {turn_id} for session {session_id}: {error}"
+        ))
     }
-}
-
-fn flush_session_to_session_db(session_id: &str) -> Result<(), String> {
-    session_store()
-        .persist_session_ack(session_id)
-        .map_err(|error| format!("session_db ACK failed before enqueue: {error}"))
 }
 
 fn prompt_model_override(payload: &serde_json::Value) -> Option<String> {
@@ -427,6 +620,91 @@ fn prompt_model_override(payload: &serde_json::Value) -> Option<String> {
     Some(format!("{provider}/{model_id}"))
 }
 
+fn prompt_runtime_model_override(
+    payload: &serde_json::Value,
+    session_model: Option<String>,
+    session_config: Option<&PromptSessionConfig>,
+) -> Option<String> {
+    prompt_model_override(payload)
+        .or_else(|| session_config.and_then(explicit_config_model_override))
+        .or(session_model)
+        .and_then(normalize_model_override)
+}
+
+pub(super) fn config_model_override(config: &TuraSessionConfig) -> Option<String> {
+    if let Some(model) = non_empty_string(config.model.clone()).filter(|model| model.contains('/'))
+    {
+        return Some(model);
+    }
+    let provider = non_empty_string(config.active_provider.clone())?;
+    let model = non_empty_string(config.active_model.clone())?;
+    Some(format!("{provider}/{model}"))
+}
+
+struct PromptSessionConfig {
+    config: TuraSessionConfig,
+    keys: std::collections::BTreeSet<String>,
+}
+
+impl PromptSessionConfig {
+    fn has(&self, key: &str) -> bool {
+        self.keys.contains(key)
+    }
+
+    fn string(
+        &self,
+        key: &str,
+        getter: impl FnOnce(&TuraSessionConfig) -> Option<String>,
+    ) -> Option<String> {
+        self.has(key).then(|| getter(&self.config)).flatten()
+    }
+
+    fn bool(
+        &self,
+        key: &str,
+        getter: impl FnOnce(&TuraSessionConfig) -> Option<bool>,
+    ) -> Option<bool> {
+        self.has(key).then(|| getter(&self.config)).flatten()
+    }
+}
+
+fn load_prompt_session_config(directory: &str) -> Option<PromptSessionConfig> {
+    let content = std::fs::read_to_string(crate::session::config::config_path(directory)).ok()?;
+    Some(PromptSessionConfig {
+        config: load_config(directory),
+        keys: config_keys(&content),
+    })
+}
+
+fn config_keys(content: &str) -> std::collections::BTreeSet<String> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            line.split_once('=')
+                .map(|(key, _)| key.trim().to_string())
+                .filter(|key| !key.is_empty())
+        })
+        .collect()
+}
+
+fn explicit_config_model_override(config: &PromptSessionConfig) -> Option<String> {
+    if config.has("model") {
+        if let Some(model) =
+            non_empty_string(config.config.model.clone()).filter(|model| model.contains('/'))
+        {
+            return Some(model);
+        }
+    }
+    if !(config.has("active_provider") || config.has("active_model")) {
+        return None;
+    }
+    config_model_override(&config.config)
+}
+
 pub(super) fn prompt_model_variant(payload: &serde_json::Value) -> Option<String> {
     payload
         .get("variant")
@@ -437,15 +715,30 @@ pub(super) fn prompt_model_variant(payload: &serde_json::Value) -> Option<String
         .map(ToString::to_string)
 }
 
+fn non_empty_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 #[derive(Default)]
 struct AgentRuntimeSettings {
     reasoning_effort: Option<String>,
     acceleration_enabled: Option<bool>,
 }
 
-fn agent_runtime_settings(agent_id: &str) -> Option<AgentRuntimeSettings> {
-    let root = repo_root_for_router()?;
-    let agent = tura_agents::store::load_agent(&root, agent_id)?;
+fn agent_runtime_settings(agent_id: &str, directory: Option<&str>) -> Option<AgentRuntimeSettings> {
+    let mut roots = Vec::new();
+    if let Some(directory) = directory {
+        roots.push(std::path::PathBuf::from(directory));
+    }
+    let env_root = tura_agents::store::project_root_from_env_or_cwd();
+    if !roots.iter().any(|root| root == &env_root) {
+        roots.push(env_root);
+    }
+    let agent = roots
+        .iter()
+        .find_map(|root| tura_agents::store::load_agent(root, agent_id))?;
     let provider = agent.config.provider.as_object()?;
     Some(AgentRuntimeSettings {
         reasoning_effort: provider_string(
@@ -491,12 +784,48 @@ fn prompt_agent_override(payload: &serde_json::Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn prompt_agent_for_run(
+    payload: &serde_json::Value,
+    session_agent: Option<String>,
+    session_config: Option<&PromptSessionConfig>,
+) -> Option<String> {
+    prompt_agent_override(payload)
+        .or_else(|| non_empty_string(session_agent))
+        .or_else(|| {
+            session_config.and_then(|config| {
+                config.string("active_agent", |config| config.active_agent.clone())
+            })
+        })
+}
+
 pub(super) fn prompt_model_acceleration(payload: &serde_json::Value) -> Option<bool> {
     payload
         .get("model_acceleration_enabled")
         .or_else(|| payload.get("modelAccelerationEnabled"))
         .or_else(|| payload.get("accelerated"))
         .and_then(|value| value.as_bool())
+}
+
+pub(super) fn prompt_command_run_shell(payload: &serde_json::Value) -> Option<String> {
+    let value = payload
+        .get("command_run_shell")
+        .or_else(|| payload.get("commandRunShell"))
+        .and_then(|value| value.as_str())?
+        .trim();
+    match value {
+        "bash" => Some("bash".to_string()),
+        "zsh" => Some("zsh".to_string()),
+        "shll" | "shell_command" => Some("shell_command".to_string()),
+        _ => None,
+    }
+}
+
+fn prompt_source_is_cli(payload: &serde_json::Value) -> bool {
+    payload
+        .get("source")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("cli"))
 }
 
 fn normalize_model_override(value: String) -> Option<String> {
@@ -680,50 +1009,136 @@ fn add_agent_fallback_message(session_id: &str, content: String) {
     }
 }
 
-pub(super) fn user_facing_completion_fallback(prompt: &str) -> String {
-    if let Some(exact) = requested_exact_reply(prompt) {
-        return exact;
-    }
-    let summary = prompt
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("The request completed.");
-    format!("Done: {summary}")
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn requested_exact_reply(text: &str) -> Option<String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    for marker in [
-        "reply with exactly",
-        "reply exactly",
-        "respond with exactly",
-        "respond exactly",
-        "只回复这一行，不要解释：",
-        "只回复这一行，不要解释:",
-        "只回复：",
-        "只回复:",
-    ] {
-        if let Some(index) = lower.find(marker) {
-            let source = &trimmed[index + marker.len()..];
-            let candidate = source
-                .trim_start_matches(|ch: char| {
-                    ch.is_whitespace() || matches!(ch, ':' | '：' | '"' | '\'' | '`')
-                })
-                .split(" and no extra")
-                .next()
-                .unwrap_or(source)
-                .trim()
-                .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | '.' | '。'))
-                .trim();
-            if !candidate.is_empty() {
-                return Some(candidate.to_string());
-            }
+    fn prompt_config(active_agent: &str) -> PromptSessionConfig {
+        PromptSessionConfig {
+            config: TuraSessionConfig {
+                active_agent: Some(active_agent.to_string()),
+                ..TuraSessionConfig::default()
+            },
+            keys: ["active_agent".to_string()].into_iter().collect(),
         }
     }
-    None
+
+    #[test]
+    fn prompt_agent_prefers_prompt_then_session_then_workspace_config() {
+        let config = prompt_config("workspace-agent");
+
+        assert_eq!(
+            prompt_agent_for_run(
+                &serde_json::json!({"agent": "prompt-agent"}),
+                Some("session-agent".to_string()),
+                Some(&config),
+            )
+            .as_deref(),
+            Some("prompt-agent")
+        );
+        assert_eq!(
+            prompt_agent_for_run(
+                &serde_json::json!({}),
+                Some("session-agent".to_string()),
+                Some(&config),
+            )
+            .as_deref(),
+            Some("session-agent")
+        );
+        assert_eq!(
+            prompt_agent_for_run(&serde_json::json!({}), None, Some(&config)).as_deref(),
+            Some("workspace-agent")
+        );
+    }
+
+    #[test]
+    fn dynamic_agent_runtime_settings_include_acceleration_flag() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut config = tura_agents::store::default_agent_config(temp.path(), "runtime-agent")
+            .expect("default agent config");
+        config.provider["model_reasoning_effort"] = serde_json::json!("high");
+        config.provider["model_acceleration_enabled"] = serde_json::json!(true);
+        tura_agents::store::save_dynamic_agent(temp.path(), &config, Some("runtime agent"))
+            .expect("save dynamic agent");
+
+        let settings = agent_runtime_settings("runtime-agent", temp.path().to_str())
+            .expect("agent runtime settings");
+
+        assert_eq!(settings.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(settings.acceleration_enabled, Some(true));
+    }
+
+    #[test]
+    fn runtime_model_override_uses_gateway_config_before_stale_session_model() {
+        let config = PromptSessionConfig {
+            config: TuraSessionConfig {
+                model: Some("openrouter/qwen/qwen3.7-max".to_string()),
+                active_provider: Some("openrouter".to_string()),
+                active_model: Some("qwen/qwen3.7-max".to_string()),
+                ..TuraSessionConfig::default()
+            },
+            keys: [
+                "model".to_string(),
+                "active_provider".to_string(),
+                "active_model".to_string(),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let runtime_model = prompt_runtime_model_override(
+            &serde_json::json!({}),
+            Some("codex/gpt-5.5".to_string()),
+            Some(&config),
+        );
+
+        assert_eq!(
+            runtime_model.as_deref(),
+            Some("openrouter/qwen/qwen3.7-max")
+        );
+        assert_eq!(runtime_model, config_model_override(&config.config));
+    }
+
+    #[test]
+    fn runtime_model_override_matches_frontend_posted_active_model() {
+        let config = PromptSessionConfig {
+            config: TuraSessionConfig {
+                model: Some("openrouter/qwen/qwen3.7-max".to_string()),
+                active_provider: Some("openrouter".to_string()),
+                active_model: Some("qwen/qwen3.7-max".to_string()),
+                ..TuraSessionConfig::default()
+            },
+            keys: [
+                "model".to_string(),
+                "active_provider".to_string(),
+                "active_model".to_string(),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        assert_eq!(
+            prompt_runtime_model_override(
+                &serde_json::json!({ "model": "anthropic/claude-opus-4.5" }),
+                Some("codex/gpt-5.5".to_string()),
+                Some(&config),
+            )
+            .as_deref(),
+            Some("anthropic/claude-opus-4.5")
+        );
+    }
+
+    #[test]
+    fn prompt_source_is_cli_matches_cli_source_only() {
+        assert!(super::prompt_source_is_cli(
+            &serde_json::json!({"source": "cli"})
+        ));
+        assert!(super::prompt_source_is_cli(
+            &serde_json::json!({"source": " CLI "})
+        ));
+        assert!(!super::prompt_source_is_cli(
+            &serde_json::json!({"source": "tui"})
+        ));
+        assert!(!super::prompt_source_is_cli(&serde_json::json!({})));
+    }
 }

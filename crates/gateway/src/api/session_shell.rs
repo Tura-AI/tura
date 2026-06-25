@@ -1,4 +1,5 @@
 use super::*;
+use crate::contracts::{ShellRequest, ShellResponse};
 
 pub async fn session_shell(
     Path(session_id): Path<String>,
@@ -46,7 +47,9 @@ pub(super) fn run_session_shell_command(directory: &str, input: &str) -> Result<
         command
     };
     command.current_dir(directory);
-    let output = command.output().map_err(|error| error.to_string())?;
+    let output = command.output().map_err(|error| {
+        format!("failed to spawn session shell command in {directory}: {error}")
+    })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut combined = String::new();
@@ -66,14 +69,4 @@ pub(super) fn run_session_shell_command(directory: &str, input: &str) -> Result<
         combined.push_str(&format!("exit status: {}", output.status));
     }
     Ok(combined)
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ShellRequest {
-    pub input: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ShellResponse {
-    pub output: String,
 }

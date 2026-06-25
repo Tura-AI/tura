@@ -25,7 +25,7 @@ export async function configCommand(context: CliContext, args: string[]): Promis
     return write(
       context,
       formatTable(rows, [
-        { header: t("tier"), value: (row) => row.tier },
+        { header: t("defaultModelTier"), value: (row) => row.tier },
         { header: t("current"), value: (row) => row.current },
         { header: t("optionsColumn"), value: (row) => row.options },
       ]),
@@ -50,6 +50,9 @@ export async function configCommand(context: CliContext, args: string[]): Promis
     }
     const [provider, model] = parseProviderModel(args);
     const updated = await client.putModelConfig({ tier, provider, model });
+    await client.patchSessionConfig(
+      sessionConfigPatchFromAssignments([`model=${provider}/${model}`]),
+    );
     return json ? printJson(updated) : write(context, `${tier} -> ${provider}/${model}`);
   }
   if (subcommand === "get") {

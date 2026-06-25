@@ -1,0 +1,568 @@
+:root {
+  --bg: #03050b;
+  --panel: rgba(6, 14, 24, 0.54);
+  --panel-strong: rgba(11, 24, 38, 0.72);
+  --line: rgba(125, 213, 255, 0.3);
+  --line-hot: rgba(255, 98, 76, 0.72);
+  --cyan: #7fe3ff;
+  --blue: #3c74ff;
+  --amber: #f6b75d;
+  --red: #ff624c;
+  --text: #eaf7ff;
+  --muted: rgba(223, 242, 255, 0.64);
+  --shadow: 0 0 28px rgba(49, 130, 255, 0.26);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Rajdhani", "Segoe UI", sans-serif;
+}
+
+button {
+  border: 0;
+  font: inherit;
+  color: inherit;
+}
+
+.scene-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-height: 560px;
+  overflow: hidden;
+  background: #020409;
+  isolation: isolate;
+}
+
+#stage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.hud {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.hud-top {
+  top: 26px;
+  left: 34px;
+  right: 34px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.brand-lockup {
+  display: grid;
+  gap: 4px;
+  text-shadow: 0 0 22px rgba(127, 227, 255, 0.38);
+}
+
+.kicker,
+.status-dot,
+.panel-header span,
+.top-readouts span,
+.weapon-stack span,
+.mission-strip span {
+  color: var(--cyan);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.brand-lockup h1 {
+  margin: 0;
+  font-family: "Exo 2", "Segoe UI", sans-serif;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 0.92;
+}
+
+.status-dot {
+  position: relative;
+  padding-left: 14px;
+  color: var(--muted);
+}
+
+.status-dot::before {
+  position: absolute;
+  top: 5px;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  content: "";
+  border-radius: 999px;
+  background: var(--red);
+  box-shadow: 0 0 14px var(--red);
+}
+
+.top-readouts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(110px, 1fr));
+  gap: 10px;
+  min-width: min(460px, 48vw);
+}
+
+.top-readouts div,
+.side-panel,
+.bottom-console {
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgba(127, 227, 255, 0.08), transparent 42%),
+    var(--panel);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px) saturate(1.5);
+}
+
+.top-readouts div {
+  min-height: 56px;
+  padding: 10px 12px;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+
+.top-readouts strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.side-panel {
+  top: 128px;
+  width: 270px;
+  padding: 16px;
+  pointer-events: auto;
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
+}
+
+.left-panel {
+  left: 34px;
+}
+
+.right-panel {
+  right: 34px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(127, 227, 255, 0.22);
+}
+
+.panel-header strong {
+  color: white;
+  font-size: 14px;
+}
+
+.bar-list {
+  display: grid;
+  gap: 13px;
+  margin: 18px 0;
+}
+
+.bar-list label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.bar-list i {
+  position: relative;
+  height: 7px;
+  overflow: hidden;
+  background: rgba(127, 227, 255, 0.12);
+}
+
+.bar-list i::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--value);
+  content: "";
+  background: linear-gradient(90deg, var(--blue), var(--cyan), var(--amber));
+  box-shadow: 0 0 18px rgba(127, 227, 255, 0.64);
+}
+
+.mode-grid,
+.command-row {
+  display: flex;
+  gap: 10px;
+}
+
+.mode,
+.command {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid rgba(127, 227, 255, 0.24);
+  background: rgba(5, 15, 28, 0.72);
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.mode svg,
+.command svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.8;
+}
+
+.mode:hover,
+.command:hover,
+.mode:focus-visible,
+.command:focus-visible {
+  border-color: var(--cyan);
+  background: rgba(28, 83, 120, 0.6);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.mode.active,
+.command.active {
+  border-color: var(--red);
+  background: rgba(255, 98, 76, 0.18);
+  color: white;
+  box-shadow: 0 0 24px rgba(255, 98, 76, 0.32);
+}
+
+.target-scope {
+  position: relative;
+  width: 178px;
+  height: 178px;
+  margin: 18px auto;
+  border: 1px solid rgba(127, 227, 255, 0.24);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(127, 227, 255, 0.16) 1px, transparent 2px) center/23px 23px,
+    radial-gradient(circle, rgba(31, 73, 121, 0.52), rgba(5, 13, 25, 0.16) 62%, transparent);
+}
+
+.scope-ring,
+.scope-ring::before,
+.scope-ring::after {
+  position: absolute;
+  inset: 20px;
+  content: "";
+  border: 1px solid rgba(127, 227, 255, 0.28);
+  border-radius: 50%;
+}
+
+.scope-ring {
+  animation: rotate-scope 8s linear infinite;
+}
+
+.scope-ring::before {
+  inset: 30px;
+}
+
+.scope-ring::after {
+  inset: 58px;
+  border-color: rgba(255, 98, 76, 0.54);
+}
+
+.scope-blip {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 16px currentColor;
+}
+
+.scope-blip.primary {
+  top: 52%;
+  left: 63%;
+  color: var(--red);
+}
+
+.scope-blip.secondary {
+  top: 35%;
+  left: 42%;
+  color: var(--cyan);
+}
+
+.scope-blip.tertiary {
+  top: 69%;
+  left: 31%;
+  color: var(--amber);
+}
+
+.target-data {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+
+.target-data div {
+  border-top: 1px solid rgba(127, 227, 255, 0.18);
+  padding-top: 8px;
+}
+
+.target-data dt {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.target-data dd {
+  margin: 2px 0 0;
+  color: white;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.bottom-console {
+  left: 50%;
+  bottom: 28px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(270px, 1.1fr);
+  gap: 18px;
+  align-items: center;
+  width: min(860px, calc(100vw - 68px));
+  min-height: 84px;
+  padding: 16px;
+  transform: translateX(-50%);
+  clip-path: polygon(20px 0, calc(100% - 20px) 0, 100% 20px, 100% calc(100% - 20px), calc(100% - 20px) 100%, 20px 100%, 0 calc(100% - 20px), 0 20px);
+  pointer-events: auto;
+}
+
+.weapon-stack,
+.mission-strip {
+  display: grid;
+  gap: 5px;
+}
+
+.weapon-stack strong,
+.mission-strip strong {
+  font-size: 17px;
+  line-height: 1.05;
+}
+
+.mission-strip i {
+  color: var(--amber);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.reticle {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  width: 156px;
+  height: 156px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.reticle::before,
+.reticle::after,
+.reticle span {
+  position: absolute;
+  content: "";
+  border-color: rgba(127, 227, 255, 0.58);
+}
+
+.reticle::before {
+  inset: 16px;
+  border: 1px solid rgba(127, 227, 255, 0.26);
+  border-radius: 50%;
+}
+
+.reticle::after {
+  inset: 58px;
+  border: 1px solid rgba(255, 98, 76, 0.55);
+  transform: rotate(45deg);
+}
+
+.reticle span:first-child {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  border-top: 1px solid rgba(127, 227, 255, 0.3);
+}
+
+.reticle span:last-child {
+  top: 0;
+  left: 50%;
+  height: 100%;
+  border-left: 1px solid rgba(127, 227, 255, 0.3);
+}
+
+.scanlines,
+.vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.scanlines {
+  opacity: 0.18;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.04) 0,
+    rgba(255, 255, 255, 0.04) 1px,
+    transparent 1px,
+    transparent 5px
+  );
+  mix-blend-mode: screen;
+}
+
+.vignette {
+  background:
+    radial-gradient(circle at 50% 48%, transparent 42%, rgba(0, 0, 0, 0.3) 66%, rgba(0, 0, 0, 0.72) 100%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.46), transparent 22%, transparent 78%, rgba(0, 0, 0, 0.42));
+}
+
+@keyframes rotate-scope {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 860px) {
+  .scene-shell {
+    min-height: 640px;
+  }
+
+  .hud-top {
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    display: grid;
+  }
+
+  .brand-lockup h1 {
+    font-size: 30px;
+  }
+
+  .top-readouts {
+    grid-template-columns: repeat(3, 1fr);
+    min-width: 0;
+    width: 100%;
+  }
+
+  .top-readouts div {
+    min-height: 48px;
+    padding: 8px;
+  }
+
+  .top-readouts strong {
+    font-size: 17px;
+  }
+
+  .side-panel {
+    top: auto;
+    bottom: 174px;
+    width: calc(50vw - 20px);
+    min-width: 0;
+    padding: 11px;
+  }
+
+  .left-panel {
+    left: 16px;
+  }
+
+  .right-panel {
+    right: 16px;
+  }
+
+  .bar-list {
+    gap: 8px;
+    margin: 10px 0;
+  }
+
+  .target-scope {
+    width: 82px;
+    height: 82px;
+    margin: 8px auto;
+  }
+
+  .scope-ring {
+    inset: 10px;
+  }
+
+  .scope-ring::before {
+    inset: 18px;
+  }
+
+  .scope-ring::after {
+    inset: 33px;
+  }
+
+  .target-data {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .target-data div {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 4px;
+  }
+
+  .target-data dd {
+    font-size: 14px;
+  }
+
+  .bottom-console {
+    bottom: 14px;
+    grid-template-columns: 1fr auto;
+    width: calc(100vw - 32px);
+    gap: 10px;
+    min-height: 86px;
+    padding: 12px;
+  }
+
+  .mission-strip {
+    grid-column: 1 / -1;
+  }
+
+  .weapon-stack strong,
+  .mission-strip strong {
+    font-size: 14px;
+  }
+
+  .mode,
+  .command {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+@media (max-width: 560px) {
+  .left-panel {
+    display: none;
+  }
+
+  .right-panel {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+}

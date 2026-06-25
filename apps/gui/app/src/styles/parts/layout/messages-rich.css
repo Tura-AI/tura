@@ -101,7 +101,15 @@
 }
 
 .assistant-meta {
+  justify-content: flex-end;
+  gap: var(--space-3);
   margin-left: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.assistant-meta-separator {
+  color: color-mix(in srgb, var(--muted) 74%, transparent);
 }
 
 .message-reactions {

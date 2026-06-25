@@ -6,7 +6,6 @@ import { ConversationView } from "../conversation/conversation-view";
 import {
   defaultLocalStartAt,
   defaultPollInterval,
-  hasVisibleSessionTasks,
   localDateTimeToUtcIso,
   taskNonceId,
   taskPollInterval,
@@ -15,11 +14,7 @@ import {
   utcIsoToLocalDateTime,
 } from "../features/plan/tasks";
 import { ConversationEmptyView } from "../pages/new-session";
-import {
-  PlanComposerControls,
-  PlanComposerTaskList,
-  PlanConversationFeedbackNotice,
-} from "../pages/plan/plan-composer";
+import { PlanComposerControls, PlanConversationFeedbackNotice } from "../pages/plan/plan-composer";
 import type { AppState } from "../state/global-store";
 import type { SettingsSection } from "../state/global-store";
 import type { AppShellViewModel } from "./app-shell-view-model";
@@ -29,6 +24,7 @@ export function ConversationPageOutlet(props: {
   setState: Setter<AppState>;
   selectedSession: Accessor<Session | undefined>;
   selectedMessages: Accessor<Message[]>;
+  loadEarlierMessages: (sessionId: string) => Promise<boolean>;
   slashCommands: Accessor<Command[]>;
   selectedEditingTask: () => TaskManagement | undefined;
   leftRailOpen: boolean;
@@ -36,10 +32,7 @@ export function ConversationPageOutlet(props: {
   view: Pick<
     AppShellViewModel,
     | "createNamedWorkspace"
-    | "createSessionFromPlanTask"
-    | "deletePlanTask"
     | "pickExistingWorkspaceDirectory"
-    | "reorderPlanTasks"
     | "abortSession"
     | "updatePlanTicketTask"
     | "useWorkspaceDirectory"
@@ -50,11 +43,6 @@ export function ConversationPageOutlet(props: {
   closeInspectorSignal?: number;
   onRequestCollapseLeftRail: () => void;
   onOpenProviderSettings: (providerId?: string) => void;
-  onEditTask: (
-    sessionId: string,
-    taskNonceIdValue: string | undefined,
-    composerText: string,
-  ) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
   onRuntimeSetting: (
     updater: (previous: AppState) => AppState,
@@ -65,10 +53,7 @@ export function ConversationPageOutlet(props: {
   const selectedSession = createMemo(() => props.selectedSession());
   const {
     createNamedWorkspace,
-    createSessionFromPlanTask,
-    deletePlanTask,
     pickExistingWorkspaceDirectory,
-    reorderPlanTasks,
     abortSession,
     updatePlanTicketTask,
     useWorkspaceDirectory,
@@ -80,6 +65,23 @@ export function ConversationPageOutlet(props: {
 
   function setComposerImages(composerImages: AppState["composerImages"]) {
     props.setState((previous) => ({ ...previous, composerImages }));
+  }
+
+  function setTranscriptScroll(sessionId: string, scrollTop: number) {
+    const value = Math.max(0, Math.round(scrollTop));
+    props.setState((previous) => {
+      const current = previous.transcriptScrollBySession[sessionId] ?? 0;
+      if (Math.abs(current - value) < 4) {
+        return previous;
+      }
+      return {
+        ...previous,
+        transcriptScrollBySession: {
+          ...previous.transcriptScrollBySession,
+          [sessionId]: value,
+        },
+      };
+    });
   }
 
   function setActiveAgent(selectedAgent: string) {
@@ -99,6 +101,7 @@ export function ConversationPageOutlet(props: {
         agents={props.state().agents}
         modelConfig={props.state().modelConfig}
         selectedAgent={props.state().selectedAgent}
+        selectedModel={props.state().selectedModel}
         onAgent={setActiveAgent}
         onSettings={props.onOpenSettings}
       />
@@ -108,7 +111,6 @@ export function ConversationPageOutlet(props: {
   return (
     <Show
       when={selectedSession()}
-      keyed
       fallback={
         <ConversationEmptyView
           state={props.state()}
@@ -142,15 +144,18 @@ export function ConversationPageOutlet(props: {
       {(session) => (
         <ConversationView
           state={props.state()}
-          session={session}
+          session={session()}
           messages={props.selectedMessages()}
+          initialScrollTop={props.state().transcriptScrollBySession[session().id]}
+          onTranscriptScroll={(scrollTop) => setTranscriptScroll(session().id, scrollTop)}
+          onLoadEarlierMessages={() => props.loadEarlierMessages(session().id)}
           slashCommands={props.slashCommands()}
           onComposerText={setComposerText}
           onComposerImages={setComposerImages}
           onSubmit={props.onSubmit}
-          onStop={() => abortSession(session.id)}
+          onStop={() => abortSession(session().id)}
           onQueueSubmit={props.onQueueSubmit}
-          running={session.status !== "idle"}
+          running={session().status !== "idle"}
           leftRailOpen={props.leftRailOpen}
           leftRailWidth={props.leftRailWidth}
           onRequestCollapseLeftRail={props.onRequestCollapseLeftRail}
@@ -234,31 +239,6 @@ export function ConversationPageOutlet(props: {
                 />
                 {agentMenu()}
               </>
-            ) : undefined
-          }
-          composerTaskList={
-            selectedSession() && hasVisibleSessionTasks(selectedSession()!) ? (
-              <PlanComposerTaskList
-                session={selectedSession()!}
-                selected_task_id={props.state().editingTask?.task_id}
-                pulseNonceId={
-                  props.state().taskPulse?.sessionId === selectedSession()!.id
-                    ? props.state().taskPulse?.task_id
-                    : undefined
-                }
-                pulseToken={
-                  props.state().taskPulse?.sessionId === selectedSession()!.id
-                    ? props.state().taskPulse?.token
-                    : undefined
-                }
-                onEdit={(task, composerText) =>
-                  props.onEditTask(selectedSession()!.id, taskNonceId(task), composerText)
-                }
-                onDelete={(task) => deletePlanTask(selectedSession()!, task)}
-                onRun={(task) => props.onRunTask(selectedSession()!, task)}
-                onCreateSession={(task) => createSessionFromPlanTask(selectedSession()!, task)}
-                onReorder={(tasks) => reorderPlanTasks(selectedSession()!, tasks)}
-              />
             ) : undefined
           }
         />

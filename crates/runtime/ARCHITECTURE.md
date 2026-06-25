@@ -9,7 +9,19 @@ Cargo target names:
 ```text
 package = runtime
 library = runtime
+binary  = tura_runtime   (src/bin/tura_runtime.rs -> runtime::worker::run)
 ```
+
+## Runtime worker binary (`tura_runtime`)
+
+The runtime is run as a per-session worker by the **standalone `tura_runtime`
+binary** (no longer the gateway binary re-invoked by role). `runtime::worker`
+hosts the line-protocol loop the router drives: read `{ "kind", "payload" }`,
+write one JSON reply per line. `health_check` carries `tura_path::instance_version()`
+so the router performs a **version handshake** before dispatching. The worker
+activates the agent spec, runs one prompt via `mano::process_from_gateway_session_in_directory`,
+and exits (complete-and-die). It reaches the database only through the single
+`tura_session_db` owner's socket — never `open_default()`.
 
 ## Layout
 
@@ -89,7 +101,6 @@ crates/runtime/
     session_state/
       mod.rs
       task_plan.rs
-      transitions.rs
 
     state_machine/
       session_management.rs
@@ -128,7 +139,11 @@ crates/runtime/
       send_calldata.rs
 
   tests/
-    coding_agent_live_test.rs
+    business/
+      claude_code_mock_e2e.rs
+      coding_agent_mock_e2e.rs
+    live/
+      claude_code_live_e2e.rs
     override_manas_direct_test.rs
     override_mano_and_manas_test.rs
     process_from_user_default_test.rs
@@ -171,17 +186,23 @@ orchestration:
 
 1. Ask `session_bootstrap` to create or resume the session and prepare a user turn.
 2. Activate selected agents.
-3. Initialize session and agent state.
-4. Ask `session_bootstrap::initial_messages` for initial workspace/user messages.
-5. Call MANAS.
-6. Return runtime result to gateway.
+3. Derive session feature flags from the active agent: `planning_enabled` tracks
+   planning tool availability, while `reflection_enabled` tracks whether the
+   active agent requests reflective task-status/objective prompt style.
+4. Initialize session and agent state.
+5. Ask `session_bootstrap::initial_messages` for initial workspace/user messages.
+6. Call MANAS.
+7. Return runtime result to gateway.
 
 Session bootstrap and gateway session loading stay in focused modules:
 `session_bootstrap/load.rs`, `session_bootstrap/prepare_turn.rs`,
 `session_bootstrap/persisted.rs`, and `session_bootstrap/initial_messages.rs`.
 
 Runtime gateway-session persistence goes through `crates/session_log`, not
-workspace-local JSON files. `checkpoint/session_snapshot.rs` uses
+workspace-local JSON files. Each session workspace is also initialized as a
+local Git repository when it is prepared, and terminal runtime exits create a
+workspace commit whose message includes the session id and task group.
+`checkpoint/session_snapshot.rs` uses
 `SessionLogClient::upsert_session` to persist runtime session snapshots.
 `session_bootstrap/persisted.rs` uses `SessionLogClient::get_session` to resume
 an existing gateway session. Resumed sessions must match the requested workspace
@@ -190,8 +211,8 @@ to avoid cross-workspace reuse of a repeated session id.
 Useful session-log queries while debugging runtime resume behavior:
 
 ```powershell
-'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_gateway.exe session-log
 ```
 
 ## MANAS Layer
@@ -218,8 +239,10 @@ final response details. Gateway-visible publishing lives in `gateway_events/`.
 ### Session
 
 The data model is defined in `state_machine/session_management.rs`.
-Transition rules live in `session_state/transitions.rs`; task-management JSON
-projection lives in `session_state/task_plan.rs`.
+The lifecycle enum and transition rules are shared from
+`session_log::SessionState` so runtime and the SQLite owner use one
+vocabulary. Task-management JSON projection lives in
+`session_state/task_plan.rs`.
 
 States:
 
@@ -229,6 +252,7 @@ States:
 - `completed`
 - `failed`
 - `cancelled`
+- `interrupted`
 
 ### Agent
 
@@ -302,7 +326,7 @@ Multi-task mode serializes `task_management.tasks[]`.
 
 `task_status` is not a standalone top-level model tool. It is an internal
 `command_run` command. Its model-visible JSON has only optional
-`task_summary` and optional `status`; `status` accepts `question` or `done`.
+`task_summary` and optional `status`; `status` accepts `doing`, `question`, or `done`.
 The runtime may create the first single task from this state update. After a
 task summary already exists, rename attempts are rejected and reported back in
 the tool result unless the user clearly changed the task.
@@ -318,7 +342,19 @@ from the compaction summary, workspace snapshot, environment context, and active
 planning objective. Runtime owns this prompt state; gateway should not assemble
 runtime prompts.
 
-Task-status guidance should use `done` or `completed` for finished work.
+The active compact threshold is capped at 255,000 tokens. Runtime still asks the
+agent to provide a `task_status.compact_context` handoff when provider-reported
+input reaches the active threshold, but it also applies an automatic checkpoint
+after a turn if `provider_input_tokens + newly_persisted_context_bytes / 3`
+would exceed that threshold. Automatic checkpoints include the current turn's
+persisted tool results in the rebuild timeline so completed work is not lost.
+When rebuilt compact text itself exceeds roughly 12,000 estimated tokens using
+the same bytes/3 estimate, older timeline entries are omitted before writing the
+checkpoint.
+
+Task-status guidance should use `doing` only when more `command_run` calls are
+required, `done` for finished work, and `question` when
+the active task is blocked on user input.
 
 ## Agent Loading
 
@@ -352,12 +388,14 @@ patch, file lock, or package environment behavior.
 selected agent prompt directory:
 
 1. `persona.md`
-2. `communication_style.md`
+2. shared `personas/src/communication_style/communication_style.md`
 3. `prompt.md`
 
-`prompt` and `fallback_agent.md` are accepted main-prompt resource names. Agent
-prompt loading must stay separate from command/tool prompt loading so agent
-identity and communication behavior do not depend on the active tool set.
+Legacy per-persona `communication_style.md` files are accepted only as a
+fallback. `prompt` and `fallback_agent.md` are accepted main-prompt resource
+names. Agent prompt loading must stay separate from command/tool prompt loading
+so agent identity and communication behavior do not depend on the active tool
+set.
 
 ## Prompt Assembly
 

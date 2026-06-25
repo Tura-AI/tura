@@ -14,6 +14,8 @@
 
 use serde_json::Value;
 
+use crate::utils::normalize_command_run_tool_input;
+
 /// Normalized tool call consumed directly by the runtime; the runtime does not
 /// need to know which provider produced it.
 #[derive(Debug, Clone)]
@@ -35,17 +37,29 @@ pub fn extract_response_text(content: &Value) -> Option<String> {
     if let Some(text) = content.get("text").and_then(Value::as_str) {
         return Some(text.to_string());
     }
+    if let Some(text) = content.get("content").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
     if let Some(parts) = content.get("parts").and_then(Value::as_array) {
-        let text = parts
-            .iter()
-            .filter_map(|part| part.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("");
-        if !text.is_empty() {
-            return Some(text);
-        }
+        return text_from_parts(parts);
+    }
+    if let Some(parts) = content
+        .get("content")
+        .and_then(|value| value.get("parts"))
+        .and_then(Value::as_array)
+    {
+        return text_from_parts(parts);
     }
     None
+}
+
+fn text_from_parts(parts: &[Value]) -> Option<String> {
+    let text = parts
+        .iter()
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("");
+    (!text.is_empty()).then_some(text)
 }
 
 /// Extract tool calls from the normalized response content. Handles two
@@ -60,8 +74,11 @@ pub fn extract_tool_calls(content: &Value) -> Vec<ProviderToolCall> {
                     let arguments = function.get("arguments").cloned().unwrap_or(Value::Null);
                     calls.push(ProviderToolCall {
                         tool_name: name.to_string(),
-                        arguments: parse_arguments(arguments),
-                        provider_metadata: call.get("provider_metadata").cloned(),
+                        arguments: normalize_command_run_tool_input(
+                            name,
+                            parse_arguments(arguments),
+                        ),
+                        provider_metadata: openai_tool_call_metadata(call),
                     });
                 }
             }
@@ -74,7 +91,10 @@ pub fn extract_tool_calls(content: &Value) -> Vec<ProviderToolCall> {
                 if let Some(name) = function_call.get("name").and_then(Value::as_str) {
                     calls.push(ProviderToolCall {
                         tool_name: name.to_string(),
-                        arguments: function_call.get("args").cloned().unwrap_or(Value::Null),
+                        arguments: normalize_command_run_tool_input(
+                            name,
+                            function_call.get("args").cloned().unwrap_or(Value::Null),
+                        ),
                         provider_metadata: google_function_call_metadata(part),
                     });
                 }
@@ -93,6 +113,24 @@ fn google_function_call_metadata(part: &Value) -> Option<Value> {
     Some(serde_json::json!({
         "google_thought_signature": signature,
     }))
+}
+
+fn openai_tool_call_metadata(call: &Value) -> Option<Value> {
+    let mut metadata = call
+        .get("provider_metadata")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    for key in ["id", "call_id", "type"] {
+        if let Some(value) = call.get(key) {
+            metadata
+                .entry(key.to_string())
+                .or_insert_with(|| value.clone());
+        }
+    }
+
+    (!metadata.is_empty()).then_some(Value::Object(metadata))
 }
 
 fn parse_arguments(arguments: Value) -> Value {
@@ -139,7 +177,10 @@ pub fn prompt_cache_key_supported(provider: &str, base_url: &str) -> bool {
     {
         return false;
     }
-    if provider.eq_ignore_ascii_case("openai") {
+    if matches!(
+        provider.to_ascii_lowercase().as_str(),
+        "openai" | "openai-api" | "chatgpt" | "codex"
+    ) {
         return true;
     }
     base_url.contains("api.openai.com")
@@ -187,6 +228,34 @@ mod tests {
                 .and_then(|metadata| metadata.get("id"))
                 .and_then(serde_json::Value::as_str),
             Some("toolu_1")
+        );
+    }
+
+    #[test]
+    fn extract_tool_calls_preserves_top_level_openai_id_as_metadata() {
+        let calls = extract_tool_calls(&json!({
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "command_run",
+                    "arguments": {"commands": []}
+                }
+            }]
+        }));
+
+        assert_eq!(calls.len(), 1);
+        let metadata = calls[0]
+            .provider_metadata
+            .as_ref()
+            .expect("top-level id should become provider metadata");
+        assert_eq!(
+            metadata.get("id").and_then(serde_json::Value::as_str),
+            Some("call_1")
+        );
+        assert_eq!(
+            metadata.get("type").and_then(serde_json::Value::as_str),
+            Some("function")
         );
     }
 }

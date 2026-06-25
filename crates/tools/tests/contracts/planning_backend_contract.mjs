@@ -120,7 +120,7 @@ addCheck("prompt describes ordered replacement tasks without plan mutation or pa
 
 addCheck("command_run routes planning through the shared command consumer path", () => {
   const handler = read("crates/tools/src/command_run/handler.rs")
-  const commandRunTests = read("crates/tools/tests/command_run_current_flow.rs")
+  const commandRunTests = read("crates/tools/tests/business/command_run_current_flow.rs")
   const commandRunSchema = JSON.parse(read("crates/tools/src/command_run/schema.json"))
   assert.equal(commandRunSchema.input_schema.properties.commands.minItems, 5)
   assert.match(handler, /"planning"\s*=>\s*ToolPayload::Function/)
@@ -131,7 +131,7 @@ addCheck("command_run routes planning through the shared command consumer path",
   assert.match(handler, /run_macro_command_batch/)
   assert.match(handler, /run_command_run_step/)
   assert.match(commandRunTests, /pass_planning_command_routes_through_command_run/)
-  assert.match(commandRunTests, /pass_same_step_commands_are_extended_to_unique_order/)
+  assert.match(commandRunTests, /pass_same_step_commands_keep_dependency_group/)
 })
 
 addCheck("runtime plan mapping replaces active task and renumbers ordered steps", () => {

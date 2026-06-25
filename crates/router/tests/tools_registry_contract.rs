@@ -24,10 +24,11 @@ fn router_loads_core_and_external_command_manifests() {
     for id in [
         "shell_command",
         "bash",
+        "zsh",
         "apply_patch",
         "task_status",
-        "compact_context",
         "planning",
+        "generate_media",
         "read_media",
         "web_discover",
     ] {
@@ -43,6 +44,17 @@ fn router_loads_core_and_external_command_manifests() {
     assert_eq!(
         read_media.binary.as_deref(),
         Some("tura-command-read-media")
+    );
+
+    let generate_media = tools
+        .iter()
+        .find(|tool| tool.id == "generate_media")
+        .expect("generate_media manifest");
+    assert!(!generate_media.core);
+    assert!(generate_media.mutating);
+    assert_eq!(
+        generate_media.binary.as_deref(),
+        Some("tura-command-generate-media")
     );
 
     let shell = tools
@@ -113,6 +125,10 @@ fn aliases_resolve_to_canonical_tool_ids() {
     assert_eq!(
         registry().get("view_media").expect("alias").id,
         "read_media"
+    );
+    assert_eq!(
+        registry().get("text_to_image").expect("alias").id,
+        "generate_media"
     );
     assert_eq!(
         registry().get("web_search").expect("alias").id,

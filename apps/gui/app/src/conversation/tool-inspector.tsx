@@ -1,8 +1,14 @@
 import type { MessagePart, ServiceStatusResponse } from "@tura/gateway-sdk";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
-import { diffLines, formatDuration, isPatchRecord, toolRecords } from "./message-tools";
+import {
+  diffLines,
+  formatCommandTiming,
+  formatDuration,
+  isPatchRecord,
+  toolRecords,
+} from "./message-tools";
 
 const INSPECTOR_MIN_WIDTH = 320;
 const INSPECTOR_COLLAPSE_WIDTH = 260;
@@ -30,6 +36,7 @@ export function ToolInspector(props: {
     return toolRecords(props.parts);
   });
   const [expandedId, setExpandedId] = createSignal<string>();
+  let autoExpandedPartId: string | undefined;
   const totalDuration = createMemo(() =>
     formatDuration(records().reduce((duration, record) => duration + (record.durationMs ?? 0), 0)),
   );
@@ -53,7 +60,21 @@ export function ToolInspector(props: {
   createEffect(() => {
     if (!props.open) {
       setExpandedId(undefined);
+      autoExpandedPartId = undefined;
     }
+  });
+
+  createEffect(() => {
+    const selectedId = props.selectedId;
+    if (!props.open || !selectedId || autoExpandedPartId === selectedId) {
+      return;
+    }
+    const selectedRecord = records().find((record) => record.partId === selectedId);
+    if (!selectedRecord) {
+      return;
+    }
+    autoExpandedPartId = selectedId;
+    setExpandedId(selectedRecord.id);
   });
 
   function startResize(clientX: number) {
@@ -178,26 +199,26 @@ export function ToolInspector(props: {
           </header>
           <div class="inspector-scroll">
             <nav class="inspector-steps inspector-records" aria-label={t("toolSteps")}>
-              <For each={records()}>
+              <Index each={records()}>
                 {(record, index) => {
-                  const expanded = () => expandedId() === record.id;
+                  const expanded = () => expandedId() === record().id;
                   const groupStart = () => {
-                    const previous = records()[index() - 1];
+                    const previous = records()[index - 1];
                     return !!(
                       previous?.groupId &&
-                      record.groupId &&
-                      previous.groupId !== record.groupId
+                      record().groupId &&
+                      previous.groupId !== record().groupId
                     );
                   };
                   return (
                     <section
-                      data-part-id={record.partId}
+                      data-part-id={record().partId}
                       class={classNames(
                         "inspector-record",
                         expanded() && "expanded",
                         groupStart() && "group-start",
-                        record.status === "running" && "running",
-                        isPatchRecord(record) && "patch-record",
+                        record().status === "running" && "running",
+                        isPatchRecord(record()) && "patch-record",
                       )}
                     >
                       <button
@@ -205,13 +226,14 @@ export function ToolInspector(props: {
                         type="button"
                         aria-expanded={expanded()}
                         onClick={() => {
-                          props.onSelect(record.id);
-                          setExpandedId(expanded() ? undefined : record.id);
+                          props.onSelect(record().partId);
+                          setExpandedId(expanded() ? undefined : record().id);
                         }}
                       >
-                        <span>{record.title}</span>
+                        <span>{record().title}</span>
                         <small>
-                          {toolStatusLabel(record.status)} · {formatDuration(record.durationMs)}
+                          {toolStatusLabel(record().status)} ·{" "}
+                          {formatCommandTiming(record().durationMs, record().timeoutMs)}
                         </small>
                       </button>
                       <Show when={expanded()}>
@@ -220,32 +242,32 @@ export function ToolInspector(props: {
                             <span>{t("command")}</span>
                             <pre
                               class="inspector-code inspector-command"
-                              textContent={record.command}
+                              textContent={record().command}
                             />
                           </section>
                           <Show
-                            when={isPatchRecord(record)}
+                            when={isPatchRecord(record())}
                             fallback={
                               <section class="inspector-block">
                                 <span>{t("console")}</span>
                                 <pre
                                   class="inspector-code inspector-console"
-                                  textContent={record.output}
+                                  textContent={record().output}
                                 />
                               </section>
                             }
                           >
                             <section class="inspector-block">
                               <span>{t("patch")}</span>
-                              <DiffPanel output={record.output} command={record.command} />
+                              <DiffPanel output={record().output} command={record().command} />
                             </section>
                           </Show>
                           <footer class="inspector-status">
-                            <span>{toolStatusLabel(record.status)}</span>
+                            <span>{toolStatusLabel(record().status)}</span>
                             <span>{serviceStatusLabel(props.serviceStatus)}</span>
                             <span>
                               {t("exitCode")}:{" "}
-                              {record.exitCode === undefined ? "--" : record.exitCode}
+                              {record().exitCode === undefined ? "--" : record().exitCode}
                             </span>
                           </footer>
                         </div>
@@ -253,7 +275,7 @@ export function ToolInspector(props: {
                     </section>
                   );
                 }}
-              </For>
+              </Index>
             </nav>
           </div>
         </>

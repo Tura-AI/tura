@@ -36,17 +36,19 @@ import { rootSessions } from "../../state/session-tree";
 import { PlanDragGhost, beginPlanPointerDrag, type PlanDragState } from "../../features/plan/drag";
 import {
   defaultPollInterval,
-  hasVisibleSessionTasks,
   localDateTimeToUtcIso,
   planSessionStatus,
   sessionTaskState,
   sessionTasks,
+  shouldShowSessionAttention,
   shortSessionId,
+  sortedSessionTasks,
   taskDisplayText,
   taskNonceId,
   taskPollInterval,
   taskStartAt,
   taskStartCondition,
+  taskSummaryText,
   timedTaskPatch,
   utcIsoToLocalDateTime,
 } from "../../features/plan/tasks";
@@ -54,7 +56,6 @@ import { relativeSessionTime, samePath, shortWorkspaceLabel } from "../../utils/
 import { PlanCalendarView } from "./plan-calendar";
 import {
   PlanComposerControls,
-  PlanComposerTaskList,
   PlanConversationFeedbackNotice,
   PlanDraftSessionPicker,
   PlanModeButtons,
@@ -73,6 +74,8 @@ export function PlanView(props: {
   state: AppState;
   previewSession?: Session;
   previewMessages: Message[];
+  previewInitialScrollTop?: number;
+  onPreviewTranscriptScroll?: (scrollTop: number) => void;
   slashCommands: Command[];
   onPlanMode: (value: PlanMode) => void;
   onSearch: (value: string) => void;
@@ -96,9 +99,7 @@ export function PlanView(props: {
   ) => void;
   onReorderTasks: (session: Session, tasks: TaskManagement[]) => void;
   onEditTask: (session: Session, task: TaskManagement, composerText: string) => void;
-  onDeleteTask: (session: Session, task: TaskManagement) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
-  onCreateSessionFromTask: (session: Session, task: TaskManagement) => void;
   onOpenSession: (session: Session) => void;
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
@@ -138,6 +139,7 @@ export function PlanView(props: {
       agents={props.state.agents}
       modelConfig={props.state.modelConfig}
       selectedAgent={props.state.selectedAgent}
+      selectedModel={props.state.selectedModel}
       onAgent={props.onAgent}
       onSettings={props.onOpenSettings}
     />
@@ -373,12 +375,7 @@ export function PlanView(props: {
                   props.onOpenSession(session);
                   props.onEditTask(session, task, taskDisplayText(task));
                 }}
-                onSchedule={(session, task, startAt) =>
-                  props.onTask(session, {
-                    task_id: taskNonceId(task),
-                    start_at: startAt,
-                  })
-                }
+                onReorder={props.onReorderTasks}
               />
             </Match>
             <Match when={props.state.planMode === "calendar"}>
@@ -387,8 +384,9 @@ export function PlanView(props: {
                 selectedSessionId={props.state.planPreviewSessionId}
                 onOpenSession={props.onOpenSession}
                 onCreateAt={openDraftAt}
-                onSchedule={(session, startAt) =>
+                onSchedule={(session, task, startAt) =>
                   props.onTask(session, {
+                    task_id: taskNonceId(task),
                     start_at: startAt,
                   })
                 }
@@ -441,6 +439,8 @@ export function PlanView(props: {
             state={props.state}
             session={props.previewSession}
             messages={props.previewMessages}
+            initialScrollTop={props.previewInitialScrollTop}
+            onTranscriptScroll={props.onPreviewTranscriptScroll}
             slashCommands={props.slashCommands}
             onComposerText={props.onComposerText}
             onComposerImages={props.onComposerImages}
@@ -521,35 +521,6 @@ export function PlanView(props: {
                 </>
               ) : undefined
             }
-            composerTaskList={
-              props.previewSession &&
-              !props.state.planDraftLane &&
-              hasVisibleSessionTasks(props.previewSession) ? (
-                <PlanComposerTaskList
-                  session={props.previewSession}
-                  selected_task_id={props.state.editingTask?.task_id}
-                  pulseNonceId={
-                    props.state.taskPulse?.sessionId === props.previewSession.id
-                      ? props.state.taskPulse.task_id
-                      : undefined
-                  }
-                  pulseToken={
-                    props.state.taskPulse?.sessionId === props.previewSession.id
-                      ? props.state.taskPulse.token
-                      : undefined
-                  }
-                  onEdit={(task, composerText) =>
-                    props.onEditTask(props.previewSession!, task, composerText)
-                  }
-                  onDelete={(task) => props.onDeleteTask(props.previewSession!, task)}
-                  onRun={(task) => props.onRunTask(props.previewSession!, task)}
-                  onCreateSession={(task) =>
-                    props.onCreateSessionFromTask(props.previewSession!, task)
-                  }
-                  onReorder={(tasks) => props.onReorderTasks(props.previewSession!, tasks)}
-                />
-              ) : undefined
-            }
             conversationNotice={
               props.state.planNotice ? (
                 <PlanConversationFeedbackNotice
@@ -625,6 +596,9 @@ export function PlanBoard(props: {
       },
     });
   }
+  function boardCardTitle(session: Session): string {
+    return sortedSessionTasks(session).map(taskSummaryText).find(Boolean) ?? sessionTitle(session);
+  }
   return (
     <section class="board-shell">
       <PlanDragGhost state={dragState()} />
@@ -666,6 +640,7 @@ export function PlanBoard(props: {
                           "board-card",
                           props.selectedSessionId === session.id && "selected",
                         )}
+                        data-session-id={session.id}
                         draggable="true"
                         onPointerDown={(event) => beginBoardDrag(event, session)}
                         onMouseDown={(event) => beginBoardDrag(event, session)}
@@ -682,11 +657,11 @@ export function PlanBoard(props: {
                           event.currentTarget.classList.remove("plan-source-dragging")
                         }
                         onClick={() => props.onOpenSession(session)}
-                        title={sessionTitle(session)}
+                        title={boardCardTitle(session)}
                       >
                         <small>{shortSessionId(session.id)}</small>
                         <span class="board-card-title">
-                          <strong>{sessionTitle(session)}</strong>
+                          <strong>{boardCardTitle(session)}</strong>
                           <Show
                             when={shouldShowSessionAttention(
                               session,
@@ -731,11 +706,6 @@ export function PlanStatusIndicator(props: { status: PlanStatus }) {
       />
     </Show>
   );
-}
-
-export function shouldShowSessionAttention(session: Session, acknowledged: boolean): boolean {
-  const status = planSessionStatus(session);
-  return !acknowledged && (status === "doing" || status === "question" || status === "done");
 }
 
 export function SessionRowMeta(props: { session: Session; attentionAcknowledged: boolean }) {

@@ -1,12 +1,12 @@
 //! Session API handlers
 
 use crate::api::product::current_user_snapshot;
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
+use crate::router_client::RouterClient;
 use crate::session::config::{load_config, merge_config, TuraSessionConfig};
 use crate::session::{
-    process_cleanup::kill_processes_in_directory, session_store, MessageRole as SessionMessageRole,
-    SessionStatus as SessionStatusMano,
+    session_store, MessageRole as SessionMessageRole, SessionStatus as SessionStatusMano,
 };
 use axum::{
     extract::{Path, Query},
@@ -14,13 +14,12 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde::Deserialize;
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
+use ::session_log::{DeleteSessionRequest, MarkSessionInterruptedRequest, SessionLogCommand};
 use runtime::state_machine::session_management::StartCondition;
 
 // ============================================================================
@@ -40,6 +39,13 @@ pub async fn list_sessions(
 
     session_store().hydrate_directory(directory.clone());
 
+    let listed = filter_list_sessions(
+        session_store().list_sessions(),
+        &params,
+        directory.as_deref(),
+    );
+    refresh_busy_session_liveness(&listed).await;
+
     let mut sessions = filter_list_sessions(
         session_store().list_sessions(),
         &params,
@@ -58,16 +64,96 @@ pub async fn list_sessions(
     Json(sessions)
 }
 
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct SessionListParams {
-    pub directory: Option<String>,
-    pub workspace: Option<String>,
-    pub roots: Option<bool>,
-    #[serde(default, alias = "includeChildren")]
-    pub include_children: bool,
-    pub start: Option<i64>,
-    pub search: Option<String>,
-    pub limit: Option<usize>,
+async fn refresh_busy_session_liveness(sessions: &[Session]) {
+    let busy_session_ids = sessions
+        .iter()
+        .filter(|session| session.status == SessionStatus::Busy)
+        .map(|session| session.id.clone())
+        .collect::<Vec<_>>();
+    if busy_session_ids.is_empty() {
+        return;
+    }
+
+    let inactive_session_ids = match RouterClient::global().probe_sessions(&busy_session_ids) {
+        Ok(payload) => inactive_sessions_from_probe(&busy_session_ids, &payload),
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                sessions = ?busy_session_ids,
+                "runtime liveness probe failed; marking busy sessions interrupted"
+            );
+            busy_session_ids
+        }
+    };
+
+    for session_id in inactive_session_ids {
+        mark_session_interrupted_from_gateway_probe(&session_id).await;
+    }
+}
+
+fn inactive_sessions_from_probe(
+    expected_session_ids: &[String],
+    payload: &serde_json::Value,
+) -> Vec<String> {
+    let active = payload
+        .get("sessions")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let session_id = entry
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)?;
+            let active = entry
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| value == "active")
+                || entry
+                    .get("active_turn")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                || entry
+                    .get("worker_alive")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+            active.then_some(session_id.to_string())
+        })
+        .collect::<std::collections::HashSet<_>>();
+
+    expected_session_ids
+        .iter()
+        .filter(|session_id| !active.contains(*session_id))
+        .cloned()
+        .collect()
+}
+
+async fn mark_session_interrupted_from_gateway_probe(session_id: &str) {
+    let Some(session) = session_store().mark_interrupted(session_id) else {
+        return;
+    };
+    session_store().finish_todos(session_id, false);
+    session_store().clear_user_commands_for_session(session_id);
+    session_store().push_event(GlobalEvent::SessionUpdated {
+        properties: SessionUpdatedProperties {
+            session_id: session_id.to_string(),
+            info: session,
+        },
+    });
+    session_store().push_current_session_status_event(session_id);
+
+    if let Err(error) = write_session_log_command(SessionLogCommand::MarkSessionInterrupted(
+        MarkSessionInterruptedRequest {
+            session_id: session_id.to_string(),
+        },
+    ))
+    .await
+    {
+        tracing::warn!(
+            session_id,
+            error,
+            "failed to persist gateway runtime liveness interruption"
+        );
+    }
 }
 
 fn filter_list_sessions(
@@ -162,6 +248,8 @@ pub async fn get_session(Path(session_id): Path<String>) -> Json<Session> {
                 status: SessionStatus::Idle,
                 message_count: 0,
                 task_management: serde_json::json!({}),
+                context_tokens: SessionContextTokens::default(),
+                usage: Default::default(),
                 plan_summary: None,
                 session_display_name: None,
             })
@@ -200,20 +288,9 @@ pub async fn create_session(
     let disable_permission_restrictions = payload.disable_permission_restrictions.unwrap_or(false);
     let auto_session_name = payload.auto_session_name.unwrap_or(true);
     if kill_processes_on_start {
-        if let Some(directory) = directory.as_deref() {
-            let cleanup = tokio::task::spawn_blocking({
-                let directory = directory.to_string();
-                move || {
-                    if let Err(err) = kill_processes_in_directory(&directory) {
-                        tracing::warn!(directory, error = %err, "session startup process cleanup failed");
-                    }
-                }
-            })
-            .await;
-            if let Err(err) = cleanup {
-                tracing::warn!(error = %err, "session startup process cleanup task failed");
-            }
-        }
+        tracing::info!(
+            "kill_processes_on_start requested; workspace-wide process scanning is disabled, router-owned workers are stopped by session id"
+        );
     }
     let requested_session_type = payload
         .session_type
@@ -268,28 +345,6 @@ pub async fn create_session(
     Json(session)
 }
 
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct CreateSessionRequest {
-    pub directory: Option<String>,
-    pub model: Option<String>,
-    pub agent: Option<String>,
-    pub session_type: Option<String>,
-    pub kill_processes_on_start: Option<bool>,
-    pub validator_enabled: Option<bool>,
-    pub force_planning: Option<bool>,
-    pub model_variant: Option<String>,
-    pub model_acceleration_enabled: Option<bool>,
-    pub disable_permission_restrictions: Option<bool>,
-    #[serde(alias = "autoSessionName")]
-    pub auto_session_name: Option<bool>,
-    pub task_management: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct SessionDirectoryParams {
-    pub directory: Option<String>,
-}
-
 pub async fn get_session_config(
     headers: HeaderMap,
     Query(params): Query<SessionDirectoryParams>,
@@ -320,31 +375,6 @@ pub async fn patch_session_config(
             Json(TuraSessionConfig::default())
         }
     }
-}
-
-fn repo_root_for_router() -> Option<PathBuf> {
-    let mut starts = Vec::new();
-    if let Ok(current) = std::env::current_dir() {
-        starts.push(current);
-    }
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            starts.push(parent.to_path_buf());
-        }
-    }
-
-    starts.into_iter().find_map(|start| {
-        start
-            .ancestors()
-            .find(|candidate| {
-                candidate
-                    .join("crates")
-                    .join("router")
-                    .join("Cargo.toml")
-                    .exists()
-            })
-            .map(PathBuf::from)
-    })
 }
 
 fn encoded_header(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -385,15 +415,49 @@ fn hex(value: u8) -> Option<u8> {
 
 pub async fn delete_session(Path(session_id): Path<String>) -> Json<bool> {
     let info = session_store().get_session(&session_id);
+    if session_has_busy_cancellation_scope(&session_id) {
+        let abort = abort_session_scope(&session_id);
+        tracing::info!(
+            session_id,
+            aborted_sessions = ?abort.sessions,
+            "aborted running session before delete"
+        );
+    }
+    let write_result =
+        write_session_log_command(SessionLogCommand::DeleteSession(DeleteSessionRequest {
+            session_id: session_id.clone(),
+        }))
+        .await;
+    if let Err(error) = &write_result {
+        tracing::warn!(
+            session_id,
+            error,
+            "failed to delete session from session_log"
+        );
+    }
     let deleted = session_store().delete_session(&session_id);
-    if deleted {
+    if deleted || write_result.is_ok() {
         if let Some(info) = info {
             session_store().push_event(GlobalEvent::SessionDeleted {
-                properties: SessionDeletedProperties { session_id, info },
+                properties: SessionDeletedProperties {
+                    session_id: session_id.clone(),
+                    info,
+                },
             });
         }
     }
-    Json(deleted)
+    Json(deleted || write_result.is_ok())
+}
+
+fn session_has_busy_cancellation_scope(session_id: &str) -> bool {
+    session_store()
+        .cancellation_scope_session_ids(session_id)
+        .into_iter()
+        .any(|id| {
+            session_store()
+                .get_session(&id)
+                .is_some_and(|session| matches!(session.status, SessionStatus::Busy))
+        })
 }
 
 pub async fn update_session(
@@ -424,7 +488,7 @@ pub async fn update_session(
             updated_at: 0,
             directory: None,
             model: None,
-            agent: Some("thinking-planning".to_string()),
+            agent: Some("thoughtful".to_string()),
             session_type: Some("coding".to_string()),
             auto_session_name: true,
             kill_processes_on_start: false,
@@ -436,6 +500,8 @@ pub async fn update_session(
             status: SessionStatus::Idle,
             message_count: 0,
             task_management: serde_json::json!({}),
+            context_tokens: SessionContextTokens::default(),
+            usage: Default::default(),
             plan_summary: None,
             session_display_name: None,
         });
@@ -475,7 +541,7 @@ pub async fn update_session_task_management(
             updated_at: 0,
             directory: None,
             model: None,
-            agent: Some("thinking-planning".to_string()),
+            agent: Some("thoughtful".to_string()),
             session_type: Some("coding".to_string()),
             auto_session_name: true,
             kill_processes_on_start: false,
@@ -487,6 +553,8 @@ pub async fn update_session_task_management(
             status: SessionStatus::Idle,
             message_count: 0,
             task_management: serde_json::json!({}),
+            context_tokens: SessionContextTokens::default(),
+            usage: Default::default(),
             plan_summary: None,
             session_display_name: None,
         });
@@ -499,69 +567,93 @@ pub async fn update_session_task_management(
     Json(session)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct UpdateSessionTaskManagementRequest {
-    pub task_management: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct UpdateSessionRequest {
-    pub title: Option<String>,
-    pub name: Option<String>,
-    pub model: Option<String>,
-    pub agent: Option<String>,
-    pub session_type: Option<String>,
-    pub kill_processes_on_start: Option<bool>,
-    pub validator_enabled: Option<bool>,
-    pub force_planning: Option<bool>,
-    pub disable_permission_restrictions: Option<bool>,
-    #[serde(alias = "autoSessionName")]
-    pub auto_session_name: Option<bool>,
-    pub task_management: Option<serde_json::Value>,
-}
-
 pub async fn abort_session(Path(session_id): Path<String>) -> Json<AbortResponse> {
-    let aborted_sessions = session_store().cancellation_scope_session_ids(&session_id);
+    Json(abort_session_scope(&session_id))
+}
 
-    let directories = aborted_sessions
-        .iter()
-        .filter_map(|id| session_store().get_session(id))
-        .filter_map(|session| session.directory)
-        .map(PathBuf::from)
-        .filter(|directory| directory.exists())
-        .collect::<BTreeSet<_>>();
+fn abort_session_scope(session_id: &str) -> AbortResponse {
+    let aborted_sessions = session_store().cancellation_scope_session_ids(session_id);
     let mut cleanups = Vec::new();
-    for directory in directories {
-        if let Some(cleanup) =
-            tokio::task::spawn_blocking(move || kill_processes_in_directory(directory))
-                .await
-                .ok()
-                .and_then(Result::ok)
-        {
-            cleanups.push(cleanup);
-        }
+    let router = RouterClient::global();
+    for id in &aborted_sessions {
+        cleanups.push(match router.cancel_turn(id, None) {
+            Ok(payload) => AbortCleanup {
+                session_id: id.clone(),
+                status: payload
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                stopped_worker: payload
+                    .get("stopped_worker")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                error: None,
+            },
+            Err(error) => AbortCleanup {
+                session_id: id.clone(),
+                status: "error".to_string(),
+                stopped_worker: false,
+                error: Some(error.to_string()),
+            },
+        });
     }
 
     for id in &aborted_sessions {
         session_store().mark_cancelled(id);
+        session_store().clear_user_commands_for_session(id);
+        if let Err(error) = router.clear_user_commands(id, id) {
+            tracing::warn!(
+                session_id = %id,
+                error = %error,
+                "failed to clear router queued user commands during abort"
+            );
+        }
         session_store().finish_todos(id, false);
+        if let Some(session) = session_store().pause_session_for_abort(id) {
+            session_store().push_event(GlobalEvent::SessionUpdated {
+                properties: SessionUpdatedProperties {
+                    session_id: id.clone(),
+                    info: session,
+                },
+            });
+        }
         session_store().update_session_status(id, SessionStatusMano::Idle);
+        if let Err(error) = persist_aborted_session(id) {
+            tracing::warn!(
+                session_id = %id,
+                error = %error,
+                "failed to persist aborted session snapshot"
+            );
+        }
+        if let Err(error) = commit_aborted_session(id) {
+            tracing::warn!(
+                session_id = %id,
+                error = %error,
+                "failed to commit aborted session workspace checkpoint"
+            );
+        }
     }
 
-    Json(AbortResponse {
+    AbortResponse {
         aborted: true,
         sessions: aborted_sessions,
         cleanup: cleanups.first().cloned(),
         cleanups,
-    })
+    }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AbortResponse {
-    pub aborted: bool,
-    pub sessions: Vec<String>,
-    pub cleanup: Option<crate::session::process_cleanup::DirectoryProcessCleanup>,
-    pub cleanups: Vec<crate::session::process_cleanup::DirectoryProcessCleanup>,
+fn persist_aborted_session(session_id: &str) -> Result<(), String> {
+    let request = session_store().session_log_upsert_request(session_id)?;
+    crate::session_log_writer::write_session_log(SessionLogCommand::UpsertSession(request))
+        .map_err(|error| error.to_string())
+}
+
+fn commit_aborted_session(session_id: &str) -> Result<(), String> {
+    let info = session_store()
+        .get_session_info(session_id)
+        .ok_or_else(|| format!("session {session_id} not found"))?;
+    runtime::workspace_git::commit_session_checkpoint(&info.management, "aborted").map(|_| ())
 }
 
 pub async fn fork_session(
@@ -604,14 +696,51 @@ pub async fn fork_session(
             .map(|session| session.disable_permission_restrictions)
             .unwrap_or(false),
     );
+    let new_session = session_store()
+        .attach_child_session(&session_id, &new_session.id)
+        .unwrap_or(new_session);
+    if payload.copy_context.unwrap_or(true) {
+        let _ = session_store().copy_session_context(&session_id, &new_session.id);
+    }
+    let new_session = session_store()
+        .get_session(&new_session.id)
+        .unwrap_or(new_session);
+    match session_store().session_log_upsert_request(&new_session.id) {
+        Ok(request) => {
+            if let Err(error) =
+                write_session_log_command(SessionLogCommand::UpsertSession(request)).await
+            {
+                tracing::warn!(
+                    session_id = %new_session.id,
+                    parent_session_id = %session_id,
+                    error,
+                    "failed to persist forked session to session_log"
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                session_id = %new_session.id,
+                parent_session_id = %session_id,
+                error,
+                "failed to build forked session_log snapshot"
+            );
+        }
+    }
+    session_store().push_event(GlobalEvent::SessionCreated {
+        properties: SessionCreatedProperties {
+            session_id: new_session.id.clone(),
+            info: new_session.clone(),
+        },
+    });
     Json(new_session)
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ForkSessionRequest {
-    pub directory: Option<String>,
-    pub model: Option<String>,
-    pub agent: Option<String>,
+async fn write_session_log_command(command: SessionLogCommand) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || crate::session_log_writer::write_session_log(command))
+        .await
+        .map_err(|error| format!("session_log writer task failed: {error}"))?
+        .map_err(|error| error.to_string())
 }
 
 pub async fn session_status() -> Json<std::collections::HashMap<String, serde_json::Value>> {
@@ -624,6 +753,8 @@ pub async fn session_status() -> Json<std::collections::HashMap<String, serde_js
                 serde_json::json!({
                     "status": session_status_value(&s.status),
                     "task_management": s.task_management,
+                    "context_tokens": s.context_tokens,
+                    "usage": s.usage,
                     "plan_summary": s.plan_summary,
                     "session_display_name": s.session_display_name,
                 }),
@@ -631,15 +762,6 @@ pub async fn session_status() -> Json<std::collections::HashMap<String, serde_js
         })
         .collect();
     Json(statuses)
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SessionStatusResponse {
-    pub session_id: String,
-    pub status: SessionStatus,
-    pub task_management: serde_json::Value,
-    pub plan_summary: Option<String>,
-    pub session_display_name: Option<String>,
 }
 
 pub(crate) fn session_status_value(status: &SessionStatus) -> serde_json::Value {
@@ -652,13 +774,8 @@ pub(crate) fn session_status_value(status: &SessionStatus) -> serde_json::Value 
 
 pub async fn share_session(Path(session_id): Path<String>) -> Json<ShareResponse> {
     Json(ShareResponse {
-        url: format!("https://share.example.com/session/{}", session_id),
+        url: format!("https://share.example.com/session/{session_id}"),
     })
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ShareResponse {
-    pub url: String,
 }
 
 // ============================================================================
@@ -676,21 +793,32 @@ pub async fn session_user_commands(Path(session_id): Path<String>) -> Json<serde
     }))
 }
 
+pub(crate) fn append_user_command_for_runtime(session_id: &str, command: String) -> Vec<String> {
+    let root_session_id = session_store().user_command_root_session_id(session_id);
+    let commands = session_store().append_user_command(session_id, command.clone());
+    if let Err(error) =
+        RouterClient::global().append_user_command(session_id, &root_session_id, &command)
+    {
+        tracing::warn!(
+            session_id,
+            root_session_id,
+            error = %error,
+            "failed to forward user command to router queue"
+        );
+    }
+    commands
+}
+
 pub async fn append_session_user_command(
     Path(session_id): Path<String>,
     Json(payload): Json<AppendUserCommandRequest>,
 ) -> Json<serde_json::Value> {
-    let commands = session_store().append_user_command(&session_id, payload.command);
+    let commands = append_user_command_for_runtime(&session_id, payload.command);
     Json(serde_json::json!({
         "ok": true,
         "session_id": session_id,
         "commands": commands,
     }))
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct AppendUserCommandRequest {
-    pub command: String,
 }
 
 pub async fn register_child_session(
@@ -716,11 +844,33 @@ pub async fn register_child_session(
 pub async fn update_session_status_for_runtime(
     Path(session_id): Path<String>,
     Json(payload): Json<RuntimeSessionStatusRequest>,
-) -> Json<SessionStatusResponse> {
+) -> impl IntoResponse {
+    if session_store().get_session(&session_id).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "session_not_found",
+                "session_id": session_id,
+            })),
+        )
+            .into_response();
+    }
     let status = match payload.status.as_str() {
-        "busy" | "running" => SessionStatusMano::Busy,
-        "error" | "failed" => SessionStatusMano::Error,
-        _ => SessionStatusMano::Idle,
+        "idle" => SessionStatusMano::Idle,
+        "busy" => SessionStatusMano::Busy,
+        "error" => SessionStatusMano::Error,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "invalid_session_status",
+                    "allowed": ["idle", "busy", "error"],
+                })),
+            )
+                .into_response();
+        }
     };
     session_store().update_session_status(&session_id, status);
     let api_status = match status {
@@ -729,31 +879,53 @@ pub async fn update_session_status_for_runtime(
         SessionStatusMano::Error => SessionStatus::Error,
     };
     let session = session_store().get_session(&session_id);
-    Json(SessionStatusResponse {
-        session_id,
-        status: api_status,
-        task_management: session
-            .as_ref()
-            .map(|session| session.task_management.clone())
-            .unwrap_or_else(|| serde_json::json!({})),
-        plan_summary: session
-            .as_ref()
-            .and_then(|session| session.plan_summary.clone()),
-        session_display_name: session.and_then(|session| session.session_display_name),
-    })
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct RuntimeSessionStatusRequest {
-    pub status: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct RegisterChildSessionRequest {
-    pub child_session_id: String,
-    pub directory: String,
-    pub name: String,
-    pub task_instruction: String,
+    if session
+        .as_ref()
+        .is_none_or(|session| session.status != api_status)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "session_status_transition_rejected",
+                "requested": payload.status,
+                "actual": session.as_ref().map(|session| session.status.clone()),
+            })),
+        )
+            .into_response();
+    }
+    (
+        StatusCode::OK,
+        Json(
+            serde_json::to_value(SessionStatusResponse {
+                session_id,
+                status: api_status,
+                task_management: session
+                    .as_ref()
+                    .map(|session| session.task_management.clone())
+                    .unwrap_or_else(|| serde_json::json!({})),
+                context_tokens: session
+                    .as_ref()
+                    .map(|session| session.context_tokens)
+                    .unwrap_or_default(),
+                usage: session
+                    .as_ref()
+                    .map(|session| session.usage.clone())
+                    .unwrap_or_default(),
+                plan_summary: session
+                    .as_ref()
+                    .and_then(|session| session.plan_summary.clone()),
+                session_display_name: session.and_then(|session| session.session_display_name),
+            })
+            .unwrap_or_else(|_| {
+                serde_json::json!({
+                    "ok": false,
+                    "error": "session_status_response_encode_failed",
+                })
+            }),
+        ),
+    )
+        .into_response()
 }
 
 // ============================================================================
@@ -762,12 +934,16 @@ pub struct RegisterChildSessionRequest {
 
 #[path = "session_messages.rs"]
 mod session_messages;
+pub use crate::contracts::{
+    MessageListParams, SendAgentMedia, SendAgentMessageRequest, SendAgentMessageResponse,
+    SendAgentToolCall, SessionCommandRequest, SessionCommandResponse, StreamAgentTextRequest,
+};
 #[cfg(test)]
 use session_messages::{agent_message_content, agent_message_metadata, planning_todos};
 pub use session_messages::{
-    get_message, get_message_part, get_todos, list_messages, send_agent_message, send_message,
-    session_command, update_todos, SendAgentMedia, SendAgentMessageRequest,
-    SendAgentMessageResponse, SendAgentToolCall,
+    get_message, get_message_part, get_todos, list_messages, send_agent_message,
+    send_agent_message_payload, send_message, session_command, stream_agent_message,
+    stream_agent_message_payload, update_todos,
 };
 pub async fn revert_session(Path(session_id): Path<String>) -> Json<bool> {
     Json(
@@ -897,11 +1073,26 @@ fn apply_single_change(record: &SessionChangeRecord, revert: bool) -> Result<boo
 
     if target_exists {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create change target directory {}: {error}",
+                    parent.display()
+                )
+            })?;
         }
-        fs::write(&path, target_content.unwrap_or_default()).map_err(|error| error.to_string())?;
+        fs::write(&path, target_content.unwrap_or_default()).map_err(|error| {
+            format!(
+                "failed to write change target file {}: {error}",
+                path.display()
+            )
+        })?;
     } else if path.exists() {
-        fs::remove_file(&path).map_err(|error| error.to_string())?;
+        fs::remove_file(&path).map_err(|error| {
+            format!(
+                "failed to remove change target file {}: {error}",
+                path.display()
+            )
+        })?;
     }
     Ok(true)
 }
@@ -919,7 +1110,8 @@ fn session_change_tracker_path(directory: &str, session_id: &str) -> PathBuf {
 
 #[path = "session_summary.rs"]
 mod session_summary;
-pub use session_summary::{summarize_session, SummaryResponse};
+pub use crate::contracts::SummaryResponse;
+pub use session_summary::summarize_session;
 
 // ============================================================================
 // Session Shell
@@ -927,8 +1119,9 @@ pub use session_summary::{summarize_session, SummaryResponse};
 
 #[path = "session_shell.rs"]
 mod session_shell;
+pub use crate::contracts::{ShellRequest, ShellResponse};
+pub use session_shell::session_shell;
 use session_shell::{run_session_shell_command, truncate_summary_text};
-pub use session_shell::{session_shell, ShellRequest, ShellResponse};
 
 // ============================================================================
 // Async Prompt
@@ -936,23 +1129,24 @@ pub use session_shell::{session_shell, ShellRequest, ShellResponse};
 
 #[path = "session_prompt.rs"]
 mod session_prompt;
-use session_prompt::{final_agent_message, frontend_safe_reply_message, run_mano_for_prompt};
 #[cfg(test)]
 use session_prompt::{
-    first_prompt_part_id, prompt_message_id, prompt_model_acceleration, prompt_model_variant,
-    prompt_text, user_facing_completion_fallback,
+    config_model_override, first_prompt_part_id, prompt_command_run_shell, prompt_message_id,
+    prompt_model_acceleration, prompt_model_variant, prompt_text,
 };
+use session_prompt::{final_agent_message, frontend_safe_reply_message, run_mano_for_prompt};
 pub use session_prompt::{prompt_async, start_task_scheduler};
+#[cfg(any(feature = "business-tests", feature = "os-tests"))]
+pub use session_prompt::{
+    run_due_task_scheduler_tick_for_business_test,
+    run_due_task_scheduler_tick_for_store_business_test,
+};
 #[path = "session_format.rs"]
 mod session_format;
-pub(crate) use session_format::api_message_from_store;
 #[cfg(test)]
-use session_format::frontend_safe_value;
+use crate::session::store::frontend_safe_value;
+pub(crate) use session_format::api_message_from_store;
 use session_format::{message_with_parts_from_store, part_json};
-
-#[path = "session_tui.rs"]
-mod session_tui;
-pub use session_tui::tui_action;
 
 #[cfg(test)]
 #[path = "session_tests.rs"]

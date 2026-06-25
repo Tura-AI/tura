@@ -115,6 +115,23 @@ export function localPathQueryValue(value: string): string {
   }
 }
 
+export function localOpenPathQueryValue(value: string): string {
+  return stripSourceLineSuffix(normalizeWindowsFilePath(localPathQueryValue(value)));
+}
+
+function normalizeWindowsFilePath(value: string): string {
+  return value.length >= 4 && value[0] === "/" && /^[A-Za-z]:[\\/]/u.test(value.slice(1))
+    ? value.slice(1)
+    : value;
+}
+
+function stripSourceLineSuffix(value: string): string {
+  const match = value.match(
+    /^(.+\.(?:tsx?|jsx?|json|ya?ml|toml|html?|css|scss|rs|py|go|java|kt|swift|c|cc|cpp|h|hpp|md|markdown|txt)):\d+(?::\d+)?$/iu,
+  );
+  return match?.[1] ?? value;
+}
+
 export function gatewayBaseUrl(): string {
   if (typeof window === "undefined") return "";
   const configured = new URLSearchParams(window.location.search).get("gatewayUrl")?.trim();

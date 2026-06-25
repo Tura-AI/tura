@@ -108,6 +108,10 @@ export function AppShell(props: { view: AppShellViewModel }) {
 
   useIdleScrollbars();
 
+  function showGatewayLoadingOverlay() {
+    return !state().bootstrapped && state().connection !== "connected" && !state().error;
+  }
+
   function applyRuntimeSetting(
     updater: (previous: AppState) => AppState,
     options: { debounce?: boolean } = {},
@@ -252,7 +256,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
           "--app-font-family": state().mainFont || DEFAULT_MAIN_FONT,
           "--code-font-family": state().codeFont || DEFAULT_CODE_FONT,
           "--base-font-size": `${state().mainFontSize || 12}px`,
-          "--code-font-size": `${state().codeFontSize || 11}px`,
+          "--code-font-size": `${state().codeFontSize || 12}px`,
         }}
       >
         <AppRail view={props.view} collapseAfterSelection={collapseRailAfterCompactSelection} />
@@ -274,10 +278,12 @@ export function AppShell(props: { view: AppShellViewModel }) {
           <Show
             when={!state().loading}
             fallback={
-              <AppLoadingPlaceholder
-                activeTab={state().activeTab}
-                settingsSection={state().settingsSection}
-              />
+              <Show when={!showGatewayLoadingOverlay()}>
+                <AppLoadingPlaceholder
+                  activeTab={state().activeTab}
+                  settingsSection={state().settingsSection}
+                />
+              </Show>
             }
           >
             <Switch>
@@ -318,6 +324,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   setState={props.view.setState}
                   selectedSession={props.view.selectedSession}
                   selectedMessages={props.view.selectedMessages}
+                  loadEarlierMessages={props.view.loadEarlierMessages}
                   slashCommands={props.view.slashCommands}
                   selectedEditingTask={selectedEditingTask}
                   leftRailOpen={!railCollapsed()}
@@ -329,7 +336,6 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   closeInspectorSignal={conversationInspectorCloseToken()}
                   onRequestCollapseLeftRail={collapseRailForMainWidth}
                   onOpenProviderSettings={openProviderSettings}
-                  onEditTask={editComposerTask}
                   onRunTask={(session, task) => void runEditingTaskNow(session, task)}
                   onRuntimeSetting={applyRuntimeSetting}
                   onOpenSettings={openSettings}
@@ -350,7 +356,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
             </Switch>
           </Show>
         </section>
-        <Show when={!state().bootstrapped && state().connection !== "connected" && !state().error}>
+        <Show when={showGatewayLoadingOverlay()}>
           <GatewayConnectionLoadingOverlay
             activeTab={state().activeTab}
             settingsSection={state().settingsSection}

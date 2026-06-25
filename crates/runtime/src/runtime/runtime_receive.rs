@@ -36,10 +36,17 @@ pub async fn execute_runtime_stream_event(
 ) -> Option<serde_json::Value> {
     match event {
         tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady { command, .. } => Some(
-            code_tools::command_run::execute_streamed_command_value(command, session_directory)
-                .await,
+            crate::router_command_run::execute_streamed_command_value_or_error(
+                command,
+                session_directory,
+                Some("runtime_receive"),
+                Some("runtime_receive_stream"),
+                None,
+            )
+            .await,
         ),
-        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted => None,
+        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted
+        | tura_llm_rust::ProviderStreamEvent::TextDelta { .. } => None,
     }
 }
 
@@ -51,9 +58,12 @@ pub async fn execute_runtime_stream_command_batch(
         return None;
     }
     Some(
-        code_tools::command_run::execute_async_value(
+        crate::router_command_run::execute_command_run_value_or_error(
             serde_json::json!({ "commands": commands }),
             session_directory,
+            Some("runtime_receive"),
+            Some("runtime_receive_batch"),
+            None,
         )
         .await,
     )
@@ -64,7 +74,8 @@ pub fn command_run_stream_event_command(
 ) -> Option<serde_json::Value> {
     match event {
         tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady { command, .. } => Some(command),
-        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted => None,
+        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted
+        | tura_llm_rust::ProviderStreamEvent::TextDelta { .. } => None,
     }
 }
 
@@ -220,26 +231,109 @@ pub async fn enqueue_tool_calls(
     }
 
     let client = redis::Client::open(redis_url)
-        .map_err(|e| format!("failed to create redis client: {}", e))?;
+        .map_err(|e| format!("failed to create redis client: {e}"))?;
 
     let mut con = client
         .get_multiplexed_async_connection()
         .await
-        .map_err(|e| format!("failed to get redis connection: {}", e))?;
+        .map_err(|e| format!("failed to get redis connection: {e}"))?;
 
-    let queue_key = format!("tool_router:queue:{}", session_id);
+    let queue_key = format!("tool_router:queue:{session_id}");
 
     for tool_call in tool_calls {
         let payload = serde_json::to_string(tool_call)
-            .map_err(|e| format!("failed to serialize tool call: {}", e))?;
+            .map_err(|e| format!("failed to serialize tool call: {e}"))?;
 
         redis::cmd("RPUSH")
             .arg(&queue_key)
             .arg(&payload)
             .query_async::<_, ()>(&mut con)
             .await
-            .map_err(|e| format!("failed to enqueue tool call: {}", e))?;
+            .map_err(|e| format!("failed to enqueue tool call: {e}"))?;
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        command_run_stream_event_command, execute_runtime_stream_command_batch, runtime_receive,
+        RuntimeReceiveInput,
+    };
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn runtime_receive_extracts_text_tool_calls_and_reasoning_from_mixed_chunks() {
+        let processed = runtime_receive(RuntimeReceiveInput {
+            runtime_id: "runtime-stream".to_string(),
+            session_id: "session-stream".to_string(),
+            agent_id: "agent-stream".to_string(),
+            raw_stream_data: json!([
+                { "type": "text", "delta": { "text": "hello" } },
+                { "type": "thinking", "thinking": "because" },
+                {
+                    "tool_calls": [{
+                        "function": {
+                            "name": "command_run",
+                            "arguments": { "command": "echo ok" }
+                        }
+                    }]
+                },
+                { "type": "done" }
+            ]),
+        })
+        .await
+        .expect("mixed stream chunks should process");
+
+        assert_eq!(processed.text_chunks, vec!["hello".to_string()]);
+        assert_eq!(processed.reasoning_chunks, vec!["because".to_string()]);
+        assert_eq!(processed.tool_calls.len(), 1);
+        assert_eq!(processed.tool_calls[0].tool_name, "command_run");
+        assert_eq!(
+            processed.tool_calls[0].arguments,
+            json!({ "command": "echo ok" })
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_receive_accepts_plain_string_as_text_chunk() {
+        let processed = runtime_receive(RuntimeReceiveInput {
+            runtime_id: "runtime-text".to_string(),
+            session_id: "session-text".to_string(),
+            agent_id: "agent-text".to_string(),
+            raw_stream_data: json!("plain text"),
+        })
+        .await
+        .expect("plain string stream data should process");
+
+        assert_eq!(processed.text_chunks, vec!["plain text".to_string()]);
+        assert!(processed.tool_calls.is_empty());
+        assert!(processed.reasoning_chunks.is_empty());
+    }
+
+    #[test]
+    fn command_run_stream_event_command_only_returns_ready_commands() {
+        let command = json!({ "command": "echo ok" });
+        let ready = tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady {
+            tool_call_id: "call_1".to_string(),
+            command_index: 0,
+            command: command.clone(),
+        };
+        assert_eq!(command_run_stream_event_command(ready), Some(command));
+
+        assert_eq!(
+            command_run_stream_event_command(tura_llm_rust::ProviderStreamEvent::TextDelta {
+                text: "hello".to_string()
+            }),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_stream_command_batch_returns_none_without_executing() {
+        let result = execute_runtime_stream_command_batch(Vec::new(), std::env::temp_dir()).await;
+
+        assert_eq!(result, None);
+    }
 }

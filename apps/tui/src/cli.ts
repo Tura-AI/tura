@@ -1,4 +1,8 @@
-import { resolveGatewayUrl, resolveCwd } from "./gateway/directory.js";
+import { spawn } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { resolveGatewayUrl, gatewayUrlIsExplicit, resolveCwd } from "./gateway/directory.js";
 import {
   CliUsageError,
   type CliContext,
@@ -22,16 +26,23 @@ import { inspectCommand } from "./commands/inspect.js";
 import { runTui } from "./tui/app.js";
 import {
   runtimeOverridesFromAssignment,
+  shellValue,
+  type CommandRunShell,
   type RuntimeConfigOverrides,
 } from "./commands/config-values.js";
 import { formatHelp } from "./output/help.js";
 import { parseLanguage, setLanguage, t, type Language } from "./i18n.js";
 import { helpPage, type HelpTopic } from "./i18n-help.js";
 
-const DEFAULT_AGENT = "fast";
+const DEFAULT_AGENT = "thinking";
+const DEFAULT_MODEL_VARIANT = "high";
 const DEFAULT_MODEL_ACCELERATION_ENABLED = true;
 
 export async function main(argv: string[]): Promise<void> {
+  if (argv[0] === "exec") {
+    await runRustCliExec(argv.slice(1));
+    return;
+  }
   const { context, args } = parseGlobal(argv);
   const command = args.shift();
   try {
@@ -43,12 +54,26 @@ export async function main(argv: string[]): Promise<void> {
       printHelp();
       return;
     }
+    if (command === "exec") {
+      await runRustCliExec(args);
+      return;
+    }
     if (command === "run") {
       if (hasHelp(args)) {
         printRunHelp();
         return;
       }
       const parsed = parseRun(args, context.json);
+      await runPrompt(context, parsed);
+      return;
+    }
+    const commandRunShell = commandRunShellForCommand(command);
+    if (commandRunShell) {
+      if (hasHelp(args)) {
+        printRunHelp();
+        return;
+      }
+      const parsed = parseRun(args, context.json, commandRunShell);
       await runPrompt(context, parsed);
       return;
     }
@@ -110,6 +135,7 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
   let json = false;
   let verbose = false;
   let mock = process.env.TURA_TUI_MOCK === "1" || process.env.TURA_TUI_MOCK === "true";
+  let dev = process.env.TURA_DEV === "1" || process.env.TURA_DEV === "true";
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--gateway-url") gatewayUrl = takeValue(args, index--);
@@ -128,6 +154,9 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
       args.splice(index--, 1);
     } else if (arg === "--mock") {
       mock = true;
+      args.splice(index--, 1);
+    } else if (arg === "--dev") {
+      dev = true;
       args.splice(index--, 1);
     } else if (arg === "--color") color = takeValue(args, index--) as ColorMode;
     else if (arg.startsWith("--color=")) {
@@ -160,6 +189,7 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
   return {
     context: {
       gatewayUrl: resolveGatewayUrl(gatewayUrl),
+      gatewayUrlExplicit: gatewayUrlIsExplicit(gatewayUrl),
       cwd: resolveCwd(cwd),
       json,
       color,
@@ -167,12 +197,17 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
       language,
       verbose,
       mock,
+      dev,
     },
     args,
   };
 }
 
-function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPrompt>[1] {
+export function parseRun(
+  args: string[],
+  rootJson: boolean,
+  commandRunShellOverride?: CommandRunShell,
+): Parameters<typeof runPrompt>[1] {
   let sessionID: string | undefined;
   let model: string | undefined;
   let agent: string | undefined;
@@ -181,6 +216,7 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
   let modelAccelerationEnabled: boolean | undefined;
   let killProcessesOnStart: boolean | undefined;
   let validatorEnabled: boolean | undefined;
+  let commandRunShell: CommandRunShell | undefined = commandRunShellOverride;
   let output: OutputMode = rootJson ? "json" : "text";
   let stream = true;
   let timeoutSec = 600;
@@ -216,6 +252,7 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     else if (arg === "--no-model-acceleration" || arg === "--no-accelerated")
       modelAccelerationEnabled = false;
     else if (arg === "-p" || arg === "--priority") modelAccelerationEnabled = true;
+    else if (isCommandRunShellFlag(arg)) commandRunShell = shellValue(arg.slice(2));
     else if (arg === "--output") output = parseOutput(args[++index]);
     else if (arg === "--json") output = "json";
     else if (arg === "--stream") stream = true;
@@ -232,6 +269,7 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
         modelAccelerationEnabled,
         killProcessesOnStart,
         validatorEnabled,
+        commandRunShell,
       } = applyRunOverrides(
         {
           model,
@@ -241,6 +279,7 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
           modelAccelerationEnabled,
           killProcessesOnStart,
           validatorEnabled,
+          commandRunShell,
         },
         overrides,
       ));
@@ -254,6 +293,7 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
         modelAccelerationEnabled,
         killProcessesOnStart,
         validatorEnabled,
+        commandRunShell,
       } = applyRunOverrides(
         {
           model,
@@ -263,6 +303,7 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
           modelAccelerationEnabled,
           killProcessesOnStart,
           validatorEnabled,
+          commandRunShell,
         },
         overrides,
       ));
@@ -275,16 +316,26 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     model,
     agent: agent ?? DEFAULT_AGENT,
     sessionType,
-    modelVariant,
+    modelVariant: modelVariant ?? DEFAULT_MODEL_VARIANT,
     modelAccelerationEnabled: modelAccelerationEnabled ?? DEFAULT_MODEL_ACCELERATION_ENABLED,
     killProcessesOnStart,
     validatorEnabled,
+    commandRunShell,
     output,
     stream,
     timeoutSec,
     lastMessageFile,
     source: "cli",
   };
+}
+
+export function commandRunShellForCommand(command: string): CommandRunShell | undefined {
+  if (command === "bash" || command === "zsh" || command === "shll") return shellValue(command);
+  return undefined;
+}
+
+function isCommandRunShellFlag(value: string): boolean {
+  return value === "--bash" || value === "--zsh" || value === "--shll";
 }
 
 function applyRunOverrides(
@@ -313,6 +364,74 @@ function parseResume(args: string[], rootJson: boolean): Parameters<typeof resum
 function parseOutput(value: string): OutputMode {
   if (value === "text" || value === "json" || value === "ndjson") return value;
   throw new CliUsageError(t("invalidOutputMode", { value }));
+}
+
+async function runRustCliExec(args: string[]): Promise<void> {
+  const executable = resolveRustCliBinary();
+  if (!executable) {
+    throw new CliUsageError(
+      "tura_exec binary not found. Run scripts/build-debug or scripts/build-release first.",
+    );
+  }
+  const code = await new Promise<number>((resolveExec, reject) => {
+    const child = spawn(executable, ["exec", ...args], {
+      stdio: ["inherit", "pipe", "pipe"],
+      env: process.env,
+      windowsHide: true,
+    });
+    child.stdout?.pipe(process.stdout);
+    child.stderr?.pipe(process.stderr);
+    child.on("error", reject);
+    child.on("exit", (exitCode, signal) => {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      if (signal) resolveExec(1);
+      else resolveExec(exitCode ?? 1);
+    });
+  });
+  process.exitCode = code;
+}
+
+function resolveRustCliBinary(): string | undefined {
+  const executable = process.platform === "win32" ? "tura_exec.exe" : "tura_exec";
+  const candidates: string[] = [];
+  const execDir = dirname(process.execPath);
+  candidates.push(join(execDir, executable));
+  const repo = findRepoRootForExec();
+  candidates.push(join(repo, "target", "release", executable));
+  candidates.push(join(repo, "target", "debug", executable));
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function findRepoRootForExec(): string {
+  const starts = [
+    process.cwd(),
+    dirname(process.execPath),
+    dirname(fileURLToPath(import.meta.url)),
+  ];
+  for (const start of starts) {
+    let current = canonicalPath(start);
+    for (let depth = 0; depth < 8; depth += 1) {
+      if (
+        existsSync(join(current, "Cargo.toml")) &&
+        existsSync(join(current, "crates", "gateway"))
+      ) {
+        return current;
+      }
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+  return process.cwd();
+}
+
+function canonicalPath(value: string): string {
+  try {
+    return realpathSync(value);
+  } catch {
+    return resolve(value);
+  }
 }
 
 function takeValue(args: string[], index: number): string {

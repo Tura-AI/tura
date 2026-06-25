@@ -3,6 +3,10 @@ import { t } from "../i18n.js";
 
 const COMMANDS = [
   "run",
+  "exec",
+  "bash",
+  "zsh",
+  "shll",
   "resume",
   "session",
   "config",

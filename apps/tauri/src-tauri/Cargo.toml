@@ -1,5 +1,5 @@
 [package]
-name = "src-tauri"
+name = "tura_gui"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -10,6 +10,8 @@ tauri-build.workspace = true
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
 tauri.workspace = true
 url.workspace = true
 

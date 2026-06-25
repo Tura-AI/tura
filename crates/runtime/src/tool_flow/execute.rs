@@ -17,7 +17,10 @@ use crate::gateway_events::{
 };
 use crate::manas::constants::COMMAND_RUN_TOOL;
 use crate::manas::tool_arguments::normalize_tool_arguments_for_tool;
-use crate::manas::tool_catalog::{command_run_commands_for_agent, project_directory_with_tools};
+use crate::manas::tool_catalog::{
+    command_run_commands_for_agent, extend_command_run_commands_with_capabilities,
+    project_directory_with_tools,
+};
 
 use super::permission::{permission_denial_for_tool, request_command_run_sandbox_bypass};
 
@@ -31,6 +34,14 @@ pub(crate) fn execute_tool_calls(
     let mut results = Vec::new();
     let project_directory = project_directory_with_tools()?;
     let tools_directory = project_directory.join("crates").join("tools").join("src");
+    let allowed_command_run_commands = agent.map(|agent| {
+        let mut commands = command_run_commands_for_agent(agent);
+        extend_command_run_commands_with_capabilities(
+            &mut commands,
+            session.session_capabilities.iter().map(String::as_str),
+        );
+        commands
+    });
 
     for tool_call in tool_calls {
         let tool_started_at = Utc::now();
@@ -113,11 +124,11 @@ pub(crate) fn execute_tool_calls(
             session_directory: session.session_directory.clone(),
             tools_directory: tools_directory.clone(),
             disable_permission_restrictions: session.disable_permission_restrictions,
-            allowed_command_run_commands: agent.map(command_run_commands_for_agent),
+            allowed_command_run_commands: allowed_command_run_commands.clone(),
         };
 
         let mut result = tokio::runtime::Runtime::new()
-            .map_err(|e| format!("failed to create runtime: {}", e))?
+            .map_err(|e| format!("failed to create runtime: {e}"))?
             .block_on(execute_tool(execute_input.clone()));
         if command_run_hit_workspace_sandbox(&tool_call.tool_name, &result)
             && !session.disable_permission_restrictions
@@ -132,7 +143,7 @@ pub(crate) fn execute_tool_calls(
                     let mut approved_input = execute_input.clone();
                     approved_input.disable_permission_restrictions = true;
                     result = tokio::runtime::Runtime::new()
-                        .map_err(|e| format!("failed to create runtime: {}", e))?
+                        .map_err(|e| format!("failed to create runtime: {e}"))?
                         .block_on(execute_tool(approved_input));
                 }
                 Ok(false) => {
@@ -287,4 +298,133 @@ fn command_run_hit_workspace_sandbox(
         Err(error) => error.clone(),
     };
     text.contains("command denied by sandbox policy") || text.contains("path outside workspace")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        command_run_hit_workspace_sandbox, command_run_result_error, command_run_result_success,
+        streamed_command_run_arguments, streamed_command_run_result,
+    };
+    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
+    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
+    use crate::tool_router::execute_tool::ToolExecutionResult;
+    use chrono::Utc;
+    use serde_json::json;
+
+    fn runtime_with_output(output: serde_json::Value) -> RuntimeManagement {
+        let mut runtime = RuntimeManagement::new(
+            "runtime-tool-flow".to_string(),
+            "session-tool-flow".to_string(),
+            "agent-tool-flow".to_string(),
+            RuntimeProviderConfig {
+                base: ProviderConfig {
+                    tura_llm_name: "fast".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
+                    stream: true,
+                    temperature: 0.0,
+                    max_tokens: 1024,
+                    tool_choice: ToolChoice::Auto,
+                    time_out_ms: 30_000,
+                },
+                thinking: false,
+                provider_name: "openai".to_string(),
+                model_name: "gpt-test".to_string(),
+                provider_url_name: "openai".to_string(),
+                llm_provider_name: "openai".to_string(),
+            },
+            Utc::now(),
+        );
+        runtime.set_output(output);
+        runtime
+    }
+
+    #[test]
+    fn streamed_command_run_result_is_read_from_runtime_output() {
+        let runtime = runtime_with_output(json!({
+            "streamed_command_run_result": {
+                "commands": [{ "command": "echo ok" }],
+                "results": [{ "success": true }]
+            }
+        }));
+
+        assert_eq!(
+            streamed_command_run_result(&runtime),
+            Some(json!({
+                "commands": [{ "command": "echo ok" }],
+                "results": [{ "success": true }]
+            }))
+        );
+    }
+
+    #[test]
+    fn streamed_command_arguments_prefer_completed_commands_over_fallback() {
+        let fallback = json!({ "command": "fallback" });
+        let streamed = json!({
+            "commands": [{ "command": "echo streamed" }],
+            "results": [{ "success": true }]
+        });
+
+        assert_eq!(
+            streamed_command_run_arguments(&fallback, &streamed),
+            json!({ "commands": [{ "command": "echo streamed" }] })
+        );
+        assert_eq!(
+            streamed_command_run_arguments(&fallback, &json!({ "commands": [] })),
+            fallback
+        );
+    }
+
+    #[test]
+    fn command_run_result_success_requires_all_result_items_to_succeed() {
+        assert!(command_run_result_success(&json!({
+            "results": [{ "success": true }, { "success": true }]
+        })));
+        assert!(!command_run_result_success(&json!({
+            "results": [{ "success": true }, { "success": false }]
+        })));
+        assert!(command_run_result_success(&json!({})));
+    }
+
+    #[test]
+    fn command_run_result_error_reports_first_failing_result_context() {
+        let with_error = json!({
+            "results": [
+                { "success": true },
+                { "success": false, "error": "first failure" },
+                { "success": false, "output": "second failure" }
+            ]
+        });
+        assert_eq!(
+            command_run_result_error(&with_error).as_deref(),
+            Some("first failure")
+        );
+
+        let with_output = json!({
+            "results": [{ "success": false, "output": "stderr fallback" }]
+        });
+        assert_eq!(
+            command_run_result_error(&with_output).as_deref(),
+            Some("stderr fallback")
+        );
+    }
+
+    #[test]
+    fn workspace_sandbox_detection_is_limited_to_command_run() {
+        let denied = Ok(ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({ "command": "cat ../secret" }),
+            result: json!({ "error": "path outside workspace" }),
+            success: false,
+            error: Some("command denied by sandbox policy".to_string()),
+        });
+
+        assert!(command_run_hit_workspace_sandbox("command_run", &denied));
+        assert!(!command_run_hit_workspace_sandbox("planning", &denied));
+
+        let failed: Result<ToolExecutionResult, String> =
+            Err("path outside workspace: ../secret".to_string());
+        assert!(command_run_hit_workspace_sandbox("command_run", &failed));
+    }
 }

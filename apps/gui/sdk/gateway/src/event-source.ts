@@ -9,6 +9,7 @@ export type GatewayEventStream = {
 
 export function connectGatewayEvents(input: {
   baseUrl: string;
+  sessionID?: string;
   onEvent: GatewayEventHandler;
   onError?: GatewayEventErrorHandler;
 }): GatewayEventStream {
@@ -17,7 +18,10 @@ export function connectGatewayEvents(input: {
     return { close: () => undefined };
   }
 
-  const url = new URL("/event", input.baseUrl);
+  const path = input.sessionID
+    ? `/session/${encodeURIComponent(input.sessionID)}/events`
+    : "/event";
+  const url = new URL(path, input.baseUrl);
   const eventSource = new EventSource(url.toString());
 
   eventSource.onmessage = (message) => {
