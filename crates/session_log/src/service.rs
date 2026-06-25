@@ -11,6 +11,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use std::time::Duration;
 
 use crate::{file_queue, SessionLogStore};
 
@@ -21,7 +22,7 @@ pub fn run_socket_service() -> Result<()> {
     let _lock = SessionDbOwnerLock::acquire()?;
     let store = SessionLogStore::open_default()?;
     let replayed = store.replay_pending_write_queue()?;
-    let interrupted = store.mark_running_sessions_interrupted()?;
+    let interrupted = store.mark_stale_running_sessions_interrupted(Duration::from_secs(120))?;
     tracing::info!(
         replayed_queue_items = replayed,
         interrupted_running_sessions = interrupted,

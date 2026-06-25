@@ -10,6 +10,8 @@ Describe only the elements that appear in the media, and do not include any info
 
 Image prompts must avoid AI slop, safe stock-like defaults, and CGI-heavy fantasy/game visuals by choosing concrete positive art direction such as stylized, atmospheric, cinematic, editorial...
 
+If an image may need background removal later, prompt for a single isolated subject on a plain solid background with a color that strongly contrasts the subject and is unrelated to the final theme palette, with crisp visible subject edges.
+
 Generate multiple distinct media assets with multiple separate `generate_media` calls in small batches. Do not ask one call to create several different assets, scenes, characters, icons, backgrounds, or deliverables at once. 
 
 Keep each image call focused on one clear asset and use repeated prompt + modification calls for asset sets so each output can preserve the intended style direction and quality.

@@ -1,9 +1,10 @@
 use super::{
     agent_message_content, agent_message_metadata, api_message_from_store, apply_single_change,
     config_model_override, filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message,
-    frontend_safe_value, planning_todos, prompt_command_run_shell, prompt_message_id,
-    prompt_model_acceleration, prompt_model_variant, prompt_text, workspace_key, SendAgentMedia,
-    SendAgentMessageRequest, SendAgentToolCall, SessionChangeRecord, SessionListParams,
+    frontend_safe_value, inactive_sessions_from_probe, planning_todos, prompt_command_run_shell,
+    prompt_message_id, prompt_model_acceleration, prompt_model_variant, prompt_text, workspace_key,
+    SendAgentMedia, SendAgentMessageRequest, SendAgentToolCall, SessionChangeRecord,
+    SessionListParams,
 };
 use crate::contracts::{Session, SessionContextTokens, SessionStatus};
 use crate::session::config::TuraSessionConfig;
@@ -848,5 +849,44 @@ fn apply_single_change_reports_target_directory_context() {
     assert!(
         message.contains(&blocking_parent.to_string_lossy().to_string()),
         "error should include the target directory path: {message}"
+    );
+}
+
+#[test]
+fn inactive_sessions_from_probe_keeps_active_sessions() {
+    let expected = vec!["active".to_string(), "worker".to_string()];
+    let inactive = inactive_sessions_from_probe(
+        &expected,
+        &serde_json::json!({
+            "sessions": [
+                { "session_id": "active", "status": "active" },
+                { "session_id": "worker", "worker_alive": true }
+            ]
+        }),
+    );
+
+    assert!(inactive.is_empty());
+}
+
+#[test]
+fn inactive_sessions_from_probe_marks_missing_or_inactive_sessions() {
+    let expected = vec![
+        "inactive".to_string(),
+        "missing".to_string(),
+        "active".to_string(),
+    ];
+    let inactive = inactive_sessions_from_probe(
+        &expected,
+        &serde_json::json!({
+            "sessions": [
+                { "session_id": "inactive", "status": "inactive" },
+                { "session_id": "active", "active_turn": true }
+            ]
+        }),
+    );
+
+    assert_eq!(
+        inactive,
+        vec!["inactive".to_string(), "missing".to_string()]
     );
 }

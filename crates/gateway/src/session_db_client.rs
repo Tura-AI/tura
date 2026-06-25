@@ -164,8 +164,8 @@ mod tests {
     };
     use serde_json::json;
     use session_log::{
-        CommandCheckpoint, DeleteSessionRequest, Page, SessionLogCommand, SessionLogResponse,
-        SessionSnapshot, WorkspaceSummary,
+        CommandCheckpoint, DeleteSessionRequest, MarkSessionInterruptedRequest, Page,
+        SessionLogCommand, SessionLogResponse, SessionSnapshot, WorkspaceSummary,
     };
 
     fn snapshot(session_id: &str) -> SessionSnapshot {
@@ -260,6 +260,11 @@ mod tests {
                 session_id: "session-1".to_string()
             }
         )));
+        assert!(!is_read_command(
+            &SessionLogCommand::MarkSessionInterrupted(MarkSessionInterruptedRequest {
+                session_id: "session-1".to_string()
+            })
+        ));
         assert!(!is_read_command(
             &SessionLogCommand::ApplyCommandCheckpoint(Box::new(CommandCheckpoint {
                 session_id: "session-1".to_string(),

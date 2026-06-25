@@ -23,6 +23,7 @@ pub fn is_async_write(command: &SessionLogCommand) -> bool {
         command,
         SessionLogCommand::UpsertSession(_)
             | SessionLogCommand::ApplyCommandCheckpoint(_)
+            | SessionLogCommand::MarkSessionInterrupted(_)
             | SessionLogCommand::DeleteSession(_)
             | SessionLogCommand::DeleteWorkspace(_)
     )
@@ -168,6 +169,9 @@ fn apply_command(store: &SessionLogStore, command: SessionLogCommand) -> Result<
         SessionLogCommand::ApplyCommandCheckpoint(payload) => {
             store.apply_command_checkpoint(*payload)
         }
+        SessionLogCommand::MarkSessionInterrupted(payload) => {
+            store.mark_session_interrupted(payload).map(|_| ())
+        }
         SessionLogCommand::DeleteSession(payload) => store.delete_session(payload),
         SessionLogCommand::DeleteWorkspace(payload) => store.delete_workspace(payload),
         other => anyhow::bail!("session queue only accepts write commands: {other:?}"),
@@ -195,7 +199,8 @@ mod tests {
     use super::{is_async_write, queue_item_name};
     use crate::{
         CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
-        ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand, UpsertSessionRequest,
+        ListSessionRecordsRequest, ListSessionsRequest, MarkSessionInterruptedRequest,
+        SessionLogCommand, UpsertSessionRequest,
     };
     use serde_json::json;
 
@@ -254,6 +259,9 @@ mod tests {
         let write_commands = [
             SessionLogCommand::UpsertSession(upsert()),
             SessionLogCommand::ApplyCommandCheckpoint(Box::new(checkpoint())),
+            SessionLogCommand::MarkSessionInterrupted(MarkSessionInterruptedRequest {
+                session_id: "session".to_string(),
+            }),
             SessionLogCommand::DeleteSession(DeleteSessionRequest {
                 session_id: "session".to_string(),
             }),

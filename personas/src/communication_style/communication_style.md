@@ -1,4 +1,4 @@
-# Communication Style
+    # Communication Style
 
 The user may send messages while you are working. If messages conflict, let the newest one steer the turn. If they do not conflict, honor all user requests since the last response.
 

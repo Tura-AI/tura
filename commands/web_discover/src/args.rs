@@ -42,12 +42,20 @@ pub(super) fn parse_args_value(value: Value) -> Result<WebDiscoverArgs, String> 
         .or_else(|| object.get("mediaType"))
         .and_then(Value::as_str)
         .unwrap_or("website");
+    let asset_type = object
+        .get("asset_type")
+        .or_else(|| object.get("assetType"))
+        .or_else(|| object.get("asset_kind"))
+        .or_else(|| object.get("assetKind"))
+        .and_then(Value::as_str)
+        .map(normalize_asset_type);
     let query = string_field(&value, &["query", "q", "search", "keywords", "keyword"])
         .unwrap_or_default()
         .trim()
         .to_string();
     args_from_parts(
         kind,
+        asset_type,
         query,
         object
             .get("include_regex")
@@ -101,6 +109,7 @@ pub(super) fn parse_cli_args(input: &str) -> Result<WebDiscoverArgs, String> {
     let mut min_size = None;
     let mut max_size = None;
     let mut format_selector = None;
+    let mut asset_type = None;
     let mut index = 0usize;
     while index < words.len() {
         let original_word = &words[index];
@@ -122,6 +131,9 @@ pub(super) fn parse_cli_args(input: &str) -> Result<WebDiscoverArgs, String> {
         match word.as_str() {
             "--type" | "--kind" | "--media-type" | "--media_type" | "-t" => {
                 kind = take_value(&mut index)?
+            }
+            "--asset-type" | "--asset_type" | "--asset-kind" | "--asset_kind" => {
+                asset_type = Some(normalize_asset_type(&take_value(&mut index)?))
             }
             "--query" | "--search" | "--q" | "-q" => query_parts.push(take_value(&mut index)?),
             "--include-regex" | "--include_regex" => include_regex = Some(take_value(&mut index)?),
@@ -151,6 +163,9 @@ pub(super) fn parse_cli_args(input: &str) -> Result<WebDiscoverArgs, String> {
             }
             "--format" | "--media-format" | "--media_format" | "--yt-dlp-format"
             | "--yt_dlp_format" => format_selector = Some(take_value(&mut index)?),
+            _ if kind == "asset" && asset_type.is_none() && is_asset_type(&word) => {
+                asset_type = Some(normalize_asset_type(&word))
+            }
             _ if query_parts.is_empty() && is_media_kind(&word) => kind = normalize_kind(&word),
             _ if !word.starts_with("--") => query_parts.push(word.clone()),
             _ => {
@@ -167,6 +182,7 @@ pub(super) fn parse_cli_args(input: &str) -> Result<WebDiscoverArgs, String> {
     }
     args_from_parts(
         &kind,
+        asset_type,
         query_parts.join(" "),
         include_regex,
         exclude_regex,
@@ -188,7 +204,14 @@ pub(super) fn is_web_discover_command_name(value: &str) -> bool {
 pub(super) fn is_media_kind(value: &str) -> bool {
     matches!(
         normalize_kind(value).as_str(),
-        "website" | "image" | "video" | "audio"
+        "website" | "image" | "video" | "audio" | "asset"
+    )
+}
+
+pub(super) fn is_asset_type(value: &str) -> bool {
+    matches!(
+        normalize_asset_type(value).as_str(),
+        "auto" | "shader" | "texture" | "2d" | "3d" | "audio"
     )
 }
 
@@ -204,6 +227,7 @@ pub(super) fn split_cli_assignment(word: &str) -> (String, Option<String>) {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn args_from_parts(
     kind: &str,
+    asset_type: Option<String>,
     query: String,
     include_regex: Option<String>,
     exclude_regex: Option<String>,
@@ -214,7 +238,10 @@ pub(super) fn args_from_parts(
     format_selector: Option<String>,
 ) -> Result<WebDiscoverArgs, String> {
     let kind = normalize_kind(kind);
-    if !matches!(kind.as_str(), "website" | "image" | "video" | "audio") {
+    if !matches!(
+        kind.as_str(),
+        "website" | "image" | "video" | "audio" | "asset"
+    ) {
         return Err(format!("unsupported web_discover type: {kind}"));
     }
     if query.trim().is_empty() {
@@ -225,8 +252,19 @@ pub(super) fn args_from_parts(
     } else {
         DEFAULT_MIN_SIZE
     };
+    let normalized_asset_type = if kind == "asset" {
+        Some(
+            asset_type
+                .as_deref()
+                .map(normalize_asset_type)
+                .unwrap_or_else(|| "auto".to_string()),
+        )
+    } else {
+        None
+    };
     Ok(WebDiscoverArgs {
         kind,
+        asset_type: normalized_asset_type,
         query,
         include_regex,
         exclude_regex,
@@ -247,6 +285,24 @@ pub(super) fn normalize_kind(value: &str) -> String {
         "img" | "images" | "photo" | "photos" => "image".to_string(),
         "videos" | "movie" | "movies" => "video".to_string(),
         "sound" | "music" => "audio".to_string(),
+        "assets" | "asset_search" | "game_asset" | "game_assets" => "asset".to_string(),
+        other => other.to_string(),
+    }
+}
+
+pub(super) fn normalize_asset_type(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "" | "any" | "all" | "auto" => "auto".to_string(),
+        "shader" | "shaders" | "glsl" | "wgsl" | "hlsl" | "material_shader" => "shader".to_string(),
+        "texture" | "textures" | "material" | "materials" | "hdri" | "hdr" | "env"
+        | "environment" => "texture".to_string(),
+        "2d" | "2d_asset" | "2d_assets" | "sprite" | "sprites" | "ui" | "icon" | "icons"
+        | "pixel" | "image" => "2d".to_string(),
+        "3d" | "3d_asset" | "3d_assets" | "model" | "models" | "mesh" | "meshes" | "glb"
+        | "gltf" | "obj" | "fbx" => "3d".to_string(),
+        "audio" | "sfx" | "sound" | "sounds" | "sound_effect" | "sound_effects" | "music" => {
+            "audio".to_string()
+        }
         other => other.to_string(),
     }
 }

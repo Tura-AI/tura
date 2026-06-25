@@ -852,6 +852,46 @@ impl SessionStore {
         });
     }
 
+    pub fn mark_interrupted(&self, session_id: &str) -> Option<ApiSession> {
+        let parent_id = self.parent_for_child(session_id);
+        let mut sessions = self.sessions.write();
+        let info = sessions.get_mut(session_id)?;
+        if matches!(
+            info.management.state,
+            SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted
+        ) {
+            return Some(api_session_from_info(info, parent_id));
+        }
+        let now = Utc::now();
+        match info.management.state {
+            SessionState::Running | SessionState::Paused => {
+                if let Err(err) = info.transition(SessionState::Interrupted) {
+                    tracing::warn!(
+                        session_id,
+                        current_state = ?info.management.state,
+                        error = %err,
+                        "session interrupted transition rejected by state machine"
+                    );
+                    return Some(api_session_from_info(info, parent_id));
+                }
+            }
+            SessionState::Created | SessionState::Completed => {
+                info.management.state = SessionState::Interrupted;
+                info.management.session_last_update_at = now;
+            }
+            SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {}
+        }
+        for task in &mut info.management.task_plan.detailed_tasks {
+            if task.status == PlanStatus::Doing {
+                task.status = PlanStatus::WaitingUser;
+            }
+        }
+        info.updated_at = now.timestamp_millis();
+        info.management.session_last_update_at = now;
+        info.status = SessionStatusMano::from_state(info.management.state);
+        Some(api_session_from_info(info, parent_id))
+    }
+
     pub fn pause_session_for_abort(&self, session_id: &str) -> Option<ApiSession> {
         let parent_id = self.parent_for_child(session_id);
         let mut sessions = self.sessions.write();

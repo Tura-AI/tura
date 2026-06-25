@@ -319,7 +319,46 @@ impl RouterProcess {
         }
     }
 
+    pub fn call_existing_with_timeout(
+        &self,
+        method: &str,
+        payload: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value> {
+        let endpoint = reachable_router_endpoint()?
+            .ok_or_else(|| anyhow!("router daemon is not reachable"))?;
+        *self.addr.lock() = Some(endpoint.addr);
+        let response = self.call_once_with_timeout(method, payload, timeout)?;
+        if response
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            Ok(response
+                .get("payload")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null))
+        } else {
+            Err(anyhow!(
+                "{}",
+                response
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("router call failed")
+            ))
+        }
+    }
+
     fn call_once(&self, method: &str, payload: serde_json::Value) -> Result<serde_json::Value> {
+        self.call_once_with_timeout(method, payload, read_timeout_for(method))
+    }
+
+    fn call_once_with_timeout(
+        &self,
+        method: &str,
+        payload: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value> {
         let addr = self
             .addr
             .lock()
@@ -341,7 +380,7 @@ impl RouterProcess {
             "payload": payload,
             "deadline_ms": deadline_ms,
         });
-        call_router_addr(&addr, &request, read_timeout_for(method))
+        call_router_addr(&addr, &request, timeout)
     }
 
     fn spawn_router_daemon(&self) -> Result<std::process::Child> {
@@ -477,6 +516,8 @@ fn apply_gateway_callback_notification(value: &Value) -> Result<()> {
 fn read_timeout_for(method: &str) -> Duration {
     if method == "health_check" {
         ROUTER_HEALTH_TIMEOUT
+    } else if method == "execution.probe_sessions" {
+        Duration::from_secs(5)
     } else if method == "execution.shutdown" {
         Duration::from_secs(10)
     } else {

@@ -114,6 +114,11 @@ pub struct DeleteSessionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkSessionInterruptedRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteWorkspaceRequest {
     pub workspace: String,
 }
@@ -129,6 +134,7 @@ pub enum SessionLogCommand {
     ListSessions(ListSessionsRequest),
     ListSessionSummaries(ListSessionsRequest),
     ListSessionRecords(ListSessionRecordsRequest),
+    MarkSessionInterrupted(MarkSessionInterruptedRequest),
     DeleteSession(DeleteSessionRequest),
     DeleteWorkspace(DeleteWorkspaceRequest),
     Shutdown,
@@ -165,8 +171,8 @@ pub enum SessionLogResponse {
 mod tests {
     use super::{
         DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionRecordsRequest,
-        ListSessionsRequest, Page, SessionLogCommand, SessionLogResponse, SessionRecord,
-        SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
+        ListSessionsRequest, MarkSessionInterruptedRequest, Page, SessionLogCommand,
+        SessionLogResponse, SessionRecord, SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
     };
     use serde_json::json;
 
@@ -213,6 +219,9 @@ mod tests {
                 session_id: "session".to_string(),
             }),
             SessionLogCommand::DeleteSession(DeleteSessionRequest {
+                session_id: "session".to_string(),
+            }),
+            SessionLogCommand::MarkSessionInterrupted(MarkSessionInterruptedRequest {
                 session_id: "session".to_string(),
             }),
             SessionLogCommand::DeleteWorkspace(DeleteWorkspaceRequest {

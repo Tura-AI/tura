@@ -24,6 +24,7 @@ fn router_ipc_has_supervision_methods_but_no_session_db_data_call() {
         "lifecycle.status",
         "execution.enqueue_turn",
         "execution.cancel_turn",
+        "execution.probe_sessions",
         "execution.get_status",
         "execution.kill_session_workers",
         "execution.shutdown",
@@ -157,8 +158,11 @@ fn session_db_service_replays_durable_queue_on_startup() {
     assert!(
         store.contains("mod write;")
             && store_write.contains("pub fn mark_running_sessions_interrupted")
-            && service.contains("store.mark_running_sessions_interrupted()?"),
-        "session_db service startup must mark non-reattachable running work interrupted"
+            && store_write.contains("pub fn mark_stale_running_sessions_interrupted")
+            && service.contains(
+                "store.mark_stale_running_sessions_interrupted(Duration::from_secs(120))?"
+            ),
+        "session_db service startup must mark stale non-reattachable running work interrupted"
     );
 }
 

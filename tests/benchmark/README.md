@@ -48,6 +48,9 @@ specific run.
   patch-contract benchmark.
 - `media-presentation/ogas_pdf_cost_comparison.mjs`: cost and artifact
   comparison for media-heavy PDF work.
+- `frontend-playwright/game_prompt_difficulty_comparison.mjs`: cost and
+  artifact comparison for playable browser-game prompts across four English
+  difficulty levels.
 - `project-rebuild-refactor/rust_cli_python_port_suite.mjs`: source-port
   benchmark with usage and command statistics.
 - `project-rebuild-refactor/rust_cli_python_port_suite_defined_workflow.mjs`:

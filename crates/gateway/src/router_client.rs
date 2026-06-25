@@ -5,6 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct RouterClient;
@@ -36,6 +37,14 @@ impl RouterClient {
         crate::router_process::global_router_process()?.call(
             "execution.cancel_turn",
             cancel_turn_payload(session_id, active_turn_id),
+        )
+    }
+
+    pub fn probe_sessions(&self, session_ids: &[String]) -> Result<Value> {
+        crate::router_process::global_router_process()?.call_existing_with_timeout(
+            "execution.probe_sessions",
+            json!({ "session_ids": session_ids }),
+            Duration::from_secs(5),
         )
     }
 

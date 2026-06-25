@@ -1,3 +1,4 @@
+use super::asset::asset_records;
 use super::files::{relative_or_display, resolve_download_dir};
 use super::filter::{
     build_search_query, filter_results, parse_query_requirements, site_filters_to_image_keywords,
@@ -80,6 +81,29 @@ pub(super) fn run_web_discover_inner(
             });
             return Ok(output);
         }
+    }
+    if args.kind == "asset" {
+        let (records, downloaded_files, searched_sources) = asset_records(
+            &args,
+            &client,
+            &search_query,
+            output_dir.as_deref(),
+            session_dir,
+        )?;
+        let output = json!({
+            "query": args.query,
+            "type": args.kind,
+            "asset_type": args.asset_type,
+            "normalized_query": normalized_query,
+            "searched_sources": searched_sources,
+            "saved": should_download,
+            "download_dir": output_dir.as_deref().map(|path| relative_or_display(path, session_dir)),
+            "result_count": records.len(),
+            "results": records,
+            "downloaded_files": downloaded_files,
+            "summary_markdown": summarize_records(&records, &downloaded_files),
+        });
+        return Ok(output);
     }
     let mut results = if args.kind == "website" {
         search_websites(&client, &search_query, args.max_results)?

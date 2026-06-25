@@ -94,6 +94,30 @@ impl ServiceManager {
             .count()
     }
 
+    pub async fn worker_alive_by_key(&self, key: &str) -> bool {
+        let worker_id = {
+            let service_to_worker = self.service_to_worker.read();
+            service_to_worker.get(key).cloned()
+        };
+        let Some(worker_id) = worker_id else {
+            return false;
+        };
+        let worker = {
+            let workers = self.workers.read();
+            workers.get(&worker_id).cloned()
+        };
+        let Some(worker) = worker else {
+            self.service_to_worker.write().remove(key);
+            return false;
+        };
+        if worker.is_alive().await {
+            return true;
+        }
+        self.workers.write().remove(&worker_id);
+        self.service_to_worker.write().remove(key);
+        false
+    }
+
     #[allow(dead_code)]
     pub async fn call_worker(
         &self,
@@ -226,6 +250,22 @@ mod tests {
         assert!(manager.stop_worker_by_key("runtime_worker:session-b").await);
         assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
         assert!(!manager.stop_worker(&handle.worker_id).await);
+    }
+
+    #[tokio::test]
+    async fn worker_alive_by_key_reports_registered_one_shot_worker() {
+        let manager = ServiceManager::new();
+        manager
+            .ensure_worker(missing_worker_spec("runtime_worker:session-live"))
+            .await
+            .expect("one-shot worker should be registered");
+
+        assert!(
+            manager
+                .worker_alive_by_key("runtime_worker:session-live")
+                .await
+        );
+        assert!(!manager.worker_alive_by_key("runtime_worker:missing").await);
     }
 
     #[tokio::test]

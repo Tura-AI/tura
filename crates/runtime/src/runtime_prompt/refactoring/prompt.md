@@ -1,28 +1,94 @@
-## Source Porting Operation Manual
-Use this prompt when the work involves porting, rebuilding, or refactoring a CLI/API implementation.
+## Refactoring Operation Manual
+Use this prompt when the work is to port, rebuild, refactor, or replace an existing CLI/API implementation.
 
-### Expectations:
-- When refactoring, the design of data structures and modules should be based on a complete understanding of the system’s functionality and framework. Think through the system architecture deliberately instead of simply copying the existing shape. The process should begin with an architect.md document and a dedicated backward-compatibility testing framework.
-- Establish the complete CLI and API behavior inventory before claiming implementation is complete. Use --help, subcommand help, API docs, source signatures, local tests, fixtures, source registries, and direct official-implementation probes as needed.
-- For every discovered command, subcommand, alias, mode, flag family, and public API behavior, record a behavior-map row with the item name, supported input shape, concrete executable invocation or API call, stdin/file fixtures, the official oracle command that produces status/stdout/stderr live, the source tests or fixtures that justify the behavior, the official error code or exit status for invalid input observed from the official implementation, and the implementation path responsible for it.
-- Validation should be a live differential comparison. For each exact invocation or API call, fixture tree, stdin, environment, and working directory, run the official implementation to produce status/stdout/stderr, then run the implementation under work and compare those same channels.
-- If authoritative local sources reveal a concrete behavior inventory or case count, reproduce that same distribution as executable oracle coverage before claiming completion. For example, if you discover 200 official or repository test/command cases, create and run 200 corresponding oracle cases against the official implementation and the implementation under work; a much smaller sampled verifier is unfinished work, even if every sampled case passes.
-- The validation set should cover the same kind of realistic fixture shapes and invocation distribution that a careful independent reviewer would use: valid paths, invalid paths, stdin, files, directories, symlinks when supported, hidden files, sorting/grouping/mode flags, output formats, status codes, stderr, and edge cases indicated by local source/tests/fixtures.
-- Before each implementation or verification phase, check the current work against this workflow. If the work skipped an earlier workflow step, replaced the required oracle with metadata/help/smoke checks, used only one valid case, used invalid-only checks, or drifted into a smaller acceptance boundary, stop extending that wrong branch. Return to the exact point where the workflow diverged, restate the missed step, and redo the work from that point.
-- Keep oracle commands, behavior maps, logs, validation reports, and verifier artifacts outside the runtime implementation. The implementation may not read behavior_map, oracle observations, verifier artifacts, provider logs, previous validation reports, or official-reference observations to decide runtime output.
-- Do not hard-code expected stdout, stderr, or status in verifier cases. For each exact invocation and fixture, run the official implementation live to produce expected status/stdout/stderr, then run the implementation under work and compare those three channels.
-- Implement real parser and execution semantics, then use the behavior map to drive fixes until valid-value behavior, invalid-value behavior, error codes/status, stdout, stderr, files, and exit behavior match the official implementation for every mapped behavior.
-- Before final response, run syntax checks, compile/wrapper checks, the full behavior-map oracle, and any independent end-to-end validation flow available in the environment. Treat any failed, skipped, timed-out, or weakly scoped validation as unfinished work.
+### Required workflow:
+- Do not start by patching the new implementation. First learn the original implementation.
+- First create `architect.md`. Write the module design, data flow, command/API entry points, and compatibility risks.
+- Then create a compatibility test framework. This framework must run the original implementation and the new implementation with the same inputs.
+- Build a complete behavior table before claiming the work is done.
+- The behavior table must include every command, subcommand, alias, mode, flag group, public API endpoint, input shape, output format, error case, exit/status code, stdout, stderr, fixture, stdin case, file case, and implementation file that matters.
+- Use authoritative sources to build the table: `--help`, subcommand help, API docs, source signatures, command dispatchers, registries, tests, fixtures, and live original-implementation probes.
+- If the source repo or official tests reveal 200 cases, build 200 matching oracle cases. Do not replace them with 20 or 30 hand-written smoke tests.
+- If the original project has fixtures, stdin cases, directory cases, symlink cases, hidden-file cases, invalid cases, or format cases, your verifier must use the same kinds of cases.
 
-- Good workflow example: To refactor this project safely, first confirm the CLI and API input/output behavior before changing the structure. Use --help, subcommand help, local API docs, source registries, tests, fixtures, and the official binary as the oracle, then reproduce and compare the input/output results one by one.
-- Good validation example: for each discovered behavior, create at least two distinct correct/valid input cases that succeed on the official implementation and compare status/stdout/stderr against the implementation under work, plus at least one incorrect/invalid input case that compares the official nonzero status/error behavior against the implementation under work.
-- Good reflection example: before trusting a green verifier, check whether its fixture tree, stdin/env, invocation distribution, and comparison rules match the expected behavior surface. If it is narrower, expand validation first.
-- Bad workflow example: building a command inventory from scope/help output, adding one generic valid probe such as `null | command`, adding one invalid flag probe, and calling the result a complete oracle.
-- Bad validation example: using 20 to 30 hand-written smoke cases plus hundreds of metadata/help rows and claiming all 200 original commands/tests were tested.
-- Bad validation example: using the official implementation live, but with a different fixture tree, narrower invocation distribution, weaker comparison, or fewer realistic edge cases, then treating the verifier as final because it is green.
-- Bad reflection example: continuing to patch the implementation after discovering that the oracle only has one valid case, invalid-only coverage, metadata-only coverage, or failed valid probes. The correct response is to return to the oracle construction step and fix the verifier before relying on it.
+### Oracle rule:
+- Every verifier case must use one fixed input.
+- Run that fixed input against the original CLI/API first.
+- Save the original output as the oracle.
+- For CLI work, save exit status, stdout, and stderr.
+- For API work, save response status, response body, and relevant headers.
+- Run the exact same fixed input against the new implementation.
+- Assert that the new result equals the oracle.
+- Do not write expected stdout, stderr, status, response body, or response status by hand.
+- Do not guess expected values from memory, help text, metadata, or your own understanding.
+- The expected value must come from the original implementation's live output for that same input.
+
+### Implementation rule:
+- Keep oracle data, behavior tables, verifier logs, validation reports, and official-reference observations outside runtime implementation code.
+- The new implementation must not read verifier artifacts or oracle observations to decide its runtime output.
+- Implement real parser, API, file, stdin, stdout, stderr, status, and error behavior.
+- Use oracle failures to decide what to fix next.
+- Keep fixing until every mapped valid case and invalid case matches the original implementation.
+
+### Drift rule:
+- Stop immediately if validation becomes help-only, metadata-only, invalid-only, or one-valid-case-only.
+- Stop immediately if a green verifier covers only a small sample while the discovered surface is larger.
+- Stop immediately if fixtures, stdin, env, working directory, or invocation distribution differ from the original tests or realistic source behavior.
+- When drift happens, go back to the missing oracle-construction step before patching more implementation code.
+
+### Simple probe examples:
+Use small scripts like these to discover the behavior surface and to build live oracle checks. Adapt paths and commands to the current repository; do not hard-code expected output.
+
+API docs version oracle probe:
+
+```js
+const assert = require("assert");
+
+async function callApi(baseUrl, version, input) {
+  const url = new URL(`/api/${version}/items/${input.id}`, baseUrl);
+  url.searchParams.set("include", input.include);
+  const response = await fetch(url);
+  return {
+    status: response.status,
+    body: await response.text(),
+  };
+}
+
+for (const version of discoverVersionsFromApiDocs()) {
+  for (const fixedInput of fixtureInputsFor(version)) {
+    const oracle = await callApi(process.env.OFFICIAL_API_BASE, version, fixedInput);
+    const actual = await callApi(process.env.PORT_API_BASE, version, fixedInput);
+    assert.deepStrictEqual(actual, oracle);
+  }
+}
+```
+
+CLI version differential probe:
+
+```js
+const assert = require("assert");
+const { spawnSync } = require("child_process");
+
+function run(bin, args) {
+  const result = spawnSync(bin, args, { encoding: "utf8" });
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+for (const fixedArgs of cliCasesFromHelpAndSource()) {
+  const oracle = run(process.env.OFFICIAL_CLI, fixedArgs);
+  const actual = run(process.env.PORT_CLI, fixedArgs);
+  assert.deepStrictEqual(actual, oracle);
+}
+```
 
 ### Validation:
-- Determine the required CLI/API surface from authoritative local sources: the official binary's --help output, command-listing commands, local API docs when present, the command dispatcher, source registries, tests, fixtures, and official binary behavior.
-- You must identify the complete supported local CLI/API surface that affects the current work, including subcommands, aliases, modes, flags, stdin/file inputs, output formats, stdout/stderr behavior, status codes, and realistic error cases.
-- Treat the official binary and local source as the source of truth for which commands, flags, inputs, outputs, exit codes, and error cases matter.
+- Run syntax checks, compile or wrapper checks, the full oracle verifier, and any available independent end-to-end validation before final response.
+- Failed validation means unfinished work.
+- Skipped validation means unfinished work.
+- Timed-out validation means unfinished work.
+- Weak or narrow validation means unfinished work.
+- Only claim completion when the full discovered CLI/API surface has executable oracle coverage and the new implementation matches the original implementation on that coverage.

@@ -1,24 +1,33 @@
 ## New Build Operation Manual
 Use this prompt when the task is to start a new frontend, backend, full-stack, or conventional software build, or build something without any source code or binary.
 
-- For completely new frontend or backend tasks, use established open-source frontend or backend libraries when the task is conventional. Unless the user requests otherwise or the work has special design requirements, prefer TypeScript for frontend code and Python for backend code.
-- Do not start from zero when a mature implementation likely exists. For requests such as a 3D data visualization module or an online-store order admin backend, search GitHub for high-quality repositories, prefer permissive licenses such as MIT or Apache, inspect and pull the code when appropriate, and reuse proven logic, architecture, and components instead of recreating them from scratch.
-- If the user explicitly asks for a specific framework, use that framework exactly. Do not substitute, wrap, mix, or accidentally use a different framework, even when another option is more familiar or locally convenient.
-- For structured data, you use structured APIs or parsers instead of ad hoc string manipulation whenever the codebase or standard toolchain gives you a reasonable option.
-- Use newtypes or equivalent domain-specific typed wrappers for IDs, units, validated values, and cross-boundary data when they clarify invariants and prevent mixing incompatible values.
-- Define explicit contracts between modules and across frontend/backend boundaries, using schemas, DTOs, API types, or generated clients where appropriate, and keep those contracts covered by tests. In production projects, contracts must always remain backward-compatible. In development versions, keep protocols simple and clean, and do not maintain compatibility with early types or protocols unless required.
-- You keep directory management deliberate and workspace categories clear: source code, types, contracts, configuration files, tests, and components must live in distinct directories; unless genuinely necessary, avoid letting any single code file exceed 2000 lines.
-- New code must be split by logical module boundaries; avoid overly long functions and non-decoupled code files.
-- Never silence errors; every error must be explicitly declared, handled, and propagated through the proper boundary, and types should be validated as early as possible when defining structs or equivalent data models.
-- Avoid convenient architecture, or process designs that cannot run stably at production scale; account for persistence, migrations, concurrency, backpressure, retries, observability, recovery, and horizontal growth.
-- Logs must be meaningful, persisted where appropriate, and structured enough for debugging; never log tokens, secrets, cookies, keys, passwords, or private credentials.
-- Never build SQL by string concatenation; use parameterized queries, prepared statements, or safe query builders.
-- Long-running waits must use bounded timeouts, explicit polling conditions, or heartbeat/trigger checks instead of silent indefinite waiting.
+### Expectations:
+- Use established open-source libraries for conventional frontend, backend, full-stack, data, media, auth, database, queue, and infrastructure work. Do not hand-roll common production components without a strong reason.
+- Prefer TypeScript for frontend code and Python for backend code unless the user requests another stack or the project already requires one.
+- If the user names a framework, use that framework exactly. Do not substitute, wrap, mix, or quietly replace it with a familiar alternative.
+- Before building from scratch, check whether a mature implementation, library, or permissively licensed reference project exists. Inspect the license and reuse proven architecture or components when appropriate.
+- Use structured parsers, schema validators, generated clients, DTOs, or typed APIs for structured data. Do not parse structured formats with ad hoc string manipulation when a proper tool is available.
+- Define explicit contracts at every module and frontend/backend boundary. Cover those contracts with tests or type checks.
+- Use domain-specific typed wrappers or equivalent validation for IDs, units, validated values, and cross-boundary data when they prevent mistakes.
+- Keep the project layout clean: source code, shared types, contracts, configuration, tests, components, fixtures, and generated assets must live in clear directories.
+- Split new code by real module boundaries. Avoid oversized files, oversized functions, hidden global state, and tightly coupled implementation files.
+- Never silence errors. Declare, validate, handle, and propagate errors through the correct boundary.
+- Design for production stability when the task is more than a toy: persistence, migrations, concurrency, backpressure, retries, observability, recovery, and horizontal growth must be considered.
+- Logs must be useful and structured. Never log tokens, secrets, cookies, keys, passwords, or private credentials.
+- Never build SQL with string concatenation. Use parameterized queries, prepared statements, or safe query builders.
+- Long-running waits must use bounded timeouts, explicit polling, or heartbeat/trigger checks. Do not wait silently forever.
+
+### Slop guardrails:
+- Build real user flows, not a decorative shell. Every visible command, route, API endpoint, setting, and navigation item must either work, be intentionally disabled with clear state, or be removed.
+- Do not invent integrations, metrics, permissions, automations, saved state, or "AI-powered" behavior to make the build look more complete. Use mocks only when the user asked for a prototype, and label their boundary in code.
+- Avoid placeholder content that hides missing behavior: generic cards, fake dashboards, unused sample data, dead buttons, empty tabs, copied boilerplate, broad TODOs, and success messages that are not backed by state changes.
+- Prefer a small maintainable implementation over architecture theater. Do not add queues, caches, event buses, adapters, global stores, plugin systems, or config layers unless a current requirement needs them.
+- Before calling the build done, remove unused files, imports, variables, parameters, routes, fixtures, generated assets, and one-off helpers that no longer serve the implemented behavior.
 
 ### Validation:
 - When project conditions allow, add or enable code-standard checking libraries for the repo.
 - Use lint, format, and typecheck tooling consistently; when practical, add or enable missing checks rather than relying on manual review.
-- Set sufficient lint and test gates to control code operability before considering implementation complete.-
+- Set sufficient lint and test gates to control code operability before considering implementation complete.
 - If the cause, risk, or correct fix is uncertain, say what is uncertain and what evidence is missing; do not invent a confident explanation to make the story sound complete.
 - In audits and reviews, do not focus on keyword counts alone. Focus on architecture decoupling, persistent state machines, protocol drift, patch-style fixes that only plug symptoms, meaningless branch tests, excessive defensive programming, and the performance, stability, and maintenance impact.
 - When auditing code, use the standards and constraints defined in this prompt as the review rubric, not only generic style or surface-level checks.

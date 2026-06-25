@@ -7,7 +7,10 @@ use super::payload::mark_workspace_session_interrupted;
 use super::SessionLogStore;
 use crate::checkpoint::CommandCheckpoint;
 use crate::path::{normalize_workspace, workspace_session_log_db};
-use crate::protocol::{DeleteSessionRequest, DeleteWorkspaceRequest, UpsertSessionRequest};
+use crate::protocol::{
+    DeleteSessionRequest, DeleteWorkspaceRequest, MarkSessionInterruptedRequest,
+    UpsertSessionRequest,
+};
 use crate::SessionState;
 use anyhow::{Context, Result};
 use rusqlite::{params, params_from_iter, OptionalExtension};
@@ -52,6 +55,95 @@ fn profile_log(label: &str, elapsed: Option<Duration>, fields: serde_json::Value
 }
 
 impl SessionLogStore {
+    pub fn mark_session_interrupted(&self, request: MarkSessionInterruptedRequest) -> Result<bool> {
+        self.mark_session_interrupted_by_id(&request.session_id)
+    }
+
+    pub fn mark_session_interrupted_by_id(&self, session_id: &str) -> Result<bool> {
+        let workspace_db_path = self.with_index_connection(|conn| {
+            conn.query_row(
+                "SELECT workspace_db_path FROM sessions WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(Into::into)
+        })?;
+        let Some(workspace_db_path) = workspace_db_path else {
+            return Ok(false);
+        };
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let Some(management) =
+            mark_workspace_session_interrupted(Path::new(&workspace_db_path), session_id, now_ms)?
+        else {
+            return Ok(false);
+        };
+        let state_text = session_state_text(SessionState::Interrupted)?;
+        let status = SessionState::Interrupted.ui_status();
+        let management_json = serde_json::to_string(&management)?;
+        self.with_index_connection(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET state = ?2,
+                     status = ?3,
+                     updated_at = MAX(updated_at, ?4),
+                     management_json = ?5
+                 WHERE session_id = ?1",
+                params![session_id, state_text, status, now_ms, management_json],
+            )?;
+            Ok(())
+        })?;
+        Ok(true)
+    }
+
+    pub fn mark_stale_running_sessions_interrupted(&self, max_idle: Duration) -> Result<u64> {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let cutoff_ms = now_ms.saturating_sub(max_idle.as_millis() as i64);
+        let candidates = self.with_index_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT session_id, workspace_db_path
+                 FROM sessions
+                 WHERE state IN ('running', 'paused')
+                   AND updated_at <= ?1",
+            )?;
+            let rows = stmt
+                .query_map(params![cutoff_ms], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })?;
+
+        let mut affected = 0;
+        for (session_id, workspace_db_path) in candidates {
+            let Some(management) = mark_workspace_session_interrupted(
+                Path::new(&workspace_db_path),
+                &session_id,
+                now_ms,
+            )?
+            else {
+                continue;
+            };
+            let state_text = session_state_text(SessionState::Interrupted)?;
+            let status = SessionState::Interrupted.ui_status();
+            let management_json = serde_json::to_string(&management)?;
+            self.with_index_connection(|conn| {
+                conn.execute(
+                    "UPDATE sessions
+                     SET state = ?2,
+                         status = ?3,
+                         updated_at = MAX(updated_at, ?4),
+                         management_json = ?5
+                     WHERE session_id = ?1",
+                    params![session_id, state_text, status, now_ms, management_json],
+                )?;
+                Ok(())
+            })?;
+            affected += 1;
+        }
+        Ok(affected)
+    }
+
     pub fn upsert_session(&self, request: UpsertSessionRequest) -> Result<()> {
         let total_start = Instant::now();
         let UpsertSessionRequest {
