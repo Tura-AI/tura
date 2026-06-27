@@ -120,6 +120,23 @@ jobs:
       - name: Run TUI e2e tests
         run: npm --prefix apps/tui run test:e2e
 
+  gui-local:
+    name: GUI Unit
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bun setup
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install GUI dependencies
+        working-directory: apps/gui
+        run: bun install --frozen-lockfile
+      - name: Run GUI unit tests
+        working-directory: apps/gui
+        run: bun run test:unit
+
   ci-complete:
     name: CI Complete
     runs-on: ubuntu-latest
@@ -127,6 +144,7 @@ jobs:
       - crate-tests
       - backend-business
       - tui-local
+      - gui-local
     steps:
       - run: echo "CI flow passed"
 
