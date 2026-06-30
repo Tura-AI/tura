@@ -14,7 +14,7 @@ use session_log::{
 use std::{
     sync::{Arc, Barrier},
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[path = "helpers/session_db_restart_queue_resilience.rs"]
@@ -29,11 +29,12 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
     let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
     let keep_id = env.session_id("keep");
     let delete_id = env.session_id("delete");
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
 
     enqueue(SessionLogCommand::UpsertSession(upsert_session(
         &keep_id,
         &workspace_key,
-        10,
+        timestamp,
         "running",
         &["keep-m1", "keep-m2"],
         &[("keep-todo-1", "doing")],
@@ -41,7 +42,7 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
     enqueue(SessionLogCommand::UpsertSession(upsert_session(
         &delete_id,
         &workspace_key,
-        20,
+        timestamp + 10,
         "created",
         &["delete-m1"],
         &[],
@@ -88,7 +89,7 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
     enqueue(SessionLogCommand::UpsertSession(upsert_session(
         &keep_id,
         &workspace_key,
-        50,
+        timestamp + 40,
         "completed",
         &["keep-m1", "keep-m2", "keep-m3"],
         &[("keep-todo-1", "done"), ("keep-todo-2", "done")],
