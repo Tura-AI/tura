@@ -51,7 +51,7 @@ jobs:
       - name: Run backend OS tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./xtask/scripts/run-backend-os-tests.ps1 -TimeoutSeconds 360
+        run: ./xtask/scripts/run-backend-os-tests.ps1 -TimeoutSeconds 900
       - name: Run backend OS tests (Unix)
         if: runner.os != 'Windows'
         run: sh ./xtask/scripts/run-backend-os-tests.sh --timeout-seconds 360

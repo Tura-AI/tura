@@ -767,9 +767,13 @@ impl GatewayGuard {
     }
 
     fn health_context(&mut self) -> String {
-        let child_status = match self.child.as_mut().and_then(|child| child.try_wait().ok()) {
-            Some(status) => format!("exited with {status}"),
-            None => "still running or unavailable".to_string(),
+        let child_status = match self.child.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => format!("exited with {status}"),
+                Ok(None) => "still running".to_string(),
+                Err(error) => format!("status unavailable: {error}"),
+            },
+            None => "already reaped".to_string(),
         };
         format!(
             "gateway process {child_status}; stdout tail: {}; stderr tail: {}",
