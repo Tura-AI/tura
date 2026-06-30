@@ -110,7 +110,7 @@ async function main() {
       await page.waitForFunction(() => Boolean(globalThis.__turaTerminal), null, {
         timeout: 10_000,
       });
-      await waitForTerminalText(page, /Enter to send/u);
+      await waitForTerminalText(page, /Enter:? send/u);
 
       await page.evaluate(async () => {
         const dataTransfer = new DataTransfer();
@@ -133,16 +133,24 @@ async function main() {
 
       await waitForTerminalText(page, /drop-image\.png/u);
       await waitForTerminalText(page, /drop-note\.txt/u);
-      const directPathToken = await page.evaluate(async () => {
+      const directPathSource = path.join(runRoot, "direct-drop.txt");
+      await fs.writeFile(directPathSource, "direct");
+      const directPathUri = `file:///${directPathSource.replace(/\\/gu, "/")}`;
+      const directPathToken = await page.evaluate(async (uri) => {
         const dataTransfer = new DataTransfer();
-        dataTransfer.setData("text/uri-list", "file:///C:/tmp/direct-drop.txt\n");
+        dataTransfer.setData("text/uri-list", `${uri}\n`);
         return await globalThis.__turaHandleDroppedData(dataTransfer);
-      });
-      assert.equal(directPathToken, "[direct-drop.txt](file:///C:/tmp/direct-drop.txt)");
+      }, directPathUri);
+      assert.match(
+        directPathToken,
+        /^\[[^\]]*direct-drop\.txt\]\(\.tura\/media\/input\/.+direct-drop\.txt\)$/u,
+      );
+      assert.doesNotMatch(directPathToken, /file:\/\//u);
 
-      const attachmentFiles = await fs.readdir(path.join(runRoot, ".tura", "attachments"));
+      const attachmentFiles = await fs.readdir(path.join(runRoot, ".tura", "media", "input"));
       assert.ok(attachmentFiles.some((file) => file.endsWith("drop-image.png")));
       assert.ok(attachmentFiles.some((file) => file.endsWith("drop-note.txt")));
+      assert.ok(attachmentFiles.some((file) => file.endsWith("direct-drop.txt")));
       await page.screenshot({ path: path.join(runRoot, "drop-composer.png"), fullPage: false });
       assert.deepEqual(pageErrors, []);
       const summary = { ok: true, runRoot, attachmentFiles, directPathToken };

@@ -128,7 +128,10 @@ The router:
 4. Enforces concurrency guards before dispatch: child depth must not exceed
    `MAX_PLANNING_DEPTH`, and active runtime workers must not exceed
    `MAX_RUNTIME_WORKERS`. Either breach returns `429 Too Many Requests`.
-5. Ensures the worker is live and forwards the call over the worker NDJSON
+5. Enforces one running runtime per `session_id`. A second dispatch for a
+   session that already has a live `runtime_worker:{session_id}` record returns
+   `409 Conflict` and does not reuse, replace, or invoke the existing worker.
+6. Ensures the worker is live and forwards the call over the worker NDJSON
    protocol.
 
 Worker subprocesses are spawned through the shared process-scope helper:
@@ -142,6 +145,10 @@ Worker subprocesses are spawned through the shared process-scope helper:
   `PR_SET_PDEATHSIG=SIGTERM` before exec with a parent-pid race check;
 - router stop and one-shot timeout paths terminate the scope before reaping the
   direct child, so worker-spawned subprocesses are included in cleanup.
+- one-shot workers keep the active process scope in the worker owner while an
+  invocation is running. `ServiceManager::stop_worker_by_key` signals the
+  invocation and terminates that scope, so gateway/TUI/GUI abort does not merely
+  remove router registry state while the runtime child continues running.
 
 Persistent worker stdout is protocol-owned. Non-JSON stdout lines are treated
 as worker noise, logged, and skipped before parsing the JSON response; stderr is

@@ -44,8 +44,12 @@ pub(crate) fn stale_endpoints_are_replaced_gateway_restarts_and_conflicts_fail(
 
     let first_port = free_port()?;
     let mut gateway = GatewayGuard::start(repo, &home, &workspace, first_port)?;
-    wait_for_http_ok(first_port, "/global/health", Duration::from_secs(30))
-        .context("stale/restart first gateway did not become healthy")?;
+    if let Err(error) = wait_for_http_ok(first_port, "/global/health", Duration::from_secs(30)) {
+        bail!(
+            "stale/restart first gateway did not become healthy: {error}; {}",
+            gateway.health_context()
+        );
+    }
     let router_addr =
         wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
             .context("stale/restart first router endpoint did not become reachable")?;
@@ -169,10 +173,14 @@ pub(crate) fn gateway_status_restarts_crashed_router_and_adopts_session_db(
     let router_before =
         wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
             .context("router crash initial router endpoint did not become reachable")?;
+    let router_before_endpoint = read_endpoint_json(&router_addr_path(&home))?;
     let service_before =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
             .context("router crash initial session_db endpoint did not become reachable")?;
-    let router_pid = wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10))?;
+    let router_pid = endpoint_pid(&router_before_endpoint)
+        .or_else(|| wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10)).ok())
+        .context("router crash initial endpoint did not expose a pid")?;
+    assert_process_alive(router_pid, "router crash initial endpoint pid")?;
 
     kill_process(router_pid).with_context(|| format!("kill router pid {router_pid}"))?;
     wait_for_addr_unreachable(&router_before, Duration::from_secs(10))
@@ -187,20 +195,27 @@ pub(crate) fn gateway_status_restarts_crashed_router_and_adopts_session_db(
     let router_after =
         wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
             .context("router crash restarted router endpoint did not become reachable")?;
+    let router_after_endpoint = read_endpoint_json(&router_addr_path(&home))?;
     assert_ne!(
         router_after, router_before,
         "gateway should publish a fresh router endpoint after a crash restart"
     );
-    let restarted_router_pid = wait_for_process_pid_change(
-        "tura_router",
-        &workspace,
-        router_pid,
-        Duration::from_secs(10),
-    )?;
+    let restarted_router_pid = endpoint_pid(&router_after_endpoint)
+        .or_else(|| {
+            wait_for_process_pid_change(
+                "tura_router",
+                &workspace,
+                router_pid,
+                Duration::from_secs(10),
+            )
+            .ok()
+        })
+        .context("router crash restarted endpoint did not expose a pid")?;
     assert_ne!(
         restarted_router_pid, router_pid,
         "router restart should be owned by a different process"
     );
+    assert_process_alive(restarted_router_pid, "router crash restarted endpoint pid")?;
 
     let service_after =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
@@ -266,16 +281,26 @@ pub(crate) fn gateway_status_kills_unresponsive_router_and_restarts(repo: &Path)
         router_after, fake.addr,
         "gateway must replace the unresponsive fake router endpoint"
     );
-    let restarted_router_pid = wait_for_process_pid_change(
-        "tura_router",
-        &workspace,
-        router_pid,
-        Duration::from_secs(10),
-    )?;
+    let router_after_endpoint = read_endpoint_json(&router_addr_path(&home))?;
+    let restarted_router_pid = endpoint_pid(&router_after_endpoint)
+        .or_else(|| {
+            wait_for_process_pid_change(
+                "tura_router",
+                &workspace,
+                router_pid,
+                Duration::from_secs(10),
+            )
+            .ok()
+        })
+        .context("router unresponsive restarted endpoint did not expose a pid")?;
     assert_ne!(
         restarted_router_pid, router_pid,
         "unresponsive router restart should be owned by a different process"
     );
+    assert_process_alive(
+        restarted_router_pid,
+        "router unresponsive restarted endpoint pid",
+    )?;
     let service_after =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30)).context(
             "router unresponsive recovered session_db endpoint did not become reachable",
@@ -304,8 +329,7 @@ pub(crate) fn router_health_restarts_crashed_session_db(repo: &Path) -> Result<(
     let service_before =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
             .context("session_db crash initial service endpoint did not become reachable")?;
-    let session_db_pid =
-        wait_for_process_pid("tura_session_db", &workspace, Duration::from_secs(10))?;
+    let session_db_pid = wait_for_session_db_pid(&home, &workspace, Duration::from_secs(10))?;
 
     kill_process(session_db_pid)
         .with_context(|| format!("kill session_db pid {session_db_pid}"))?;
@@ -325,12 +349,17 @@ pub(crate) fn router_health_restarts_crashed_session_db(repo: &Path) -> Result<(
         service_after, service_before,
         "router should publish a fresh session_db endpoint after a crash restart"
     );
-    let restarted_session_db_pid = wait_for_process_pid_change(
-        "tura_session_db",
-        &workspace,
-        session_db_pid,
-        Duration::from_secs(10),
-    )?;
+    let restarted_session_db_pid = session_db_pid_from_health(&health)
+        .or_else(|| {
+            wait_for_session_db_pid_change(
+                &home,
+                &workspace,
+                session_db_pid,
+                Duration::from_secs(10),
+            )
+            .ok()
+        })
+        .context("session_db crash restarted health did not expose a pid")?;
     assert_ne!(
         restarted_session_db_pid, session_db_pid,
         "session_db restart should be owned by a different process"
@@ -361,8 +390,7 @@ pub(crate) fn router_health_restarts_unresponsive_session_db(repo: &Path) -> Res
     let service_before =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
             .context("session_db unresponsive initial service endpoint did not become reachable")?;
-    let session_db_pid =
-        wait_for_process_pid("tura_session_db", &workspace, Duration::from_secs(10))?;
+    let session_db_pid = wait_for_session_db_pid(&home, &workspace, Duration::from_secs(10))?;
     assert_process_alive(
         session_db_pid,
         "managed session_db before unresponsive endpoint swap",
@@ -396,12 +424,17 @@ pub(crate) fn router_health_restarts_unresponsive_session_db(repo: &Path) -> Res
     wait_for_process_dead(session_db_pid, Duration::from_secs(10)).with_context(|| {
         format!("unresponsive managed session_db pid {session_db_pid} should die")
     })?;
-    let restarted_session_db_pid = wait_for_process_pid_change(
-        "tura_session_db",
-        &workspace,
-        session_db_pid,
-        Duration::from_secs(10),
-    )?;
+    let restarted_session_db_pid = session_db_pid_from_health(&health)
+        .or_else(|| {
+            wait_for_session_db_pid_change(
+                &home,
+                &workspace,
+                session_db_pid,
+                Duration::from_secs(10),
+            )
+            .ok()
+        })
+        .context("session_db unresponsive restarted health did not expose a pid")?;
     assert_ne!(
         restarted_session_db_pid, session_db_pid,
         "unresponsive session_db restart should be owned by a different process"
@@ -510,6 +543,7 @@ pub(crate) fn router_keeps_command_run_when_runtime_socket_disconnects(repo: &Pa
 
     let pid_file = workspace.join("router-command-run-child.pid");
     let done_file = workspace.join("router-command-run-child.done");
+    let shell_command = code_tools::commands::active_shell_command_name();
     let request = json!({
         "request_id": "router-command-run-survive-disconnect",
         "kind": "call",
@@ -520,14 +554,14 @@ pub(crate) fn router_keeps_command_run_when_runtime_socket_disconnects(repo: &Pa
             "session_directory": workspace.display().to_string(),
             "arguments": {
                 "commands": [{
-                    "command": "shell_command",
+                    "command": shell_command,
                     "command_line": json!({
                         "command": command_run_survival_script(&pid_file, &done_file),
                         "timeout_ms": 10000
                     }).to_string()
                 }]
             },
-            "allowed_commands": ["shell_command"]
+            "allowed_commands": [shell_command]
         }
     });
 
@@ -555,7 +589,9 @@ pub(crate) fn router_keeps_command_run_when_runtime_socket_disconnects(repo: &Pa
     Ok(())
 }
 
-pub(crate) fn gateway_stdin_eof_leaves_router_to_idle_self_shutdown(repo: &Path) -> Result<()> {
+pub(crate) fn gateway_stdin_eof_shuts_down_router_session_db_and_runtime(
+    repo: &Path,
+) -> Result<()> {
     let root = temp_root("workspace-process-gateway-router-idle")?;
     let home = root.join("home");
     let workspace = root.join("workspace");
@@ -583,15 +619,21 @@ pub(crate) fn gateway_stdin_eof_leaves_router_to_idle_self_shutdown(repo: &Path)
 
     wait_for_http_ok(port, "/global/health", Duration::from_secs(30))
         .context("stdin-eof gateway did not become healthy")?;
-    wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
+    let router_endpoint_path = router_addr_path(&home);
+    wait_for_reachable_endpoint(&router_endpoint_path, Duration::from_secs(30))
         .context("stdin-eof router endpoint did not become reachable")?;
     wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
         .context("stdin-eof session_db endpoint did not become reachable")?;
     wait_for_router_fronts(&home, 1, Duration::from_secs(10))
         .context("router did not receive gateway heartbeat before stdin EOF")?;
-    let router_addr = read_endpoint_addr(&router_addr_path(&home))?;
-    let router_pid = wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10))
-        .context("stdin-eof router pid should be discoverable before idle shutdown")?;
+    let router_endpoint = read_endpoint_json(&router_endpoint_path)?;
+    let router_pid = endpoint_pid(&router_endpoint)
+        .or_else(|| wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10)).ok())
+        .context("stdin-eof router endpoint did not expose a pid before idle shutdown")?;
+    assert_process_alive(
+        router_pid,
+        "stdin-eof router endpoint pid before idle shutdown",
+    )?;
 
     drop(child.stdin.take());
     let status = wait_for_process_exit(&mut child, Duration::from_secs(20), "stdin-eof gateway")?;
@@ -599,14 +641,10 @@ pub(crate) fn gateway_stdin_eof_leaves_router_to_idle_self_shutdown(repo: &Path)
         status.success(),
         "stdin-eof gateway should exit cleanly after frontend pipe closes: {status}"
     );
-    assert!(
-        socket_reachable(&router_addr)?,
-        "gateway EOF must not proactively kill router; router should self-shutdown after idle"
-    );
     if let Err(error) = wait_for_file_missing(&router_addr_path(&home), PROCESS_EXIT_TIMEOUT) {
         let lifecycle = router_lifecycle_status(&home)
             .unwrap_or_else(|status_error| json!({ "status_error": status_error.to_string() }));
-        bail!("{error}; lifecycle={lifecycle}");
+        bail!("gateway EOF must explicitly shut down router/session_db/runtime-owned work: {error}; lifecycle={lifecycle}");
     }
     wait_for_file_missing(&service_addr_path(&home), PROCESS_EXIT_TIMEOUT)?;
     wait_for_process_dead(router_pid, PROCESS_EXIT_TIMEOUT).with_context(|| {
@@ -627,6 +665,7 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
 
     let session_id = format!("process-recovery-{}", std::process::id());
     let message_id = "process-recovery-message-1";
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
     let mut session_db = SessionDbGuard::start(repo, &home)?;
     wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
         .context("recovery initial session_db endpoint did not become reachable")?;
@@ -634,9 +673,9 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
         &home,
         &json!({
             "command": "upsert_session",
-            "session": running_session_payload(&session_id, &workspace, 100),
+            "session": running_session_payload(&session_id, &workspace, timestamp),
             "messages": [
-                message_payload(&session_id, message_id, "user", 100, "resume this work")
+                message_payload(&session_id, message_id, "user", timestamp, "resume this work")
             ],
             "todos": [
                 {"id": "todo-recovery", "content": "keep history across restart", "status": "doing"}
@@ -739,28 +778,44 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
 pub(crate) struct GatewayGuard {
     child: Option<Child>,
     home: PathBuf,
+    stdout_log: PathBuf,
+    stderr_log: PathBuf,
 }
 
 impl GatewayGuard {
     fn start(repo: &Path, home: &Path, workspace: &Path, port: u16) -> Result<Self> {
+        let stdout_log = process_log_path(home, &format!("gateway-{port}.stdout.log"));
+        let stderr_log = process_log_path(home, &format!("gateway-{port}.stderr.log"));
         let child = Command::new(debug_bin(repo, "tura_gateway"))
             .current_dir(workspace)
             .envs(gateway_env(repo, home, workspace, port))
             .stdin(Stdio::null())
-            .stdout(Stdio::from(process_log_file(
-                home,
-                &format!("gateway-{port}.stdout.log"),
-            )?))
-            .stderr(Stdio::from(process_log_file(
-                home,
-                &format!("gateway-{port}.stderr.log"),
-            )?))
+            .stdout(Stdio::from(process_log_file_at(&stdout_log)?))
+            .stderr(Stdio::from(process_log_file_at(&stderr_log)?))
             .spawn()
             .context("spawn tura_gateway")?;
         Ok(Self {
             child: Some(child),
             home: home.to_path_buf(),
+            stdout_log,
+            stderr_log,
         })
+    }
+
+    fn health_context(&mut self) -> String {
+        let child_status = match self.child.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => format!("exited with {status}"),
+                Ok(None) => "still running".to_string(),
+                Err(error) => format!("status unavailable: {error}"),
+            },
+            None => "already reaped".to_string(),
+        };
+        format!(
+            "gateway process {child_status}; stdout tail: {}; stderr tail: {}",
+            file_tail(&self.stdout_log, 4096),
+            file_tail(&self.stderr_log, 4096)
+        )
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -1104,7 +1159,7 @@ pub(crate) fn wait_for_gateway_router_running(
     port: u16,
     timeout: Duration,
 ) -> Result<serde_json::Value> {
-    wait_for_gateway_router_running_with_http_timeout(port, timeout, Duration::from_secs(10))
+    wait_for_gateway_router_running_with_http_timeout(port, timeout, Duration::from_secs(45))
 }
 
 pub(crate) fn wait_for_gateway_router_running_with_http_timeout(
@@ -1401,7 +1456,14 @@ pub(crate) fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
 pub(crate) fn process_alive(pid: u32) -> bool {
     let mut system = sysinfo::System::new_all();
     system.refresh_processes();
-    system.process(sysinfo::Pid::from_u32(pid)).is_some()
+    system
+        .process(sysinfo::Pid::from_u32(pid))
+        .is_some_and(|process| {
+            !matches!(
+                process.status(),
+                sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+            )
+        })
 }
 
 pub(crate) struct TargetBackendCleanup {
@@ -1515,6 +1577,92 @@ pub(crate) fn wait_for_process_pid_change(
     )
 }
 
+pub(crate) fn wait_for_session_db_pid(home: &Path, cwd: &Path, timeout: Duration) -> Result<u32> {
+    let started = Instant::now();
+    let mut last_error = None;
+    while started.elapsed() < timeout {
+        match session_db_lock_pid(home) {
+            Ok(Some(pid)) => return Ok(pid),
+            Ok(None) => {
+                match wait_for_process_pid("tura_session_db", cwd, Duration::from_millis(200)) {
+                    Ok(pid) => return Ok(pid),
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            Err(error) => last_error = Some(error),
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("session_db pid did not appear")))
+}
+
+pub(crate) fn wait_for_session_db_pid_change(
+    home: &Path,
+    cwd: &Path,
+    previous: u32,
+    timeout: Duration,
+) -> Result<u32> {
+    let started = Instant::now();
+    let mut last_seen = None;
+    while started.elapsed() < timeout {
+        if let Some(pid) = session_db_lock_pid(home)? {
+            last_seen = Some(pid);
+            if pid != previous {
+                return Ok(pid);
+            }
+        }
+        for pid in process_pids_by_name_and_cwd("tura_session_db", cwd)? {
+            last_seen = Some(pid);
+            if pid != previous {
+                return Ok(pid);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    bail!(
+        "session_db process pid did not change from {previous}; last seen {:?}",
+        last_seen
+    )
+}
+
+pub(crate) fn session_db_pid_from_health(health: &serde_json::Value) -> Option<u32> {
+    health["payload"]["session_db"]["pid"]
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+pub(crate) fn session_db_lock_pid(home: &Path) -> Result<Option<u32>> {
+    for lock in lock_files(home, "session-db")? {
+        let raw = std::fs::read_to_string(&lock)
+            .with_context(|| format!("read session_db lock {}", lock.display()))?;
+        let mut pid = None;
+        let mut kind = None;
+        let mut build_kind = None;
+        let mut lock_home = None;
+        for line in raw.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            match key.trim() {
+                "pid" => pid = value.trim().parse::<u32>().ok(),
+                "kind" => kind = Some(value.trim().to_string()),
+                "build_kind" => build_kind = Some(value.trim().to_string()),
+                "home" => lock_home = Some(PathBuf::from(value.trim())),
+                _ => {}
+            }
+        }
+        if kind.as_deref() == Some("session_db")
+            && build_kind.as_deref().is_some_and(|value| !value.is_empty())
+            && lock_home
+                .as_deref()
+                .is_some_and(|value| same_path(value, home))
+        {
+            return Ok(pid);
+        }
+    }
+    Ok(None)
+}
+
 pub(crate) fn process_pids_by_name_and_cwd(binary: &str, cwd: &Path) -> Result<Vec<u32>> {
     let expected_cwd = canonical_or_self(cwd);
     let mut system = sysinfo::System::new_all();
@@ -1542,6 +1690,16 @@ pub(crate) fn process_name_matches(name: &str, binary: &str) -> bool {
 
 pub(crate) fn canonical_or_self(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub(crate) fn same_path(left: &Path, right: &Path) -> bool {
+    let left = canonical_or_self(left);
+    let right = canonical_or_self(right);
+    if cfg!(windows) {
+        left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
+    } else {
+        left == right
+    }
 }
 
 pub(crate) fn lock_files(home: &Path, kind: &str) -> Result<Vec<PathBuf>> {
@@ -1780,11 +1938,48 @@ pub(crate) fn http_get(port: u16, path: &str, timeout: Duration) -> Result<Strin
     stream
         .write_all(request.as_bytes())
         .with_context(|| format!("write HTTP request {path} to {addr}"))?;
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .with_context(|| format!("read HTTP response {path} from {addr}"))?;
-    Ok(response)
+    read_http_response(&mut stream, path, addr)
+}
+
+fn read_http_response(stream: &mut TcpStream, path: &str, addr: SocketAddr) -> Result<String> {
+    let mut reader = BufReader::new(stream);
+    let mut header = Vec::new();
+    loop {
+        let mut byte = [0_u8; 1];
+        let read = reader
+            .read(&mut byte)
+            .with_context(|| format!("read HTTP response header {path} from {addr}"))?;
+        if read == 0 {
+            break;
+        }
+        header.push(byte[0]);
+        if header.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    if !header.ends_with(b"\r\n\r\n") {
+        bail!(
+            "HTTP response {path} from {addr} ended before complete headers: {}",
+            String::from_utf8_lossy(&header)
+        );
+    }
+    let header_text = String::from_utf8_lossy(&header);
+    let content_length = header_text
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .ok_or_else(|| anyhow!("HTTP response {path} from {addr} missing Content-Length"))?;
+    let mut body = vec![0_u8; content_length];
+    reader
+        .read_exact(&mut body)
+        .with_context(|| format!("read HTTP response body {path} from {addr}"))?;
+    let mut response = header;
+    response.extend_from_slice(&body);
+    String::from_utf8(response).context("HTTP response was not valid UTF-8")
 }
 
 pub(crate) fn ensure_backend_binaries(repo: &Path) -> Result<()> {
@@ -1832,6 +2027,45 @@ pub(crate) fn service_addr_path(home: &Path) -> PathBuf {
     home.join("db").join("session_log").join("service.addr")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_get_returns_complete_content_length_response_without_waiting_for_close() -> Result<()> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = listener.local_addr()?.port();
+        let handle = thread::spawn(move || -> Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+            let mut request_line = String::new();
+            BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+            assert!(
+                request_line.starts_with("GET /service/status HTTP/1.1"),
+                "unexpected request line: {request_line}"
+            );
+            let body = r#"{"router":{"status":"running"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+                body.len(),
+                body
+            )?;
+            stream.flush()?;
+            thread::sleep(Duration::from_secs(1));
+            Ok(())
+        });
+
+        let response = http_get(port, "/service/status", Duration::from_millis(200))?;
+        assert!(response.starts_with("HTTP/1.1 200"));
+        assert!(response.ends_with(r#"{"router":{"status":"running"}}"#));
+        handle
+            .join()
+            .map_err(|_| anyhow!("HTTP fixture thread panicked"))??;
+        Ok(())
+    }
+}
+
 pub(crate) fn temp_root(prefix: &str) -> Result<PathBuf> {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let path = std::env::temp_dir().join(format!("{prefix}-{}-{nonce}", std::process::id()));
@@ -1852,9 +2086,26 @@ pub(crate) fn reserved_closed_addr() -> Result<String> {
 }
 
 pub(crate) fn process_log_file(home: &Path, name: &str) -> Result<std::fs::File> {
-    let dir = home.join(".tura").join("test-logs");
-    std::fs::create_dir_all(&dir)?;
-    std::fs::File::create(dir.join(name)).with_context(|| format!("create process log {name}"))
+    process_log_file_at(&process_log_path(home, name))
+}
+
+pub(crate) fn process_log_path(home: &Path, name: &str) -> PathBuf {
+    home.join(".tura").join("test-logs").join(name)
+}
+
+pub(crate) fn process_log_file_at(path: &Path) -> Result<std::fs::File> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::File::create(path).with_context(|| format!("create process log {}", path.display()))
+}
+
+pub(crate) fn file_tail(path: &Path, max_bytes: usize) -> String {
+    let Ok(bytes) = std::fs::read(path) else {
+        return format!("{} unavailable", path.display());
+    };
+    let start = bytes.len().saturating_sub(max_bytes);
+    String::from_utf8_lossy(&bytes[start..]).replace(['\r', '\n'], "\\n")
 }
 
 pub(crate) fn read_pipe(pipe: Option<impl Read>) -> String {

@@ -203,14 +203,14 @@ export function prepareMessagesForDisplay(messages: Message[]): Message[] {
 }
 
 function mergeMessageForDisplay(existing: Message | undefined, incoming: Message): Message {
-  const created = incoming.created_at ?? existing?.created_at;
-  const updated = incoming.updated_at ?? existing?.updated_at ?? created;
+  const createdAt = incoming.created_at ?? existing?.created_at;
+  const updatedAt = incoming.updated_at ?? existing?.updated_at ?? createdAt;
   return {
     ...existing,
     ...incoming,
-    ...(created !== undefined ? { created_at: created } : {}),
-    ...(updated !== undefined ? { updated_at: updated } : {}),
-    time: incoming.time || existing?.time,
+    ...(createdAt !== undefined ? { created_at: createdAt } : {}),
+    ...(updatedAt !== undefined ? { updated_at: updatedAt } : {}),
+    ...messageTimeFields(createdAt, updatedAt),
     parts: mergeMessagePartsForDisplay(existing?.parts ?? [], incoming.parts),
   };
 }
@@ -299,8 +299,8 @@ export function applyCommandUpdate(
   sessionID: string | undefined,
   update: CommandUpdatedEventProperties,
 ): Message[] {
-  const createdAt = update.createdAt;
-  const updatedAt = update.updatedAt;
+  const createdAt = update.createdAt ?? update.updatedAt ?? undefined;
+  const updatedAt = update.updatedAt ?? undefined;
   const commandPart = commandPartFromUpdate(update);
   let foundMessage = false;
   const next = messages.map((message) => {
@@ -312,15 +312,12 @@ export function applyCommandUpdate(
       foundPart = true;
       return mergeCommandPart(part, update);
     });
+    const messageUpdatedAt = updatedAt ?? message.updated_at;
     return {
       ...message,
+      ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+      ...messageTimeFields(message.created_at, messageUpdatedAt),
       parts: orderMessagePartsForDisplay(foundPart ? parts : [...parts, commandPart]),
-      updated_at: Math.max(message.updated_at ?? updatedAt, updatedAt),
-      ...(message.time
-        ? { time: { ...message.time, updated: updatedAt } }
-        : message.created_at !== undefined
-          ? { time: { created: message.created_at, updated: updatedAt } }
-          : {}),
     };
   });
   if (!foundMessage) {
@@ -329,12 +326,12 @@ export function applyCommandUpdate(
       sessionID,
       role: "assistant",
       parts: orderMessagePartsForDisplay([commandPart]),
-      created_at: createdAt,
-      updated_at: updatedAt,
-      time: { created: createdAt, updated: updatedAt },
+      ...(createdAt === undefined ? {} : { created_at: createdAt }),
+      ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+      ...messageTimeFields(createdAt, updatedAt),
     });
   }
-  return sortMessages(next);
+  return next;
 }
 
 function commandPartFromUpdate(update: CommandUpdatedEventProperties): MessagePart {
@@ -358,16 +355,35 @@ function commandPartFromUpdate(update: CommandUpdatedEventProperties): MessagePa
 
 function mergeCommandPart(part: MessagePart, update: CommandUpdatedEventProperties): MessagePart {
   const state = recordValue(part.state);
+  const updateCreatedAt = update.createdAt ?? update.updatedAt ?? undefined;
+  const updatedAt = update.updatedAt ?? numberValue(state.updated_at) ?? undefined;
+  const previousUpdatedAt = numberValue(state.updated_at) ?? numberValue(state.updatedAt);
+  const previousEventSeq = numberValue(state.eventSeq) ?? numberValue(state.event_seq);
+  const updateEventSeq = update.eventSeq ?? undefined;
+  if (
+    (previousEventSeq !== undefined &&
+      updateEventSeq !== undefined &&
+      updateEventSeq < previousEventSeq) ||
+    (previousUpdatedAt !== undefined && updatedAt !== undefined && updatedAt < previousUpdatedAt)
+  ) {
+    return part;
+  }
   const input = recordValue(state.input);
   const stream = recordValue(state.streamed_command_run_result);
+  const time = recordValue(state.time);
+  const previousCreatedAt = numberValue(state.created_at) ?? numberValue(state.createdAt);
+  const createdAt = previousCreatedAt ?? updateCreatedAt;
   const commands = upsertCommandRecord(arrayValue(input.commands), update.command, update);
   const results = update.result
     ? upsertCommandRecord(arrayValue(stream.results), update.result, update)
     : arrayValue(stream.results);
   const nextState = {
     ...state,
-    status: commandRunStatus(commands, results, update.status),
-    eventSeq: Math.max(numberValue(state.eventSeq) ?? 0, update.eventSeq ?? 0),
+    status: mergedCommandRunStatus(stringValue(state.status), update.status),
+    ...(createdAt === undefined ? {} : { created_at: createdAt }),
+    ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+    eventSeq: update.eventSeq ?? numberValue(state.eventSeq) ?? undefined,
+    time: commandTimeFields(time, createdAt, updatedAt),
     input: {
       ...input,
       commands,
@@ -404,48 +420,52 @@ function upsertCommandRecord(
     provider_tool_call_id: update.providerToolCallID ?? undefined,
     command_index: update.commandIndex ?? undefined,
     event_seq: update.eventSeq ?? undefined,
+    created_at: update.createdAt ?? undefined,
+    updated_at: update.updatedAt ?? undefined,
     status: update.status,
   };
   const existingIndex = current.findIndex((item) => commandRecordID(item) === update.commandID);
-  if (existingIndex < 0) return sortCommandRecords([...current, incomingRecord]);
+  if (existingIndex < 0) return [...current, incomingRecord];
   const existing = recordValue(current[existingIndex]);
-  if ((numberValue(existing.event_seq) ?? -1) > (update.eventSeq ?? -1)) return current;
+  const previousEventSeq = numberValue(existing.event_seq) ?? numberValue(existing.eventSeq);
+  const updateEventSeq = update.eventSeq ?? undefined;
+  if (
+    previousEventSeq !== undefined &&
+    updateEventSeq !== undefined &&
+    updateEventSeq < previousEventSeq
+  ) {
+    return current;
+  }
+  const previousUpdatedAt = numberValue(existing.updated_at) ?? numberValue(existing.updatedAt);
+  const updateUpdatedAt = update.updatedAt ?? undefined;
+  if (
+    previousUpdatedAt !== undefined &&
+    updateUpdatedAt !== undefined &&
+    updateUpdatedAt < previousUpdatedAt
+  ) {
+    return current;
+  }
   const next = [...current];
   next[existingIndex] = { ...existing, ...incomingRecord };
-  return sortCommandRecords(next);
+  return next;
 }
 
-function commandRunStatus(commands: unknown[], results: unknown[], fallback: string): string {
-  const resultRecords = results.map(recordValue);
-  if (resultRecords.some((result) => result.success === false || result.status === "failed")) {
-    return "failed";
-  }
-  if (
-    commands.length > 0 &&
-    resultRecords.length >= commands.length &&
-    resultRecords.every((result) => result.success === true || result.status === "completed")
-  ) {
-    return "completed";
-  }
-  return fallback === "ready" ? "running" : fallback;
+function mergedCommandRunStatus(existing: string | undefined, incoming: string): string {
+  if (!existing) return incoming;
+  if (isTerminalStatus(existing) && !isTerminalStatus(incoming)) return existing;
+  if (existing === "running" && incoming === "ready") return existing;
+  return incoming;
+}
+
+function isTerminalStatus(status: string): boolean {
+  return ["completed", "failed", "error", "cancelled", "done", "success"].includes(
+    status.toLowerCase(),
+  );
 }
 
 function commandRecordID(value: unknown): string | undefined {
   const record = recordValue(value);
   return stringValue(record.command_id) ?? stringValue(record.commandID);
-}
-
-function sortCommandRecords(values: unknown[]): unknown[] {
-  return [...values].sort((left, right) => {
-    const leftRecord = recordValue(left);
-    const rightRecord = recordValue(right);
-    return (
-      (numberValue(leftRecord.command_index) ?? Number.MAX_SAFE_INTEGER) -
-        (numberValue(rightRecord.command_index) ?? Number.MAX_SAFE_INTEGER) ||
-      (numberValue(leftRecord.step) ?? Number.MAX_SAFE_INTEGER) -
-        (numberValue(rightRecord.step) ?? Number.MAX_SAFE_INTEGER)
-    );
-  });
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -464,6 +484,28 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function messageTimeFields(
+  createdAt: number | undefined,
+  updatedAt: number | undefined,
+): { time?: Message["time"] } {
+  if (createdAt === undefined || updatedAt === undefined) return {};
+  return { time: { created: createdAt, updated: updatedAt } };
+}
+
+function commandTimeFields(
+  current: Record<string, unknown>,
+  createdAt: number | undefined,
+  updatedAt: number | undefined,
+): Record<string, unknown> {
+  return {
+    ...current,
+    ...(numberValue(current.start) !== undefined || createdAt === undefined
+      ? {}
+      : { start: createdAt }),
+    ...(updatedAt === undefined ? {} : { updated: updatedAt }),
+  };
 }
 
 export function applyPartDelta(

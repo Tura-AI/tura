@@ -23,7 +23,7 @@ const webTerminalBin = path.join(appRoot, "scripts", "web-terminal.mjs");
 const tuiRequire = createRequire(path.join(appRoot, "package.json"));
 
 const model = process.env.TUI_REAL_SNAKE_MODEL || "codex/gpt-5.5";
-const agent = process.env.TUI_REAL_SNAKE_AGENT || "fast";
+const agent = process.env.TUI_REAL_SNAKE_AGENT || "direct";
 const timeoutMs = Number(process.env.TUI_REAL_SNAKE_TIMEOUT_MS || 600_000);
 const checks = [];
 

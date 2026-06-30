@@ -1,5 +1,4 @@
 use super::args::*;
-use super::asset::*;
 use super::download::*;
 use super::files::*;
 use super::filter::*;
@@ -219,7 +218,6 @@ fn site_filter_does_not_reject_image_results() {
         vec![result],
         &WebDiscoverArgs {
             kind: "image".to_string(),
-            asset_type: None,
             query: "site:wikipedia.org 唐玄奘 画像".to_string(),
             include_regex: None,
             exclude_regex: None,
@@ -344,59 +342,6 @@ fn parse_json_args_accepts_schema_aliases_and_string_numbers() {
 }
 
 #[test]
-fn parse_asset_args_accepts_asset_type_and_aliases() {
-    let args = parse_args_text(r#"web_discover asset 3d "space cruiser" -o assets --limit 2"#)
-        .expect("parse asset cli");
-
-    assert_eq!(args.kind, "asset");
-    assert_eq!(args.asset_type.as_deref(), Some("3d"));
-    assert_eq!(args.query, "space cruiser");
-    assert_eq!(args.download_dir.as_deref(), Some("assets"));
-    assert_eq!(args.max_results, 2);
-
-    let audio_args = parse_args_text(r#"asset audio "laser click" --download-dir assets"#)
-        .expect("parse asset audio");
-    assert_eq!(audio_args.kind, "asset");
-    assert_eq!(audio_args.asset_type.as_deref(), Some("audio"));
-    assert_eq!(audio_args.query, "laser click");
-
-    for (asset_type, query) in [
-        ("shader", "scanline wgsl"),
-        ("texture", "brushed metal"),
-        ("2d", "pixel cockpit"),
-        ("3d", "patrol ship"),
-        ("audio", "laser click"),
-    ] {
-        let parsed = parse_args_text(&format!("asset {asset_type} \"{query}\" -o assets"))
-            .expect("parse asset subtype");
-        assert_eq!(parsed.kind, "asset", "{asset_type}");
-        assert_eq!(
-            parsed.asset_type.as_deref(),
-            Some(asset_type),
-            "{asset_type}"
-        );
-        assert_eq!(parsed.query, query, "{asset_type}");
-        assert_eq!(
-            parsed.download_dir.as_deref(),
-            Some("assets"),
-            "{asset_type}"
-        );
-    }
-
-    let json_args = parse_args_value(json!({
-        "kind": "assets",
-        "assetType": "materials",
-        "query": "brushed metal"
-    }))
-    .expect("parse asset JSON");
-    assert_eq!(json_args.kind, "asset");
-    assert_eq!(json_args.asset_type.as_deref(), Some("texture"));
-
-    assert_eq!(normalize_kind("game-assets"), "asset");
-    assert_eq!(normalize_asset_type("sfx"), "audio");
-}
-
-#[test]
 fn parse_json_args_accepts_cli_string_and_rejects_arrays() {
     let args = parse_args_value(json!("image newjeans minji --limit=3")).expect("string payload");
     assert_eq!(args.kind, "image");
@@ -451,7 +396,6 @@ fn parse_cli_args_reports_missing_values_for_value_options() {
         "--min-size",
         "--max_size",
         "--format",
-        "--asset-type",
     ] {
         let error = parse_args_text(input).expect_err("missing value should fail");
         assert!(error.contains("requires a value"), "{input}: {error}");
@@ -486,39 +430,8 @@ fn normalize_kind_covers_internal_canonical_values_only() {
     assert_eq!(normalize_kind("photos"), "image");
     assert_eq!(normalize_kind("movies"), "video");
     assert_eq!(normalize_kind("music"), "audio");
-    assert_eq!(normalize_kind("assets"), "asset");
+    assert_eq!(normalize_kind("bundles"), "bundles");
     assert_eq!(normalize_kind("custom_type"), "custom_type");
-}
-
-#[test]
-fn asset_source_queries_cover_prompted_asset_sources() {
-    let sources = asset_source_queries("auto", "space cruiser")
-        .into_iter()
-        .map(|source| source.source)
-        .collect::<Vec<_>>();
-
-    for expected in [
-        "polydown_poly_pizza",
-        "magic_ui",
-        "shadcn_ui",
-        "objaverse",
-        "ambientcg_api",
-        "sketchfab_download_api",
-        "freesound_api",
-        "internet_archive",
-    ] {
-        assert!(sources.contains(&expected), "{expected} not searched");
-    }
-
-    let model_sources = asset_source_queries("3d", "fighter")
-        .into_iter()
-        .map(|source| source.source)
-        .collect::<Vec<_>>();
-    assert!(model_sources.contains(&"polydown_poly_pizza"));
-    assert!(model_sources.contains(&"objaverse"));
-    assert!(model_sources.contains(&"sketchfab_download_api"));
-    assert!(model_sources.contains(&"internet_archive"));
-    assert!(!model_sources.contains(&"magic_ui"));
 }
 
 #[test]
@@ -549,7 +462,6 @@ fn normalized_search_query_preserves_query_text() {
 fn filter_results_applies_include_exclude_site_and_limit() {
     let args = WebDiscoverArgs {
         kind: "website".to_string(),
-        asset_type: None,
         query: "site:example.com rust".to_string(),
         include_regex: Some("Rust|Tokio".to_string()),
         exclude_regex: Some("draft".to_string()),
@@ -590,7 +502,6 @@ fn filter_results_applies_include_exclude_site_and_limit() {
 fn filter_results_returns_regex_errors_with_field_context() {
     let args = WebDiscoverArgs {
         kind: "website".to_string(),
-        asset_type: None,
         query: "rust".to_string(),
         include_regex: Some("(".to_string()),
         exclude_regex: None,
@@ -610,7 +521,6 @@ fn filter_results_returns_regex_errors_with_field_context() {
 fn filter_results_reports_exclude_regex_errors_with_field_context() {
     let args = WebDiscoverArgs {
         kind: "website".to_string(),
-        asset_type: None,
         query: "rust".to_string(),
         include_regex: None,
         exclude_regex: Some("[".to_string()),
@@ -630,7 +540,6 @@ fn filter_results_reports_exclude_regex_errors_with_field_context() {
 fn filter_results_applies_site_filter_only_to_website_results() {
     let image_args = WebDiscoverArgs {
         kind: "image".to_string(),
-        asset_type: None,
         query: "site:official.example profile".to_string(),
         include_regex: None,
         exclude_regex: None,
@@ -642,7 +551,6 @@ fn filter_results_applies_site_filter_only_to_website_results() {
     };
     let video_args = WebDiscoverArgs {
         kind: "video".to_string(),
-        asset_type: None,
         query: "site:official.example concert".to_string(),
         include_regex: None,
         exclude_regex: None,
@@ -677,7 +585,6 @@ fn filter_results_applies_site_filter_only_to_website_results() {
 fn bing_image_include_regex_uses_url_context_not_query_title() {
     let args = WebDiscoverArgs {
         kind: "image".to_string(),
-        asset_type: None,
         query: "site:official.example profile".to_string(),
         include_regex: Some("official\\.example".to_string()),
         exclude_regex: None,
@@ -928,7 +835,6 @@ fn file_helpers_resolve_relative_absolute_and_unique_downloads() {
     let session_dir = temp.path();
     let args = WebDiscoverArgs {
         kind: "image".to_string(),
-        asset_type: None,
         query: "minji".to_string(),
         include_regex: None,
         exclude_regex: None,
@@ -1109,46 +1015,6 @@ fn execute_invalid_input_returns_structured_error_without_network() {
 }
 
 #[test]
-fn execute_asset_direct_zip_downloads_and_extracts_into_type_directory() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let zip_bytes = make_test_zip_bytes();
-    let (asset_url, server) = spawn_binary_endpoint("application/zip", zip_bytes, "/asset.zip");
-
-    let response = execute(
-        &format!("asset 3d {asset_url} --download-dir assets --min-size 1 --max-size 1000000"),
-        temp.path(),
-        0,
-    );
-    server.join().expect("asset server");
-
-    assert!(response.success, "{}", response.stderr);
-    assert_eq!(response.output["type"], "asset");
-    assert_eq!(response.output["asset_type"], "3d");
-    assert_eq!(response.output["searched_sources"][0], "direct_asset_url");
-    assert_eq!(response.output["result_count"], 1);
-    assert!(response.output["download_dir"]
-        .as_str()
-        .unwrap_or_default()
-        .ends_with("assets"));
-
-    let downloaded = response.output["downloaded_files"]
-        .as_array()
-        .expect("downloaded files");
-    assert_eq!(downloaded.len(), 2);
-    assert!(downloaded.iter().any(|item| {
-        item["absolute_path"]
-            .as_str()
-            .is_some_and(|path| path.ends_with("asset-zip.zip") && PathBuf::from(path).exists())
-    }));
-    assert!(downloaded.iter().any(|item| {
-        item["absolute_path"].as_str().is_some_and(|path| {
-            path.ends_with("models\\ship.glb") || path.ends_with("models/ship.glb")
-        }) && item["content_type"] == "model/gltf-binary"
-    }));
-    assert!(temp.path().join("assets").join("3d").exists());
-}
-
-#[test]
 fn exa_web_results_dedupe_limit_and_skip_metadata_lines() {
     let raw = json!({
         "result": {
@@ -1282,55 +1148,6 @@ fn spawn_json_endpoint(response_body: String) -> (String, std::thread::JoinHandl
             .expect("write response");
     });
     (format!("http://{addr}/search"), handle)
-}
-
-fn spawn_binary_endpoint(
-    content_type: &'static str,
-    body: Vec<u8>,
-    path: &'static str,
-) -> (String, std::thread::JoinHandle<()>) {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind binary endpoint");
-    let addr = listener.local_addr().expect("binary endpoint addr");
-    let handle = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept request");
-        let mut request = Vec::new();
-        let mut buffer = [0_u8; 1024];
-        loop {
-            let read = stream.read(&mut buffer).expect("read request");
-            if read == 0 {
-                break;
-            }
-            request.extend_from_slice(&buffer[..read]);
-            if http_request_complete(&request) {
-                break;
-            }
-        }
-        let request_text = String::from_utf8_lossy(&request);
-        assert!(
-            request_text.starts_with(&format!("GET {path} ")),
-            "{request_text}"
-        );
-        let headers = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        stream.write_all(headers.as_bytes()).expect("write headers");
-        stream.write_all(&body).expect("write body");
-    });
-    (format!("http://{addr}{path}"), handle)
-}
-
-fn make_test_zip_bytes() -> Vec<u8> {
-    let cursor = std::io::Cursor::new(Vec::new());
-    let mut writer = zip::ZipWriter::new(cursor);
-    let options = zip::write::SimpleFileOptions::default();
-    writer
-        .start_file("models/ship.glb", options)
-        .expect("start zip file");
-    writer
-        .write_all(b"glTF test model")
-        .expect("write zip file");
-    writer.finish().expect("finish zip").into_inner()
 }
 
 fn http_request_complete(data: &[u8]) -> bool {
@@ -1472,7 +1289,6 @@ fn file_helpers_resolve_download_scopes_and_unique_names() {
     let dir = tempfile::tempdir().expect("tempdir");
     let args = WebDiscoverArgs {
         kind: "image".to_string(),
-        asset_type: None,
         query: "sample query".to_string(),
         include_regex: None,
         exclude_regex: None,

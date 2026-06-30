@@ -1132,7 +1132,7 @@ mod tests {
     fn extract_page_image_url_rejects_data_and_non_image_candidates() {
         let html = r#"
             <meta property="og:image" content="data:image/png;base64,abc">
-            <meta name="twitter:image" content="/assets/not-a-document.txt">
+            <meta name="twitter:image" content="/media/not-a-document.txt">
             <img src="../images/profile.PNG?size=large">
         "#;
 

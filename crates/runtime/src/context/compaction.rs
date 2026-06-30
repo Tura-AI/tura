@@ -13,7 +13,7 @@ use super::tool_results::{
     immutable_tool_result_context_messages, strip_context_reporting_fields,
     tool_result_context_cache,
 };
-use super::{ContextualUserFragment, WorkspaceSnapshot, USER_AGENT_CONTEXT_ROLE};
+use super::{ContextualUserFragment, WorkspaceSnapshot};
 
 const MAX_INHERITED_COMPACT_SUMMARIES: usize = 2;
 const INHERITED_COMPACT_CONTEXT_MARKER: &str = "[inherited_compact_context]";
@@ -522,7 +522,7 @@ pub(super) fn context_compaction_messages(
         .and_then(serde_json::Value::as_str)
     {
         messages.push(serde_json::json!({
-            "role": USER_AGENT_CONTEXT_ROLE,
+            "role": "developer",
             "content": snapshot,
         }));
     }
@@ -531,7 +531,7 @@ pub(super) fn context_compaction_messages(
         .and_then(serde_json::Value::as_str)
     {
         messages.push(serde_json::json!({
-            "role": USER_AGENT_CONTEXT_ROLE,
+            "role": "developer",
             "content": environment,
         }));
     }

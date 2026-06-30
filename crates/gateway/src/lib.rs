@@ -15,6 +15,7 @@ pub mod session;
 pub mod session_db_client;
 pub mod session_log_writer;
 pub mod simple_runtime;
+pub mod tray;
 pub mod types;
 pub mod web;
 

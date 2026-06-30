@@ -10,6 +10,7 @@ export interface CliContext {
   color: ColorMode;
   display: DisplayMode;
   language?: "zh-CN" | "en";
+  initialSessionId?: string;
   verbose: boolean;
   mock: boolean;
   dev: boolean;

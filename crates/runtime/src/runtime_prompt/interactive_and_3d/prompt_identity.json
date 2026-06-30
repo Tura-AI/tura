@@ -1,7 +1,7 @@
 {
   "id": "interactive_and_3d",
   "display_name": "Interactive and 3D Operation Manual",
-  "description": "Use for games, simulations, shader effects,and polished browser-based 3D scenes.",
-  "father_ids": ["frontend"],
+  "description": "Use for simulations, 3D scenes, shader effects, and real-time interactive visuals.",
+  "father_ids": ["frontend","visual"],
   "capabilities": ["generate_media", "read_media"]
 }

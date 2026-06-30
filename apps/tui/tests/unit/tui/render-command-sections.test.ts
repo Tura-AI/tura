@@ -555,3 +555,78 @@ test("render keeps each command detail to one visible line", () => {
   assert.doesNotMatch(stripAnsi(output), /MULTILINE_COMMAND_SECOND_LINE_VISIBLE/);
   assertLineWidths(output, 58);
 });
+
+test("render keeps separate apply_patch commands with the same step", () => {
+  const session = { id: "sess-apply-patch", title: "Apply Patch", status: "idle" as const };
+  const patchStart = ["***", "Begin Patch"].join(" ");
+  const patchEnd = ["***", "End Patch"].join(" ");
+  const firstPatch = [
+    patchStart,
+    "*** Update File: src/a.ts",
+    "@@",
+    "-oldA",
+    "+newA",
+    patchEnd,
+  ].join("\n");
+  const secondPatch = [
+    patchStart,
+    "*** Update File: src/b.ts",
+    "@@",
+    "-oldB",
+    "+newB",
+    patchEnd,
+  ].join("\n");
+  const commands = [
+    {
+      command_id: "runtime-patch.tool.command_run:call_1:0",
+      provider_tool_call_id: "call_1",
+      command_index: 0,
+      step: 1,
+      command_type: "apply_patch",
+      command_line: firstPatch,
+    },
+    {
+      command_id: "runtime-patch.tool.command_run:call_1:1",
+      provider_tool_call_id: "call_1",
+      command_index: 1,
+      step: 1,
+      command_type: "apply_patch",
+      command_line: secondPatch,
+    },
+  ];
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-apply-patch",
+        sessionID: session.id,
+        role: "assistant",
+        parts: [
+          {
+            id: "runtime-patch.tool.command_run",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              input: { commands },
+              streamed_command_run_result: {
+                results: commands.map((command) => ({ ...command, success: true })),
+              },
+            },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+    sessionConfig: { show_command_instructions: true },
+  });
+
+  const transcript = stripAnsi(render(state, richCapabilities()));
+  const patchLines = transcript
+    .split("\n")
+    .filter((line) => line.includes("#1 apply_patch completed") && line.includes(patchStart));
+  assert.equal(patchLines.length, 2, transcript);
+});

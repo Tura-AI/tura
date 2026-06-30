@@ -913,7 +913,7 @@
           "llm.embedding",
           "llm.tool_call"
         ],
-        "display_name": "Codex Subscription",
+        "display_name": "Codex",
         "domains": [
           "llm"
         ],

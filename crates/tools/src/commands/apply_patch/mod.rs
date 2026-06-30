@@ -194,15 +194,12 @@ pub fn execute(patch_text: &str, session_dir: &Path) -> CommandResponse {
                 }
             }
             if !failed_changes.is_empty() {
-                let partial = !applied_changes.is_empty();
-                let first_failure = failed_changes.first().cloned().unwrap_or_else(
-                    || json!({ "error_type": "PatchFailed", "message": "apply_patch failed" }),
-                );
-                let first_kind = first_failure["error_type"]
-                    .as_str()
+                let first_failure = failed_changes.first();
+                let first_kind = first_failure
+                    .and_then(|failure| failure["error_type"].as_str())
                     .unwrap_or("PatchFailed");
-                let first_message = first_failure["message"]
-                    .as_str()
+                let first_message = first_failure
+                    .and_then(|failure| failure["message"].as_str())
                     .unwrap_or("apply_patch failed");
                 let message = if failed_changes.len() == 1 {
                     first_message.to_string()
@@ -214,27 +211,19 @@ pub fn execute(patch_text: &str, session_dir: &Path) -> CommandResponse {
                         first_message
                     )
                 };
-                let mut output = json!({
+                let output = json!({
                     "error_type": if failed_changes.len() == 1 {
                         first_kind
                     } else {
                         "MultiplePatchFailures"
                     },
-                    "message": message,
-                    "guidance": apply_patch_failure_guidance(first_kind, partial),
                     "failed_changes": failed_changes,
                 });
-                if let Some(failed_change) = first_failure.get("failed_change") {
-                    output["failed_change"] = failed_change.clone();
-                }
-                if partial {
-                    output["partial_changes"] = Value::Array(applied_changes.clone());
-                }
                 return CommandResponse {
                     success: false,
                     exit_code: 1,
                     stdout: String::new(),
-                    stderr: output["message"].as_str().unwrap_or_default().to_string(),
+                    stderr: message,
                     output,
                     changes: applied_changes,
                 };
@@ -755,9 +744,7 @@ fn apply_patch_failure_guidance(kind: &str, partial: bool) -> &'static str {
         ("ContextMismatch", false) => {
             "apply_patch failed because expected context was not found; read the current file and retry with a smaller hunk."
         }
-        (_, true) => {
-            "apply_patch failed after earlier changes were applied; inspect partial_changes before retrying."
-        }
+        (_, true) => "apply_patch failed after earlier changes were applied; inspect changes before retrying.",
         _ => "apply_patch failed; inspect error_type and message before retrying.",
     }
 }

@@ -35,23 +35,26 @@ tura exec "Inspect this workspace and summarize what makes it unusual"
 
 ## Why Tura Exists
 
-Most coding agents expose many tools directly to the model, keep enormous
+Most coding agents expose too much raw machinery to the model, keep enormous
 prompt surfaces alive forever, and rely on the model to remember how to be a
-good engineer. Tura moves more of that into runtime structure:
+good engineer. Tura moves the boring but important parts into runtime structure.
 
-- One model-visible `command_run` tool batches shell, patch, media, web, and
-  task-state operations through a step scheduler.
-- Runtime prompt manuals are injected by task type, not permanently pasted into
-  every prompt.
-- `task_status` tracks active work, questions, completion, and compact
-  handoffs as structured state, and the runtime prompt tells agents to define a
-  missing task type before starting work.
-- Context checkpoints keep long tasks alive without dragging the whole old
-  transcript through every future provider call.
-- The tools crate owns file locks, command safety, schema normalization, shell
-  process handling, media reading, web discovery, and command output shaping.
-- Benchmarks and business tests are first-class repo citizens rather than
-  afterthought scripts.
+The shape is:
+
+- A compact `command_run` surface for shell, patch, media, web, and task-state
+  operations, with internal scheduling for multi-step work.
+- Runtime prompt manuals selected by task type, so a frontend task gets
+  frontend guidance and a debug task gets debug discipline without pasting every
+  manual into every prompt.
+- Dynamic context and session management across CLI/TUI/GUI. CLI runs do not
+  have to start from empty memory, and a desktop workspace does not become a
+  graveyard of hundreds of disconnected new sessions.
+- Structured task state for active work, open questions, compact handoffs, and
+  completion, so long tasks can pause, compress, and resume with the useful
+  context still attached.
+- Repo-aware guardrails for file locks, command safety, schema normalization,
+  shell process handling, media reading, web discovery, command output shaping,
+  business tests, and benchmarks.
 
 The result is a coding assistant that is designed to be cheaper in tokens,
 faster in command-heavy loops, harder to derail, and more useful on work that
@@ -64,6 +67,7 @@ needs taste, verification, and maintenance judgement.
 | Tool-call spam and repeated schema overhead | `command_run` exposes one compact tool, then schedules many internal commands by step | [Command Run](docs/command-run.md) |
 | Prompt bloat from every skill, every time | Runtime prompt manuals are selected by `task_type` and persisted as session records | [Runtime Prompts vs Skills](docs/runtime-prompts-vs-skills.md) |
 | Long tasks that loop, forget, or declare victory early | Structured task state, explicit completion rules, retry prompts, and compact handoffs | [Long Task Loop](docs/long-task-loop.md) |
+| CLI starts from nothing, desktop piles up too many fresh sessions | Dynamic context and workspace session management reuse the useful history, task state, and handoffs across fronts | [Operational overview](docs/overview.md), [Long Task Loop](docs/long-task-loop.md) |
 | "AI slop" code that only satisfies the visible prompt | Repo rules, business tests, typed runners, command safety, and verification pressure | [Rules](docs/rules.md), [Tests](tests/README.md) |
 | Agents that cannot inspect media, web pages, or reusable assets without bloating context | `read_media`, `web_discover`, and `generate_media` return compact artifacts, summaries, and downloaded asset folders | [Tools Crate](crates/tools/ARCHITECTURE.md) |
 | Benchmarks nobody can reproduce | Benchmark harnesses collect usage, command counts, wall time, provider time, and artifacts | [Benchmarks](tests/benchmark/README.md) |

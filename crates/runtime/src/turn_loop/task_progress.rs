@@ -10,54 +10,71 @@ const TASK_STATUS_COMMAND: &str = "task_status";
 pub(crate) fn command_run_result_terminal_task_status(
     result: &serde_json::Value,
 ) -> Option<String> {
-    let result = result.get("streamed_command_run_result").unwrap_or(result);
-    result
-        .get("results")
-        .and_then(|value| value.as_array())
-        .and_then(|items| items.iter().find_map(command_run_item_terminal_task_status))
+    command_run_result_items(result)
+        .into_iter()
+        .find_map(command_run_item_terminal_task_status)
 }
 
 fn command_run_item_terminal_task_status(item: &serde_json::Value) -> Option<String> {
-    let command_type = item
-        .get("command_type")
-        .or_else(|| item.get("command"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .replace('-', "_");
-    if command_type != TASK_STATUS_COMMAND {
+    if command_result_type(item).as_deref() != Some(TASK_STATUS_COMMAND) {
         return None;
     }
     if item.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
         return None;
     }
     item.get("output")
-        .and_then(|output| output.get("task_status"))
+        .and_then(|output| {
+            output
+                .get(TASK_STATUS_COMMAND)
+                .or_else(|| output.get("status"))
+        })
         .and_then(|status| status.get("status"))
         .and_then(serde_json::Value::as_str)
         .filter(|status| matches!(*status, "doing" | "done" | "question"))
         .map(ToString::to_string)
 }
 
-pub(crate) fn command_run_result_has_non_status_command(result: &serde_json::Value) -> bool {
+pub(crate) fn command_run_result_is_single_task_status(
+    result: &serde_json::Value,
+    status: &str,
+) -> bool {
+    let items = command_run_result_items(result);
+    let [item] = items.as_slice() else {
+        return false;
+    };
+    command_run_item_terminal_task_status(item).as_deref() == Some(status)
+}
+
+pub(crate) fn command_run_result_has_command(result: &serde_json::Value) -> bool {
+    command_run_result_items(result).into_iter().any(|item| {
+        command_result_type(item).is_some_and(|command_type| command_type != TASK_STATUS_COMMAND)
+    })
+}
+
+fn command_run_result_items(result: &serde_json::Value) -> Vec<&serde_json::Value> {
     let result = result.get("streamed_command_run_result").unwrap_or(result);
-    result
-        .get("results")
-        .and_then(|value| value.as_array())
-        .is_some_and(|items| {
-            items.iter().any(|item| {
-                let command_type = item
-                    .get("command_type")
-                    .or_else(|| item.get("command"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_ascii_lowercase()
-                    .replace('-', "_");
-                !command_type.is_empty() && command_type != TASK_STATUS_COMMAND
-            })
-        })
+    let Some(results) = result.get("results").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    let mut items = Vec::new();
+    for item in results {
+        if item.get("mode").and_then(serde_json::Value::as_str) == Some("batch") {
+            if let Some(batch_results) = item.get("results").and_then(serde_json::Value::as_array) {
+                items.extend(batch_results);
+                continue;
+            }
+        }
+        items.push(item);
+    }
+    items
+}
+
+fn command_result_type(item: &serde_json::Value) -> Option<String> {
+    item.get("command_type")
+        .or_else(|| item.get("command"))
+        .and_then(serde_json::Value::as_str)
+        .map(|value| value.trim().to_ascii_lowercase().replace('-', "_"))
+        .filter(|value| !value.is_empty())
 }
 
 pub(crate) fn active_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
@@ -230,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn command_run_result_detects_real_commands_before_terminal_status() {
+    fn command_run_result_detects_non_task_status_command_before_terminal_status() {
         let result = json!({
             "streamed_command_run_result": {
                 "results": [
@@ -243,7 +260,7 @@ mod tests {
                 ]
             }
         });
-        assert!(super::command_run_result_has_non_status_command(&result));
+        assert!(super::command_run_result_has_command(&result));
 
         let status_only = json!({
             "results": [{
@@ -252,8 +269,25 @@ mod tests {
                 "output": { "task_status": { "status": "done" } }
             }]
         });
-        assert!(!super::command_run_result_has_non_status_command(
-            &status_only
+        assert!(!super::command_run_result_has_command(&status_only));
+        assert!(super::command_run_result_is_single_task_status(
+            &status_only,
+            "done"
+        ));
+
+        let batched_status_only = json!({
+            "results": [{
+                "mode": "batch",
+                "results": [{
+                    "command_type": "task_status",
+                    "success": true,
+                    "output": { "status": { "status": "done" } }
+                }]
+            }]
+        });
+        assert!(super::command_run_result_is_single_task_status(
+            &batched_status_only,
+            "done"
         ));
     }
 

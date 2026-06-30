@@ -119,6 +119,12 @@ fn env_flag(value: &str) -> bool {
     )
 }
 
+fn no_op_manual_enabled_from_env() -> bool {
+    std::env::var("TURA_NO_OP_MANUAL")
+        .ok()
+        .is_some_and(|value| env_flag(&value))
+}
+
 fn handle_envelope(envelope: &Value) -> Value {
     match envelope.get("kind").and_then(Value::as_str) {
         Some("health_check") => json!({
@@ -165,6 +171,10 @@ fn handle_call(payload: &Value) -> Value {
         .get("runtime_context")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let no_op_manual = call
+        .get("no_op_manual")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(no_op_manual_enabled_from_env);
     let planning_mode_override = call.get("planning_mode_override").and_then(Value::as_bool);
     let agent_spec = call.get("agent_spec").cloned();
 
@@ -179,6 +189,12 @@ fn handle_call(payload: &Value) -> Value {
         runtime_context,
         planning_mode_override,
     };
+
+    if no_op_manual {
+        std::env::set_var("TURA_NO_OP_MANUAL", "1");
+    } else {
+        std::env::remove_var("TURA_NO_OP_MANUAL");
+    }
 
     if let Some(agent_spec) = agent_spec {
         std::env::set_var("TURA_ROUTER_AGENT_SPEC", agent_spec.to_string());

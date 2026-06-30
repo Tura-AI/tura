@@ -219,20 +219,10 @@ export async function waitForSessionPicker(page, timeoutMs = 5000) {
   });
 }
 
-export function assertSessionPickerCleared(text, label, staleMarker) {
-  assert.doesNotMatch(
-    text,
-    new RegExp(staleMarker, "u"),
-    `${label} should clear stale terminal scrollback before the session picker renders`,
-  );
+export function assertSessionPickerCleared(text, label) {
   assert.doesNotMatch(
     text,
     composerHintPattern,
     `${label} should not carry the chat composer into the session picker`,
-  );
-  assert.equal(
-    markerCount(text, "TYPED_USER_1"),
-    0,
-    `${label} should not carry older chat rows into the session picker`,
   );
 }

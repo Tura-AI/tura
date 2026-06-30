@@ -340,6 +340,7 @@ fn catalog_browser_login_defaults_are_stable_and_supported_by_registry() {
 
 #[test]
 fn catalog_provider_display_name_uses_registry_or_identity_fallback() {
+    assert_eq!(provider_display_name("codex"), "Codex");
     assert_eq!(provider_display_name("openai"), "OpenAI API");
     assert_eq!(
         provider_display_name("unknown-provider-for-test"),

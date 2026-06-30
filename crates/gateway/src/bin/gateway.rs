@@ -46,6 +46,7 @@ fn main() {
         Ok(lock) => lock,
         Err(error) => {
             if gateway_root_on_port(desired_port).as_deref() == Some(my_root().as_str()) {
+                write_active_gateway_url(desired_port);
                 println!("✅ Gateway for this home is already running on http://127.0.0.1:{desired_port}");
                 return;
             }
@@ -57,6 +58,7 @@ fn main() {
     let port = match select_listen_port(desired_port) {
         PortDecision::Bind(port) => port,
         PortDecision::AlreadyOwned(port) => {
+            write_active_gateway_url(port);
             println!("✅ Gateway for this directory is already running on http://127.0.0.1:{port}");
             return;
         }
@@ -75,8 +77,32 @@ fn main() {
         std::process::exit(1);
     }
     start_router_front_heartbeat();
-    install_stdin_eof_shutdown_watcher();
-    let server_result = runtime.block_on(gateway::web::server::run_server(port));
+    let stdin_eof_shutdown = install_stdin_eof_shutdown_watcher();
+    let stdin_eof_lifecycle = stdin_eof_shutdown.is_some();
+    if !stdin_eof_lifecycle && gateway::tray::tray_enabled() {
+        match gateway::tray::GatewayTrayApp::new(port) {
+            Ok(tray) => {
+                std::thread::spawn(move || {
+                    let server_result = run_gateway_server(runtime, port, stdin_eof_shutdown);
+                    shutdown_global_router_process("gateway server exit");
+                    if let Err(error) = server_result {
+                        eprintln!("gateway server stopped with error: {error}");
+                        std::process::exit(1);
+                    }
+                    drop(gateway_lock);
+                });
+                tray.run();
+                shutdown_global_router_process("gateway tray quit");
+                return;
+            }
+            Err(error) => {
+                eprintln!("gateway tray unavailable; continuing without tray icon: {error:#}");
+            }
+        }
+    }
+
+    let server_result = run_gateway_server(runtime, port, stdin_eof_shutdown);
+    shutdown_global_router_process("gateway server exit");
     drop(gateway_lock);
     if let Err(error) = server_result {
         eprintln!("gateway server stopped with error: {error}");
@@ -84,23 +110,38 @@ fn main() {
     }
 }
 
-/// Default gateway port for a bare invocation, derived from the compile-time
-/// build-kind so the two independent routes never collide:
-///   - `dev`     (the repo-local `bin/` dev package) → 4126
-///   - `release` (the portable `release/` package)   → 4156
+fn run_gateway_server(
+    runtime: tokio::runtime::Runtime,
+    port: u16,
+    shutdown: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(shutdown) = shutdown {
+        return runtime.block_on(gateway::web::server::run_server_until_shutdown(
+            port,
+            async move {
+                let _ = shutdown.await;
+            },
+        ));
+    }
+    runtime.block_on(gateway::web::server::run_server(port))
+}
+
+fn shutdown_global_router_process(reason: &str) {
+    match gateway::router_process::global_router_process().and_then(|router| router.shutdown()) {
+        Ok(payload) => eprintln!("gateway shutdown ({reason}): router shutdown {payload}"),
+        Err(error) => eprintln!("gateway shutdown ({reason}): router shutdown failed: {error:#}"),
+    }
+}
+
+/// Default gateway port for a bare invocation, derived from the build kind:
+///   - `dev`     → 4125
+///   - `release` → 4126
 ///
 /// dev/release are distinguished by build-kind (`TURA_BUILD_KIND`) and isolated
 /// by instance_home — never by the executable's file name. Launchers and the
 /// TUI/GUI spawners always pass an explicit `PORT`, so this is only the fallback.
-const DEV_GATEWAY_PORT: u16 = 4126;
-const RELEASE_GATEWAY_PORT: u16 = 4156;
-
 fn default_port_for_exe() -> u16 {
-    if mode_for_exe() == "dev" {
-        DEV_GATEWAY_PORT
-    } else {
-        RELEASE_GATEWAY_PORT
-    }
+    tura_path::default_gateway_port_for_build_kind(mode_for_exe())
 }
 
 fn mode_for_exe() -> &'static str {
@@ -139,6 +180,15 @@ fn my_root() -> String {
     // Single source of truth for project-root resolution (TURA_PROJECT_ROOT or
     // cwd, canonicalized + verbatim-stripped).
     tura_path::canonical_root().to_string_lossy().to_string()
+}
+
+fn write_active_gateway_url(port: u16) {
+    let url = format!("http://127.0.0.1:{port}");
+    if let Err(error) =
+        tura_path::write_active_gateway_url_for_home(tura_path::instance_home(), &url)
+    {
+        eprintln!("gateway failed to write active URL {url}: {error}");
+    }
 }
 
 /// Probe `/global/health` on a loopback port and return the gateway's reported
@@ -191,15 +241,16 @@ fn configure_release_runtime_env() {
     }
 }
 
-fn install_stdin_eof_shutdown_watcher() {
+fn install_stdin_eof_shutdown_watcher() -> Option<tokio::sync::oneshot::Receiver<()>> {
     if std::env::var("TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF")
         .ok()
         .as_deref()
         != Some("1")
     {
-        return;
+        return None;
     }
-    std::thread::spawn(|| {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
         let mut stdin = std::io::stdin();
         let mut buffer = [0_u8; 1];
         loop {
@@ -209,8 +260,9 @@ fn install_stdin_eof_shutdown_watcher() {
                 Err(_) => break,
             }
         }
-        std::process::exit(0);
+        let _ = tx.send(());
     });
+    Some(rx)
 }
 
 fn start_router_front_heartbeat() {

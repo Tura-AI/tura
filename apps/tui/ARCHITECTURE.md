@@ -177,7 +177,8 @@ Default gateway URL resolution:
 
 1. `--gateway-url`
 2. `TURA_GATEWAY_URL`
-3. `http://127.0.0.1:4126`
+3. `.tura/gateway-active.env`
+4. Build default: `http://127.0.0.1:4125` in dev, `http://127.0.0.1:4126` in release.
 
 Every request that is workspace-scoped must send the current directory through
 both compatible mechanisms until the API is fully documented:

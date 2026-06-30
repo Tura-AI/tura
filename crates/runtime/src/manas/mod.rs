@@ -8,6 +8,9 @@ pub(crate) mod runtime_turn;
 pub(crate) mod tool_arguments;
 pub(crate) mod tool_catalog;
 
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub(crate) use constants::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
 pub(crate) use final_response::{user_visible_runtime_output_text, user_visible_runtime_text};
 pub use process::{process_manas_internal, ManasInput, ManasResult};

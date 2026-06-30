@@ -238,6 +238,7 @@ mod tests {
             parent_id: None,
             created_at: 0,
             updated_at: 0,
+            last_user_message_at: None,
             state: None,
             status: None,
             message_count: 0,

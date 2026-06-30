@@ -72,18 +72,15 @@ fn prompt_payload_treats_default_model_variant_as_unset() {
 }
 
 #[test]
-fn session_config_model_override_prefers_provider_model_pair_for_tier_names() {
+fn session_config_model_override_keeps_tier_names_out_of_specific_model_display() {
     let config = TuraSessionConfig {
         model: Some("thinking".to_string()),
-        active_provider: Some("codex".to_string()),
-        active_model: Some("gpt-5.5".to_string()),
+        active_provider: None,
+        active_model: None,
         ..TuraSessionConfig::default()
     };
 
-    assert_eq!(
-        config_model_override(&config).as_deref(),
-        Some("codex/gpt-5.5")
-    );
+    assert_eq!(config_model_override(&config), None);
 }
 
 fn test_session(id: &str, directory: &str, parent_id: Option<&str>, updated_at: i64) -> Session {
@@ -93,6 +90,8 @@ fn test_session(id: &str, directory: &str, parent_id: Option<&str>, updated_at: 
         parent_id: parent_id.map(ToString::to_string),
         created_at: updated_at - 1,
         updated_at,
+        last_user_message_at: None,
+        task_start_at: Some(updated_at - 1),
         directory: Some(directory.to_string()),
         model: None,
         agent: None,
@@ -175,6 +174,106 @@ fn session_list_can_include_children_when_requested() {
             .collect::<Vec<_>>(),
         vec!["root-a", "child-a"]
     );
+}
+
+#[tokio::test]
+async fn session_list_orders_by_latest_user_message_not_runtime_update() {
+    let directory = std::env::temp_dir()
+        .join(format!(
+            "tura-session-user-message-order-{}",
+            uuid::Uuid::new_v4()
+        ))
+        .to_string_lossy()
+        .to_string();
+
+    let assistant_updated_later = session_store().create_session(
+        Some(directory.clone()),
+        None,
+        None,
+        Some("chat".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    let user_sent_later = session_store().create_session(
+        Some(directory.clone()),
+        None,
+        None,
+        Some("chat".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let Json(_) = super::update_session_task_management(
+        Path(assistant_updated_later.id.clone()),
+        Json(super::UpdateSessionTaskManagementRequest {
+            task_management: serde_json::json!({
+                "task_summary": "Assistant updated later",
+                "start_at": "2026-06-25T12:00:00Z"
+            }),
+        }),
+    )
+    .await;
+    let Json(_) = super::update_session_task_management(
+        Path(user_sent_later.id.clone()),
+        Json(super::UpdateSessionTaskManagementRequest {
+            task_management: serde_json::json!({
+                "task_summary": "User sent later",
+                "start_at": "2026-06-25T10:00:00Z"
+            }),
+        }),
+    )
+    .await;
+
+    session_store().add_message(
+        &assistant_updated_later.id,
+        crate::session::store::MessageRole::User,
+        "older user prompt".to_string(),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let newer_user_message = session_store()
+        .add_message(
+            &user_sent_later.id,
+            crate::session::store::MessageRole::User,
+            "newer user prompt".to_string(),
+        )
+        .expect("newer user message should be stored");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    session_store().add_message(
+        &assistant_updated_later.id,
+        crate::session::store::MessageRole::Assistant,
+        "later assistant reply".to_string(),
+    );
+
+    let Json(listed) = super::list_sessions(
+        HeaderMap::new(),
+        Query(SessionListParams {
+            directory: Some(directory.clone()),
+            include_children: true,
+            ..SessionListParams::default()
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        listed.first().map(|session| session.id.as_str()),
+        Some(user_sent_later.id.as_str())
+    );
+    assert_eq!(
+        listed
+            .first()
+            .and_then(|session| session.last_user_message_at),
+        Some(newer_user_message.updated_at)
+    );
+
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -279,8 +378,12 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
     assert!(value["context_tokens"]["limit"].as_u64().is_some());
     assert_eq!(value["usage"]["context_tokens"]["input"], 0);
     assert!(value["usage"]["context_tokens"]["limit"].as_u64().is_some());
+    assert_eq!(
+        value["last_user_message_at"].as_i64(),
+        session.last_user_message_at
+    );
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 23);
+    assert_eq!(object.len(), 25);
 
     let Json(listed) = super::list_sessions(
         HeaderMap::new(),
@@ -354,8 +457,12 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
     assert!(value["context_tokens"]["limit"].as_u64().is_some());
     assert_eq!(value["usage"]["context_tokens"]["input"], 0);
     assert!(value["usage"]["context_tokens"]["limit"].as_u64().is_some());
+    assert_eq!(
+        value["last_user_message_at"].as_i64(),
+        updated.last_user_message_at
+    );
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 23);
+    assert_eq!(object.len(), 25);
 
     let Json(fetched) = super::get_session(Path(session.id)).await;
     assert_eq!(fetched.task_management["status"], "question");
@@ -854,12 +961,19 @@ fn apply_single_change_reports_target_directory_context() {
 
 #[test]
 fn inactive_sessions_from_probe_keeps_active_sessions() {
-    let expected = vec!["active".to_string(), "worker".to_string()];
+    let expected = vec![
+        "active".to_string(),
+        "queued".to_string(),
+        "running".to_string(),
+        "worker".to_string(),
+    ];
     let inactive = inactive_sessions_from_probe(
         &expected,
         &serde_json::json!({
             "sessions": [
                 { "session_id": "active", "status": "active" },
+                { "session_id": "queued", "status": "queued" },
+                { "session_id": "running", "status": "running" },
                 { "session_id": "worker", "worker_alive": true }
             ]
         }),

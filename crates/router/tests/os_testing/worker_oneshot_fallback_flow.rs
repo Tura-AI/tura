@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+use sysinfo::{Pid, System};
 use tura_router::manager::ServiceManager;
 use tura_router::models::{CallContext, WorkerSpec};
 
@@ -126,6 +128,61 @@ async fn router_one_shot_fallback_business_flow_restarts_child_for_each_invocati
         .with_context(|| format!("read one-shot counter {}", counter.display()))?;
     assert_eq!(final_count.trim(), "3");
     assert_eq!(manager.stop_workers_with_prefix("runtime_worker:").await, 1);
+    assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_one_shot_stop_kills_running_child_process() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp one-shot cancellation worker dir")?;
+    let script = write_one_shot_worker_script(temp.path())?;
+    let pid_file = temp.path().join("running.pid");
+    let manager = ServiceManager::new();
+    let spec = one_shot_spec_with_env(
+        "runtime_worker:oneshot-cancel",
+        &python_executable()?,
+        &script,
+        "sleep",
+        vec![(
+            "TURA_TEST_ONESHOT_PID_FILE".to_string(),
+            pid_file.to_string_lossy().to_string(),
+        )],
+    );
+
+    let handle = manager.ensure_worker(spec).await?;
+    let worker_id = handle.worker_id.clone();
+    let call = tokio::spawn({
+        let manager = manager.clone();
+        async move {
+            manager
+                .call_worker(
+                    &worker_id,
+                    CallContext::new(
+                        "runtime.run".to_string(),
+                        "/runtime/oneshot/cancel".to_string(),
+                        json!({ "prompt": "sleep until abort" }),
+                    ),
+                )
+                .await
+        }
+    });
+
+    let pid = wait_for_pid_file(&pid_file, Duration::from_secs(5)).await?;
+    wait_for_process_alive(pid, Duration::from_secs(5)).await?;
+    assert!(
+        manager
+            .stop_worker_by_key("runtime_worker:oneshot-cancel")
+            .await
+    );
+    wait_for_process_dead(pid, Duration::from_secs(10))
+        .await
+        .with_context(|| format!("one-shot worker pid {pid} should die after stop"))?;
+
+    let result = call.await.context("join cancelled one-shot call")?;
+    assert!(
+        result.is_err(),
+        "cancelled one-shot invocation should not report success after stop"
+    );
     assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
     Ok(())
 }
@@ -300,6 +357,15 @@ if message.get("kind") == "health_check":
     sys.exit(3)
 
 mode = os.environ.get("TURA_TEST_ONESHOT_MODE", "ok")
+if mode == "sleep":
+    pid_path = os.environ.get("TURA_TEST_ONESHOT_PID_FILE")
+    if pid_path:
+        with open(pid_path, "w", encoding="utf-8") as writer:
+            writer.write(str(os.getpid()))
+    import time
+    time.sleep(60)
+    print(json.dumps({"ok": True, "mode": mode, "input": message}), flush=True)
+    sys.exit(0)
 if mode == "fail":
     print("intentional one-shot failure", file=sys.stderr, flush=True)
     sys.exit(9)
@@ -328,4 +394,60 @@ print(json.dumps({
     )
     .with_context(|| format!("write one-shot worker script {}", script.display()))?;
     Ok(script)
+}
+
+async fn wait_for_pid_file(path: &Path, timeout: Duration) -> Result<u32> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if let Ok(raw) = std::fs::read_to_string(path) {
+            if let Ok(pid) = raw.trim().parse::<u32>() {
+                return Ok(pid);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(anyhow!(
+        "pid file {} was not written after {}ms",
+        path.display(),
+        timeout.as_millis()
+    ))
+}
+
+async fn wait_for_process_alive(pid: u32, timeout: Duration) -> Result<()> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if process_alive(pid) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(anyhow!(
+        "pid {pid} was not alive after {}ms",
+        timeout.as_millis()
+    ))
+}
+
+async fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if !process_alive(pid) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(anyhow!(
+        "pid {pid} was still alive after {}ms",
+        timeout.as_millis()
+    ))
+}
+
+fn process_alive(pid: u32) -> bool {
+    let mut system = System::new_all();
+    system.refresh_processes();
+    system.process(Pid::from_u32(pid)).is_some_and(|process| {
+        !matches!(
+            process.status(),
+            sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+        )
+    })
 }

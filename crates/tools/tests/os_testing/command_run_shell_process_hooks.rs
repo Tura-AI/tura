@@ -4,6 +4,25 @@ mod helpers;
 
 use helpers::*;
 
+fn command_result_text(result: &Value) -> String {
+    let Some(output) = result.get("output") else {
+        return String::new();
+    };
+    if let Some(text) = output.as_str() {
+        return text.to_string();
+    }
+    let mut text = String::new();
+    for key in ["stdout", "stderr", "output"] {
+        if let Some(value) = output.get(key).and_then(Value::as_str) {
+            text.push_str(value);
+            if !value.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+    }
+    text
+}
+
 #[test]
 fn pass_timeout_returns_quick_failure() {
     let _guard = env_lock_blocking();
@@ -28,10 +47,7 @@ fn pass_timeout_returns_quick_failure() {
     );
 
     assert_eq!(output["results"][0]["success"], false);
-    assert!(output["results"][0]["output"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("Timed out after"));
+    assert!(command_result_text(&output["results"][0]).contains("Timed out after"));
     assert!(
         output["results"][0].get("error").is_none(),
         "timeout must be returned by the shell runtime as model-visible tool output, not by dropping command_run dispatch"
@@ -58,10 +74,7 @@ fn fail_timeout_kills_descendant_process_tree_quickly() {
     );
 
     assert_eq!(output["results"][0]["success"], false);
-    assert!(output["results"][0]["output"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("Timed out after"));
+    assert!(command_result_text(&output["results"][0]).contains("Timed out after"));
     assert!(
         output["results"][0].get("error").is_none(),
         "descendant timeout must be converted by the shell runtime instead of outer command_run timeout"
@@ -74,10 +87,15 @@ async fn pass_async_command_run_entry_does_not_start_nested_runtime() {
     let _guard = env_lock().await;
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("async-entry");
+    let command = if cfg!(windows) {
+        "Write-Output async-ok"
+    } else {
+        "echo async-ok"
+    };
     let output = command_run::execute_async_value(
         json!({
             "commands": [
-                { "command": "shell_command", "command_line": json!({ "command": "Write-Output async-ok" }).to_string() }
+                { "command": "shell_command", "command_line": json!({ "command": command }).to_string() }
             ]
         }),
         root,
@@ -85,10 +103,7 @@ async fn pass_async_command_run_entry_does_not_start_nested_runtime() {
     .await;
 
     assert_eq!(output["results"][0]["success"], true);
-    assert!(output["results"][0]["output"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("async-ok"));
+    assert!(command_result_text(&output["results"][0]).contains("async-ok"));
 }
 
 #[test]
@@ -112,10 +127,7 @@ fn pass_bash_surface_runs_posix_script_without_exposing_shell_command() {
     assert!(output["results"][0].get("command").is_none());
     assert_eq!(output["results"][0]["command_type"], "bash");
     assert_eq!(output["results"][0]["success"], true);
-    assert!(output["results"][0]["output"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("one"));
+    assert!(command_result_text(&output["results"][0]).contains("one"));
 }
 
 #[test]
@@ -144,7 +156,7 @@ fn pass_zsh_surface_runs_zsh_script_without_exposing_shell_command() {
     assert!(output["results"][0].get("command").is_none());
     assert_eq!(output["results"][0]["command_type"], "zsh");
     assert_eq!(output["results"][0]["success"], true);
-    let text = output["results"][0]["output"].as_str().unwrap_or_default();
+    let text = command_result_text(&output["results"][0]);
     assert!(text.contains("alpha"), "{output}");
     assert!(!text.contains("beta"), "{output}");
 }
@@ -180,10 +192,7 @@ fn fail_zsh_surface_reports_missing_configured_binary() {
     restore_env_var("TURA_ZSH_PATH", previous_zsh_path);
     assert_eq!(output["results"][0]["command_type"], "zsh");
     assert_eq!(output["results"][0]["success"], false);
-    assert!(output["results"][0]["output"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("zsh executable was not found"));
+    assert!(command_result_text(&output["results"][0]).contains("zsh executable was not found"));
 }
 
 #[test]

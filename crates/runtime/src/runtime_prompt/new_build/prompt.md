@@ -25,7 +25,6 @@ Use this prompt when the task is to start a new frontend, backend, full-stack pr
 - Before calling the build done, remove unused files, imports, variables, parameters, routes, fixtures, generated assets, and one-off helpers that no longer serve the implemented behavior.
 
 ### Validation:
-- When project conditions allow, add or enable code-standard checking libraries for the repo.
 - Use lint, format, and typecheck tooling consistently; when practical, add or enable missing checks rather than relying on manual review.
 - Set sufficient lint and test gates to control code operability before considering implementation complete.
 - If the cause, risk, or correct fix is uncertain, say what is uncertain and what evidence is missing; do not invent a confident explanation to make the story sound complete.

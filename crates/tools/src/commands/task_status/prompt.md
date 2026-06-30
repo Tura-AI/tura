@@ -1,6 +1,6 @@
 Use `task_status` only to update internal task-management state. It is never a substitute for the user-visible assistant message.
-Every time you change `status` to `done` or `question`, first send a normal assistant-channel natural language reply containing the actual answer, explanation, completion summary, blocker, or question for the user. Then call `task_status` in the same assistant response.
-For simple questions, greetings, acknowledgements, or ordinary conversation, answer the user naturally in the assistant channel before any terminal `task_status` update. Do not use `task_status` as the only response. If the conversation is answered, mark `done`; if you need user input, mark `question`. Do not mark `doing` for ordinary conversation.
+When there is no task-state update to record--no status transition, no `task_group` or `task_type` correction, no required Operation Manual change, and no `compact_context` checkpoint--a `task_status` call is usually unnecessary, but it is not forbidden.
+For simple questions, greetings, acknowledgements, or ordinary conversation, answer the user naturally in the assistant channel. Usually avoid `task_status` unless the conversation actually changes task state or needs required user input, but a no-change `task_status` call is allowed when an explicit internal state touch is useful. Do not use `task_status` as the only response. Do not mark `doing` for ordinary conversation.
 Put the explanation, question, completion summary, modified files, artifacts, validation, risks, and follow-up notes in the assistant reply, not in `task_status` arguments.
 
 Use the user's input language for `task_group`.
@@ -26,28 +26,29 @@ The available `task_type` values are injected dynamically from runtime prompt id
 
 Only call `status: "doing"` when the task cannot be completed without additional command_run calls.
 Call `status: "done"` only after the task is complete, verified, and every media file you plan to send or show to the user has been read and inspected with `read_media`.
+When you call `status: "done"` You must also send final report message as assistant message, when `done` is updated it will be the final agent round, it will not start a new round.
 Do not call `status: "done"` when a required or reasonably runnable verification command failed, timed out, was skipped, or could not start. Keep working to install missing dependencies, start required services, fix environment setup, and rerun the validation until it passes. This includes builds, unit tests, integration tests, Playwright/browser tests, runtime smoke checks, harnesses, and any user-requested verifier.
 
 If verification should be runnable but the current environment truly cannot run it after reasonable setup effort, clearly explain the environment blocker to the user in the normal assistant reply and call `status: "question"`.
-If user feedback, missing information, permissions, credentials, or keys are required, first send the user-facing assistant reply with the question or blocker, then call `status: "question"` in the same assistant response.
+If user feedback, missing information, permissions, credentials, or keys are required, first send the user-facing assistant reply with the question or blocker, and call `status: "question"` in the same assistant response.
 Use `compact_context` on `task_status` to create a context checkpoint when a meaningful phase is complete, when most of the previous context is no longer relevant to the next task, or when the active context reaches the 255,000 tokens hard cap.
 Only use `compact_context` when the new task no longer depends on the current main context and a handoff is needed. The user will receive all conversation from the current task and any previous summary; include only details that are not already covered by that conversation or prior summary. Do not duplicate obvious dialogue history.
-When useful work should happen before the checkpoint, put those required commands in earlier steps of the same `command_run`, then put the `task_status` command carrying `compact_context` after them. The results from earlier commands will still be executed and returned normally before the compacted context is used on the next turn.
+If useful information or code needs to remain available after the checkpoint, include the relevant git, get-content or read commands earlier in the same command_run. Then place the `task_status` command with `compact_context` after them. Commands in the same batch will still run normally, and their results will be passed along with the compacted context on the next turn.
 
 The `compact_context` value is one handoff text for the next model turn. Include:
-- current user goal and Operation Manual
+- current user goal and task
 - still-relevant user requirements and preferences
 - workflow or process rules that must continue to be followed
 - current task status, including completed and incomplete parts
 - key decisions and constraints
 - deliverables, file paths, and validation standards
-- reference files, relevant code paths, architecture docs, test docs, or other documentation paths that should be read or kept in mind
+- reference files, relevant code paths, code line number, architecture docs, test docs, or other documentation paths that should be read or kept in mind
 - relevant steps already taken and important command results
 - directory or file requirements needed to continue
 - related process id and what the process is for
 - exactly what to do next
 
-Keep `compact_context` concise and structured. Do not exceed 15 sentences. Use plain text English, and do not use quotation marks or brackets.
+Keep `compact_context` concise and structured. Do not exceed 15 sentences. Use plain text in the user's language, and do not use quotation marks or brackets.
 
 Example `command_line` values:
 - Update task group and task types: `{"task_group":"Storefront Frontend","task_type":["refactoring","frontend"],"status":"doing"}`

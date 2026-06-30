@@ -8,7 +8,7 @@ import { setActiveCapabilities, stripAnsi } from "../../../src/tui/render-termin
 import { initialState, reducer, type AppState } from "../../../src/tui/reducer.js";
 import type { Session } from "../../../src/types/session.js";
 
-test("opening a setting detail starts selection at the first option", () => {
+test("opening a setting detail starts selection at the active config option", () => {
   const root = {
     ...baseState(),
     settingsOpen: true,
@@ -19,7 +19,7 @@ test("opening a setting detail starts selection at the first option", () => {
   const next = reducer(root, { type: "open-setting-detail", detail: "variant" });
 
   assert.equal(next.settingDetail, "variant");
-  assert.equal(next.selectedSettingOptionIndex, 0);
+  assert.equal(next.selectedSettingOptionIndex, 2);
 });
 
 test("setting detail rendering pages when selection moves past visible rows", () => {
@@ -36,6 +36,52 @@ test("setting detail rendering pages when selection moves past visible rows", ()
   assert.doesNotMatch(rendered, /> low/u);
   assert.doesNotMatch(rendered, /> medium/u);
   assert.match(rendered, /> high/u);
+});
+
+test("agent setting marker follows session config instead of stale session agent", () => {
+  setActiveCapabilities(richCapabilities());
+  const state = reducer(
+    {
+      ...baseState(),
+      session: { ...session("sess-settings"), agent: "stale-agent" },
+      sessionConfig: {
+        ...baseState().sessionConfig,
+        active_agent: "thoughtful",
+      },
+      agents: [storedAgent("stale-agent"), storedAgent("thoughtful")],
+    },
+    { type: "open-setting-detail", detail: "agent" },
+  );
+
+  const rendered = stripAnsi(settingsLines(state, 96, 12).join("\n"));
+
+  assert.match(rendered, /thoughtful\s+[✓*]/u);
+  assert.doesNotMatch(rendered, /stale-agent\s+[✓*]/u);
+  assert.equal(state.selectedSettingOptionIndex, 1);
+});
+
+test("persona setting marker follows session config over stale session persona", () => {
+  setActiveCapabilities(richCapabilities());
+  const state = reducer(
+    {
+      ...baseState(),
+      sessionConfig: {
+        ...baseState().sessionConfig,
+        active_persona: "wonderful",
+      },
+      personas: [
+        { summary: { id: "tura", source: "static" } },
+        { summary: { id: "wonderful", source: "static" } },
+      ],
+    },
+    { type: "open-setting-detail", detail: "persona" },
+  );
+
+  const rendered = stripAnsi(settingsLines(state, 96, 12).join("\n"));
+
+  assert.match(rendered, /wonderful\s+[✓*]/u);
+  assert.doesNotMatch(rendered, /tura\s+[✓*]/u);
+  assert.equal(state.selectedSettingOptionIndex, 1);
 });
 
 test("settings root shows command default while hiding removed validator stall guard and session type entries", () => {
@@ -147,6 +193,22 @@ function session(id: string): Session {
     task_management: {},
     plan_summary: null,
     session_display_name: null,
+  };
+}
+
+function storedAgent(id: string): AppState["agents"][number] {
+  return {
+    summary: {
+      id,
+      name: id,
+      description: id,
+      source: "static",
+      path: `agents/${id}.md`,
+      aliases: [],
+      capabilities: [],
+      hidden: false,
+    },
+    config: { agent_name: id },
   };
 }
 

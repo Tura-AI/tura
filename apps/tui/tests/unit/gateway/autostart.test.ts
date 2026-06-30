@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
 import {
-  killOwnedGateway,
   _canBindGatewayUrlForTest,
+  _releaseOwnedGatewayForTest,
   _setOwnedGatewayForTest,
 } from "../../../src/gateway/autostart.js";
 
@@ -35,57 +35,32 @@ function isAlive(pid: number | undefined): boolean {
   }
 }
 
-test("killOwnedGateway is a no-op when no gateway is owned", () => {
-  _setOwnedGatewayForTest(undefined);
-  assert.doesNotThrow(() => killOwnedGateway());
-});
-
-test("killOwnedGateway kills the owned process", async () => {
+test("releasing an owned gateway reference does not kill the process", async () => {
   const child = spawnSleeper();
   await waitForSpawn(child);
   const pid = child.pid;
+  try {
+    _setOwnedGatewayForTest(child);
+    _releaseOwnedGatewayForTest();
 
-  _setOwnedGatewayForTest(child);
-  killOwnedGateway();
-
-  await waitForExit(child);
-  assert.equal(isAlive(pid), false, "process should be dead after killOwnedGateway");
+    assert.equal(isAlive(pid), true, "persistent gateway must survive front cleanup");
+  } finally {
+    child.kill();
+    await waitForExit(child).catch(() => {});
+  }
 });
 
-test("killOwnedGateway clears the reference — second call is a no-op", async () => {
-  const child = spawnSleeper();
-  await waitForSpawn(child);
-
-  _setOwnedGatewayForTest(child);
-  killOwnedGateway();
-
-  // Second call must not throw even though reference was cleared
-  assert.doesNotThrow(() => killOwnedGateway());
-
-  await waitForExit(child);
-});
-
-test("killOwnedGateway handles an already-dead process gracefully", async () => {
-  const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
-  await waitForExit(child);
-
-  _setOwnedGatewayForTest(child);
-  // Should not throw even though the process already exited
-  assert.doesNotThrow(() => killOwnedGateway());
-});
-
-test("gateway spawned by ensureGatewayAvailable is not detached (integration guard)", async () => {
-  // Verify that a process spawned without detached=true is in the same process
-  // group as the parent on Unix, or inherits the parent job on Windows.
-  // We use a canary child to assert basic process-group membership:
-  // child.pid is defined (spawn succeeded) and belongs to our process group.
-  const child = spawnSleeper();
+test("persistent gateway spawn is detached from the TUI process group", async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
   try {
     await waitForSpawn(child);
     assert.ok(child.pid, "spawned child has a pid");
 
     if (process.platform !== "win32") {
-      // On Unix, process group matches the parent's because detached was false.
       const childPgid = parseInt(
         (
           await new Promise<string>((res, rej) => {
@@ -101,13 +76,12 @@ test("gateway spawned by ensureGatewayAvailable is not detached (integration gua
         10,
       );
       const parentPgid = (process as unknown as { getpgid?: (pid: number) => number }).getpgid?.(0);
-      assert.equal(childPgid, parentPgid ?? childPgid, "same process group as TUI");
+      assert.notEqual(childPgid, parentPgid ?? process.pid, "gateway must not share TUI process group");
     }
-    // On Windows: absence of CREATE_NEW_PROCESS_GROUP flag means the gateway
-    // inherits the parent console session — verified by the absence of errors above.
+    // On Windows, detached=true maps to a detached child process; successful
+    // spawn plus unreferenced cleanup is the portable unit-level contract.
   } finally {
-    _setOwnedGatewayForTest(child);
-    killOwnedGateway();
+    child.kill();
     await waitForExit(child).catch(() => {});
   }
 });

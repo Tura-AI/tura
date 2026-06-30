@@ -8,7 +8,6 @@ pub(super) const MIN_WEBSITE_TEXT_CHARS_FOR_READER: usize = 1_200;
 #[derive(Clone, Debug)]
 pub(super) struct WebDiscoverArgs {
     pub(super) kind: String,
-    pub(super) asset_type: Option<String>,
     pub(super) query: String,
     pub(super) include_regex: Option<String>,
     pub(super) exclude_regex: Option<String>,

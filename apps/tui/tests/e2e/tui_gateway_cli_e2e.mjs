@@ -160,7 +160,7 @@ async function runWebTerminalE2e(gateway) {
           assert.match(body, /Rich Fixture/);
           assert.match(body, /Enter to send,.*\/help commands \/settings settings/);
           assert.doesNotMatch(body, /\[MEDIA:/);
-          assert.doesNotMatch(body, /Agent:fast/);
+          assert.doesNotMatch(body, /Agent:direct/);
           assert.doesNotMatch(body, /persona:direct/);
           const chromeColors = await page.evaluate(() =>
             [...document.querySelectorAll(".dot")].map(
@@ -242,7 +242,7 @@ async function runWebTerminalE2e(gateway) {
         assert.match(body, /(^|\n).*\/chat(?:\s|$)/m);
         assert.match(body, /(^|\n).*\/commands(?:\s|$)/m);
         assert.doesNotMatch(body, /system|assistant|user/);
-        assert.doesNotMatch(body, /Agent:fast/);
+        assert.doesNotMatch(body, /Agent:direct/);
       }
       await sendRichCommandInput("/chat\r");
       await page.waitForFunction(
@@ -401,16 +401,16 @@ async function main() {
     assert.match(zhHelp.stdout, /agent\s+列出、读取、创建、更新或配置智能体档位/);
 
     const config = await expectCliJson([...baseArgs(gateway), "--json", "config", "get"]);
-    assert.equal(config.active_agent, "fast");
+    assert.equal(config.active_agent, "direct");
     const patched = await expectCliJson([
       ...baseArgs(gateway),
       "--json",
       "config",
       "set",
-      "agent=fast",
+      "agent=direct",
       "model_variant=low",
     ]);
-    assert.equal(patched.active_agent, "fast");
+    assert.equal(patched.active_agent, "direct");
     assert.equal(gateway.records.configPatches[0].model_variant, "low");
     const rejectedTheme = await runCli([...baseArgs(gateway), "config", "set", "theme=dark"]);
     assert.notEqual(rejectedTheme.status, 0);
@@ -486,9 +486,9 @@ async function main() {
       "update",
       "sess-e2e",
       "--data",
-      '{"agent":"fast"}',
+      '{"agent":"direct"}',
     ]);
-    assert.equal(updatedSession.agent, "fast");
+    assert.equal(updatedSession.agent, "direct");
     const taskSession = await expectCliJson([
       ...baseArgs(gateway),
       "--json",
@@ -534,8 +534,8 @@ async function main() {
 
     const agents = await expectCliJson([...baseArgs(gateway), "--json", "agent", "list"]);
     assert.equal(agents[0].summary.name, "Fast");
-    const agent = await expectCliJson([...baseArgs(gateway), "--json", "agent", "show", "fast"]);
-    assert.equal(agent.summary.id, "fast");
+    const agent = await expectCliJson([...baseArgs(gateway), "--json", "agent", "show", "direct"]);
+    assert.equal(agent.summary.id, "direct");
     const createdAgent = await expectCliJson([
       ...baseArgs(gateway),
       "--json",
@@ -624,7 +624,7 @@ async function main() {
     });
     assert.equal((await client.health()).version, "minimal-e2e");
     await client.syncWorkspace();
-    assert.equal((await client.getSessionConfig()).active_agent, "fast");
+    assert.equal((await client.getSessionConfig()).active_agent, "direct");
     assert.equal(
       (await client.patchSessionConfig({ model_variant: "medium" })).model_variant,
       "medium",
@@ -634,7 +634,7 @@ async function main() {
       "sess-created-1",
     );
     assert.equal((await client.getSession("sess-e2e")).id, "sess-e2e");
-    assert.equal((await client.updateSession("sess-e2e", { agent: "fast" })).agent, "fast");
+    assert.equal((await client.updateSession("sess-e2e", { agent: "direct" })).agent, "direct");
     assert.equal((await client.listMessages("sess-e2e")).at(-1).role, "assistant");
     assert.equal((await client.listProviders()).all[0].id, "openai");
     assert.equal((await client.listProviderAuthMethods()).openai[0].login, "oauth");
@@ -644,8 +644,8 @@ async function main() {
       "https://auth.example.test/openai",
     );
     assert.equal((await client.providerLogout("openai")).ok, true);
-    assert.equal((await client.listAgents())[0].summary.id, "fast");
-    assert.equal((await client.getAgent("fast")).summary.id, "fast");
+    assert.equal((await client.listAgents())[0].summary.id, "direct");
+    assert.equal((await client.getAgent("direct")).summary.id, "direct");
     await client.abort("sess-e2e");
     assert.ok(gateway.records.aborts.includes("sess-e2e"));
 

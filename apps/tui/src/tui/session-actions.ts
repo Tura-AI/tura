@@ -1,6 +1,7 @@
 import { promptPayload } from "../commands/run.js";
 import { MockGatewayClient } from "../gateway/mock-client.js";
-import { isDraftSession } from "../types/session.js";
+import { isDraftSession, sessionTitle, type Session } from "../types/session.js";
+import { t } from "../i18n.js";
 import { promptRuntimeSelection } from "./logic/selection.js";
 import { hydrate, type TuiDispatch, type TuiGatewayClient, type TuiGetState } from "./runtime.js";
 import { richPromptFromInput } from "./rich-prompt.js";
@@ -13,6 +14,8 @@ export async function createAndSelectSession(
   closePanels = false,
 ): Promise<void> {
   const current = getState();
+  if (current.sessionLoading) return;
+  dispatch({ type: "session-loading", value: { title: t("newSession") } });
   const runtimeSelection = promptRuntimeSelection(current);
   const session = await client
     .createSession(createSessionRequest(runtimeSelection))
@@ -34,6 +37,70 @@ export async function createAndSelectSession(
     closePanels,
   });
   dispatch({ type: "questions", value: [] });
+}
+
+export async function loadAndSelectSession(
+  client: TuiGatewayClient,
+  getState: TuiGetState,
+  dispatch: TuiDispatch,
+  session: Session,
+  closePanels = true,
+): Promise<void> {
+  if (getState().sessionLoading) return;
+  dispatch({
+    type: "session-loading",
+    value: { sessionID: session.id, title: sessionTitle(session) },
+  });
+  await hydrateSelectedSession(client, getState, dispatch, session, closePanels);
+}
+
+export async function loadAndSelectSessionByID(
+  client: TuiGatewayClient,
+  getState: TuiGetState,
+  dispatch: TuiDispatch,
+  sessionID: string,
+  closePanels = true,
+): Promise<void> {
+  if (getState().sessionLoading) return;
+  dispatch({ type: "session-loading", value: { sessionID, title: sessionID } });
+  try {
+    const session = await client.getSession(sessionID);
+    dispatch({
+      type: "session-loading",
+      value: { sessionID: session.id, title: sessionTitle(session) },
+    });
+    await hydrateSelectedSession(client, getState, dispatch, session, closePanels);
+  } catch (error) {
+    dispatch({ type: "session-loading", value: undefined });
+    throw error;
+  }
+}
+
+async function hydrateSelectedSession(
+  client: TuiGatewayClient,
+  getState: TuiGetState,
+  dispatch: TuiDispatch,
+  session: Session,
+  closePanels: boolean,
+): Promise<void> {
+  try {
+    const next = await hydrate(getState(), client, session);
+    dispatch({
+      type: "hydrate",
+      session: next.session!,
+      messages: next.messages,
+      permissions: next.permissions,
+      providers: next.providers,
+      agents: next.agents,
+      personas: next.personas,
+      sessions: next.sessions,
+      closePanels,
+    });
+    dispatch({ type: "questions", value: next.questions });
+  } catch (error) {
+    dispatch({ type: "session-loading", value: undefined });
+    throw error;
+  }
 }
 
 export async function submitPrompt(

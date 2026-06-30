@@ -4,7 +4,7 @@ Input is CLI-style. Use `image` or `speech` as the first word, quote long prompt
 
 For images, pass `image` with a strong visual prompt. Optional image fields are `--reference`, `--width`, `--height`, `--size`, `--aspect-ratio`, `--quality`, `--n`, `--seed`, `--format`, and `--output-dir`.
 
-Image prompts must be positive-only. Always describe and verify the time period settings. For character image prompts, you must describe the distinct character's style, facial features, body type/build, hairstyle, posture, and visual identity in detail.
+Image prompts must be positive-only. Don't use any words like `no text`. Always describe and verify the time period settings. For character image prompts, you must describe the distinct character's style, facial features, body type/build, hairstyle, posture, and visual identity in detail.
 
 Describe only the elements that appear in the media, and do not include any information about the media’s intended use. Do not include the name of any character, any text that describe the object, or words such as "magazine cover", poser in the prompt.
 

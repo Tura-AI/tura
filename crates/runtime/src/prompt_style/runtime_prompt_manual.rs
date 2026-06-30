@@ -111,7 +111,7 @@ pub fn capabilities_for_task_type_ids(ids: &[String]) -> Vec<String> {
 }
 
 pub fn active_operation_manual_text(session: &SessionManagement) -> Option<String> {
-    if !session.goal_mode {
+    if !session_manual_injection_enabled(session) {
         return None;
     }
     let manuals = manuals_for_task_type_ids(&session.task_type);
@@ -127,6 +127,20 @@ pub fn active_operation_manual_text(session: &SessionManagement) -> Option<Strin
     )
 }
 
+pub fn active_manual_display_names(session: &SessionManagement) -> Vec<String> {
+    if !session_manual_injection_enabled(session) {
+        return Vec::new();
+    }
+    manuals_for_task_type_ids(&session.task_type)
+        .into_iter()
+        .map(|manual| manual.display_name)
+        .collect()
+}
+
+fn session_manual_injection_enabled(session: &SessionManagement) -> bool {
+    session.goal_mode || session.reflection_enabled || session.op_manual_enabled
+}
+
 pub fn append_missing_runtime_prompt_manuals(
     session: &mut SessionManagement,
     mut current_messages: Option<&mut Vec<Value>>,
@@ -135,9 +149,12 @@ pub fn append_missing_runtime_prompt_manuals(
         return Ok(false);
     }
     let manuals = manuals_for_task_type_ids(&session.task_type);
+    let manual_injection_enabled = session_manual_injection_enabled(session);
     let mut changed = false;
     for manual in manuals {
-        if !runtime_prompt_manual_present_since_last_compact(session, &manual.id) {
+        if manual_injection_enabled
+            && !runtime_prompt_manual_present_since_last_compact(session, &manual.id)
+        {
             let content = manual.prompt.trim().to_string();
             if !content.is_empty() {
                 let now = Utc::now();
@@ -323,6 +340,9 @@ fn read_manuals_from_dir(root: &Path) -> Result<Vec<RuntimePromptManual>, String
         }
         let identity_path = path.join("prompt_identity.json");
         let prompt_path = path.join("prompt.md");
+        if !identity_path.is_file() || !prompt_path.is_file() {
+            continue;
+        }
         let identity_text = std::fs::read_to_string(&identity_path)
             .map_err(|err| format!("failed to read {}: {err}", identity_path.display()))?;
         let identity: RuntimePromptIdentity = serde_json::from_str(&identity_text)
@@ -365,9 +385,9 @@ fn static_manuals() -> Vec<RuntimePromptManual> {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_missing_runtime_prompt_manuals, capabilities_for_task_type_ids,
-        normalize_task_type_ids, RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE,
-        RUNTIME_PROMPT_MANUAL_RECORD_TYPE,
+        active_manual_display_names, append_missing_runtime_prompt_manuals,
+        capabilities_for_task_type_ids, normalize_task_type_ids,
+        RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE, RUNTIME_PROMPT_MANUAL_RECORD_TYPE,
     };
     use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
@@ -383,12 +403,129 @@ mod tests {
             vec!["visual", "frontend"]
         );
         assert_eq!(
-            normalize_task_type_ids(["data_visualization"]),
-            vec!["visual", "new_build", "data_visualization"]
+            normalize_task_type_ids(["website"]),
+            vec!["visual", "website"]
+        );
+        assert_eq!(
+            normalize_task_type_ids(["data_research"]),
+            vec!["visual", "new_build", "data_research"]
         );
         assert_eq!(
             normalize_task_type_ids(["editorial"]),
             vec!["visual", "editorial"]
+        );
+    }
+
+    #[test]
+    fn active_manual_display_names_follow_normalized_unique_task_types() {
+        let mut session = SessionManagement::new(
+            "runtime-prompt-manual-names".to_string(),
+            "runtime prompt manual names".to_string(),
+            std::path::PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "list manual names".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "list manual names".to_string(),
+            Utc::now(),
+        );
+        session.task_type = normalize_task_type_ids(["interactive_and_3d", "visual"]);
+
+        assert_eq!(
+            active_manual_display_names(&session),
+            vec![
+                "Visual Operation Manual".to_string(),
+                "Frontend Operation Manual".to_string(),
+                "Interactive and 3D Operation Manual".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn disabled_manual_policy_skips_manual_text_but_keeps_task_type_capabilities() {
+        let mut session = SessionManagement::new(
+            "runtime-prompt-manual-disabled".to_string(),
+            "runtime prompt manual disabled".to_string(),
+            std::path::PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "make a visual asset".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "make a visual asset".to_string(),
+            Utc::now(),
+        );
+        session.record_session_capabilities(vec![
+            "web_discover".to_string(),
+            "apply_patch".to_string(),
+            code_tools::commands::active_shell_command_name().to_string(),
+        ]);
+        session.task_type = normalize_task_type_ids(["visual"]);
+        session.op_manual_enabled = false;
+
+        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
+            .expect("disabled manual text should still allow capabilities"));
+        assert!(runtime_prompt_manual_log_ids(&session).is_empty());
+        assert!(active_manual_display_names(&session).is_empty());
+        let records = command_run_capability_records(&session);
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].get("capabilities"),
+            Some(&serde_json::json!(["generate_media", "read_media"]))
+        );
+        assert!(session.has_session_capability("generate_media"));
+        assert!(session.has_session_capability("read_media"));
+    }
+
+    #[test]
+    fn manual_injection_goal_or_reflection_overrides_disabled_policy() {
+        let mut goal_session = SessionManagement::new(
+            "runtime-prompt-manual-goal".to_string(),
+            "runtime prompt manual goal".to_string(),
+            std::path::PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "fix a bug".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "fix a bug".to_string(),
+            Utc::now(),
+        );
+        goal_session.task_type = normalize_task_type_ids(["debug"]);
+        goal_session.op_manual_enabled = false;
+        goal_session.goal_mode = true;
+
+        assert!(
+            append_missing_runtime_prompt_manuals(&mut goal_session, None)
+                .expect("goal mode should force manual injection")
+        );
+        assert_eq!(runtime_prompt_manual_log_ids(&goal_session), vec!["debug"]);
+
+        let mut reflection_session = goal_session.clone();
+        reflection_session.session_log.clear();
+        reflection_session.goal_mode = false;
+        reflection_session.reflection_enabled = true;
+
+        assert!(
+            append_missing_runtime_prompt_manuals(&mut reflection_session, None)
+                .expect("reflection should force manual injection")
+        );
+        assert_eq!(
+            runtime_prompt_manual_log_ids(&reflection_session),
+            vec!["debug"]
         );
     }
 
@@ -407,7 +544,7 @@ mod tests {
             ]
         );
 
-        let ids = normalize_task_type_ids(["data_visualization"]);
+        let ids = normalize_task_type_ids(["data_research"]);
         assert_eq!(
             capabilities_for_task_type_ids(&ids),
             vec![
@@ -420,6 +557,12 @@ mod tests {
         );
 
         let ids = normalize_task_type_ids(["editorial"]);
+        assert_eq!(
+            capabilities_for_task_type_ids(&ids),
+            vec!["web_discover", "generate_media", "read_media"]
+        );
+
+        let ids = normalize_task_type_ids(["website"]);
         assert_eq!(
             capabilities_for_task_type_ids(&ids),
             vec!["web_discover", "generate_media", "read_media"]
@@ -469,6 +612,15 @@ mod tests {
             records[0].get("type").and_then(serde_json::Value::as_str),
             Some(RUNTIME_PROMPT_MANUAL_RECORD_TYPE)
         );
+        let manual_content = records[0]
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        assert!(manual_content
+            .contains("do not remove, simplify, fake, screenshot, or replace any interaction"));
+        assert!(manual_content.contains("Do not use any remote webpage scripts"));
+        assert!(manual_content
+            .contains("must work under `file://` with local assets only, run 100% stably"));
         assert_eq!(
             records[1].get("type").and_then(serde_json::Value::as_str),
             Some(RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE)
@@ -550,6 +702,48 @@ mod tests {
         assert_eq!(
             runtime_prompt_manual_log_ids(&session),
             vec!["visual", "frontend", "interactive_and_3d"]
+        );
+    }
+
+    #[test]
+    fn website_manual_injects_after_visual_without_duplicate_media_capabilities() {
+        let mut session = SessionManagement::new(
+            "runtime-prompt-manual-website".to_string(),
+            "runtime prompt manual website".to_string(),
+            std::path::PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "Design a landing page".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "Design a landing page".to_string(),
+            Utc::now(),
+        );
+        session.record_session_capabilities(vec!["web_discover".to_string()]);
+        session.task_type = normalize_task_type_ids(["website"]);
+
+        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
+            .expect("website manual should append"));
+
+        assert_eq!(
+            runtime_prompt_manual_log_ids(&session),
+            vec!["visual", "website"]
+        );
+        let records = command_run_capability_records(&session);
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0]
+                .get("task_type")
+                .and_then(serde_json::Value::as_str),
+            Some("visual")
+        );
+        assert_eq!(
+            records[0].get("capabilities"),
+            Some(&serde_json::json!(["generate_media", "read_media"]))
         );
     }
 

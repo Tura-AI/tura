@@ -304,6 +304,7 @@ impl SessionStore {
         if let Some(info) = self.sessions.write().get_mut(target_session_id) {
             info.message_count = copied_messages.len();
             info.updated_at = now;
+            info.last_user_message_at = last_user_message_at_in_messages(&copied_messages);
         }
         true
     }
@@ -531,6 +532,10 @@ impl SessionStore {
             info.message_count = session_messages.len();
             info.updated_at = now;
             if role == MessageRole::User {
+                info.last_user_message_at = Some(now);
+                if let Some(timestamp) = chrono::DateTime::<Utc>::from_timestamp_millis(now) {
+                    info.management.record_user_message_at(timestamp);
+                }
                 if let Some(text) = message.parts.iter().find_map(|part| part.text.clone()) {
                     if info.management.input.user_input.trim().is_empty() {
                         info.management.input.user_input = text;

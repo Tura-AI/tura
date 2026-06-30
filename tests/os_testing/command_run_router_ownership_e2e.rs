@@ -63,7 +63,11 @@ async fn command_run_executes_only_after_runtime_hands_request_to_router() {
     )
     .await;
 
-    assert_eq!(output["results"][0]["command_type"], "shell_command");
+    assert_eq!(
+        output["results"][0]["command_type"],
+        code_tools::commands::active_shell_command_name(),
+        "router-owned command_run must report the active OS shell surface"
+    );
     assert_eq!(output["results"][0]["success"], true);
     let text = std::fs::read_to_string(workspace.path().join("router-owned.txt"))
         .expect("router-owned command created workspace artifact");

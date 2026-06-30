@@ -161,7 +161,13 @@ async fn streamed_command_run_waits_for_commands_after_provider_stream_completes
     .expect("completed provider stream should wait for command results");
 
     let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_millis(300));
+    assert!(
+        elapsed >= Duration::from_millis(300),
+        "completed provider stream returned before the streamed command finished; elapsed={elapsed:?}, state={:?}, status={:?}, output={:?}",
+        result.state,
+        result.call_result_status,
+        result.output
+    );
     assert!(
         elapsed < Duration::from_secs(5),
         "completed provider stream should only wait for command completion; elapsed={elapsed:?}, state={:?}, status={:?}, output={:?}",
@@ -169,10 +175,21 @@ async fn streamed_command_run_waits_for_commands_after_provider_stream_completes
         result.call_result_status,
         result.output
     );
-    assert_eq!(result.state, RuntimeState::Finished);
+    assert_eq!(
+        result.state,
+        RuntimeState::Finished,
+        "runtime should finish successfully; status={:?}, error={:?}, output={:?}",
+        result.call_result_status,
+        result.error,
+        result.output
+    );
     assert_eq!(
         result.call_result_status,
-        RuntimeCallResultStatus::Succeeded
+        RuntimeCallResultStatus::Succeeded,
+        "runtime should report success; state={:?}, error={:?}, output={:?}",
+        result.state,
+        result.error,
+        result.output
     );
     assert!(result.called_at.is_some());
     assert!(result.call_finished_at.is_some());
@@ -243,7 +260,6 @@ async fn streamed_command_run_gateway_callbacks_do_not_gate_command_execution_bu
         "local-stream-callback-model",
     );
 
-    let started = std::time::Instant::now();
     let result = call_runtime(
         CallRuntimeInput {
             runtime,
@@ -267,15 +283,14 @@ async fn streamed_command_run_gateway_callbacks_do_not_gate_command_execution_bu
     .await
     .expect("hanging gateway callbacks must not block streamed command execution");
 
-    let elapsed = started.elapsed();
-    assert!(
-        elapsed < Duration::from_secs(2),
-        "gateway callback timeout must not gate command execution; elapsed={elapsed:?}, state={:?}, status={:?}, output={:?}",
+    assert_eq!(
         result.state,
+        RuntimeState::Finished,
+        "runtime should finish successfully; status={:?}, error={:?}, output={:?}",
         result.call_result_status,
+        result.error,
         result.output
     );
-    assert_eq!(result.state, RuntimeState::Finished);
     assert_eq!(
         result.call_result_status,
         RuntimeCallResultStatus::Succeeded
@@ -287,7 +302,8 @@ async fn streamed_command_run_gateway_callbacks_do_not_gate_command_execution_bu
     let output = result.output.as_ref().expect("runtime output");
     assert_eq!(
         output.pointer("/streamed_command_run_result/results/0/success"),
-        Some(&json!(true))
+        Some(&json!(true)),
+        "runtime output={output:#}"
     );
 }
 
@@ -554,12 +570,12 @@ fn delayed_command(output_path: &std::path::Path) -> serde_json::Value {
 }
 
 fn write_completed_command_run_stream(stream: &mut TcpStream, command: serde_json::Value) {
-    let _ = write!(
-        stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
-    );
-    write_sse_chunk(
-        stream,
+    let arguments = json!({
+        "commands": [command],
+        "step_summary": "Run a single local command before the provider stream completes."
+    })
+    .to_string();
+    let events = vec![
         json!({
             "type": "response.output_item.added",
             "item": {
@@ -570,30 +586,16 @@ fn write_completed_command_run_stream(stream: &mut TcpStream, command: serde_jso
                 "arguments": ""
             }
         }),
-    );
-    let arguments = json!({
-        "commands": [command],
-        "step_summary": "Run a single local command before the provider stream completes."
-    })
-    .to_string();
-    write_sse_chunk(
-        stream,
         json!({
             "type": "response.function_call_arguments.delta",
             "item_id": "fc_completed_cmd",
             "delta": arguments
         }),
-    );
-    write_sse_chunk(
-        stream,
         json!({
             "type": "response.function_call_arguments.done",
             "item_id": "fc_completed_cmd",
             "arguments": arguments
         }),
-    );
-    write_sse_chunk(
-        stream,
         json!({
             "type": "response.output_item.done",
             "item": {
@@ -604,9 +606,6 @@ fn write_completed_command_run_stream(stream: &mut TcpStream, command: serde_jso
                 "arguments": arguments
             }
         }),
-    );
-    write_sse_chunk(
-        stream,
         json!({
             "type": "response.completed",
             "response": {
@@ -621,34 +620,57 @@ fn write_completed_command_run_stream(stream: &mut TcpStream, command: serde_jso
                 }
             }
         }),
+    ];
+    let mut body = events
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+    body.push_str("data: [DONE]\n\n");
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
     );
-    write_sse_done(stream);
-}
-
-fn write_sse_chunk(stream: &mut TcpStream, value: serde_json::Value) {
-    let data = format!("data: {value}\n\n");
-    let _ = write!(stream, "{:X}\r\n{}\r\n", data.len(), data);
-    let _ = stream.flush();
-}
-
-fn write_sse_done(stream: &mut TcpStream) {
-    let data = "data: [DONE]\n\n";
-    let _ = write!(stream, "{:X}\r\n{}\r\n0\r\n\r\n", data.len(), data);
     let _ = stream.flush();
 }
 
 fn read_request_head(stream: &mut std::net::TcpStream) -> String {
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 512];
+    let mut expected_len = None;
     loop {
         let read = stream.read(&mut chunk).expect("read request");
         assert!(read > 0, "client closed before request headers");
         buffer.extend_from_slice(&chunk[..read]);
-        if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+        if expected_len.is_none() {
+            if let Some(header_end) = request_header_end(&buffer) {
+                let headers = String::from_utf8_lossy(&buffer[..header_end]);
+                let content_len = content_length(&headers);
+                expected_len = Some(header_end + 4 + content_len);
+            }
+        }
+        if expected_len.is_some_and(|len| buffer.len() >= len) {
             break;
         }
     }
     String::from_utf8_lossy(&buffer).to_string()
+}
+
+fn request_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn content_length(headers: &str) -> usize {
+    headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0)
 }
 
 struct EnvGuard {

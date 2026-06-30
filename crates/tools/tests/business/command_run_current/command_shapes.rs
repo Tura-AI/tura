@@ -1,7 +1,7 @@
 use super::helpers::*;
 
 #[test]
-fn pass_shell_command_output_matches_current_code_mode_string() {
+fn pass_shell_command_output_matches_current_structured_code_mode() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("shell-output");
@@ -14,15 +14,13 @@ fn pass_shell_command_output_matches_current_code_mode_string() {
         &root,
     );
 
-    let text = output["results"][0]["output"]
+    let shell_output = &output["results"][0]["output"];
+    assert_eq!(shell_output["exit_code"], 0);
+    assert!(shell_output["stdout"]
         .as_str()
-        .expect("shell command_run output should be current-style text");
-    assert!(text.starts_with("Exit code: 0\nWall time: "));
-    assert!(text.contains("\nOutput:\n"));
-    assert!(text.contains("current-backfill-ok"));
-    assert!(!text.contains("\"metadata\""));
-    assert!(!text.contains("\"stdout\""));
-    assert!(!text.contains("\"stderr\""));
+        .is_some_and(|stdout| stdout.contains("current-backfill-ok")));
+    assert_eq!(shell_output["stderr"], "");
+    assert!(shell_output.get("metadata").is_none());
 }
 
 #[test]
@@ -236,7 +234,7 @@ fn pass_command_line_without_command_type_accepts_workdir_and_timeout() {
         output["results"][0]["command_type"],
         commands::active_shell_command_name()
     );
-    assert!(output["results"][0]["output"]
+    assert!(output["results"][0]["output"]["stdout"]
         .as_str()
         .is_some_and(|text| text.replace('\\', "/").contains("/subdir")));
 }

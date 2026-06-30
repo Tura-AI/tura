@@ -18,6 +18,11 @@ pub const DB_DIR_NAME: &str = "session_log";
 /// (sockets, locks, endpoint files). Hidden so it does not clutter a repo home.
 pub const RUNTIME_DIR_NAME: &str = ".tura";
 
+pub const DEBUG_GATEWAY_PORT: u16 = 4125;
+pub const RELEASE_GATEWAY_PORT: u16 = 4126;
+pub const ACTIVE_GATEWAY_ENV_FILE: &str = "gateway-active.env";
+pub const TURA_GATEWAY_URL_ENV: &str = "TURA_GATEWAY_URL";
+
 // ---------------------------------------------------------------------------
 // Repo / project root
 // ---------------------------------------------------------------------------
@@ -92,6 +97,53 @@ pub fn home_socket(name: &str) -> PathBuf {
 /// Directory holding this instance's flock files.
 pub fn locks_dir() -> PathBuf {
     home_runtime_dir().join("locks")
+}
+
+pub fn default_gateway_port_for_build_kind(build_kind: &str) -> u16 {
+    if build_kind == "release" {
+        RELEASE_GATEWAY_PORT
+    } else {
+        DEBUG_GATEWAY_PORT
+    }
+}
+
+pub fn default_gateway_url_for_build_kind(build_kind: &str) -> String {
+    format!(
+        "http://127.0.0.1:{}",
+        default_gateway_port_for_build_kind(build_kind)
+    )
+}
+
+pub fn active_gateway_env_path_for_home(home: impl AsRef<Path>) -> PathBuf {
+    home.as_ref()
+        .join(RUNTIME_DIR_NAME)
+        .join(ACTIVE_GATEWAY_ENV_FILE)
+}
+
+pub fn read_active_gateway_url_for_home(home: impl AsRef<Path>) -> Option<String> {
+    let path = active_gateway_env_path_for_home(home);
+    let raw = std::fs::read_to_string(path).ok()?;
+    parse_active_gateway_url(&raw)
+}
+
+pub fn write_active_gateway_url_for_home(
+    home: impl AsRef<Path>,
+    gateway_url: &str,
+) -> std::io::Result<()> {
+    let path = active_gateway_env_path_for_home(home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, format!("{TURA_GATEWAY_URL_ENV}={gateway_url}\n"))
+}
+
+fn parse_active_gateway_url(raw: &str) -> Option<String> {
+    raw.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let value = trimmed.strip_prefix(&format!("{TURA_GATEWAY_URL_ENV}="))?;
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        (!value.is_empty()).then(|| value.to_string())
+    })
 }
 
 /// The private database directory for this instance.
@@ -332,6 +384,29 @@ mod tests {
         assert_eq!(locks_dir(), normalize_path(temp.path()).join(".tura/locks"));
 
         restore_env("TURA_HOME", previous);
+    }
+
+    #[test]
+    fn gateway_default_ports_match_build_kind_contract() {
+        assert_eq!(default_gateway_port_for_build_kind("dev"), 4125);
+        assert_eq!(default_gateway_port_for_build_kind("release"), 4126);
+        assert_eq!(
+            default_gateway_url_for_build_kind("release"),
+            "http://127.0.0.1:4126"
+        );
+    }
+
+    #[test]
+    fn active_gateway_env_round_trips_project_url() {
+        let temp = tempfile::tempdir().expect("temp home");
+
+        write_active_gateway_url_for_home(temp.path(), "http://127.0.0.1:4777")
+            .expect("write active gateway");
+
+        assert_eq!(
+            read_active_gateway_url_for_home(temp.path()).as_deref(),
+            Some("http://127.0.0.1:4777")
+        );
     }
 
     #[test]

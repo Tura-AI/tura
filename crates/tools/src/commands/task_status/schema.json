@@ -9,7 +9,7 @@
     "status": {
       "type": "string",
       "enum": ["doing", "question", "done"],
-      "description": "doing only when more command_run calls are required; question when blocked on user feedback; done only when the task is complete, verified, and any media to send/show has been read and inspected."
+      "description": "Update only when there is a real task-state transition. doing only when more command_run calls are required; question when blocked on user feedback; done only when the task is complete, verified, and any media to send/show has been read and inspected."
     },
     "task_type": {
       "type": "array",

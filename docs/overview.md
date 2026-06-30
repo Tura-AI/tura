@@ -24,6 +24,12 @@ The backend is scoped by `TURA_HOME`. All sockets, locks, and the private
 session_db index derive from that home through `tura_path`. Workspace session
 history follows the project and is stored under `<workspace>/.tura`.
 
+CLI calls are naturally short-lived, while desktop use can create many sessions
+inside the same workspace. Tura keeps the useful state at the workspace layer:
+dynamic context, task state, compact handoffs, messages, todos, and replayable
+history can be reused by CLI, TUI, and GUI clients instead of being trapped in
+one isolated front.
+
 ## Storage
 
 `crates/session_log` owns durable session/task/message/todo storage. It uses

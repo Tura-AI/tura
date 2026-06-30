@@ -104,13 +104,17 @@ fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json:
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
         if let Some(group) = requested_group {
-            changed |= apply_task_group(session, status, group);
+            changed |= apply_task_group(session, group);
         }
         if let Some(task_type) = status.get("task_type") {
             let task_type = runtime_prompt_manual::task_type_ids_from_value(task_type);
             let before = session.task_type.clone();
             session.replace_task_type(task_type);
             if session.task_type != before {
+                changed = true;
+            }
+            if !session.no_op_manual && !session.op_manual_enabled {
+                session.op_manual_enabled = true;
                 changed = true;
             }
             changed |= runtime_prompt_manual::append_missing_runtime_prompt_manuals(session, None)
@@ -126,31 +130,29 @@ fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json:
     changed
 }
 
-fn apply_task_group(
-    session: &mut SessionManagement,
-    output: &mut serde_json::Map<String, serde_json::Value>,
-    group: String,
-) -> bool {
+fn apply_task_group(session: &mut SessionManagement, group: String) -> bool {
     let mut changed = false;
     if session.auto_session_name && session.session_name.trim() != group.trim() {
         session.session_name = group.clone();
         changed = true;
     }
-    if session.task_plan.plan_summary.trim().is_empty() {
-        session.task_plan.plan_summary = group.clone();
-        ensure_single_task(session, Utc::now());
-        if let Some(task) = session.task_plan.detailed_tasks.first_mut() {
-            task.task_summary = group;
-        }
-        return true;
-    }
     if session.task_plan.plan_summary.trim() != group.trim() {
-        output.insert(
-            "warning".to_string(),
-            serde_json::Value::String(
-                "task_group update ignored because the task already has a work area; no other task-management parameter needs updating for this group update".to_string(),
-            ),
-        );
+        session.task_plan.plan_summary = group.clone();
+        changed = true;
+    }
+    if session.task_plan.detailed_tasks.is_empty() {
+        ensure_single_task(session, Utc::now());
+    }
+    if let Some(task) = session.task_plan.detailed_tasks.iter_mut().find(|task| {
+        matches!(
+            task.status,
+            PlanStatus::Doing | PlanStatus::Todo | PlanStatus::Question
+        )
+    }) {
+        if task.task_summary.trim() != group.trim() {
+            task.task_summary = group;
+            changed = true;
+        }
     }
     changed
 }
@@ -748,6 +750,65 @@ mod tests {
     }
 
     #[test]
+    fn task_type_from_status_enables_manual_injection_for_direct_agents() {
+        let mut session = session();
+        session.op_manual_enabled = false;
+        assert!(!session.no_op_manual);
+        let mut result = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "task_type": ["frontend", "visual"]
+                    }
+                }
+            }]
+        });
+
+        assert!(apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &mut result,
+        ));
+
+        assert!(session.op_manual_enabled);
+        assert_eq!(session.task_type, vec!["visual", "frontend"]);
+        assert_eq!(
+            runtime_prompt_manual_log_ids(&session),
+            vec!["visual", "frontend"]
+        );
+    }
+
+    #[test]
+    fn task_type_from_status_respects_no_op_manual() {
+        let mut session = session();
+        session.op_manual_enabled = false;
+        session.no_op_manual = true;
+        let mut result = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "task_type": ["visual"]
+                    }
+                }
+            }]
+        });
+
+        assert!(apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &mut result,
+        ));
+
+        assert!(!session.op_manual_enabled);
+        assert_eq!(session.task_type, vec!["visual"]);
+        assert!(runtime_prompt_manual_log_ids(&session).is_empty());
+    }
+
+    #[test]
     fn task_group_refreshes_auto_session_name_after_summary_exists() {
         let mut session = session();
         session.task_plan.plan_summary = "Existing task".to_string();
@@ -775,15 +836,119 @@ mod tests {
             apply_tool_result_session_state_update(&mut session, COMMAND_RUN_TOOL, &mut result);
 
         assert!(changed);
-        assert_eq!(session.task_plan.plan_summary, "Existing task");
+        assert_eq!(session.task_plan.plan_summary, "pdf编辑制作");
         assert_eq!(session.session_name, "pdf编辑制作");
         assert_eq!(
             session.task_plan.detailed_tasks[0].task_summary,
-            "Existing task"
+            "pdf编辑制作"
         );
-        assert!(result["results"][0]["output"]["status"]["warning"]
-            .as_str()
-            .is_some_and(|text| text.contains("group update")));
+        assert!(
+            result["results"][0]["output"]["status"]
+                .get("warning")
+                .is_none(),
+            "task_group refresh should not emit a warning: {result}"
+        );
+    }
+
+    #[test]
+    fn task_group_update_reaches_fsm_when_task_type_already_exists() {
+        let mut session = session();
+        session.auto_session_name = false;
+        session.session_name = "Manual title".to_string();
+        session.task_type = vec!["debug".to_string()];
+        session.task_plan.plan_summary = "Previous runtime work".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "nonce-1".to_string(),
+            step: 1,
+            task_summary: "Previous runtime work".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+        let mut result = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "task_group": "runtime message handling",
+                        "task_type": ["debug"],
+                        "status": "doing"
+                    }
+                }
+            }]
+        });
+
+        let changed =
+            apply_tool_result_session_state_update(&mut session, COMMAND_RUN_TOOL, &mut result);
+
+        assert!(changed);
+        assert_eq!(session.session_name, "Manual title");
+        assert_eq!(session.task_type, vec!["debug"]);
+        assert_eq!(session.task_plan.plan_summary, "runtime message handling");
+        assert_eq!(
+            session.task_plan.detailed_tasks[0].task_summary,
+            "runtime message handling"
+        );
+    }
+
+    #[test]
+    fn task_group_refresh_does_not_block_incremental_task_type_manuals_and_capabilities() {
+        let mut session = session();
+        session.task_plan.plan_summary = "Existing visual work".to_string();
+        session.session_name = "Existing visual work".to_string();
+        session.task_type = vec!["visual".to_string()];
+        assert!(
+            crate::prompt_style::runtime_prompt_manual::append_missing_runtime_prompt_manuals(
+                &mut session,
+                None,
+            )
+            .expect("visual manual should append")
+        );
+        assert!(session.has_session_capability("read_media"));
+        assert!(!session.has_session_capability("apply_patch"));
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "nonce-1".to_string(),
+            step: 1,
+            task_summary: "Existing visual work".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+        let mut result = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "task_group": "frontend polish",
+                        "task_type": ["frontend"]
+                    }
+                }
+            }]
+        });
+
+        let changed =
+            apply_tool_result_session_state_update(&mut session, COMMAND_RUN_TOOL, &mut result);
+
+        assert!(changed);
+        assert_eq!(session.session_name, "frontend polish");
+        assert_eq!(session.task_plan.plan_summary, "frontend polish");
+        assert_eq!(
+            session.task_plan.detailed_tasks[0].task_summary,
+            "frontend polish"
+        );
+        assert_eq!(session.task_type, vec!["visual", "frontend"]);
+        assert_eq!(
+            runtime_prompt_manual_log_ids(&session),
+            vec!["visual", "frontend"]
+        );
+        assert!(session.has_session_capability("apply_patch"));
+        assert!(session.has_session_capability(code_tools::commands::active_shell_command_name()));
+        assert!(
+            result["results"][0]["output"]["task_status"]
+                .get("warning")
+                .is_none(),
+            "task_group + task_type update should not emit a warning: {result}"
+        );
     }
 
     #[test]

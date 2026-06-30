@@ -225,7 +225,7 @@ export async function startGateway(runRoot) {
     model: "openai/gpt-test",
     active_model: "openai/gpt-test",
     active_provider: "openai",
-    active_agent: "fast",
+    active_agent: "direct",
     model_variant: "medium",
     model_acceleration_enabled: true,
   };
@@ -276,19 +276,19 @@ export async function startGateway(runRoot) {
   };
   let agent = {
     summary: {
-      id: "fast",
-      name: "Fast",
-      description: "Fast existing runtime agent",
+      id: "direct",
+      name: "Direct",
+      description: "Direct existing runtime agent",
       source: "static",
-      path: "agents/src/fast",
+      path: "agents/src/direct",
       aliases: [],
       capabilities: ["chat"],
       hidden: false,
     },
     config: {
-      agent_name: "fast",
+      agent_name: "direct",
     },
-    prompt: "Fast prompt",
+    prompt: "Direct prompt",
   };
   const persona = {
     summary: {
@@ -495,7 +495,7 @@ export async function startGateway(runRoot) {
       return sendJson(res, true);
     }
     if (req.method === "GET" && url.pathname === "/agent") return sendJson(res, [agent]);
-    if (req.method === "GET" && url.pathname === "/agent/fast") return sendJson(res, agent);
+    if (req.method === "GET" && url.pathname === "/agent/direct") return sendJson(res, agent);
     if (req.method === "POST" && url.pathname === "/agent") {
       const payload = await readJson(req);
       records.agentUpserts.push({ method: "POST", payload });
@@ -525,7 +525,7 @@ export async function startGateway(runRoot) {
         config: { ...agent.config, ...(payload.config ?? {}), agent_name: id },
         prompt: payload.prompt ?? agent.prompt,
       };
-      if (id === "fast") agent = updated;
+      if (id === "direct") agent = updated;
       return sendJson(res, updated);
     }
     if (req.method === "GET" && url.pathname === "/persona") return sendJson(res, [persona]);

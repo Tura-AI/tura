@@ -11,6 +11,10 @@ use tura_agents::coding_agent::{CodingAgent, CodingAgentProviderConfig, CodingAg
 const PROJECT_ROOT_ENV: &str = "TURA_PROJECT_ROOT";
 const DEFAULT_CODING_AGENT_NAME: &str = "balanced";
 
+fn default_op_manual() -> bool {
+    true
+}
+
 pub fn activate_agent_with_loader(
     session: &SessionManagement,
     agent_loader: fn(&SessionManagement) -> Result<Vec<AgentManagement>, String>,
@@ -88,6 +92,9 @@ fn create_agent_by_name(
                 agent.agent_id = generate_agent_id(canonical_name);
                 agent.agent_name = canonical_name.to_string();
                 agent.reflection = canonical_name == "thoughtful";
+                agent.op_manual =
+                    canonical_name != "direct" && canonical_name != "direct-text-only";
+                agent.self_reflection = canonical_name == "thoughtful";
                 agent.agent_prompt.clear();
                 agent.add_prompt(
                     AgentPromptItem {
@@ -146,6 +153,7 @@ fn create_coding_agent(
         project_directory.to_path_buf(),
         None,
         true,
+        false,
         false,
         false,
         provider,
@@ -207,6 +215,7 @@ fn create_general_agent(
         true,
         false,
         false,
+        false,
         provider,
         validator,
         now,
@@ -254,6 +263,10 @@ struct AgentRegistryEntry {
     default_config: bool,
     #[serde(default)]
     reflection: bool,
+    #[serde(default = "default_op_manual")]
+    op_manual: bool,
+    #[serde(default)]
+    self_reflection: bool,
     provider: ProviderConfig,
     agent_prompt: Vec<AgentPromptItem>,
     agent_capabilities: Vec<AgentCapabilityItem>,
@@ -326,10 +339,12 @@ fn build_agent_from_registry_entry(
         entry.report_to_user,
         entry.default_config,
         entry.reflection,
+        entry.self_reflection,
         entry.provider,
         entry.validator,
         now,
     );
+    agent.op_manual = entry.op_manual;
 
     for prompt in entry.agent_prompt {
         agent.add_prompt(
@@ -481,6 +496,7 @@ mod tests {
             true,
             false,
             false,
+            false,
             provider_config(),
             validator_config(),
             now,
@@ -550,6 +566,8 @@ mod tests {
             report_to_user: false,
             default_config: true,
             reflection: false,
+            op_manual: true,
+            self_reflection: false,
             provider: provider_config(),
             agent_prompt: vec![AgentPromptItem {
                 agent_prompt: "prompt".to_string(),
@@ -581,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_entry_build_maps_reflection_flag() {
+    fn registry_entry_build_maps_reflective_flags() {
         let project = Path::new("C:/repo/tura");
         let entry = AgentRegistryEntry {
             agent_name: "reflective".to_string(),
@@ -590,6 +608,8 @@ mod tests {
             report_to_user: true,
             default_config: false,
             reflection: true,
+            op_manual: true,
+            self_reflection: true,
             provider: provider_config(),
             agent_prompt: Vec::new(),
             agent_capabilities: Vec::new(),
@@ -600,6 +620,8 @@ mod tests {
             build_agent_from_registry_entry(project, entry).expect("registry entry should build");
 
         assert!(agent.reflection);
+        assert!(agent.op_manual);
+        assert!(agent.self_reflection);
     }
 
     #[test]

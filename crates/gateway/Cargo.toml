@@ -25,6 +25,10 @@ reqwest = { workspace = true }
 sysinfo.workspace = true
 base64.workspace = true
 sha2.workspace = true
+image.workspace = true
+tao.workspace = true
+tray-icon.workspace = true
+url.workspace = true
 
 # Web framework
 axum.workspace = true
@@ -131,6 +135,11 @@ required-features = ["os-tests"]
 [[test]]
 name = "gateway_session_concurrency_stress"
 path = "tests/performance/gateway_session_concurrency_stress.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "full_chain_e2e_stress"
+path = "tests/performance/full_chain_e2e_stress.rs"
 required-features = ["performance-tests"]
 
 [[test]]

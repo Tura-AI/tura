@@ -68,8 +68,9 @@ test("reducer keeps session picker selection during active-session polling hydra
   });
 
   state = reducer(state, { type: "sessions", value: [session, other], open: true });
-  state = reducer(state, { type: "select-session", delta: 1 });
-  assert.equal(state.selectedSessionIndex, 1);
+  const selectedIndex = state.sessions.findIndex((item) => item.id === other.id);
+  assert.notEqual(selectedIndex, -1);
+  state = { ...state, selectedSessionIndex: selectedIndex };
 
   state = reducer(state, {
     type: "hydrate",
@@ -80,8 +81,149 @@ test("reducer keeps session picker selection during active-session polling hydra
   });
 
   assert.equal(state.sessionsOpen, true);
-  assert.equal(state.selectedSessionIndex, 1);
+  assert.equal(state.sessions[state.selectedSessionIndex]?.id, other.id);
 });
+
+test("reducer keeps session order stable for runtime-only timestamp updates", () => {
+  const laterTaskSession = sessionWithTaskSort("later-task", 200, 10);
+  const earlierTaskSession = sessionWithTaskSort("earlier-task", 100, 20);
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: laterTaskSession,
+    messages: [],
+    permissions: [],
+    sessions: [laterTaskSession, earlierTaskSession],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "session.updated",
+        properties: {
+          sessionID: "earlier-task",
+          info: {
+            ...earlierTaskSession,
+            updated_at: 999,
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    state.sessions.map((item) => item.id),
+    ["later-task", "earlier-task"],
+  );
+});
+
+test("reducer orders sessions by latest user message time before runtime updates", () => {
+  const assistantUpdatedLater = {
+    ...sessionWithTaskSort("assistant-updated-later", 10, 1_000),
+    last_user_message_at: 10,
+  };
+  const userSentLater = {
+    ...sessionWithTaskSort("user-sent-later", 20, 20),
+    last_user_message_at: 200,
+  };
+
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: assistantUpdatedLater,
+    messages: [],
+    permissions: [],
+    sessions: [assistantUpdatedLater, userSentLater],
+  });
+
+  assert.deepEqual(
+    state.sessions.map((item) => item.id),
+    ["user-sent-later", "assistant-updated-later"],
+  );
+});
+
+test("reducer reorders sessions only when a user message arrives", () => {
+  const assistantUpdatedLater = {
+    ...sessionWithTaskSort("assistant-updated-later", 10, 10),
+    last_user_message_at: 10,
+  };
+  const userSentLater = {
+    ...sessionWithTaskSort("user-sent-later", 20, 20),
+    last_user_message_at: 20,
+  };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: userSentLater,
+    messages: [],
+    permissions: [],
+    sessions: [userSentLater, assistantUpdatedLater],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: {
+          sessionID: "assistant-updated-later",
+          info: {
+            id: "assistant-message",
+            sessionID: "assistant-updated-later",
+            role: "assistant",
+            parts: [],
+            created_at: 999,
+            updated_at: 999,
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    state.sessions.map((item) => item.id),
+    ["user-sent-later", "assistant-updated-later"],
+  );
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: {
+          sessionID: "assistant-updated-later",
+          info: {
+            id: "user-message",
+            sessionID: "assistant-updated-later",
+            role: "user",
+            parts: [],
+            created_at: 1_000,
+            updated_at: 1_000,
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    state.sessions.map((item) => item.id),
+    ["assistant-updated-later", "user-sent-later"],
+  );
+  assert.equal(state.sessions[0]?.last_user_message_at, 1_000);
+});
+
+function sessionWithTaskSort(id: string, taskStartAt: number, updatedAt: number) {
+  return {
+    id,
+    title: id,
+    directory: "C:/repo",
+    status: "idle" as const,
+    created_at: taskStartAt,
+    task_start_at: taskStartAt,
+    updated_at: updatedAt,
+  } as typeof session & { task_start_at: number };
+}
 
 test("reducer clears old transcript when hydrating a different session", () => {
   const nextSession = {

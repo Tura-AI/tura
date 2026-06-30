@@ -48,6 +48,7 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 anyhow = "1"
+arboard = "3"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
@@ -73,6 +74,8 @@ sha2 = "0.10"
 sysinfo = "0.30"
 tauri = "2"
 tauri-build = "2"
+tauri-plugin-single-instance = "2.4.2"
+tao = "0.35.3"
 tempfile = "3"
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
@@ -82,9 +85,10 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tray-icon = "0.23.1"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 agents = { path = "agents" }
 provider = { path = "crates/provider" }
@@ -147,4 +151,9 @@ required-features = ["os-tests"]
 [[test]]
 name = "command_run_router_ownership_e2e"
 path = "tests/os_testing/command_run_router_ownership_e2e.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "tauri_gui_lifecycle_policy"
+path = "tests/os_testing/tauri_gui_lifecycle_policy.rs"
 required-features = ["os-tests"]

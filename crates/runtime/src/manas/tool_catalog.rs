@@ -587,6 +587,7 @@ mod tests {
             true,
             true,
             false,
+            false,
             ProviderConfig {
                 tura_llm_name: "thinking".to_string(),
                 default_model_tier: None,
@@ -1126,6 +1127,7 @@ mod tests {
             root.clone(),
             None,
             true,
+            false,
             false,
             false,
             ProviderConfig {

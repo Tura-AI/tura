@@ -815,6 +815,11 @@ impl SessionStore {
             info.status = SessionStatusMano::from_state(info.management.state);
             info.updated_at = now.timestamp_millis();
         }
+        if matches!(status, SessionStatusMano::Idle | SessionStatusMano::Error) {
+            self.session_db_refresh_needed
+                .write()
+                .insert(session_id.to_string());
+        }
         let (status, updated_at, context_tokens, usage) = self
             .sessions
             .read()
@@ -1183,6 +1188,8 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         parent_id,
         created_at: info.created_at,
         updated_at: info.updated_at,
+        last_user_message_at: info.last_user_message_at,
+        task_start_at: session_task_start_at(info),
         directory: info.directory.clone(),
         model: info.model.clone(),
         agent: info.agent.clone(),
@@ -1206,6 +1213,25 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         plan_summary,
         session_display_name,
     }
+}
+
+fn last_user_message_at_in_messages(messages: &[Message]) -> Option<i64> {
+    messages
+        .iter()
+        .filter(|message| message.role == MessageRole::User)
+        .map(|message| message.updated_at.max(message.created_at))
+        .max()
+}
+
+fn session_task_start_at(info: &SessionInfo) -> Option<i64> {
+    info.management
+        .task_plan
+        .detailed_tasks
+        .iter()
+        .find(|task| task.status == PlanStatus::Doing)
+        .or_else(|| info.management.task_plan.detailed_tasks.first())
+        .map(|task| task.start_at.timestamp_millis())
+        .or_else(|| Some(info.management.session_started_at.timestamp_millis()))
 }
 
 fn session_context_tokens(info: &SessionInfo) -> SessionContextTokens {
@@ -1259,9 +1285,20 @@ fn persisted_record_from_session_log(
                 .map(|management| SessionInfo::from_management(&management))
         })
         .map_err(|err| format!("invalid session_log session snapshot: {err}"))?;
+    if let Ok(management) = serde_json::from_value(snapshot.management.clone()) {
+        info.management = management;
+    }
+    apply_session_log_snapshot_lifecycle(&mut info, &snapshot);
     info.id = snapshot.session_id.clone();
     info.created_at = snapshot.created_at;
     info.updated_at = snapshot.updated_at;
+    info.last_user_message_at = snapshot.last_user_message_at;
+    if let Some(last_user_message_at) = snapshot
+        .last_user_message_at
+        .and_then(DateTime::<Utc>::from_timestamp_millis)
+    {
+        info.management.session_last_user_message_at = last_user_message_at;
+    }
     if !snapshot.workspace.trim().is_empty() {
         info.directory = Some(snapshot.workspace);
     }
@@ -1289,6 +1326,71 @@ fn persisted_record_from_session_log(
         messages,
         todos: snapshot.todos,
     })
+}
+
+fn apply_session_log_snapshot_lifecycle(info: &mut SessionInfo, snapshot: &SessionSnapshot) {
+    if let Some(state) = snapshot.state.as_deref().and_then(session_state_from_text) {
+        info.management.state = state;
+        info.status = SessionStatusMano::from_state(state);
+    } else if let Some(status) = snapshot
+        .status
+        .as_deref()
+        .and_then(session_status_from_text)
+    {
+        info.status = status;
+        info.management.state = representative_state_for_status(status, info.management.state);
+    } else {
+        info.status = SessionStatusMano::from_state(info.management.state);
+    }
+
+    if let Some(created_at) = DateTime::<Utc>::from_timestamp_millis(snapshot.created_at) {
+        info.management.session_created_at = created_at;
+    }
+    if let Some(updated_at) = DateTime::<Utc>::from_timestamp_millis(snapshot.updated_at) {
+        info.management.session_last_update_at = updated_at;
+    }
+}
+
+fn session_state_from_text(value: &str) -> Option<SessionState> {
+    serde_json::from_value(serde_json::Value::String(value.trim().to_ascii_lowercase())).ok()
+}
+
+fn session_status_from_text(value: &str) -> Option<SessionStatusMano> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "idle" => Some(SessionStatusMano::Idle),
+        "busy" => Some(SessionStatusMano::Busy),
+        "error" => Some(SessionStatusMano::Error),
+        _ => None,
+    }
+}
+
+fn representative_state_for_status(
+    status: SessionStatusMano,
+    current: SessionState,
+) -> SessionState {
+    match status {
+        SessionStatusMano::Idle
+            if matches!(current, SessionState::Created | SessionState::Completed) =>
+        {
+            current
+        }
+        SessionStatusMano::Idle => SessionState::Created,
+        SessionStatusMano::Busy
+            if matches!(current, SessionState::Running | SessionState::Paused) =>
+        {
+            current
+        }
+        SessionStatusMano::Busy => SessionState::Running,
+        SessionStatusMano::Error
+            if matches!(
+                current,
+                SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted
+            ) =>
+        {
+            current
+        }
+        SessionStatusMano::Error => SessionState::Failed,
+    }
 }
 
 lazy_static::lazy_static! {

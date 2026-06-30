@@ -5,22 +5,11 @@
 //! `prompt.md` / `schema.json`, mirroring every other command.
 
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub const PROMPT: &str = include_str!("prompt.md");
 pub const SCHEMA: &str = include_str!("schema.json");
-
-const FALLBACK_TASK_TYPE_IDS: &[&str] = &[
-    "creative_and_writing",
-    "data_visualization",
-    "debug",
-    "frontend",
-    "interactive_and_3d",
-    "new_build",
-    "refactoring",
-    "research_and_learning",
-    "visual",
-];
 
 /// Normalize a task_status command into its result output
 /// `{ "task_status": { ...provided fields... } }`.
@@ -181,30 +170,81 @@ fn task_type_field(
 }
 
 fn task_type_ids() -> Vec<String> {
-    runtime_prompt_root()
-        .and_then(|root| read_task_type_ids_from_dir(&root).ok())
-        .filter(|ids| !ids.is_empty())
-        .unwrap_or_else(|| {
-            FALLBACK_TASK_TYPE_IDS
-                .iter()
-                .map(|id| (*id).to_string())
-                .collect()
-        })
+    let mut seen = HashSet::new();
+    let mut ids = Vec::new();
+    for root in runtime_prompt_roots() {
+        let Ok(root_ids) = read_task_type_ids_from_dir(&root) else {
+            continue;
+        };
+        for id in root_ids {
+            if seen.insert(id.clone()) {
+                ids.push(id);
+            }
+        }
+    }
+    ids.sort();
+    ids
 }
 
-fn runtime_prompt_root() -> Option<PathBuf> {
-    std::env::var_os("TURA_RUNTIME_PROMPT_ROOT")
-        .map(PathBuf::from)
-        .or_else(|| {
-            let tools_crate = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            Some(
-                tools_crate
-                    .parent()?
-                    .join("runtime")
-                    .join("src")
-                    .join("runtime_prompt"),
-            )
-        })
+fn runtime_prompt_roots() -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut roots = Vec::new();
+    for root in runtime_prompt_root_candidates() {
+        if seen.insert(root.clone()) {
+            roots.push(root);
+        }
+    }
+    roots
+}
+
+fn runtime_prompt_root_candidates() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(root) = std::env::var_os("TURA_RUNTIME_PROMPT_ROOT") {
+        roots.push(PathBuf::from(root));
+    }
+    if let Some(project_root) = std::env::var_os("TURA_PROJECT_ROOT") {
+        roots.push(runtime_prompt_root_from_repo(PathBuf::from(project_root)));
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        if let Some(repo_root) = repo_root_from(&current_dir) {
+            roots.push(runtime_prompt_root_from_repo(repo_root));
+        }
+    }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(repo_root) = repo_root_from(&current_exe) {
+            roots.push(runtime_prompt_root_from_repo(repo_root));
+        }
+    }
+    let tools_crate = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(crates_dir) = tools_crate.parent() {
+        roots.push(
+            crates_dir
+                .join("runtime")
+                .join("src")
+                .join("runtime_prompt"),
+        );
+    }
+    roots
+}
+
+fn runtime_prompt_root_from_repo(repo_root: PathBuf) -> PathBuf {
+    repo_root
+        .join("crates")
+        .join("runtime")
+        .join("src")
+        .join("runtime_prompt")
+}
+
+fn repo_root_from(start: &Path) -> Option<PathBuf> {
+    let start = if start.is_dir() {
+        start
+    } else {
+        start.parent().unwrap_or(start)
+    };
+    start.ancestors().find_map(|candidate| {
+        (candidate.join("Cargo.toml").is_file() && candidate.join("crates").is_dir())
+            .then(|| candidate.to_path_buf())
+    })
 }
 
 fn read_task_type_ids_from_dir(root: &Path) -> Result<Vec<String>, String> {
@@ -217,6 +257,9 @@ fn read_task_type_ids_from_dir(root: &Path) -> Result<Vec<String>, String> {
             continue;
         }
         let identity_path = path.join("prompt_identity.json");
+        if !identity_path.is_file() {
+            continue;
+        }
         let identity_text = std::fs::read_to_string(&identity_path)
             .map_err(|err| format!("failed to read {}: {err}", identity_path.display()))?;
         let identity: Value = serde_json::from_str(&identity_text)
@@ -329,14 +372,14 @@ mod tests {
     fn task_type_array_normalizes_and_deduplicates() {
         let out = normalize_output(
             None,
-            "{\"task_type\":[\"debug\",\"data_visualization\",\"frontend\",\"debug\"]}",
+            "{\"task_type\":[\"debug\",\"data_research\",\"frontend\",\"website\",\"debug\"]}",
         )
         .expect("task_type should normalize");
 
         assert_eq!(
             out.pointer("/task_status/task_type")
                 .expect("task_type should be present"),
-            &json!(["debug", "data_visualization", "frontend"])
+            &json!(["debug", "data_research", "frontend", "website"])
         );
     }
 
@@ -346,6 +389,22 @@ mod tests {
             .expect_err("unknown task type should be rejected");
 
         assert!(err.contains("task_status task_type must be one of"));
+    }
+
+    #[test]
+    fn task_type_ids_scan_runtime_prompt_dirs_and_skip_non_manual_dirs() {
+        let ids = read_task_type_ids_from_dir(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("tools crate should live under crates")
+                .join("runtime")
+                .join("src")
+                .join("runtime_prompt"),
+        )
+        .expect("runtime prompt ids should scan");
+
+        assert!(ids.iter().any(|id| id == "website"));
+        assert!(!ids.iter().any(|id| id == ".tura"));
     }
 
     #[test]

@@ -7,14 +7,18 @@ use std::time::{Duration, Instant};
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-const RUNTIME_COUNT: usize = 24;
-const WRITES_PER_RUNTIME: usize = 12;
+const WORKSPACE_COUNT: usize = 10;
+const TASKS_PER_WORKSPACE: usize = 20;
+const RUNTIME_COUNT: usize = WORKSPACE_COUNT * TASKS_PER_WORKSPACE;
+const WRITES_PER_RUNTIME: usize = 9;
 const EXPECTED_MESSAGES_PER_RUNTIME: usize = WRITES_PER_RUNTIME + 1;
-const TEST_TIMEOUT: Duration = Duration::from_secs(120);
-const DRAIN_TIMEOUT: Duration = Duration::from_secs(45);
+const EXPECTED_TOTAL_RICH_RECORDS: usize = RUNTIME_COUNT * EXPECTED_MESSAGES_PER_RUNTIME;
+const TEST_TIMEOUT: Duration = Duration::from_secs(180);
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn runtime_session_log_file_queue_pressure_24_runtimes_write_summaries() -> Result<()> {
+async fn runtime_session_log_file_queue_pressure_10_workspaces_20_tasks_2000_rich_records(
+) -> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, session_log_queue_pressure_impl())
         .await
         .context("runtime session_log queue pressure exceeded total timeout")?
@@ -24,20 +28,27 @@ async fn session_log_queue_pressure_impl() -> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp runtime session_log queue pressure root")?;
     let home = root.path().join("home");
-    let workspace = root.path().join("workspace");
     std::fs::create_dir_all(&home).context("create pressure home")?;
-    std::fs::create_dir_all(&workspace).context("create pressure workspace")?;
+    let workspaces = (0..WORKSPACE_COUNT)
+        .map(|index| root.path().join(format!("workspace-{index}")))
+        .collect::<Vec<_>>();
+    for workspace in &workspaces {
+        std::fs::create_dir_all(workspace).context("create pressure workspace")?;
+    }
     let _env = EnvGuard::new(&home);
     let service = ServiceThread::start()?;
-    let workspace_text = workspace.to_string_lossy().to_string();
-    let workspace_key = session_log::path::normalize_workspace(&workspace_text);
+    let workspace_texts = workspaces
+        .iter()
+        .map(|workspace| workspace.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
 
     let enqueue_started = Instant::now();
     let mut tasks = Vec::with_capacity(RUNTIME_COUNT);
     for runtime_index in 0..RUNTIME_COUNT {
-        let workspace_text = workspace_text.clone();
+        let workspace_index = runtime_index / TASKS_PER_WORKSPACE;
+        let workspace_text = workspace_texts[workspace_index].clone();
         tasks.push(tokio::task::spawn_blocking(move || {
-            write_runtime_snapshots(runtime_index, &workspace_text)
+            write_runtime_snapshots(runtime_index, workspace_index, &workspace_text)
         }));
     }
 
@@ -53,20 +64,24 @@ async fn session_log_queue_pressure_impl() -> Result<()> {
     let client = SessionLogClient::discover()?;
     let drain_started = Instant::now();
     wait_until(DRAIN_TIMEOUT, || {
-        pressure_sessions_visible(&client, &workspace_key, &summaries, &home)
+        pressure_sessions_visible(&client, &summaries, &home)
     })
     .await?;
     let drain_elapsed = drain_started.elapsed();
 
-    let (page, sessions) = client.list_sessions(workspace_key.clone(), 0, RUNTIME_COUNT as u64)?;
-    assert_eq!(page.total, RUNTIME_COUNT as u64);
-    assert_eq!(sessions.len(), RUNTIME_COUNT);
+    for workspace_index in 0..WORKSPACE_COUNT {
+        let workspace_key =
+            session_log::path::normalize_workspace(&workspace_texts[workspace_index]);
+        let (page, sessions) = client.list_sessions(workspace_key.clone(), 0, 500)?;
+        assert_eq!(page.total, TASKS_PER_WORKSPACE as u64);
+        assert_eq!(sessions.len(), TASKS_PER_WORKSPACE);
+    }
 
     for summary in &summaries {
         let snapshot = client
             .get_session(summary.session_id.clone())?
             .ok_or_else(|| anyhow!("missing pressure session {}", summary.session_id))?;
-        assert_eq!(snapshot.workspace, workspace_key);
+        assert_eq!(snapshot.workspace, summary.workspace_key);
         assert_eq!(
             snapshot.message_count, EXPECTED_MESSAGES_PER_RUNTIME as u64,
             "summary session should include all runtime messages"
@@ -84,8 +99,7 @@ async fn session_log_queue_pressure_impl() -> Result<()> {
     }
 
     eprintln!(
-        "runtime_session_log_queue_pressure summary: runtimes={RUNTIME_COUNT} writes_per_runtime={WRITES_PER_RUNTIME} queued_writes={} enqueue_ms={} drain_ms={}",
-        RUNTIME_COUNT * EXPECTED_MESSAGES_PER_RUNTIME,
+        "runtime_session_log_queue_pressure summary: workspaces={WORKSPACE_COUNT} tasks_per_workspace={TASKS_PER_WORKSPACE} runtimes={RUNTIME_COUNT} total_rich_records={EXPECTED_TOTAL_RICH_RECORDS} enqueue_ms={} drain_ms={}",
         enqueue_elapsed.as_millis(),
         drain_elapsed.as_millis()
     );
@@ -98,7 +112,11 @@ async fn session_log_queue_pressure_impl() -> Result<()> {
     Ok(())
 }
 
-fn write_runtime_snapshots(runtime_index: usize, workspace: &str) -> Result<RuntimeSummary> {
+fn write_runtime_snapshots(
+    runtime_index: usize,
+    workspace_index: usize,
+    workspace: &str,
+) -> Result<RuntimeSummary> {
     let client = SessionLogClient::discover()?;
     let session_id = format!("queue-pressure-session-{runtime_index}");
     let runtime_id = format!("queue-pressure-runtime-{runtime_index}");
@@ -110,7 +128,12 @@ fn write_runtime_snapshots(runtime_index: usize, workspace: &str) -> Result<Runt
             &session_id,
             &message_id,
             "assistant",
-            &format!("runtime {runtime_index} queued write {write}"),
+            &rich_text_payload(
+                workspace_index,
+                runtime_index,
+                write,
+                "runtime queued write",
+            ),
             write as i64,
         ));
         client.upsert_session(
@@ -136,7 +159,12 @@ fn write_runtime_snapshots(runtime_index: usize, workspace: &str) -> Result<Runt
         &session_id,
         &summary_message_id,
         "assistant",
-        &format!("summary for runtime {runtime_index}: {WRITES_PER_RUNTIME} writes persisted"),
+        &rich_text_payload(
+            workspace_index,
+            runtime_index,
+            WRITES_PER_RUNTIME,
+            "runtime summary",
+        ),
         10_000 + runtime_index as i64,
     ));
     client.upsert_session(
@@ -159,25 +187,35 @@ fn write_runtime_snapshots(runtime_index: usize, workspace: &str) -> Result<Runt
     Ok(RuntimeSummary {
         session_id,
         summary_message_id,
+        workspace_key: session_log::path::normalize_workspace(workspace),
     })
 }
 
 fn pressure_sessions_visible(
     client: &SessionLogClient,
-    workspace_key: &str,
     summaries: &[RuntimeSummary],
     home: &Path,
 ) -> bool {
     if pending_queue_files(home).unwrap_or(usize::MAX) != 0 {
         return false;
     }
-    let Ok((page, sessions)) =
-        client.list_sessions(workspace_key.to_string(), 0, summaries.len() as u64)
-    else {
-        return false;
-    };
-    if page.total != summaries.len() as u64 || sessions.len() != summaries.len() {
-        return false;
+
+    for workspace_index in 0..WORKSPACE_COUNT {
+        let workspace_summaries = summaries
+            .iter()
+            .filter(|summary| summary.workspace_index() == workspace_index)
+            .collect::<Vec<_>>();
+        let Some(first) = workspace_summaries.first() else {
+            return false;
+        };
+        let Ok((page, sessions)) =
+            client.list_sessions(first.workspace_key.clone(), 0, TASKS_PER_WORKSPACE as u64)
+        else {
+            return false;
+        };
+        if page.total != TASKS_PER_WORKSPACE as u64 || sessions.len() != TASKS_PER_WORKSPACE {
+            return false;
+        }
     }
     summaries.iter().all(|summary| {
         client
@@ -231,6 +269,28 @@ fn message_payload(
     })
 }
 
+fn rich_text_payload(
+    workspace_index: usize,
+    runtime_index: usize,
+    record_index: usize,
+    label: &str,
+) -> String {
+    format!(
+        "### {label} workspace-{workspace_index} task-{runtime_index} record-{record_index}\n\n\
+Runtime queue rich text record with markdown table, HTML, local link, and a code fence for end-to-end pressure.\n\n\
+| component | workspace | task | record |\n\
+| --- | ---: | ---: | ---: |\n\
+| runtime | {workspace_index} | {runtime_index} | {record_index} |\n\
+| session_db | {workspace_index} | {runtime_index} | {record_index} |\n\n\
+```rs\n\
+let workspace = {workspace_index};\n\
+let task = {runtime_index};\n\
+let record = {record_index};\n\
+```\n\n\
+<b>runtime rich marker</b> [workspace](file:///tmp/tura/runtime-{workspace_index}-{runtime_index})"
+    )
+}
+
 fn pending_queue_files(home: &Path) -> Result<usize> {
     let pending = home
         .join("db")
@@ -250,6 +310,18 @@ fn pending_queue_files(home: &Path) -> Result<usize> {
 struct RuntimeSummary {
     session_id: String,
     summary_message_id: String,
+    workspace_key: String,
+}
+
+impl RuntimeSummary {
+    fn workspace_index(&self) -> usize {
+        self.session_id
+            .rsplit('-')
+            .next()
+            .and_then(|value| value.parse::<usize>().ok())
+            .map(|runtime_index| runtime_index / TASKS_PER_WORKSPACE)
+            .unwrap_or(usize::MAX)
+    }
 }
 
 struct EnvGuard {

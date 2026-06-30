@@ -8,7 +8,7 @@ import type {
 } from "../../types/provider.js";
 import type { SessionConfig } from "../../types/config.js";
 import type { StoredAgent } from "../../types/agent.js";
-import type { StoredPersona } from "../../types/gateway.js";
+import type { StoredPersona, TuraConfigResponse } from "../../types/gateway.js";
 import type { SettingDetail } from "../settings-catalog.js";
 
 export type { SettingDetail } from "../settings-catalog.js";
@@ -19,6 +19,12 @@ export interface SettingInputState {
   kind: SettingInputKind;
   providerID: string;
   prompt: string;
+}
+
+export interface SessionLoadingState {
+  kind?: "loading" | "deleting";
+  sessionID?: string;
+  title?: string;
 }
 
 export interface AppState {
@@ -38,9 +44,11 @@ export interface AppState {
   authMethods?: ProviderAuthMethodsResponse;
   authStatuses: Record<string, ProviderAuthStatus>;
   sessionConfig?: SessionConfig;
+  modelConfig?: TuraConfigResponse;
   status: "idle" | "busy" | "error";
   composer: string;
   notice?: string;
+  noticeTransient?: boolean;
   help: boolean;
   sessionsOpen: boolean;
   modelsOpen: boolean;
@@ -49,6 +57,7 @@ export interface AppState {
   settingDetail?: SettingDetail;
   selectedProviderID?: string;
   settingInput?: SettingInputState;
+  sessionLoading?: SessionLoadingState;
   personasOpen: boolean;
   selectedSessionIndex: number;
   selectedModelIndex: number;
@@ -88,17 +97,19 @@ export type AppAction =
       authMethods?: ProviderAuthMethodsResponse;
       authStatuses?: Record<string, ProviderAuthStatus>;
       sessionConfig?: SessionConfig;
+      modelConfig?: TuraConfigResponse;
       closePanels?: boolean;
     }
   | { type: "event"; event: GatewayEventEnvelope }
   | { type: "messages-incremental"; sessionID: string; messages: Message[]; session?: Session }
   | { type: "composer"; value: string }
-  | { type: "notice"; value?: string }
+  | { type: "notice"; value?: string; transient?: boolean }
   | { type: "status"; value: AppState["status"] }
   | { type: "permissions"; value: PermissionRequest[] }
   | { type: "questions"; value: QuestionRequest[] }
   | { type: "sessions"; value: Session[]; open?: boolean }
   | { type: "session-previews"; value: Record<string, string> }
+  | { type: "session-loading"; value?: SessionLoadingState }
   | {
       type: "auth";
       methods?: ProviderAuthMethodsResponse;
@@ -106,7 +117,12 @@ export type AppAction =
       open?: boolean;
     }
   | { type: "agents"; value: StoredAgent[] }
-  | { type: "session-config"; value: SessionConfig; open?: boolean }
+  | {
+      type: "session-config";
+      value: SessionConfig;
+      modelConfig?: TuraConfigResponse;
+      open?: boolean;
+    }
   | { type: "personas"; value: StoredPersona[]; open?: boolean }
   | { type: "select-session"; delta: number }
   | { type: "select-model"; delta: number }
@@ -149,6 +165,7 @@ export function initialState(cwd: string): AppState {
     settingDetail: undefined,
     selectedProviderID: undefined,
     settingInput: undefined,
+    sessionLoading: undefined,
     personasOpen: false,
     selectedSessionIndex: 0,
     selectedModelIndex: 0,

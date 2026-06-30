@@ -28,20 +28,6 @@ export type CommandInfo = {
   status?: string;
 };
 
-export function uniqueCommands(commands: CommandInfo[]): CommandInfo[] {
-  const seen = new Set<string>();
-  const unique: CommandInfo[] = [];
-  for (const item of commands) {
-    const key = firstCommandLine(item.command);
-    if (!key) continue;
-    const dedupeKey = `${item.step ?? ""}\0${key}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    unique.push({ ...item, command: sanitizeRawTerminalText(item.command).trim() });
-  }
-  return unique;
-}
-
 export function commandsForPart(part: MessagePart): CommandInfo[] {
   const state =
     part.state && typeof part.state === "object" ? (part.state as Record<string, unknown>) : {};
@@ -89,9 +75,31 @@ function streamedCommandRunCommands(
 ): CommandInfo[] {
   if (part.tool !== "command_run") return [];
   const specs = commandSpecs(state, part.metadata);
-  return streamedCommandRunResults(state, part.metadata)
+  const streamed = streamedCommandRunResults(state, part.metadata);
+  if (specs.length) {
+    const resultsById = new Map(
+      streamed.flatMap((result) => commandRecordKeys(result).map((key) => [key, result] as const)),
+    );
+    return specs
+      .map((spec, index) => ({
+        result: resultForSpec(resultsById, spec) ?? streamed[index],
+        spec,
+        index,
+      }))
+      .map(({ result, spec, index }) =>
+        commandInfoFromStreamedResult(
+          result ?? spec,
+          spec,
+          index,
+          tool,
+          result || streamed.length === 0 ? fallbackStatus : undefined,
+        ),
+      )
+      .filter((command): command is CommandInfo => Boolean(command));
+  }
+  return streamed
     .map((result, index) =>
-      commandInfoFromStreamedResult(result, specs[index], tool, fallbackStatus),
+      commandInfoFromStreamedResult(result, undefined, index, tool, fallbackStatus),
     )
     .filter((command): command is CommandInfo => Boolean(command));
 }
@@ -117,7 +125,17 @@ function streamedCommandRunResults(
     ...arrayField(stateMetadataOutput, "results"),
     ...arrayField(metadataStream, "results"),
     ...arrayField(metadataOutput, "results"),
-  ].filter((value): value is Record<string, unknown> => isRecord(value));
+  ]
+    .filter((value): value is Record<string, unknown> => isRecord(value))
+    .reduce<Record<string, unknown>[]>((records, record) => {
+      const keys = commandRecordKeys(record);
+      const existingIndex = keys
+        .map((key) => records.findIndex((item) => commandRecordKeys(item).includes(key)))
+        .find((index) => index >= 0);
+      if (existingIndex === undefined) return [...records, record];
+      records[existingIndex] = { ...records[existingIndex], ...record };
+      return records;
+    }, []);
 }
 
 function commandSpecs(
@@ -145,12 +163,23 @@ function commandSpecs(
     ...arrayField(metadataInput, "commands"),
     ...arrayField(metadataStream, "commands"),
     ...arrayField(metadataOutput, "commands"),
-  ].filter((value): value is Record<string, unknown> => isRecord(value));
+  ]
+    .filter((value): value is Record<string, unknown> => isRecord(value))
+    .reduce<Record<string, unknown>[]>((records, record) => {
+      const keys = commandRecordKeys(record);
+      const existingIndex = keys
+        .map((key) => records.findIndex((item) => commandRecordKeys(item).includes(key)))
+        .find((index) => index >= 0);
+      if (existingIndex === undefined) return [...records, record];
+      records[existingIndex] = { ...records[existingIndex], ...record };
+      return records;
+    }, []);
 }
 
 function commandInfoFromStreamedResult(
   result: Record<string, unknown>,
   spec: Record<string, unknown> | undefined,
+  index: number,
   tool: string,
   fallbackStatus: string | undefined,
 ): CommandInfo | undefined {
@@ -161,7 +190,7 @@ function commandInfoFromStreamedResult(
   return {
     command,
     name,
-    step: commandStepFromStreamedResult(result, spec),
+    step: commandStepFromStreamedResult(result, spec) ?? index + 1,
     tool,
     status: commandStatusFromStreamedResult(result, fallbackStatus),
   };
@@ -173,12 +202,12 @@ function commandStepFromStreamedResult(
 ): number | undefined {
   const resultCommand = recordLike(result.command);
   const specCommand = recordLike(spec?.command);
-  return (
+  const step =
     numberField(result, "step") ??
     numberField(resultCommand, "step") ??
     numberField(spec ?? {}, "step") ??
-    numberField(specCommand, "step")
-  );
+    numberField(specCommand, "step");
+  return step !== undefined && step > 0 ? Math.trunc(step) : undefined;
 }
 
 function commandLineFromStreamedResult(
@@ -253,10 +282,10 @@ function stringField(record: Record<string, unknown>, key: string): string | und
 
 function numberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
-  if (typeof value === "string" && /^\d+$/u.test(value.trim())) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^\d+(?:\.\d+)?$/u.test(value.trim())) {
     const parsed = Number(value.trim());
-    return parsed > 0 ? parsed : undefined;
+    return Number.isFinite(parsed) ? parsed : undefined;
   }
   return undefined;
 }
@@ -268,12 +297,61 @@ function commandLineFromRecord(record: Record<string, unknown>): string | undefi
     stringField(record, "command_line") ??
     stringField(record, "commandLine") ??
     commandFieldWithType(record);
-  if (command) return firstCommandLine(command);
+  if (command) return sanitizeRawTerminalText(command).trim();
   return commandType;
 }
 
 function commandNameFromRecord(record: Record<string, unknown>): string | undefined {
   return commandTypeFromRecord(record);
+}
+
+function commandRecordID(record: Record<string, unknown> | undefined): string | undefined {
+  if (!record) return undefined;
+  return stringField(record, "command_id") ?? stringField(record, "commandID");
+}
+
+function commandRecordKeys(record: Record<string, unknown>): string[] {
+  const command = recordLike(record.command);
+  const keys = new Set<string>();
+  const id = commandRecordID(record) ?? commandRecordID(command);
+  if (id) keys.add(`id:${id}`);
+
+  const provider =
+    stringField(record, "provider_tool_call_id") ??
+    stringField(record, "providerToolCallID") ??
+    stringField(command, "provider_tool_call_id") ??
+    stringField(command, "providerToolCallID");
+  const index =
+    numberField(record, "command_index") ??
+    numberField(record, "commandIndex") ??
+    numberField(command, "command_index") ??
+    numberField(command, "commandIndex");
+  if (provider && index !== undefined) keys.add(`provider:${provider}:${index}`);
+
+  const step = numberField(record, "step") ?? numberField(command, "step");
+  const commandLine =
+    stringField(record, "command_line") ??
+    stringField(command, "command_line") ??
+    stringField(record, "command");
+  const commandType =
+    stringField(record, "command_type") ??
+    stringField(command, "command_type") ??
+    stringField(record, "name") ??
+    stringField(command, "name");
+  if (step !== undefined && commandLine)
+    keys.add(`step:${step}:${commandType ?? ""}:${commandLine}`);
+  return [...keys];
+}
+
+function resultForSpec(
+  resultsById: Map<string, Record<string, unknown>>,
+  spec: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  for (const key of commandRecordKeys(spec)) {
+    const result = resultsById.get(key);
+    if (result) return result;
+  }
+  return undefined;
 }
 
 function commandTypeFromRecord(record: Record<string, unknown>): string | undefined {

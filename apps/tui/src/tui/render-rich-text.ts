@@ -8,7 +8,6 @@ import {
   dim,
   inverse,
   italic,
-  padVisible,
   reset,
   richBlockBg,
   richInlineBg,
@@ -106,7 +105,9 @@ function plainRichText(source: string, options: RenderRichTextOptions): string {
             stripHtml(String(body)),
           )
           .replace(markdownLinkPattern, "$1")
-          .replace(/\[MEDIA:([\s\S]*?):MEDIA\]/gu, "[MEDIA:$1:MEDIA]")
+          .replace(/\[MEDIA:([\s\S]*?):MEDIA\]/gu, (_match, mediaPath) =>
+            mediaDisplayPath(String(mediaPath).trim(), options.workspaceDirectory),
+          )
           .replace(/\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu, (_match, _mode, emoji) =>
             String(emoji).trim(),
           ),
@@ -332,20 +333,28 @@ function formatMarkdownTable(
         ? " │ "
         : "  ";
   const widths = tableColumnWidths(normalized, separator, tableWidth);
+  const renderTableLine = (cells: string[], header: boolean): string => {
+    const text = ` ${cells.join(separator)} `;
+    if (activeCapabilities.level === "rich")
+      return header ? `${textAgentRich}${bold}${text}${reset}` : `${textAgentRich}${text}${reset}`;
+    return header ? `${bold}${text}${reset}` : text;
+  };
+  const renderSpacerLine = (): string =>
+    renderTableLine(
+      widths.map((width) => " ".repeat(width)),
+      false,
+    );
   return normalized.flatMap((row, index) => {
     const wrappedCells = row.map((cell, column) => tableCellLines(cell, widths[column]));
     const rowHeight = Math.max(1, ...wrappedCells.map((cell) => cell.length));
-    return Array.from({ length: rowHeight }, (_item, lineIndex) => {
+    const renderedRow = Array.from({ length: rowHeight }, (_item, lineIndex) => {
       const cells = wrappedCells.map((cell, column) =>
-        padVisible(cell[lineIndex] ?? "", widths[column]),
+        padTableCell(cell[lineIndex] ?? "", widths[column]),
       );
-      const text = ` ${cells.join(separator)} `;
-      if (activeCapabilities.level === "rich")
-        return index === 0
-          ? `${textAgentRich}${bold}${text}${reset}`
-          : `${textAgentRich}${text}${reset}`;
-      return index === 0 ? `${bold}${text}${reset}` : text;
+      return renderTableLine(cells, index === 0);
     });
+    if (index < normalized.length - 1) renderedRow.push(renderSpacerLine());
+    return renderedRow;
   });
 }
 
@@ -378,23 +387,42 @@ function tableCellLines(value: string, width: number): string[] {
   if (visibleTextWidth(value) <= width) return [value];
   let visible = 0;
   let line = "";
+  let activeSgr = "";
   const output: string[] = [];
   for (const token of ansiTokensForTable(value)) {
     if (token.control) {
       line += token.value;
+      activeSgr = nextTableActiveSgr(activeSgr, token.value);
       continue;
     }
     const segmentWidth = visibleTextWidth(token.value);
     if (visible > 0 && visible + segmentWidth > width) {
-      output.push(line);
-      line = "";
+      output.push(closeTableCellLine(line, activeSgr));
+      line = activeSgr;
       visible = 0;
     }
     line += token.value;
     visible += segmentWidth;
   }
-  output.push(line);
+  output.push(closeTableCellLine(line, activeSgr));
   return output;
+}
+
+function padTableCell(value: string, width: number): string {
+  const visible = visibleTextWidth(value);
+  return visible >= width ? value : `${value}${" ".repeat(width - visible)}`;
+}
+
+function closeTableCellLine(line: string, activeSgr: string): string {
+  return activeSgr ? `${line}${reset}` : line;
+}
+
+function nextTableActiveSgr(current: string, sequence: string): string {
+  const match = sequence.match(/^\x1b\[([0-9;]*)m/u);
+  if (!match) return current;
+  const codes = (match[1] || "0").split(";").filter(Boolean);
+  if (!codes.length || codes.includes("0")) return "";
+  return `${current}${sequence}`;
 }
 
 function* ansiTokensForTable(value: string): Generator<{ value: string; control: boolean }> {
@@ -500,10 +528,19 @@ function renderInlineDecorations(source: string): string {
 }
 
 function renderMediaToken(path: string, options: RenderRichTextOptions = {}): string {
-  const label = path;
+  const label = mediaDisplayPath(path, options.workspaceDirectory);
   return isLinkTarget(path)
-    ? terminalLink(linkTargetUrl(path, options.workspaceDirectory), linkLabel(label, path))
-    : `${textAgentRich}${label}${reset}`;
+    ? terminalLink(linkTargetUrl(path, options.workspaceDirectory), mediaLinkLabel(label, path))
+    : mediaLinkLabel(label, path);
+}
+
+function mediaDisplayPath(value: string, workspaceDirectory?: string): string {
+  if (/^https?:\/\//iu.test(value)) return value;
+  return normalizeDisplayPath(localFilesystemPath(value, workspaceDirectory) ?? value);
+}
+
+function normalizeDisplayPath(value: string): string {
+  return value.replace(/\\/g, "/");
 }
 
 function renderLinkTarget(
@@ -520,6 +557,12 @@ function renderLinkTarget(
 function linkLabel(label: string, target: string): string {
   const style = isLocalLinkTarget(target) ? `${textAgentRich}${underline}` : textAgentRich;
   return `${style}${label}${reset}`;
+}
+
+function mediaLinkLabel(label: string, target: string): string {
+  const localStyle = isLocalLinkTarget(target) ? underline : "";
+  if (activeCapabilities.level === "plain") return label;
+  return `${richInlineBg}${textAgentRich}${localStyle} ${label} ${reset}`;
 }
 
 const LOCAL_PATH_PATTERN =
@@ -784,6 +827,7 @@ function localFilesystemPath(value: string, workspaceDirectory?: string): string
     }
   }
   if (!isLocalPathReference(trimmed)) return undefined;
+  if (/^[A-Za-z]:[\\/]/u.test(trimmed)) return trimmed;
   if (path.isAbsolute(trimmed)) return trimmed;
   return path.resolve(workspaceDirectory || process.cwd(), trimmed);
 }

@@ -11,7 +11,7 @@ use tokio::io::AsyncReadExt;
 
 use super::process::{
     attach_shell_process_scope, configure_process_scope, configure_tokio_process_scope,
-    retain_shell_process_scope,
+    retain_shell_process_scope, terminate_process_tree,
 };
 use super::response::failed_async_response;
 
@@ -54,6 +54,7 @@ pub(super) fn run_command_with_timeout(mut command: Command, timeout_secs: u64) 
                             if let Some(scope) = &scope {
                                 scope.terminate();
                             }
+                            terminate_process_tree(child.id());
                             let _ = child.kill();
                             let _ = child.wait();
                             let (stdout, stderr) = drain_blocking_stream_tasks(
@@ -231,6 +232,9 @@ pub(super) async fn run_tokio_command_with_timeout(
         if let Some(scope) = &scope {
             scope.terminate();
         }
+        if let Some(pid) = pid {
+            terminate_process_tree(pid);
+        }
         None
     } else {
         tokio::select! {
@@ -240,12 +244,18 @@ pub(super) async fn run_tokio_command_with_timeout(
                 if let Some(scope) = &scope {
                     scope.terminate();
                 }
+                if let Some(pid) = pid {
+                    terminate_process_tree(pid);
+                }
                 None
             }
             _ = ctx.cancellation.cancelled() => {
                 expiration = Some("tool task aborted".to_string());
                 if let Some(scope) = &scope {
                     scope.terminate();
+                }
+                if let Some(pid) = pid {
+                    terminate_process_tree(pid);
                 }
                 None
             }

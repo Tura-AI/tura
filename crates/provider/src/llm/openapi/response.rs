@@ -223,7 +223,8 @@ fn build_responses_payload(
     options: &CallOptions,
 ) -> Value {
     let mut input = Vec::new();
-    let instructions = "Follow the user request and answer concisely.".to_string();
+    let instructions =
+        "Follow the user request and Operation Manual, and answer concisely.".to_string();
     for message in messages {
         if matches!(
             message.get("type").and_then(Value::as_str),

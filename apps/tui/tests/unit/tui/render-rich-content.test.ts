@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { initialState, reducer } from "../../../src/tui/reducer.js";
 import { render } from "../../../src/tui/render.js";
+import { renderRichText } from "../../../src/tui/render-rich-text.js";
 import {
   ansiCapabilities,
   plainCapabilities,
@@ -85,6 +86,10 @@ function osc8Urls(value: string): string[] {
   return [...value.matchAll(/\x1b\]8;;([^\x1b]*)\x1b\\/gu)].map((match) => match[1] ?? "");
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 test("render applies communication style rich text without leaking protocol markup", () => {
   const session = sessionFixture("sess-rich", "Rich");
   const state = reducer(initialState("C:/repo"), {
@@ -117,9 +122,15 @@ test("render applies communication style rich text without leaking protocol mark
   assert.doesNotMatch(stripAnsi(transcript), /Example \(https:\/\/example\.com\)/);
   assert.match(transcript, /\x1b\]8;;https:\/\/example\.com\x1b\\/);
   assert.doesNotMatch(transcript, /\[MEDIA:C:\/tmp\/shot\.png:MEDIA\]/);
-  assert.match(transcript, /\x1b\]8;;file:\/\/\/C:\/tmp\/shot\.png\x1b\\/);
+  assert.match(
+    transcript,
+    /\x1b\]8;;file:\/\/\/C:\/tmp\/shot\.png\x1b\\\x1b\[48;5;236m\x1b\[38;2;217;222;205m\x1b\[4m C:\/tmp\/shot\.png \x1b\[0m/u,
+  );
   assert.match(transcript, /https:\/\/example\.com\/shot\.png/);
-  assert.match(transcript, /\x1b\]8;;https:\/\/example\.com\/shot\.png\x1b\\/);
+  assert.match(
+    transcript,
+    /\x1b\]8;;https:\/\/example\.com\/shot\.png\x1b\\\x1b\[48;5;236m\x1b\[38;2;217;222;205m https:\/\/example\.com\/shot\.png \x1b\[0m/u,
+  );
   assert.match(transcript, /👍/u);
   assert.doesNotMatch(transcript, /\[EMOJI:/);
   assert.match(transcript, /\x1b\[48;5;234m\x1b\[38;2;217;222;205mquoted/);
@@ -162,7 +173,8 @@ test("render gracefully downgrades rich text across display levels", () => {
   assert.match(plain, /src\/App\.tsx:12/);
   assert.match(plain, /Example/);
   assert.doesNotMatch(plain, /Example \(https:\/\/example\.com\)/);
-  assert.match(plain, /\[MEDIA:https:\/\/example\.com\/shot\.png:MEDIA\]/);
+  assert.match(plain, /https:\/\/example\.com\/shot\.png/);
+  assert.doesNotMatch(plain, /\[MEDIA:https:\/\/example\.com\/shot\.png:MEDIA\]/);
   assert.match(plain, /👍/u);
   assert.doesNotMatch(plain, /\[EMOJI:/);
   assert.doesNotMatch(plain, /\x1b|<b>|<\/code>|\x1b\]8|▏/u);
@@ -173,6 +185,10 @@ test("render gracefully downgrades rich text across display levels", () => {
   assert.match(ansi, /https:\/\/example\.com/);
   assert.match(ansi, /https:\/\/example\.com\/shot\.png/);
   assert.doesNotMatch(ansi, /\[MEDIA:https:\/\/example\.com\/shot\.png:MEDIA\]/);
+  assert.match(
+    ansi,
+    /\x1b\[48;5;236m\x1b\[38;2;217;222;205m https:\/\/example\.com\/shot\.png \x1b\[0m/u,
+  );
   assert.match(ansi, /👍/u);
   assert.match(ansi, /\x1b\[[0-9;]*m/);
   assert.doesNotMatch(ansi, /<b>|<\/code>/u);
@@ -368,6 +384,8 @@ test("render resolves relative paths with spaces and links missing local media",
   try {
     mkdirSync(path.join(workspace, "shots"), { recursive: true });
     writeFileSync(path.join(workspace, "shots", "final image.png"), "not really an image");
+    const finalMediaPath = path.join(workspace, "shots", "final image.png").replace(/\\/g, "/");
+    const missingMediaPath = path.join(workspace, "shots", "missing image.png").replace(/\\/g, "/");
     const session = sessionFixture("sess-local-media", "Local Media", "idle", {
       directory: workspace,
     });
@@ -393,8 +411,12 @@ test("render resolves relative paths with spaces and links missing local media",
     const transcript = render(state, richCapabilities());
     assert.match(transcript, /\x1b\]8;;file:\/\/.*shots\/final%20image\.png\x1b\\/u);
     assert.match(transcript, /Local Shot/);
-    assert.match(transcript, /shots\/final image\.png/);
-    assert.match(transcript, /shots\/missing image\.png/);
+    assert.match(stripAnsi(transcript), new RegExp(escapeRegExp(finalMediaPath), "u"));
+    assert.match(stripAnsi(transcript), new RegExp(escapeRegExp(missingMediaPath), "u"));
+    assert.match(
+      transcript,
+      /\x1b\[48;5;236m\x1b\[38;2;217;222;205m\x1b\[4m [^\x1b]*shots\/final image\.png \x1b\[0m/u,
+    );
     assert.match(transcript, /\x1b\]8;;file:\/\/[^\x1b]*missing%20image\.png\x1b\\/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
@@ -414,6 +436,8 @@ test("render keeps spaces inside local media and directory links without swallow
     writeFileSync(path.join(reviewDir, "notes final.md"), "# notes");
 
     const absoluteRawDir = rawDir.replace(/\\/g, "/");
+    const absoluteMediaPath = path.join(mediaDir, "shot final.png").replace(/\\/g, "/");
+    const absoluteMissingMediaPath = path.join(mediaDir, "missing final.png").replace(/\\/g, "/");
     const fileUrl = pathToFileURL(reviewDir).href;
     const session = sessionFixture("sess-local-link-boundaries", "Local Link Boundaries", "idle", {
       directory: workspace,
@@ -447,9 +471,9 @@ test("render keeps spaces inside local media and directory links without swallow
     const urls = osc8Urls(transcript);
 
     assert.match(text, /Project Files\/Docs \(review\)/u);
-    assert.match(text, /Project Files\/Agent Media\/shot final\.png/u);
-    assert.match(text, /Project Files\/Agent Media\/missing final\.png/u);
-    assert.match(text, /Raw Directory and then plain words/u);
+    assert.match(text, new RegExp(escapeRegExp(absoluteMediaPath), "u"));
+    assert.match(text, new RegExp(escapeRegExp(absoluteMissingMediaPath), "u"));
+    assert.match(text.replace(/[▏\s]+/gu, ""), /RawDirectoryandthenplainwords/u);
     assert.doesNotMatch(text, /Review Folder\)/u);
     assert.match(
       transcript,
@@ -470,6 +494,10 @@ test("render keeps spaces inside local media and directory links without swallow
     assert.ok(
       urls.some((url) => /Project%20Files\/Agent%20Media\/missing%20final\.png$/u.test(url)),
       urls.join("\n"),
+    );
+    assert.match(
+      transcript,
+      /\x1b\[48;5;236m\x1b\[38;2;217;222;205m\x1b\[4m [^\x1b]*Project Files\/Agent Media\/shot final\.png \x1b\[0m/u,
     );
     assert.ok(
       urls.every((url) => !/plain%20words|comma%20clause|after%20wrapper/u.test(url)),
@@ -526,15 +554,57 @@ test("render wraps wide markdown table cells without dropping data or breaking c
     tableRows.every((line) => (line.match(/│/gu) ?? []).length === 4),
     `wrapped table lines should keep five columns:\n${tableRows.join("\n")}`,
   );
+  const tableInterior = tableRegion.filter((line) => !/^▏\s*$/u.test(line));
+  assert.ok(
+    tableInterior.every((line) => (line.match(/│/gu) ?? []).length === 4),
+    `wrapped table lines should preserve column separators:\n${tableRegion.join("\n")}`,
+  );
+  const spacerRows = tableInterior.filter(
+    (line) => line.includes("│") && !/[\p{L}\p{N}]/u.test(line.replace(/[│▏]/gu, "")),
+  );
+  assert.equal(
+    spacerRows.length,
+    3,
+    `table renderer must insert one separator-preserving blank row between table rows:\n${tableRegion.join("\n")}`,
+  );
   const nextActionColumn = tableRows
     .map((line) => line.split("│")[4] ?? "")
     .join("")
     .replace(/[^\p{Script=Han}]/gu, "");
-  assert.doesNotMatch(tableRegion.join("\n"), /\.\.\./u);
+  assert.doesNotMatch(tableRegion.join("\n"), /\.\.\.|…/u);
   assert.match(nextActionColumn, /补偿数据校验流程/u);
   assert.match(nextActionColumn, /确认扩容窗口/u);
   assert.match(nextActionColumn, /异步导出兜底/u);
   assertLineWidths(output, 88);
+});
+
+test("render keeps inline rich text scoped to wrapped markdown table cells", () => {
+  const output = renderRichText(
+    [
+      "| 命令 | 结果 |",
+      "| --- | --- |",
+      "| `very-long-command-with-inline-rich-style-that-wraps` | 通过 |",
+    ].join("\n"),
+    { tableWidth: 34 },
+  );
+  const lines = output.split("\n").filter((line) => stripAnsi(line).includes("│"));
+  const dataLines = lines.filter(
+    (line) => stripAnsi(line).includes("通过") || stripAnsi(line).includes("rich-style"),
+  );
+
+  assert.ok(dataLines.length >= 2, output);
+
+  const firstDataLine = dataLines.find((line) => stripAnsi(line).includes("通过"));
+  assert.ok(firstDataLine, output);
+  const [firstCell = "", secondCell = ""] = firstDataLine.split("│");
+  assert.match(firstCell, /\x1b\[48;5;236m/u);
+  assert.doesNotMatch(secondCell, /\x1b\[48;5;236m/u);
+
+  const wrappedCommandLine = dataLines.find((line) => stripAnsi(line).includes("rich-style"));
+  assert.ok(wrappedCommandLine, output);
+  const [wrappedFirstCell = "", wrappedSecondCell = ""] = wrappedCommandLine.split("│");
+  assert.match(wrappedFirstCell, /\x1b\[48;5;236m/u);
+  assert.doesNotMatch(wrappedSecondCell, /\x1b\[48;5;236m/u);
 });
 
 test("render preserves rich text blank paragraphs and full-width code block backgrounds", () => {
@@ -572,10 +642,12 @@ test("render preserves rich text blank paragraphs and full-width code block back
   assert.ok(quoteIndex >= 0 && codeLineIndex > quoteIndex);
   assert.ok(tableHeaderIndex > codeLineIndex);
   assert.ok(tableRowIndex > tableHeaderIndex);
+  assert.equal(tableRowIndex, tableHeaderIndex + 2);
+  assert.match(lines[tableHeaderIndex + 1] ?? "", /│/u);
+  assert.doesNotMatch(lines[tableHeaderIndex + 1] ?? "", /[\p{L}\p{N}]/u);
   assert.ok(lines.slice(quoteIndex + 1, codeLineIndex).some((line) => /^▏\s*$/u.test(line)));
   assert.ok(lines.slice(codeLineIndex + 1, tableHeaderIndex).some((line) => /^▏\s*$/u.test(line)));
   assert.doesNotMatch(stripped, /```(?:ts)?/);
-  assert.match(lines[tableRowIndex + 1] ?? "", /^▏\s*$/u);
 
   const rawCodeLines = rich.split("\n");
   const codeLine = rawCodeLines.find((line) => stripAnsi(line).includes("const width"));

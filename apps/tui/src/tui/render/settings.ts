@@ -32,7 +32,7 @@ export function settingsEntries(state: AppState): SettingEntry[] {
     {
       detail: "model",
       label: t("settingModel"),
-      value: configuredModel(config) ?? t("unknown"),
+      value: configuredModel(state) ?? t("unknown"),
     },
     { detail: "provider", label: t("settingProvider"), value: configuredProviderSummary(state) },
     { detail: "agent", label: t("settingAgent"), value: config.active_agent ?? t("unknown") },
@@ -353,10 +353,10 @@ function pageInfoForIndex(
 
 function activeSettingValue(state: AppState): unknown {
   const config = state.sessionConfig;
-  if (state.settingDetail === "model") return configuredModel(config);
+  if (state.settingDetail === "model") return configuredModel(state);
   if (state.settingDetail === "provider") return config?.active_provider;
   if (state.settingDetail === "providerAuth") return undefined;
-  if (state.settingDetail === "agent") return state.session?.agent ?? config?.active_agent;
+  if (state.settingDetail === "agent") return config?.active_agent;
   if (state.settingDetail === "persona") return config?.active_persona ?? "tura";
   if (state.settingDetail === "language") return config?.language ?? "en";
   if (state.settingDetail === "session") return config?.session_type ?? "coding";
@@ -369,8 +369,8 @@ function activeSettingValue(state: AppState): unknown {
   return undefined;
 }
 
-function configuredModel(config: AppState["sessionConfig"]): string | undefined {
-  return runtimeModelFromConfig(config);
+function configuredModel(state: AppState): string | undefined {
+  return runtimeModelFromConfig(state.sessionConfig, state.modelConfig);
 }
 
 function activeMarker(): string {

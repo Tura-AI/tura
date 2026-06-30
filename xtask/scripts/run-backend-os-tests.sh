@@ -49,9 +49,10 @@ run_cargo() {
 }
 
 find_backend_os_tests() {
+  printf '%s\n' ./Cargo.toml
   for root in crates commands agents personas; do
     if [ -d "$root" ]; then
-      find "$root" -path '*/tests/os_testing/*.rs' -type f
+      find "$root" -name Cargo.toml -type f ! -path '*/target/*'
     fi
   done
 }
@@ -64,6 +65,27 @@ os_features() {
   if grep -Eq '^[[:space:]]*os-tests[[:space:]]*=' "$1"; then
     printf '%s' "os-tests"
   fi
+}
+
+os_test_targets() {
+  awk '
+    /^[[:space:]]*\[\[test\]\][[:space:]]*$/ {
+      if (in_test && name != "" && os) print name;
+      in_test = 1; name = ""; os = 0; next;
+    }
+    /^[[:space:]]*\[/ {
+      if (in_test && name != "" && os) print name;
+      in_test = 0; name = ""; os = 0; next;
+    }
+    in_test && /^[[:space:]]*name[[:space:]]*=/ {
+      line = $0;
+      sub(/^[^"]*"/, "", line);
+      sub(/".*/, "", line);
+      name = line;
+    }
+    in_test && /^[[:space:]]*required-features[[:space:]]*=/ && /"os-tests"/ { os = 1; }
+    END { if (in_test && name != "" && os) print name; }
+  ' "$1"
 }
 
 run_case() {
@@ -92,34 +114,21 @@ add_case() {
   fi
 }
 
-if [ -d tests/os_testing ]; then
-  for test_path in $(find tests/os_testing -maxdepth 1 -type f -name '*.rs' | sort); do
-    if [ -n "$CRATE" ] && [ "$CRATE" != "tura_workspace" ] && [ "$CRATE" != "." ]; then
-      continue
-    fi
-    target=${test_path##*/}
-    target=${target%.rs}
-    features=$(os_features Cargo.toml)
-    add_case tura_workspace "$target" "$features" "$test_path"
-  done
-fi
-
-find_backend_os_tests | sort | while IFS= read -r test_path; do
-  crate_root=${test_path%%/tests/os_testing/*}
-  cargo_toml="$crate_root/Cargo.toml"
-  if [ ! -f "$cargo_toml" ]; then
-    echo "OS test is not under a crate tests/os_testing directory: $test_path" >&2
-    exit 1
+find_backend_os_tests | sort | while IFS= read -r cargo_toml; do
+  crate_root=${cargo_toml%/Cargo.toml}
+  crate_root=${crate_root#./}
+  if [ "$crate_root" = "Cargo.toml" ] || [ -z "$crate_root" ]; then
+    crate_root=.
   fi
   package=$(package_name "$cargo_toml")
   crate_dir=${crate_root##*/}
   if [ -n "$CRATE" ] && [ "$CRATE" != "$package" ] && [ "$CRATE" != "$crate_dir" ]; then
     continue
   fi
-  target=${test_path##*/}
-  target=${target%.rs}
   features=$(os_features "$cargo_toml")
-  add_case "$package" "$target" "$features" "$test_path"
+  os_test_targets "$cargo_toml" | while IFS= read -r target; do
+    add_case "$package" "$target" "$features" "$cargo_toml"
+  done
 done
 
 if [ "$LIST" -eq 0 ]; then

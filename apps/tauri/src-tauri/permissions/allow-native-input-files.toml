@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-native-input-files"
+description = "Allow the tura_gui shell to read native dropped files and clipboard images for composer attachments."
+
+[permission.commands]
+allow = ["read_input_file", "read_clipboard_image"]
+deny = []

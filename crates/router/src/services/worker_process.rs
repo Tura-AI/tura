@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     fs::OpenOptions, io::Write as StdWrite, path::Path, process::Stdio, sync::Arc, time::Duration,
 };
@@ -7,7 +8,7 @@ use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::Mutex,
+    sync::{Mutex, Notify},
     time::{timeout, Instant},
 };
 use tracing::{error, info, warn};
@@ -33,6 +34,9 @@ pub struct WorkerProcess {
     spawn_env: Vec<(String, String)>,
     child: Mutex<Option<Child>>,
     process_scope: Mutex<Option<WorkerProcessScope>>,
+    one_shot_process_scope: Mutex<Option<WorkerProcessScope>>,
+    one_shot_cancelled: AtomicBool,
+    one_shot_cancel: Notify,
     stdin: Mutex<Option<ChildStdin>>,
     stdout: Mutex<Option<BufReader<ChildStdout>>>,
     round_trip: Mutex<()>,
@@ -91,6 +95,9 @@ impl WorkerProcess {
             spawn_env: env.to_vec(),
             child: Mutex::new(None),
             process_scope: Mutex::new(None),
+            one_shot_process_scope: Mutex::new(None),
+            one_shot_cancelled: AtomicBool::new(false),
+            one_shot_cancel: Notify::new(),
             stdin: Mutex::new(None),
             stdout: Mutex::new(None),
             round_trip: Mutex::new(()),
@@ -235,6 +242,9 @@ impl WorkerProcess {
             spawn_env: env.to_vec(),
             child: Mutex::new(Some(child)),
             process_scope: Mutex::new(process_scope),
+            one_shot_process_scope: Mutex::new(None),
+            one_shot_cancelled: AtomicBool::new(false),
+            one_shot_cancel: Notify::new(),
             stdin: Mutex::new(Some(stdin_for_probe)),
             stdout: Mutex::new(Some(reader)),
             round_trip: Mutex::new(()),
@@ -293,6 +303,12 @@ impl WorkerProcess {
                 let _ = child.wait().await;
             }
             self.process_scope.lock().await.take();
+        } else {
+            self.one_shot_cancelled.store(true, Ordering::SeqCst);
+            self.one_shot_cancel.notify_waiters();
+            if let Some(scope) = self.one_shot_process_scope.lock().await.as_ref() {
+                scope.terminate();
+            }
         }
         self.stdin.lock().await.take();
         self.stdout.lock().await.take();
@@ -413,6 +429,7 @@ impl WorkerProcess {
         ctx: CallContext,
         notifications: Option<ipc::IpcNotificationSender>,
     ) -> Result<Value> {
+        self.one_shot_cancelled.store(false, Ordering::SeqCst);
         let mut command = Command::new(&self.executable_path);
         command
             .args(&self.spawn_args)
@@ -423,7 +440,7 @@ impl WorkerProcess {
         for (key, value) in &self.spawn_env {
             command.env(key, value);
         }
-        let mut child = command.spawn().with_context(|| {
+        let child = command.spawn().with_context(|| {
             format!(
                 "failed to spawn one-shot executable: {}",
                 self.executable_path.display()
@@ -439,6 +456,7 @@ impl WorkerProcess {
         }).ok().flatten();
 
         let input = one_shot_input_bytes(&ctx, &self.spawn_env)?;
+        let mut child = child;
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(&input).await?;
             stdin.write_all(b"\n").await?;
@@ -462,16 +480,32 @@ impl WorkerProcess {
             stderr.read_to_end(&mut bytes).await.map(|_| bytes)
         });
 
-        let status = match child.wait().await {
-            Ok(status) => status,
-            Err(error) => {
-                if let Some(scope) = process_scope.as_ref() {
-                    scope.terminate();
+        {
+            let mut active_scope = self.one_shot_process_scope.lock().await;
+            *active_scope = process_scope;
+        }
+        let wait_result = if self.one_shot_cancelled.load(Ordering::SeqCst) {
+            terminate_one_shot_child(
+                &mut child,
+                self.one_shot_process_scope.lock().await.as_ref(),
+            )
+            .await;
+            Err(anyhow!("one-shot worker cancelled"))
+        } else {
+            tokio::select! {
+                status = child.wait() => status.map_err(Into::into),
+                _ = self.one_shot_cancel.notified() => {
+                    terminate_one_shot_child(
+                        &mut child,
+                        self.one_shot_process_scope.lock().await.as_ref(),
+                    ).await;
+                    Err(anyhow!("one-shot worker cancelled"))
                 }
-                return Err(error.into());
             }
         };
-        drop(process_scope);
+        self.one_shot_process_scope.lock().await.take();
+        self.one_shot_cancelled.store(false, Ordering::SeqCst);
+        let status = wait_result?;
         let (stdout, parsed_stdout) = stdout_task
             .await
             .map_err(|err| anyhow!("failed to join one-shot stdout reader: {err}"))??;
@@ -655,6 +689,14 @@ async fn read_one_shot_worker_stdout(
         }
     }
     Ok((raw, parsed_response))
+}
+
+async fn terminate_one_shot_child(child: &mut Child, scope: Option<&WorkerProcessScope>) {
+    if let Some(scope) = scope {
+        scope.terminate();
+    }
+    let _ = child.start_kill();
+    let _ = child.wait().await;
 }
 
 fn one_shot_worker_mode(env: &[(String, String)]) -> bool {
@@ -899,6 +941,8 @@ mod tests {
     };
     use serde_json::json;
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::Notify;
     use tokio::{io::AsyncWriteExt, sync::Mutex};
 
     #[tokio::test]
@@ -1043,6 +1087,9 @@ mod tests {
             spawn_env: Vec::new(),
             child: Mutex::new(None),
             process_scope: Mutex::new(None),
+            one_shot_process_scope: Mutex::new(None),
+            one_shot_cancelled: AtomicBool::new(false),
+            one_shot_cancel: Notify::new(),
             stdin: Mutex::new(None),
             stdout: Mutex::new(None),
             round_trip: Mutex::new(()),

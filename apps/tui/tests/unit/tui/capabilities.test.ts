@@ -23,7 +23,7 @@ test("capability presets keep the documented L1/L2/L3 contract", () => {
   assert.equal(ansiCapabilities().interactive, true);
   assert.equal(richCapabilities().level, "rich");
   assert.equal(richCapabilities().color, "truecolor");
-  assert.equal(richCapabilities().mediaOpen, true);
+  assert.equal(richCapabilities().mediaOpen, false);
 });
 
 test("explicit display flags override terminal auto detection", () => {

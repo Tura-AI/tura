@@ -7,48 +7,24 @@ import type { TerminalCapabilities } from "../tui/capabilities.js";
 import { TUI_DRAW_INTERVAL_MS } from "../tui/frame-rate.js";
 import { iconAnimationFrame } from "../tui/render/busy-animation.js";
 import { t } from "../i18n.js";
+import { defaultGatewayUrl, readActiveGatewayUrl, writeActiveGatewayUrl } from "./active-url.js";
 
-// Tracks the gateway spawned by this TUI instance. Undefined when reusing an
-// already-running gateway that belongs to another session.
+// Tracks only a just-spawned gateway during startup so a failed startup can be
+// cleaned up. Normal TUI exit deliberately leaves gateway alive for the OS tray.
 let ownedGatewayProcess: ChildProcess | undefined;
-let ownedGatewayShutdownMode: "stdin-eof" | "kill" | undefined;
 
-/**
- * Kill the gateway that this TUI instance started, if any.
- * Safe to call multiple times; a no-op when no gateway is owned.
- * The shared backend is owned by the detached router, not this gateway front.
- */
-export function killOwnedGateway(): void {
-  const proc = ownedGatewayProcess;
-  if (proc) {
-    ownedGatewayProcess = undefined;
-    const shutdownMode = ownedGatewayShutdownMode;
-    ownedGatewayShutdownMode = undefined;
-    try {
-      if (shutdownMode === "stdin-eof") {
-        proc.stdin?.end();
-        const timer = setTimeout(() => {
-          if (proc.exitCode === null && !proc.killed) {
-            proc.kill();
-          }
-        }, 5_000);
-        timer.unref();
-      } else {
-        proc.kill();
-      }
-    } catch {
-      // Already dead — nothing to do.
-    }
-  }
+function releaseOwnedGatewayReference(): void {
+  ownedGatewayProcess = undefined;
 }
 
 /** For testing only: inject a process as the owned gateway. */
-export function _setOwnedGatewayForTest(
-  child: ChildProcess | undefined,
-  shutdownMode: "stdin-eof" | "kill" = "kill",
-): void {
+export function _setOwnedGatewayForTest(child: ChildProcess | undefined): void {
   ownedGatewayProcess = child;
-  ownedGatewayShutdownMode = child ? shutdownMode : undefined;
+}
+
+/** For testing only: release the owned gateway reference without killing it. */
+export function _releaseOwnedGatewayForTest(): void {
+  releaseOwnedGatewayReference();
 }
 
 type StartupStep = "checking" | "starting" | "waiting";
@@ -69,15 +45,28 @@ interface GatewayStartupState {
   spawnError?: unknown;
 }
 
+function gatewayCandidates(
+  requestedUrl: string,
+  defaultUrl: string,
+  instanceHome: string,
+  explicit: boolean,
+): string[] {
+  if (explicit) return [requestedUrl];
+  const candidates = [readActiveGatewayUrl(instanceHome), requestedUrl, defaultUrl].filter(
+    (value): value is string => Boolean(value),
+  );
+  return [...new Set(candidates.map(stripTrailingSlash))];
+}
+
 /**
  * Ensure a gateway this package can use is running, and return the URL to talk
  * to it on.
  *
  * Behaviour:
- *  - If the fixed (per-package) port already serves *our own* directory's
- *    gateway, reuse it.
- *  - If that port is occupied by a foreign gateway or process, fail clearly.
- *  - If nothing is listening, start our own gateway on the fixed port.
+ *  - Explicit URLs are trusted as-is.
+ *  - Otherwise, reuse a healthy project active URL first.
+ *  - If active is stale, try this build's fixed default port.
+ *  - If nothing is listening, start our own gateway on that fixed port.
  */
 export async function ensureGatewayAvailable(
   gatewayUrl: string,
@@ -91,25 +80,49 @@ export async function ensureGatewayAvailable(
   const binary = resolved.binary;
   const instanceHome = process.env.TURA_HOME?.trim() ? canonical(process.env.TURA_HOME) : myRoot;
   const mode = gatewayMode(binary);
-  let identity = await gatewayIdentityWithProbeTimeout(desiredUrl);
+  const targetUrl = explicit ? desiredUrl : stripTrailingSlash(defaultGatewayUrl());
+  for (const candidate of gatewayCandidates(
+    desiredUrl,
+    targetUrl,
+    instanceHome,
+    Boolean(explicit),
+  )) {
+    const candidateIdentity = await gatewayIdentityWithProbeTimeout(candidate);
+    if (candidateIdentity && (explicit || isOwnGateway(candidateIdentity, myRoot))) {
+      writeActiveGatewayUrl(candidate, instanceHome);
+      return candidate;
+    }
+    if (!candidateIdentity && candidate !== targetUrl && !(await canBindGatewayUrl(candidate))) {
+      await terminateGatewayFromLock(instanceHome, mode, candidate);
+    }
+  }
+
+  let identity = await gatewayIdentityWithProbeTimeout(targetUrl);
   // An explicitly chosen URL (flag / TURA_GATEWAY_URL) is trusted as-is: if a
   // Tura gateway answers there, reuse it regardless of its reported root. The
   // root identity check only guards reuse of the default auto-discovered port.
   if (identity && (explicit || isOwnGateway(identity, myRoot))) {
-    return desiredUrl;
+    writeActiveGatewayUrl(targetUrl, instanceHome);
+    return targetUrl;
   }
 
-  if (!identity && !(await canBindGatewayUrl(desiredUrl))) {
-    identity = await waitForGatewayIdentity(desiredUrl, HEALTH_TIMEOUT_MS);
-    if (identity && (explicit || isOwnGateway(identity, myRoot))) return desiredUrl;
-    await terminateGatewayFromLock(instanceHome, mode, desiredUrl);
-    identity = await waitForGatewayIdentity(desiredUrl, HEALTH_POLL_INTERVAL_MS);
-    if (identity && (explicit || isOwnGateway(identity, myRoot))) return desiredUrl;
+  if (!identity && !(await canBindGatewayUrl(targetUrl))) {
+    identity = await waitForGatewayIdentity(targetUrl, HEALTH_TIMEOUT_MS);
+    if (identity && (explicit || isOwnGateway(identity, myRoot))) {
+      writeActiveGatewayUrl(targetUrl, instanceHome);
+      return targetUrl;
+    }
+    await terminateGatewayFromLock(instanceHome, mode, targetUrl);
+    identity = await waitForGatewayIdentity(targetUrl, HEALTH_POLL_INTERVAL_MS);
+    if (identity && (explicit || isOwnGateway(identity, myRoot))) {
+      writeActiveGatewayUrl(targetUrl, instanceHome);
+      return targetUrl;
+    }
   }
 
-  if (identity || !(await canBindGatewayUrl(desiredUrl))) {
+  if (identity || !(await canBindGatewayUrl(targetUrl))) {
     throw new Error(
-      `gateway URL ${desiredUrl} is occupied by a foreign process; set --gateway-url/TURA_GATEWAY_URL to an explicit Tura gateway or stop the foreign process`,
+      `gateway URL ${targetUrl} is occupied by a foreign process; set --gateway-url/TURA_GATEWAY_URL to an explicit Tura gateway or stop the foreign process`,
     );
   }
 
@@ -118,7 +131,7 @@ export async function ensureGatewayAvailable(
   }
 
   const launchBinary = binary;
-  const port = portOf(desiredUrl);
+  const port = portOf(targetUrl);
   const spawnPort = port || process.env.PORT;
   const startupState: GatewayStartupState = {};
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -132,17 +145,17 @@ export async function ensureGatewayAvailable(
       run: async () => {
         const child = spawn(launchBinary, [], {
           cwd: myRoot,
-          // stdin is a front lifetime lease: gateway exits when the owning TUI
-          // closes this pipe or dies; router observes heartbeat expiry and
-          // performs backend idle shutdown itself.
-          stdio: ["pipe", "ignore", "ignore"],
+          // Gateway is a persistent front now: closing this TUI must not close
+          // the shared gateway process or its OS tray menu.
+          detached: true,
+          stdio: ["ignore", "ignore", "ignore"],
           windowsHide: true,
           env: {
             ...process.env,
             ...(spawnPort ? { PORT: spawnPort } : {}),
             TURA_HOME: instanceHome,
             TURA_PROJECT_ROOT: myRoot,
-            TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF: "1",
+            TURA_GATEWAY_URL: targetUrl,
           },
         });
         child.on("error", (error) => {
@@ -154,14 +167,13 @@ export async function ensureGatewayAvailable(
         });
         // unref so the event loop can exit normally even while gateway is alive.
         child.unref();
-        (child.stdin as (NodeJS.WritableStream & { unref?: () => void }) | null)?.unref?.();
         ownedGatewayProcess = child;
-        ownedGatewayShutdownMode = "stdin-eof";
       },
     });
 
-    if (await waitForGateway(desiredUrl, capabilities, startupState, instanceHome, mode)) {
-      return desiredUrl;
+    if (await waitForGateway(targetUrl, capabilities, startupState, instanceHome, mode)) {
+      writeActiveGatewayUrl(targetUrl, instanceHome);
+      return targetUrl;
     }
   }
   throw new Error(t("gatewayStartTimeout"));
@@ -395,8 +407,7 @@ function killProcessTree(pid: number): void {
 async function forceKillOwnedGateway(): Promise<boolean> {
   const proc = ownedGatewayProcess;
   const pid = proc?.pid;
-  ownedGatewayProcess = undefined;
-  ownedGatewayShutdownMode = undefined;
+  releaseOwnedGatewayReference();
   if (!pid) return false;
   killProcessTree(pid);
   await waitForProcessExit(pid, 5_000);

@@ -1,7 +1,7 @@
 {
   "persona_name": "tura",
   "display_name": "Tura",
-  "description": "Balanced and energetic operational presence.",
+  "description": " Awkwardly smart and energetic operational presence.",
   "short_description": "Balanced energetic",
   "default_config": true,
   "persona_directory": "personas/src/tura",

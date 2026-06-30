@@ -1,16 +1,32 @@
 import type { SessionConfig } from "../types/config.js";
+import type { TuraConfigResponse } from "../types/gateway.js";
 
-export function runtimeModelFromConfig(config: SessionConfig | undefined): string | undefined {
+export function runtimeModelFromConfig(
+  config: SessionConfig | undefined,
+  modelConfig?: TuraConfigResponse,
+): string | undefined {
+  const model = stringValue(config?.model);
+  const tierModel = model ? modelForTier(modelConfig, model) : undefined;
+  if (tierModel) return tierModel;
+
   const provider = stringValue(config?.active_provider);
   const activeModel = stringValue(config?.active_model);
   if (provider && activeModel) {
     return `${provider}/${stripProviderPrefix(provider, activeModel)}`;
   }
 
-  const model = stringValue(config?.model);
   if (model?.includes("/")) return model;
   if (provider && model) return `${provider}/${stripProviderPrefix(provider, model)}`;
   return model ?? activeModel;
+}
+
+export function modelForTier(
+  modelConfig: TuraConfigResponse | undefined,
+  tier: string,
+): string | undefined {
+  const current = modelConfig?.tiers?.find((item) => item.tier === tier)?.current;
+  if (!current?.provider || !current.model) return undefined;
+  return `${current.provider}/${stripProviderPrefix(current.provider, current.model)}`;
 }
 
 function stripProviderPrefix(provider: string, model: string): string {

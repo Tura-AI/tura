@@ -1,10 +1,13 @@
 import { resolve } from "node:path";
-
-const DEV_GATEWAY_PORT = "4126";
-const RELEASE_GATEWAY_PORT = "4156";
+import { defaultGatewayPort, defaultGatewayUrl, readActiveGatewayUrl } from "./active-url.js";
 
 export function resolveGatewayUrl(flagValue?: string): string {
-  const raw = (flagValue || process.env.TURA_GATEWAY_URL || defaultGatewayUrl()).trim();
+  const raw = (
+    flagValue ||
+    process.env.TURA_GATEWAY_URL ||
+    readActiveGatewayUrl() ||
+    defaultGatewayUrl()
+  ).trim();
   return normalizeGatewayUrl(raw).replace(/\/+$/, "");
 }
 
@@ -27,20 +30,6 @@ function normalizeGatewayUrl(input: string): string {
   } catch {
     return input.replace(/\/+$/, "");
   }
-}
-
-function defaultGatewayUrl(): string {
-  return `http://127.0.0.1:${defaultGatewayPort()}`;
-}
-
-function defaultGatewayPort(): string {
-  return currentBuildMode() === "release" ? RELEASE_GATEWAY_PORT : DEV_GATEWAY_PORT;
-}
-
-function currentBuildMode(): "dev" | "release" {
-  if (process.env.TURA_BUILD_KIND === "release") return "release";
-  const normalized = process.execPath.replace(/\\/g, "/").toLowerCase();
-  return normalized.includes("/target/release/") ? "release" : "dev";
 }
 
 export function resolveCwd(flagValue?: string): string {

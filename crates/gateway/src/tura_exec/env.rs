@@ -18,6 +18,11 @@ pub(crate) fn configure_runtime_env(config: &CliConfig) {
     } else {
         std::env::remove_var("TURA_GOAL_MODE");
     }
+    if config.no_op_manual {
+        std::env::set_var("TURA_NO_OP_MANUAL", "1");
+    } else {
+        std::env::remove_var("TURA_NO_OP_MANUAL");
+    }
     if let Some(max_tokens) = config.max_tokens {
         std::env::set_var("TURA_SESSION_MAX_TOKENS", max_tokens.to_string());
     }

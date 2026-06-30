@@ -186,8 +186,11 @@ pub fn checkpoint_streamed_command_finished(
                 .map(|code| code == 0)
                 .unwrap_or(true)
         });
-    let output_summary = result
-        .get("stdout")
+    let response = result.get("response").or_else(|| result.get("output"));
+    let output_summary = response
+        .and_then(|value| value.get("stdout"))
+        .or_else(|| result.get("stdout"))
+        .or_else(|| response.and_then(|value| value.get("output")))
         .or_else(|| result.get("output"))
         .and_then(Value::as_str)
         .map(|text| text.chars().take(4000).collect::<String>());
@@ -208,7 +211,11 @@ pub fn checkpoint_streamed_command_finished(
         command_line,
         status: status.to_string(),
         output_summary,
-        changes: result.get("changes").cloned().unwrap_or(Value::Null),
+        changes: result
+            .get("changes")
+            .or_else(|| response.and_then(|value| value.get("changes")))
+            .cloned()
+            .unwrap_or(Value::Null),
         started_at: None,
         finished_at: Some(input.finished_at.to_rfc3339()),
     };

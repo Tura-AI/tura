@@ -289,7 +289,7 @@ fn fail_later_batch_commands_stop_after_apply_patch_failure() {
     assert_eq!(output["results"].as_array().expect("results").len(), 1);
     assert_eq!(output["results"][0]["success"], false);
     assert_eq!(
-        output["results"][0]["output"]["output"]["error_type"],
+        output["results"][0]["output"]["error_type"],
         "ContextMismatch"
     );
 }
@@ -487,11 +487,11 @@ fn pass_mutating_commands_are_barriers_between_read_batches() {
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(output["results"][1]["success"], true);
     assert_eq!(output["results"][2]["success"], true);
-    assert!(output["results"][0]["output"]
+    assert!(output["results"][0]["output"]["stdout"]
         .as_str()
         .unwrap_or_default()
         .contains("before"));
-    assert!(output["results"][2]["output"]
+    assert!(output["results"][2]["output"]["stdout"]
         .as_str()
         .unwrap_or_default()
         .contains("after"));

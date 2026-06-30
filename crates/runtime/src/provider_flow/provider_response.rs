@@ -46,3 +46,62 @@ pub(crate) fn apply_provider_response_with_options(
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::apply_provider_response_with_options;
+    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
+    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
+    use chrono::Utc;
+    use serde_json::json;
+
+    fn runtime() -> RuntimeManagement {
+        RuntimeManagement::new(
+            "runtime-provider-response-test".to_string(),
+            "session-provider-response-test".to_string(),
+            "agent-provider-response-test".to_string(),
+            RuntimeProviderConfig {
+                base: ProviderConfig {
+                    tura_llm_name: "fast".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
+                    stream: true,
+                    temperature: 0.0,
+                    max_tokens: 1024,
+                    tool_choice: ToolChoice::Auto,
+                    time_out_ms: 30_000,
+                },
+                thinking: false,
+                provider_name: "openai".to_string(),
+                model_name: "gpt-test".to_string(),
+                provider_url_name: "openai".to_string(),
+                llm_provider_name: "openai".to_string(),
+            },
+            Utc::now(),
+        )
+    }
+
+    #[test]
+    fn provider_response_can_suppress_raw_command_run_tool_calls() {
+        let mut runtime = runtime();
+        let now = runtime.created_at;
+        let content = json!({
+            "text": "visible text",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "command_run",
+                    "arguments": {
+                        "commands": [{ "command_type": "apply_patch", "command_line": "ignored patch body" }]
+                    }
+                }
+            }]
+        });
+
+        apply_provider_response_with_options(&mut runtime, &content, now, true);
+
+        assert_eq!(runtime.text, "visible text");
+        assert!(runtime.tool_call.is_empty());
+    }
+}

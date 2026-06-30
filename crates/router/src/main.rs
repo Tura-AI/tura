@@ -16,7 +16,7 @@ mod shutdown;
 #[cfg(test)]
 pub(crate) use app::build_state;
 pub(crate) use app::AppState;
-pub(crate) use runtime_dispatch::{dispatch_run_agent, RunAgentRequest};
+pub(crate) use runtime_dispatch::{dispatch_run_agent_with_runtime_slot, RunAgentRequest};
 
 fn main() -> anyhow::Result<()> {
     tura_path::process_hardening::harden_current_process("router");

@@ -40,6 +40,13 @@ impl RouterClient {
         )
     }
 
+    pub fn kill_session_workers(&self, session_id: &str) -> Result<Value> {
+        crate::router_process::global_router_process()?.call(
+            "execution.kill_session_workers",
+            kill_session_workers_payload(session_id),
+        )
+    }
+
     pub fn probe_sessions(&self, session_ids: &[String]) -> Result<Value> {
         crate::router_process::global_router_process()?.call_existing_with_timeout(
             "execution.probe_sessions",
@@ -87,9 +94,15 @@ fn cancel_turn_payload(session_id: &str, active_turn_id: Option<&str>) -> Value 
     json!({ "session_id": session_id, "active_turn_id": active_turn_id })
 }
 
+fn kill_session_workers_payload(session_id: &str) -> Value {
+    json!({ "session_id": session_id })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{cancel_turn_payload, enqueue_turn_payload, EnqueueTurnRequest};
+    use super::{
+        cancel_turn_payload, enqueue_turn_payload, kill_session_workers_payload, EnqueueTurnRequest,
+    };
     use serde_json::json;
 
     #[test]
@@ -122,6 +135,14 @@ mod tests {
         assert_eq!(
             cancel_turn_payload("session-1", None),
             json!({ "session_id": "session-1", "active_turn_id": null })
+        );
+    }
+
+    #[test]
+    fn kill_session_workers_payload_targets_session_runtime() {
+        assert_eq!(
+            kill_session_workers_payload("session-1"),
+            json!({ "session_id": "session-1" })
         );
     }
 }

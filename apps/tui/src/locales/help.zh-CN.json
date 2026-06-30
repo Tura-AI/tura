@@ -30,9 +30,10 @@
     "options": [
       {
         "flags": "--gateway-url URL",
-        "summary": "网关基础 URL；默认 TURA_GATEWAY_URL 或 http://127.0.0.1:4126"
+        "summary": "网关基础 URL；默认 TURA_GATEWAY_URL、项目 active URL，然后 dev 4125 / release 4126"
       },
       { "flags": "--cwd PATH", "summary": "发送给网关的工作区目录" },
+      { "flags": "--initial-session ID", "summary": "打开交互式 TUI 时直接进入指定会话" },
       { "flags": "--json", "summary": "支持时输出 JSON" },
       { "flags": "--color MODE", "summary": "auto、always 或 never" },
       { "flags": "--lang zh-CN|en", "summary": "显示语言" },

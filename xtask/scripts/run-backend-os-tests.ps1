@@ -31,6 +31,22 @@ function Read-OsTestFeatures {
   $features
 }
 
+function Read-OsTestTargets {
+  param([string]$CargoToml)
+  $content = Get-Content -Raw -LiteralPath $CargoToml
+  $targets = @()
+  $matches = [regex]::Matches($content, '(?ms)^\s*\[\[test\]\]\s*(.*?)(?=^\s*\[\[|^\s*\[[^\[]|\z)')
+  foreach ($match in $matches) {
+    $block = $match.Groups[1].Value
+    $name = [regex]::Match($block, '(?m)^\s*name\s*=\s*"([^"]+)"')
+    $features = [regex]::Match($block, '(?m)^\s*required-features\s*=\s*\[([^\]]*)\]')
+    if ($name.Success -and $features.Success -and $features.Groups[1].Value -match '"os-tests"') {
+      $targets += $name.Groups[1].Value
+    }
+  }
+  $targets
+}
+
 function New-BackendTestCase {
   param(
     [string]$Package,
@@ -111,51 +127,31 @@ function Find-CrateRoot {
 
 $cases = @()
 
-$rootCargoToml = Join-Path $RepoRoot "Cargo.toml"
-$rootOsDir = Join-Path $RepoRoot "tests\os_testing"
-if (Test-Path -LiteralPath $rootOsDir) {
-  foreach ($test in (Get-ChildItem -LiteralPath $rootOsDir -File -Filter *.rs | Sort-Object FullName)) {
-    if ($Crate -and $Crate -ne "tura_workspace" -and $Crate -ne ".") {
-      continue
-    }
-    $target = [System.IO.Path]::GetFileNameWithoutExtension($test.Name)
-    $features = Read-OsTestFeatures $rootCargoToml
-    if ($List) {
-      Write-Host "tura_workspace::$target [serial] $($test.FullName)"
-    } else {
-      $cases += New-BackendTestCase -Package "tura_workspace" -Target $target -Features $features -Path $test.FullName
-    }
-  }
-}
+$crateRoots = @($RepoRoot)
 
 $scanRoots = @("crates", "commands", "agents", "personas") |
   ForEach-Object { Join-Path $RepoRoot $_ } |
   Where-Object { Test-Path -LiteralPath $_ }
 
-$tests = @(
 foreach ($root in $scanRoots) {
-  Get-ChildItem -Path $root -Recurse -Directory -Filter os_testing |
-    Where-Object { $_.FullName -match [regex]::Escape("\tests\os_testing") + "$" } |
-    ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -File -Filter *.rs }
+  Get-ChildItem -Path $root -Recurse -File -Filter Cargo.toml |
+    ForEach-Object { Split-Path -Parent $_.FullName } |
+    ForEach-Object { $crateRoots += $_ }
 }
-) | Sort-Object FullName
 
-foreach ($test in $tests) {
-  $crateRoot = Find-CrateRoot $test.FullName
+foreach ($crateRoot in ($crateRoots | Sort-Object -Unique)) {
   $cargoToml = Join-Path $crateRoot "Cargo.toml"
-  if (-not (Test-Path -LiteralPath $cargoToml)) {
-    throw "OS test is not under a crate tests/os_testing directory: $($test.FullName)"
-  }
   $package = Read-PackageName $cargoToml
-  if ($Crate -and $Crate -ne $package -and $Crate -ne (Split-Path -Leaf $crateRoot)) {
-    continue
-  }
-  $target = [System.IO.Path]::GetFileNameWithoutExtension($test.Name)
   $features = Read-OsTestFeatures $cargoToml
-  if ($List) {
-    Write-Host "$package::$target [serial] $($test.FullName)"
-  } else {
-    $cases += New-BackendTestCase -Package $package -Target $target -Features $features -Path $test.FullName
+  foreach ($target in (Read-OsTestTargets $cargoToml)) {
+    if ($Crate -and $Crate -ne $package -and $Crate -ne (Split-Path -Leaf $crateRoot) -and $Crate -ne ".") {
+      continue
+    }
+    if ($List) {
+      Write-Host "$package::$target [serial] $cargoToml"
+    } else {
+      $cases += New-BackendTestCase -Package $package -Target $target -Features $features -Path $cargoToml
+    }
   }
 }
 

@@ -2,17 +2,19 @@ import type { CommandUpdatedEventProperties } from "../types/event.js";
 import type { Message, MessagePart, Session } from "../types/session.js";
 import { normalizeEvent } from "../gateway/events.js";
 import { sameDirectory } from "../gateway/directory.js";
-import { partMessageID, sessionStatusText } from "../types/session.js";
+import { partMessageID, sessionSortAt, sessionStatusText } from "../types/session.js";
 import type { AppAction, AppState, LiveStream } from "./reducer/state.js";
 import {
   boundedSessionIndex,
   modelCount,
   seedSeenSessionCounts,
   selectedPersonaIndex,
+  selectedSettingOptionIndex,
   selectedSessionIndex,
   SESSION_CREATE_ENTRY_COUNT,
   settingOptionCount,
   settingsEntryCount,
+  sortSessions,
   upsertById,
   upsertSession,
   wrapIndex,
@@ -42,6 +44,7 @@ export type {
   AppState,
   LiveStream,
   RefreshSessionState,
+  SessionLoadingState,
   SettingDetail,
   SettingInputKind,
   SettingInputState,
@@ -51,7 +54,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
   if (action.type === "hydrate") {
     const sessionID = action.session.id;
     const sessionChanged = Boolean(state.session && state.session.id !== sessionID);
-    const nextSessions = action.sessions ?? state.sessions;
+    const nextSessions = sortSessions(action.sessions ?? state.sessions);
     const hydratedMessages = prepareMessagesForDisplay(action.messages);
     const merged = sessionChanged
       ? { messages: hydratedMessages, liveStreams: {} }
@@ -91,6 +94,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
       authMethods: action.authMethods ?? state.authMethods,
       authStatuses: action.authStatuses ?? state.authStatuses,
       sessionConfig: action.sessionConfig ?? state.sessionConfig,
+      modelConfig: action.modelConfig ?? state.modelConfig,
+      sessionLoading: undefined,
       status: action.session.status ?? "idle",
       selectedSessionIndex:
         state.sessionsOpen && !sessionChanged
@@ -103,14 +108,16 @@ export function reducer(state: AppState, action: AppAction): AppState {
         action.sessionConfig ?? state.sessionConfig,
       ),
     };
-    return nextState;
+    return clearTransientNotice(nextState);
   }
+  if (action.type === "session-loading") return { ...state, sessionLoading: action.value };
+  if (state.sessionLoading && locksDuringSessionLoading(action)) return state;
   if (action.type === "event") {
     const normalized = normalizeEvent(action.event);
     if (normalized.directory !== "global" && !sameDirectory(normalized.directory, state.cwd))
       return state;
     if (action.event.payload?.type === "server.connected") {
-      return state;
+      return clearTransientNotice(state);
     }
     if (action.event.payload?.type === "message.updated") {
       const message = (action.event.payload.properties as { info?: Message } | undefined)?.info;
@@ -125,15 +132,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
             [sessionID]: preview,
           },
           refreshState: refreshStateAfterBackgroundMessage(state.refreshState, sessionID, message),
-          sessions: state.sessions.map((session) =>
-            session.id === sessionID
-              ? {
-                  ...session,
-                  message_count: (session.message_count ?? 0) + 1,
-                  updated_at: message.updated_at ?? message.created_at ?? session.updated_at,
-                }
-              : session,
-          ),
+          sessions: updateSessionForMessage(state.sessions, sessionID, message),
         };
       }
       const updated = upsertMessageIgnoringLive(
@@ -415,24 +414,31 @@ export function reducer(state: AppState, action: AppAction): AppState {
     return nextState;
   }
   if (action.type === "composer") return { ...state, composer: action.value };
-  if (action.type === "notice") return { ...state, notice: action.value };
+  if (action.type === "notice") {
+    return {
+      ...state,
+      notice: action.value,
+      noticeTransient: action.value ? Boolean(action.transient) : undefined,
+    };
+  }
   if (action.type === "status") return { ...state, status: action.value };
   if (action.type === "permissions") return { ...state, permissions: action.value };
   if (action.type === "questions") return { ...state, questions: action.value };
   if (action.type === "sessions") {
     const keepSelection = state.sessionsOpen && action.open;
+    const sessions = sortSessions(action.value);
     return {
       ...state,
-      sessions: action.value,
+      sessions,
       seenSessionMessageCounts: seedSeenSessionCounts(
         state.seenSessionMessageCounts,
-        action.value,
+        sessions,
         state.session?.id,
       ),
       sessionsOpen: action.open ?? state.sessionsOpen,
       selectedSessionIndex: keepSelection
-        ? boundedSessionIndex(state.selectedSessionIndex, action.value)
-        : selectedSessionIndex(action.value, state.session?.id),
+        ? boundedSessionIndex(state.selectedSessionIndex, sessions)
+        : selectedSessionIndex(sessions, state.session?.id),
     };
   }
   if (action.type === "session-previews") {
@@ -454,9 +460,10 @@ export function reducer(state: AppState, action: AppAction): AppState {
   }
   if (action.type === "agents") return { ...state, agents: action.value };
   if (action.type === "session-config") {
-    return {
+    const nextState = {
       ...state,
       sessionConfig: action.value,
+      modelConfig: action.modelConfig ?? state.modelConfig,
       settingsOpen: action.open ?? state.settingsOpen,
       settingDetail: action.open ? undefined : state.settingDetail,
       selectedProviderID: action.open ? undefined : state.selectedProviderID,
@@ -464,6 +471,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
       modelsOpen: false,
       authOpen: false,
       personasOpen: false,
+    };
+    return {
+      ...nextState,
+      selectedSettingOptionIndex: nextState.settingDetail
+        ? selectedSettingOptionIndex(nextState, nextState.settingDetail)
+        : state.selectedSettingOptionIndex,
     };
   }
   if (action.type === "personas") {
@@ -523,17 +536,20 @@ export function reducer(state: AppState, action: AppAction): AppState {
     };
   }
   if (action.type === "open-setting-detail") {
-    return {
+    const nextState = {
       ...state,
       settingsOpen: true,
       settingDetail: action.detail,
       selectedProviderID: action.providerID ?? state.selectedProviderID,
       settingInput: undefined,
-      selectedSettingOptionIndex: 0,
       sessionsOpen: false,
       modelsOpen: false,
       authOpen: false,
       personasOpen: false,
+    };
+    return {
+      ...nextState,
+      selectedSettingOptionIndex: selectedSettingOptionIndex(nextState, action.detail),
     };
   }
   if (action.type === "close-setting-detail") {
@@ -633,6 +649,46 @@ export function reducer(state: AppState, action: AppAction): AppState {
       help: false,
     };
   return state;
+}
+
+function updateSessionForMessage(
+  sessions: Session[],
+  sessionID: string,
+  message: Message,
+): Session[] {
+  let changed = false;
+  const next = sessions.map((session) => {
+    if (session.id !== sessionID) return session;
+    changed = true;
+    const timestamp = messageTime(message);
+    return {
+      ...session,
+      message_count: (session.message_count ?? 0) + 1,
+      updated_at: timestamp ?? session.updated_at,
+      ...(message.role === "user" && timestamp !== undefined
+        ? { last_user_message_at: Math.max(session.last_user_message_at ?? 0, timestamp) }
+        : {}),
+    };
+  });
+  return changed && message.role === "user"
+    ? next.sort((left, right) => sessionSortAt(right) - sessionSortAt(left))
+    : next;
+}
+
+function messageTime(message: Message): number | undefined {
+  return message.updated_at ?? message.created_at ?? message.time?.updated ?? message.time?.created;
+}
+
+function clearTransientNotice(state: AppState): AppState {
+  return state.noticeTransient
+    ? { ...state, notice: undefined, noticeTransient: undefined }
+    : state;
+}
+
+function locksDuringSessionLoading(action: AppAction): boolean {
+  return !["tick", "event", "notice", "session-previews", "messages-incremental"].includes(
+    action.type,
+  );
 }
 
 function sessionWithUsage(

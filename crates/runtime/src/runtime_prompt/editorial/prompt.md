@@ -4,14 +4,22 @@ Use this prompt when the task is to create, redesign, or verify slide decks, pre
 This manual depends on the Visual Operation Manual. Apply the visual system, media, reference, hierarchy, and validation rules first, then apply these editorial-specific rules for slides and print.
 
 ### Editorial Workflow
+- Identify the reader, medium, deliverable type, purpose, emotional or decision target, factual constraints, and requested voice before writing or designing the document.
+- Treat user-provided drafts, brand notes, examples, references, datasets, local files, and official/source-grounded material as the primary content and style source. Inspect local material with tools when the deliverable depends on it.
+- Preserve the user's strongest existing material: point of view, rhythm, imagery, humor, specificity, terminology, and level of formality. Do not flatten distinctive writing into generic polished prose unless the user explicitly asks for a neutral style.
+- Separate invention from fact. For real-world decks, reports, PDFs, bios, pitches, essays, and public-facing documents, do not invent credentials, quotes, metrics, dates, sources, case studies, or claims.
 - When designing layouts for PPTs, visual PDFs, or other static visual deliverables, first create a screen- or page-format HTML layout with minimal, tasteful interactivity and one consistent design system, then convert or export that HTML into the requested PPTX, PDF, or other final format.
-- Each page or slide must have one clear role in the story and should stand alone visually and narratively. Use only 1 primary design element per page or slide, build a coherent title sequence, keep body text minimal and readable, and use purposeful visual variety such as text pages, tables, quotes, diagrams, images, and section breaks.
+- Each page or slide must have one clear role in the story and should stand alone visually and narratively. Use only 1 primary design element per page or slide, build a coherent title sequence or long-form document structure, order sections by the intended reader effect or decision path, keep body text minimal and readable, and use purposeful visual variety such as text pages, tables, quotes, diagrams, images, and section breaks.
+- Improve structure, clarity, pacing, specificity, and line-level sound while preserving the user's meaning and matching the deliverable's cadence and density. Cut repetitive summaries, filler transitions, generic conclusions, and overexplained meaning.
 - Never explain your process or intent in the deliverable.
 
+### Editorial Typography
+- Use the Visual Operation Manual's general narrative visual typography rules for text visibility, title size, title length, title/body hierarchy, and font-role contrast first, then apply the slide- and print-specific rules below.
+
 ### Slide Typography
-- Slide should have fewest possible words, and title should have no more than 30 letters or 15 CJK character on each slide, make every title the heaviest bold weight: Black / Heavy / 900.
-- Slide decks must use presentation-scale typography, not web-density typography. At 1920x1080, body paragraphs and main explanations must be at least 18px, card descriptions, lists, timeline notes, captions, and figure notes at least 16px, and meta, kicker, mono labels, chart labels, and small annotations at least 14px.
-- If slide content does not fit at those sizes, shorten the copy, split the slide, or choose a layout with fewer elements; do not shrink body, caption, timeline, or label text to 10px, 11px, 12px, or 13px to make content fit.
+- Slide should have only meaningful words, and title should have no more than 30 letters or 15 CJK character on each slide, make every title the heaviest bold weight: Black / Heavy / 900.
+- Slide decks must use presentation-scale typography, not web-density typography. At 1920x1080, body paragraphs and main explanations must be at least 14px, card descriptions, lists, timeline notes, captions, and figure notes at least 12px, and meta, kicker, mono labels, chart labels, and small annotations at least 10px.
+- If slide content does not fit at those sizes, shorten the copy, split the slide, or choose a layout with fewer elements; content text must not be smaller than 12px to make content fit.
 - Large slide titles, hero declarations, large numbers, and KPI figures should use `font-size: min(Xvw, Yvh)` rather than raw `vw`; keep `Y >= X * 1.6` so 16:9 screens do not clip or shrink the intended size. Recommended starting points: hero declaration `min(11.6vw, 19vh)`, section title `min(7vw, 12vh)` to `min(7.4vw, 13vh)`, large KPI `min(8.4vw, 14vh)`, medium number or index `min(4.6vw, 8.5vh)` to `min(5.6vw, 10vh)`.
 - For CJK slide titles, size by line count and characters before layout: 1 line with 8 or fewer CJK characters uses `min(6.4vw, 11.2vh)`; 2 lines with 8 or fewer CJK characters per line use `min(5.8vw, 10.2vh)`; 2 lines where any line has 9-12 CJK characters use `min(5.2vw, 9.2vh)`; 3 lines or longer should be rewritten first, and only if unavoidable use `min(4.6vw, 8.2vh)`.
 - Prevent CJK title failure modes: maximum hero title size is about 10vw when the title is 5 CJK characters or fewer; long titles should use manual `<br>` line breaks and `white-space: nowrap` where needed, not accidental one-character-per-line wrapping.
@@ -25,5 +33,6 @@ This manual depends on the Visual Operation Manual. Apply the visual system, med
 - For print-oriented typography, use stable point sizes rather than viewport units. Use typeface contrast deliberately: titles and quotes may use serif/display faces, body copy should use a highly readable text face, and metadata/code/labels may use a monospaced face when it clarifies hierarchy.
 
 ### Editorial Validation
-- For slide decks, verify that the final typography follows the defined CSS type scale and uses presentation-scale sizing rather than web-density sizing.
+- Check the final text against the requested format, length, audience, tone, purpose, factual boundaries, and source material. Confirm revisions did not remove important nuance, change the user's position, or add unsupported claims; remove invented facts unless the user explicitly marked the work as fictional or speculative.
+- For slide decks, verify that the final typography follows the Visual Operation Manual's narrative visual type scale and uses presentation-scale sizing rather than dashboard or web-density sizing.
 - For PDFs and print documents, verify page breaks, heading orphans/widows, table splits, figure captions, print margins, and text line length before finishing.

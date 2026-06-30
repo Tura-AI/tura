@@ -39,6 +39,8 @@ pub struct SessionSnapshot {
     pub parent_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_user_message_at: Option<i64>,
     pub state: Option<String>,
     pub status: Option<String>,
     pub message_count: u64,
@@ -58,6 +60,8 @@ pub struct SessionSummary {
     pub parent_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_user_message_at: Option<i64>,
     pub state: Option<String>,
     pub status: Option<String>,
     pub message_count: u64,
@@ -270,6 +274,7 @@ mod tests {
                 parent_id: None,
                 created_at: 1,
                 updated_at: 2,
+                last_user_message_at: Some(1),
                 state: Some("created".to_string()),
                 status: Some("idle".to_string()),
                 message_count: 1,

@@ -128,7 +128,12 @@ pub fn streamed_command_run_call_id(runtime_id: &str) -> String {
     runtime_tool_part_id(runtime_id, COMMAND_RUN_TOOL_NAME)
 }
 
-pub fn command_run_live_delta_result(command: &Value, stdout: &str, stderr: &str) -> Value {
+pub fn command_run_live_delta_result(
+    command: &Value,
+    stdout: &str,
+    stderr: &str,
+    started_at: DateTime<Utc>,
+) -> Value {
     let command_type = command
         .get("command_type")
         .and_then(Value::as_str)
@@ -142,16 +147,9 @@ pub fn command_run_live_delta_result(command: &Value, stdout: &str, stderr: &str
         .and_then(Value::as_u64)
         .unwrap_or(1)
         .max(1);
-    let mut output_text = String::from("Output:\n");
-    output_text.push_str(stdout);
-    if !stderr.is_empty() {
-        output_text.push_str("\nStderr:\n");
-        output_text.push_str(stderr);
-    }
     let output = sanitize_tool_callback_output(&serde_json::json!({
         "stdout": stdout,
         "stderr": stderr,
-        "text": output_text,
     }));
     serde_json::json!({
         "command_id": command.get("command_id").cloned().unwrap_or(Value::Null),
@@ -163,6 +161,7 @@ pub fn command_run_live_delta_result(command: &Value, stdout: &str, stderr: &str
         "command_line": command_line,
         "status": "running",
         "success": null,
+        "started_at": started_at.timestamp_millis(),
         "command": command,
         "output": output,
     })
@@ -463,6 +462,7 @@ mod tests {
             "step": 1
         });
 
+        let started_at = Utc::now();
         let record = streamed_command_event_record(
             "ready",
             "runtime-1",
@@ -470,14 +470,15 @@ mod tests {
             0,
             &command,
             None,
-            Utc::now(),
+            started_at,
         );
-        let live = command_run_live_delta_result(&command, "", "");
+        let live = command_run_live_delta_result(&command, "", "", started_at);
 
         assert_eq!(record["command_type"], serde_json::Value::Null);
         assert_eq!(record["command_line"], serde_json::Value::Null);
         assert_eq!(live["command_type"], "command_run");
         assert_eq!(live["command_line"], "");
+        assert_eq!(live["started_at"], started_at.timestamp_millis());
     }
 
     #[test]

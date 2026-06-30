@@ -93,6 +93,7 @@ function dispatchHydrateFromState(
     personas: state.personas,
     sessions: state.sessions,
     sessionConfig,
+    modelConfig: state.modelConfig,
   });
 }
 

@@ -32,6 +32,7 @@ Current manual families include:
 - `debug`
 - `frontend`
 - `visual`
+- `editorial`
 - `interactive_and_3d`
 - `data_visualization`
 - `new_build`

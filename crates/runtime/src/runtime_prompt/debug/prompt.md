@@ -11,6 +11,7 @@ The failures agents miss are usually not "find the line and patch it" bugs. They
 - The table must include the exact reproduction, neighboring valid cases, neighboring invalid cases, transformed/derived paths, caller variants, format variants, and any round-trip or ordering cases that matter.
 - Use authoritative sources to build the table: existing tests, issue repro, failing stack, schema, parser grammar, command/API docs, source dispatchers, migration history, fixtures, logs, and live probes.
 - Patch only after you know the earliest invariant boundary where the state becomes wrong.
+- Trace the failure all the way back to the authoritative data source. ***Even if you think you have found the answer, confirm the complete chain from source data through every parser, dispatcher, transformer, cache, fallback, renderer, serializer, caller variant, and final externally visible behavior before deciding the root cause.***
 
 ### Reproduction rule:
 - The reproduction must fail before the fix and pass after the fix.
@@ -21,6 +22,7 @@ The failures agents miss are usually not "find the line and patch it" bugs. They
 
 ### Invariant boundary rule:
 - Work backward from the failure to the first point where a valid invariant becomes invalid.
+- Do not stop at the first plausible local cause. Enumerate every producer of the wrong value or fallback, every transformation that can replace or override the value, and every caller/documenter/renderer path that can expose it; the root cause is not established until this chain is complete and competing branches are ruled out.
 - Do not hide the symptom with fallback, dedupe, debounce, broad try/catch, extra coercion, or display filtering when the invariant belongs deeper.
 - For parser/printer failures, fix grammar, tokenization, AST, precedence, escaping, or round-trip ownership rather than special-casing the printed text.
 - For ORM/query/migration failures, fix the query state, alias/annotation/order/distinct/index contract, or migration state transition before adding output guards.
