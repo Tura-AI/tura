@@ -619,14 +619,21 @@ pub(crate) fn gateway_stdin_eof_shuts_down_router_session_db_and_runtime(
 
     wait_for_http_ok(port, "/global/health", Duration::from_secs(30))
         .context("stdin-eof gateway did not become healthy")?;
-    wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
+    let router_endpoint_path = router_addr_path(&home);
+    wait_for_reachable_endpoint(&router_endpoint_path, Duration::from_secs(30))
         .context("stdin-eof router endpoint did not become reachable")?;
     wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
         .context("stdin-eof session_db endpoint did not become reachable")?;
     wait_for_router_fronts(&home, 1, Duration::from_secs(10))
         .context("router did not receive gateway heartbeat before stdin EOF")?;
-    let router_pid = wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10))
-        .context("stdin-eof router pid should be discoverable before idle shutdown")?;
+    let router_endpoint = read_endpoint_json(&router_endpoint_path)?;
+    let router_pid = endpoint_pid(&router_endpoint)
+        .or_else(|| wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10)).ok())
+        .context("stdin-eof router endpoint did not expose a pid before idle shutdown")?;
+    assert_process_alive(
+        router_pid,
+        "stdin-eof router endpoint pid before idle shutdown",
+    )?;
 
     drop(child.stdin.take());
     let status = wait_for_process_exit(&mut child, Duration::from_secs(20), "stdin-eof gateway")?;
