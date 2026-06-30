@@ -510,6 +510,7 @@ pub(crate) fn router_keeps_command_run_when_runtime_socket_disconnects(repo: &Pa
 
     let pid_file = workspace.join("router-command-run-child.pid");
     let done_file = workspace.join("router-command-run-child.done");
+    let shell_command = code_tools::commands::active_shell_command_name();
     let request = json!({
         "request_id": "router-command-run-survive-disconnect",
         "kind": "call",
@@ -520,14 +521,14 @@ pub(crate) fn router_keeps_command_run_when_runtime_socket_disconnects(repo: &Pa
             "session_directory": workspace.display().to_string(),
             "arguments": {
                 "commands": [{
-                    "command": "shell_command",
+                    "command": shell_command,
                     "command_line": json!({
                         "command": command_run_survival_script(&pid_file, &done_file),
                         "timeout_ms": 10000
                     }).to_string()
                 }]
             },
-            "allowed_commands": ["shell_command"]
+            "allowed_commands": [shell_command]
         }
     });
 
