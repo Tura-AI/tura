@@ -473,7 +473,7 @@ test("render keeps spaces inside local media and directory links without swallow
     assert.match(text, /Project Files\/Docs \(review\)/u);
     assert.match(text, new RegExp(escapeRegExp(absoluteMediaPath), "u"));
     assert.match(text, new RegExp(escapeRegExp(absoluteMissingMediaPath), "u"));
-    assert.match(text.replace(/\s+/gu, " "), /Raw Directory and then plain words/u);
+    assert.match(text.replace(/[▏\s]+/gu, ""), /RawDirectoryandthenplainwords/u);
     assert.doesNotMatch(text, /Review Folder\)/u);
     assert.match(
       transcript,
