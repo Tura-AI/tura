@@ -188,7 +188,8 @@ fn session_db_read_path_bounds_pages_and_prunes_stale_workspace_index_rows() -> 
     )?;
 
     assert_get_session_snapshot(get_session_id, &workspace_key, 3)?;
-    assert_list_sessions_page(&workspace_key, 99, 0, 1, 1, 2, &[get_session_id])?;
+    assert_list_sessions_page(&workspace_key, 0, 1, 0, 1, 2, &[get_session_id])?;
+    assert_list_sessions_page(&workspace_key, 99, 0, 1, 1, 2, &[records_session_id])?;
     assert_records_page(records_session_id, 0, 1, 2, 1, 3, &["records-m3"])?;
     assert_records_page(
         records_session_id,
