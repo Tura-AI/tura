@@ -281,16 +281,26 @@ pub(crate) fn gateway_status_kills_unresponsive_router_and_restarts(repo: &Path)
         router_after, fake.addr,
         "gateway must replace the unresponsive fake router endpoint"
     );
-    let restarted_router_pid = wait_for_process_pid_change(
-        "tura_router",
-        &workspace,
-        router_pid,
-        Duration::from_secs(10),
-    )?;
+    let router_after_endpoint = read_endpoint_json(&router_addr_path(&home))?;
+    let restarted_router_pid = endpoint_pid(&router_after_endpoint)
+        .or_else(|| {
+            wait_for_process_pid_change(
+                "tura_router",
+                &workspace,
+                router_pid,
+                Duration::from_secs(10),
+            )
+            .ok()
+        })
+        .context("router unresponsive restarted endpoint did not expose a pid")?;
     assert_ne!(
         restarted_router_pid, router_pid,
         "unresponsive router restart should be owned by a different process"
     );
+    assert_process_alive(
+        restarted_router_pid,
+        "router unresponsive restarted endpoint pid",
+    )?;
     let service_after =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30)).context(
             "router unresponsive recovered session_db endpoint did not become reachable",
