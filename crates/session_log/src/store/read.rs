@@ -61,7 +61,7 @@ impl SessionLogStore {
                 "SELECT session_id, workspace_db_path
                  FROM sessions
                  WHERE workspace = ?1
-                 ORDER BY updated_at DESC, session_id ASC
+                 ORDER BY last_user_message_at DESC, session_id ASC
                  LIMIT ?2 OFFSET ?3",
             )?;
             let index_rows = stmt
@@ -109,7 +109,7 @@ impl SessionLogStore {
                 "SELECT session_id, workspace_db_path
                  FROM sessions
                  WHERE workspace = ?1
-                 ORDER BY updated_at DESC, session_id ASC
+                 ORDER BY last_user_message_at DESC, session_id ASC
                  LIMIT ?2 OFFSET ?3",
             )?;
             let index_rows = stmt
@@ -256,6 +256,7 @@ impl SessionLogStore {
             parent_id: workspace_payload.parent_id,
             created_at: workspace_payload.created_at,
             updated_at: workspace_payload.updated_at,
+            last_user_message_at: workspace_payload.last_user_message_at,
             state: workspace_payload.state,
             status: workspace_payload.status,
             message_count: workspace_payload.message_count as u64,
@@ -280,6 +281,7 @@ impl SessionLogStore {
             parent_id: workspace_payload.parent_id,
             created_at: workspace_payload.created_at,
             updated_at: workspace_payload.updated_at,
+            last_user_message_at: workspace_payload.last_user_message_at,
             state: workspace_payload.state,
             status: workspace_payload.status,
             message_count: workspace_payload.message_count as u64,

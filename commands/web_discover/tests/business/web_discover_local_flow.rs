@@ -195,7 +195,7 @@ fn web_discover_business_protocol_health_capabilities_and_access_are_stable() {
 fn web_discover_business_flow_downloads_direct_image_and_applies_size_limits() {
     let dir = tempfile::tempdir().expect("tempdir");
     let image_bytes = tiny_png_bytes();
-    let image = spawn_binary_response_server(200, "image/png", image_bytes.to_vec(), "/asset.png");
+    let image = spawn_binary_response_server(200, "image/png", image_bytes.to_vec(), "/image.png");
     let command_line = format!(
         "web_discover image {} --download-dir media-out --min-size 1 --max-size 100000",
         image.url
@@ -237,7 +237,7 @@ fn web_discover_business_flow_downloads_direct_image_and_applies_size_limits() {
     let downloaded_bytes = std::fs::read(dir.path().join(downloaded_path)).expect("saved image");
     assert_eq!(downloaded_bytes, image_bytes);
     assert!(response.stdout.contains("downloaded:"));
-    assert!(image.join().starts_with("GET /asset.png "));
+    assert!(image.join().starts_with("GET /image.png "));
 
     let filtered =
         spawn_binary_response_server(200, "image/png", image_bytes.to_vec(), "/small.png");
@@ -269,11 +269,11 @@ fn web_discover_business_flow_downloads_direct_image_and_applies_size_limits() {
 #[test]
 fn web_discover_business_flow_downloads_multiple_direct_images_concurrently_and_keeps_order() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let server = spawn_multi_asset_server(vec![
-        AssetResponse::ok("/first.png", "image/png", b"first image bytes".to_vec()),
-        AssetResponse::status("/missing.png", 404, "image/png", b"missing".to_vec()),
-        AssetResponse::ok("/second.jpg", "image/jpeg", b"second image bytes".to_vec()),
-        AssetResponse::ok("/third.webp", "image/webp", b"third image bytes".to_vec()),
+    let server = spawn_multi_response_server(vec![
+        StubResponse::ok("/first.png", "image/png", b"first image bytes".to_vec()),
+        StubResponse::status("/missing.png", 404, "image/png", b"missing".to_vec()),
+        StubResponse::ok("/second.jpg", "image/jpeg", b"second image bytes".to_vec()),
+        StubResponse::ok("/third.webp", "image/webp", b"third image bytes".to_vec()),
     ]);
     let query = format!(
         "{} {} {} {}",
@@ -376,144 +376,6 @@ fn web_discover_business_flow_downloads_multiple_direct_images_concurrently_and_
     assert!(requests
         .iter()
         .any(|request| request.starts_with("GET /third.webp ")));
-}
-
-#[test]
-fn web_discover_business_flow_downloads_assets_into_typed_dirs_and_extracts_zip() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let shader_bytes =
-        b"void mainImage(out vec4 color, in vec2 uv) { color = vec4(uv, 0.0, 1.0); }";
-    let texture_bytes = b"business texture jpg bytes";
-    let sprite_bytes = tiny_png_bytes();
-    let model_bytes = b"glTF business binary model";
-    let audio_bytes = b"ID3 business audio bytes";
-    let bundle_bytes = test_zip_bytes(&[
-        ("models/fighter.glb", b"glTF extracted fighter"),
-        ("textures/fighter-hull.png", tiny_png_bytes()),
-    ]);
-    let server = spawn_multi_asset_server(vec![
-        AssetResponse::ok("/hud.glsl", "text/plain", shader_bytes.to_vec()),
-        AssetResponse::ok("/brushed-metal.jpg", "image/jpeg", texture_bytes.to_vec()),
-        AssetResponse::ok("/particle.png", "image/png", sprite_bytes.to_vec()),
-        AssetResponse::ok("/patrol.glb", "model/gltf-binary", model_bytes.to_vec()),
-        AssetResponse::ok("/impact.mp3", "audio/mpeg", audio_bytes.to_vec()),
-        AssetResponse::ok("/fighter-pack.zip", "application/zip", bundle_bytes.clone()),
-    ]);
-
-    for (asset_type, path, expected_content_type, expected_size) in [
-        (
-            "shader",
-            "/hud.glsl",
-            "text/plain",
-            shader_bytes.len() as u64,
-        ),
-        (
-            "texture",
-            "/brushed-metal.jpg",
-            "image/jpeg",
-            texture_bytes.len() as u64,
-        ),
-        (
-            "2d",
-            "/particle.png",
-            "image/png",
-            sprite_bytes.len() as u64,
-        ),
-        (
-            "3d",
-            "/patrol.glb",
-            "model/gltf-binary",
-            model_bytes.len() as u64,
-        ),
-        (
-            "audio",
-            "/impact.mp3",
-            "audio/mpeg",
-            audio_bytes.len() as u64,
-        ),
-    ] {
-        let command_line = format!(
-            "web_discover asset {asset_type} {} --download-dir assets --min-size 1 --max-size 1000000",
-            server.url_for(path)
-        );
-        let response = execute(&command_line, dir.path(), 10);
-
-        assert!(
-            response.success,
-            "asset {asset_type} download should succeed: {}",
-            response.stderr
-        );
-        assert_eq!(response.output["type"], "asset");
-        assert_eq!(response.output["asset_type"], asset_type);
-        assert_eq!(response.output["searched_sources"][0], "direct_asset_url");
-        assert_eq!(response.output["result_count"], 1);
-        let downloaded = response.output["downloaded_files"]
-            .as_array()
-            .expect("downloaded asset files");
-        assert_eq!(downloaded.len(), 1);
-        assert_eq!(downloaded[0]["content_type"], expected_content_type);
-        assert_eq!(downloaded[0]["size"], expected_size);
-        let local_path = downloaded[0]["path"].as_str().expect("asset path");
-        assert!(
-            normalize_path(local_path).starts_with(&format!("assets/{asset_type}/")),
-            "asset should be placed under typed dir: {local_path}"
-        );
-        assert!(dir.path().join(local_path).exists());
-    }
-
-    let zip_command = format!(
-        "web_discover asset 3d {} --download-dir assets --min-size 1 --max-size 1000000",
-        server.url_for("/fighter-pack.zip")
-    );
-    let zip_response = execute(&zip_command, dir.path(), 10);
-    assert!(
-        zip_response.success,
-        "zip asset download should succeed: {}",
-        zip_response.stderr
-    );
-    assert_eq!(zip_response.output["type"], "asset");
-    assert_eq!(zip_response.output["asset_type"], "3d");
-    let zip_downloaded = zip_response.output["downloaded_files"]
-        .as_array()
-        .expect("zip downloaded files");
-    assert_eq!(zip_downloaded.len(), 3);
-    assert!(zip_downloaded.iter().any(|item| {
-        item["path"]
-            .as_str()
-            .is_some_and(|path| normalize_path(path).contains("assets/3d/archives/"))
-            && item["content_type"] == "application/zip"
-            && item["size"] == bundle_bytes.len() as u64
-    }));
-    assert!(zip_downloaded.iter().any(|item| {
-        item["path"]
-            .as_str()
-            .is_some_and(|path| normalize_path(path).ends_with("models/fighter.glb"))
-            && item["content_type"] == "model/gltf-binary"
-    }));
-    assert!(zip_downloaded.iter().any(|item| {
-        item["path"]
-            .as_str()
-            .is_some_and(|path| normalize_path(path).ends_with("textures/fighter-hull.png"))
-            && item["content_type"] == "image/png"
-    }));
-
-    let requests = server.join();
-    assert_eq!(requests.len(), 6);
-    for path in [
-        "/hud.glsl",
-        "/brushed-metal.jpg",
-        "/particle.png",
-        "/patrol.glb",
-        "/impact.mp3",
-        "/fighter-pack.zip",
-    ] {
-        assert!(
-            requests
-                .iter()
-                .any(|request| request.starts_with(&format!("GET {path} "))),
-            "missing request for {path}: {requests:?}"
-        );
-    }
 }
 
 #[test]

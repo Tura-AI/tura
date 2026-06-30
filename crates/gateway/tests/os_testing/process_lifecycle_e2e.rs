@@ -86,7 +86,7 @@ fn gateway_router_session_db_conflict_and_shutdown_e2e() -> Result<()> {
 }
 
 #[test]
-fn gateway_stdin_eof_leaves_router_to_idle_self_shutdown_e2e() -> Result<()> {
+fn gateway_stdin_eof_shuts_down_router_session_db_and_runtime_e2e() -> Result<()> {
     let repo = repo_root();
     ensure_backend_binary(&repo, "router", "tura_router")?;
     ensure_backend_binary(&repo, "session_log", "tura_session_db")?;
@@ -108,10 +108,6 @@ fn gateway_stdin_eof_leaves_router_to_idle_self_shutdown_e2e() -> Result<()> {
     assert!(
         status.success(),
         "gateway should exit cleanly after stdin EOF, got {status}"
-    );
-    assert!(
-        router_endpoint_reachable(&home),
-        "gateway stdin EOF must not directly kill router; router should self-shutdown after idle"
     );
     wait_for_missing(&router_addr_path(&home), Duration::from_secs(15))?;
     wait_for_missing(&service_addr_path(&home), Duration::from_secs(15))?;

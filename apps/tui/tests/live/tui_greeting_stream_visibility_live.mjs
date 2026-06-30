@@ -180,7 +180,7 @@ async function writeWorkspaceConfig() {
       `model=${process.env.TURA_TUI_LIVE_MODEL || "codex/gpt-5.5"}`,
       "active_provider=codex",
       "active_model=gpt-5.5",
-      `active_agent=${process.env.TURA_TUI_LIVE_AGENT || "fast"}`,
+      `active_agent=${process.env.TURA_TUI_LIVE_AGENT || "direct"}`,
       "session_type=coding",
       `model_variant=${process.env.TURA_TUI_LIVE_MODEL_VARIANT || "medium"}`,
       "model_acceleration_enabled=true",

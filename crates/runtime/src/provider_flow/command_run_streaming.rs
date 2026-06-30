@@ -33,6 +33,8 @@ pub(crate) struct StreamedCommandRunState {
     pub(crate) events: Arc<Mutex<Vec<Value>>>,
     pub(crate) seen: Arc<AtomicBool>,
     pub(crate) cancelled: Arc<AtomicBool>,
+    pub(crate) startup_apply_patch_discarded: Arc<AtomicBool>,
+    pub(crate) startup_apply_patch_discard_complete: Arc<AtomicBool>,
 }
 
 impl StreamedCommandRunState {
@@ -43,6 +45,8 @@ impl StreamedCommandRunState {
             events: Arc::new(Mutex::new(Vec::new())),
             seen: Arc::new(AtomicBool::new(false)),
             cancelled: Arc::new(AtomicBool::new(false)),
+            startup_apply_patch_discarded: Arc::new(AtomicBool::new(false)),
+            startup_apply_patch_discard_complete: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -52,6 +56,29 @@ impl StreamedCommandRunState {
 
     pub(crate) fn should_cancel_after_results(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst) && !self.snapshot_results().is_empty()
+    }
+
+    pub(crate) fn startup_apply_patch_discarded(&self) -> bool {
+        self.startup_apply_patch_discarded.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn should_finish_startup_apply_patch_discard(&self) -> bool {
+        self.startup_apply_patch_discard_complete
+            .load(Ordering::SeqCst)
+    }
+
+    fn mark_startup_apply_patch_discarded(&self) {
+        self.startup_apply_patch_discarded
+            .store(true, Ordering::SeqCst);
+    }
+
+    fn mark_startup_apply_patch_discard_complete(&self) {
+        self.startup_apply_patch_discard_complete
+            .store(true, Ordering::SeqCst);
+    }
+
+    fn should_stop_accepting_commands(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst) || self.startup_apply_patch_discarded()
     }
 
     pub(crate) fn snapshot(&self) -> StreamedCommandRunSnapshot {
@@ -95,6 +122,7 @@ pub(crate) struct SpawnStreamedCommandRunTask {
     pub(crate) started_at: DateTime<Utc>,
     pub(crate) state: StreamedCommandRunState,
     pub(crate) runtime_status: RuntimeSessionSyncStatus,
+    pub(crate) require_startup_task_state: bool,
 }
 
 #[derive(Clone)]
@@ -180,7 +208,7 @@ pub(crate) fn spawn_streamed_command_run_task(
                 });
             }
 
-            if input.state.cancelled.load(Ordering::SeqCst) {
+            if input.state.should_stop_accepting_commands() {
                 receiver_open = false;
                 pending.clear();
             }
@@ -286,6 +314,9 @@ pub(crate) fn spawn_streamed_command_run_task(
         if halted_before_finish {
             input.state.cancelled.store(true, Ordering::SeqCst);
         }
+        if input.state.startup_apply_patch_discarded() && !checkpoint_ack_failed {
+            input.state.mark_startup_apply_patch_discard_complete();
+        }
         final_results
     })
 }
@@ -347,6 +378,15 @@ fn prepare_stream_command(
         }
     };
     let step = step_normalizer.normalize(&mut command);
+    if input.require_startup_task_state && command_is_apply_patch(&command) {
+        tracing::warn!(
+            session_id = %input.session_id,
+            runtime_id = %input.runtime_id,
+            "discarding streamed apply_patch before startup task_type is effective"
+        );
+        input.state.mark_startup_apply_patch_discarded();
+        return None;
+    }
     let command_id = streamed_command_id(&input.call_id, &tool_call_id, command_index);
     attach_command_identity(
         &mut command,
@@ -596,7 +636,12 @@ fn start_stream_command(
     });
 
     let mut live_results = results.to_vec();
-    live_results.push(command_run_live_delta_result(&live_command, "", ""));
+    live_results.push(command_run_live_delta_result(
+        &live_command,
+        "",
+        "",
+        command_started_at,
+    ));
     publish_streamed_command_run_update(StreamedCommandRunUpdate {
         session_id: &input.session_id,
         runtime_id: &input.runtime_id,
@@ -696,6 +741,16 @@ fn command_step(command: &Value) -> u64 {
         .max(1)
 }
 
+fn command_is_apply_patch(command: &Value) -> bool {
+    command
+        .get("command")
+        .or_else(|| command.get("command_type"))
+        .and_then(Value::as_str)
+        .map(code_tools::commands::canonical_command)
+        .as_deref()
+        == Some("apply_patch")
+}
+
 fn record_completed_results(
     state: &StreamedCommandRunState,
     results: &mut Vec<Value>,
@@ -757,10 +812,50 @@ pub(crate) fn apply_cancelled_streamed_command_run_result(
     runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at));
 }
 
+pub(crate) fn apply_startup_apply_patch_discarded_streamed_command_run_result(
+    runtime: &mut RuntimeManagement,
+    commands: &[Value],
+    events: &[Value],
+    results: &[Value],
+    finished_at: DateTime<Utc>,
+) {
+    runtime.set_output(streamed_command_run_output(
+        commands, events, results, false,
+    ));
+    runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at));
+}
+
+pub(crate) fn ensure_streamed_command_run_tool_record(
+    runtime: &mut RuntimeManagement,
+    commands: &[Value],
+    finished_at: DateTime<Utc>,
+) {
+    if commands.is_empty()
+        || runtime
+            .tool_call
+            .iter()
+            .any(|record| record.tool_called_name == COMMAND_RUN_TOOL_NAME)
+    {
+        return;
+    }
+    let mut record = streamed_command_run_tool_record(commands, finished_at);
+    record.provider_metadata = streamed_command_run_provider_metadata(commands);
+    runtime.push_tool_call(record);
+}
+
 fn cancelled_streamed_command_run_output(
     commands: &[Value],
     events: &[Value],
     results: &[Value],
+) -> Value {
+    streamed_command_run_output(commands, events, results, true)
+}
+
+fn streamed_command_run_output(
+    commands: &[Value],
+    events: &[Value],
+    results: &[Value],
+    cancelled: bool,
 ) -> Value {
     let events = events
         .iter()
@@ -775,8 +870,7 @@ fn cancelled_streamed_command_run_output(
             "commands": commands,
             "command_events": events,
             "results": results,
-            "early_finish_reason": "apply_patch_failed",
-            "cancelled": true,
+            "cancelled": cancelled,
         }
     })
 }
@@ -800,11 +894,29 @@ fn streamed_command_run_tool_record(
     }
 }
 
+fn streamed_command_run_provider_metadata(commands: &[Value]) -> Option<Value> {
+    let provider_call_id = commands
+        .iter()
+        .find_map(|command| {
+            command
+                .get("provider_tool_call_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })?
+        .to_string();
+    Some(serde_json::json!({
+        "id": provider_call_id,
+        "call_id": provider_call_id,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_cancelled_streamed_command_run_result, spawn_streamed_command_run_task,
-        streamed_command_already_seen, SpawnStreamedCommandRunTask, StreamedCommandRunState,
+        apply_cancelled_streamed_command_run_result, ensure_streamed_command_run_tool_record,
+        spawn_streamed_command_run_task, streamed_command_already_seen,
+        SpawnStreamedCommandRunTask, StreamedCommandRunState,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{
@@ -891,7 +1003,7 @@ mod tests {
         let output = runtime.output.as_ref().expect("output should be set");
         assert_eq!(
             output.pointer("/streamed_command_run_result/early_finish_reason"),
-            Some(&json!("apply_patch_failed"))
+            None
         );
         assert_eq!(
             output.pointer("/streamed_command_run_result/cancelled"),
@@ -905,6 +1017,62 @@ mod tests {
         );
         assert_eq!(runtime.tool_call[0].tool_received_at, finished_at);
         assert_eq!(runtime.state, RuntimeState::Created);
+    }
+
+    #[test]
+    fn completed_streamed_command_run_record_uses_stream_provider_call_id() {
+        let mut runtime = runtime();
+        let finished_at = runtime.created_at;
+        let commands = vec![json!({
+            "command_type": "task_status",
+            "command_line": "{\"status\":\"doing\"}",
+            "provider_tool_call_id": "call_streamed_command_run"
+        })];
+
+        ensure_streamed_command_run_tool_record(&mut runtime, &commands, finished_at);
+
+        assert_eq!(runtime.tool_call.len(), 1);
+        assert_eq!(runtime.tool_call[0].tool_called_name, "command_run");
+        assert_eq!(
+            runtime.tool_call[0].tool_called_input,
+            json!({ "commands": commands })
+        );
+        assert_eq!(
+            runtime.tool_call[0].provider_metadata,
+            Some(json!({
+                "id": "call_streamed_command_run",
+                "call_id": "call_streamed_command_run"
+            }))
+        );
+        assert_eq!(runtime.tool_call[0].tool_received_at, finished_at);
+    }
+
+    #[test]
+    fn completed_streamed_command_run_record_does_not_duplicate_provider_record() {
+        let mut runtime = runtime();
+        let finished_at = runtime.created_at;
+        let commands = vec![json!({ "provider_tool_call_id": "call_streamed_command_run" })];
+        runtime.push_tool_call(crate::state_machine::runtime_management::ToolCallRecord {
+            tool_called_name: "command_run".to_string(),
+            tool_called_input: json!({ "commands": [] }),
+            provider_metadata: Some(json!({ "id": "call_existing" })),
+            tool_received_at: finished_at,
+            tool_executed_at: finished_at,
+            tool_calldata_received_at: finished_at,
+            tool_reported_success: false,
+            agent_reported_success: false,
+            agent_reported_helpful: false,
+            agent_reported_summary: String::new(),
+            validator_reported_success: None,
+        });
+
+        ensure_streamed_command_run_tool_record(&mut runtime, &commands, finished_at);
+
+        assert_eq!(runtime.tool_call.len(), 1);
+        assert_eq!(
+            runtime.tool_call[0].provider_metadata,
+            Some(json!({ "id": "call_existing" }))
+        );
     }
 
     #[test]
@@ -928,6 +1096,7 @@ mod tests {
             started_at: Utc::now(),
             state,
             runtime_status: runtime().session_sync_status(),
+            require_startup_task_state: false,
         });
 
         stream_tx
@@ -997,6 +1166,7 @@ mod tests {
             started_at: Utc::now(),
             state,
             runtime_status: runtime().session_sync_status(),
+            require_startup_task_state: false,
         });
 
         stream_tx
@@ -1083,6 +1253,7 @@ mod tests {
             started_at: Utc::now(),
             state,
             runtime_status: runtime().session_sync_status(),
+            require_startup_task_state: false,
         });
 
         stream_tx
@@ -1096,6 +1267,54 @@ mod tests {
             .expect("streamed command task should not panic");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0]["output"], "callback-fast");
+    }
+
+    #[test]
+    fn startup_task_state_streaming_discards_apply_patch_without_cancel_failure() {
+        let _guard = STREAMING_TEST_ENV
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let router = MockStreamingRouter::start();
+        let _router_env = EnvGuard::set("TURA_ROUTER_ADDR", &router.addr);
+        let _gateway_env = EnvGuard::set("TURA_GATEWAY_CALLBACKS", "off");
+        let (stream_tx, stream_rx) = mpsc::channel();
+        let state = StreamedCommandRunState::new();
+        let state_for_assert = state.clone();
+        let handle = spawn_streamed_command_run_task(SpawnStreamedCommandRunTask {
+            stream_rx,
+            session_directory: std::env::temp_dir(),
+            allowed_command_run_commands: None,
+            session_id: "stream-session-startup-discard".to_string(),
+            runtime_id: "stream-runtime-startup-discard".to_string(),
+            provider: json!({ "provider": "test" }),
+            call_id: "stream-call-startup-discard".to_string(),
+            started_at: Utc::now(),
+            state,
+            runtime_status: runtime().session_sync_status(),
+            require_startup_task_state: true,
+        });
+
+        stream_tx
+            .send(stream_command_event("before-discard", 1, 0))
+            .expect("first command event should send");
+        router.wait_for_started(&["before-discard"], Duration::from_secs(2));
+        stream_tx
+            .send(stream_apply_patch_event(1))
+            .expect("startup-gate apply patch event should send");
+        drop(stream_tx);
+
+        let results = handle
+            .join()
+            .expect("streamed command task should not panic");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["output"], "before-discard");
+        assert!(state_for_assert.startup_apply_patch_discarded());
+        assert!(state_for_assert.should_finish_startup_apply_patch_discard());
+        assert!(!state_for_assert.cancelled.load(Ordering::SeqCst));
+        let snapshot = state_for_assert.snapshot();
+        assert_eq!(snapshot.commands.len(), 1);
+        assert_eq!(snapshot.commands[0]["label"], "before-discard");
     }
 
     fn stream_command_event(
@@ -1114,6 +1333,18 @@ mod tests {
                     "command": "Test-Path .",
                     "timeout_ms": 5000
                 }).to_string()
+            }),
+        }
+    }
+
+    fn stream_apply_patch_event(command_index: usize) -> tura_llm_rust::ProviderStreamEvent {
+        tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady {
+            tool_call_id: "stream-tool-call".to_string(),
+            command_index,
+            command: json!({
+                "step": 1,
+                "command": "apply_patch",
+                "command_line": "ignored patch body"
             }),
         }
     }

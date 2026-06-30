@@ -72,6 +72,21 @@ fn gateway_uses_router_enqueue_and_direct_session_db_client() {
 }
 
 #[test]
+fn gateway_abort_and_delete_force_stop_runtime_before_session_db_delete() {
+    let session_api = read("crates/gateway/src/api/session.rs");
+    assert!(
+        session_api.contains("let abort = abort_session_scope(&session_id);")
+            && session_api.contains("SessionLogCommand::DeleteSession"),
+        "delete_session must abort the session scope before deleting session DB state"
+    );
+    assert!(
+        session_api.contains("router.kill_session_workers(id)")
+            && !session_api.contains("router.cancel_turn(id, None)"),
+        "abort_session must ask router to force-stop runtime workers, not soft-cancel turns"
+    );
+}
+
+#[test]
 fn runtime_session_db_client_uses_file_queue_without_one_shot_processes() {
     let path = "crates/runtime/src/session_log_client.rs";
     let source = read(path);
@@ -181,20 +196,23 @@ fn runtime_acks_streamed_command_checkpoints_through_session_db() {
 }
 
 #[test]
-fn gui_dev_gateway_is_parent_owned_and_refuses_unknown_port_owner() {
+fn gui_dev_gateway_tracks_active_url_and_refuses_unknown_port_owner() {
     let vite = read("apps/gui/app/vite.config.ts");
     assert!(
-        vite.contains("ownedGatewayChild")
-            && vite.contains("server.httpServer?.once(\"close\"")
-            && vite.contains("killOwnedGateway()"),
-        "GUI dev must keep an owned gateway child and kill it when Vite closes"
+        vite.contains("ACTIVE_GATEWAY_ENV_FILE")
+            && vite.contains("TURA_GATEWAY_URL_ENV")
+            && vite.contains("writeActiveGatewayUrl")
+            && vite.contains("readActiveGatewayUrl"),
+        "GUI dev must persist and reuse the active gateway URL across dev-server requests"
     );
     assert!(
         !vite.contains("detached: true") && !vite.contains("child.unref()"),
         "GUI dev gateway must not be detached or unrefed"
     );
     assert!(
-        vite.contains("canBindGatewayUrl") && vite.contains("unknown or foreign process"),
+        vite.contains("canBindGatewayUrl")
+            && vite.contains("terminateGatewayFromLock")
+            && vite.contains("unknown or foreign process"),
         "GUI dev must fail rather than spawn when the gateway port is occupied by an unknown process"
     );
 }

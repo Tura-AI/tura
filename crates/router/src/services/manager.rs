@@ -16,22 +16,64 @@ use super::{
 pub struct ServiceManager {
     workers: Arc<RwLock<HashMap<String, Arc<WorkerProcess>>>>,
     service_to_worker: Arc<RwLock<HashMap<String, String>>>,
-    ensure_lock: Arc<Mutex<()>>,
+    ensure_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
 }
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExistingWorkerPolicy {
+    Reuse,
+    Reject,
+}
+
+#[derive(Debug)]
+pub struct WorkerAlreadyRunning {
+    pub key: String,
+    pub worker_id: String,
+}
+
+impl std::fmt::Display for WorkerAlreadyRunning {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "worker key {} is already running as {}",
+            self.key, self.worker_id
+        )
+    }
+}
+
+impl std::error::Error for WorkerAlreadyRunning {}
 
 impl ServiceManager {
     pub fn new() -> Self {
         Self {
             workers: Arc::new(RwLock::new(HashMap::new())),
             service_to_worker: Arc::new(RwLock::new(HashMap::new())),
-            ensure_lock: Arc::new(Mutex::new(())),
+            ensure_locks: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Ensure a worker from a declarative spec, reusing by `spec.key` while the
     /// process is healthy and replacing it after liveness checks fail.
+    #[allow(dead_code)]
     pub async fn ensure_worker(&self, spec: WorkerSpec) -> Result<WorkerHandle> {
-        let _guard = self.ensure_lock.lock().await;
+        self.ensure_worker_inner(spec, ExistingWorkerPolicy::Reuse)
+            .await
+    }
+
+    /// Start a worker only if no live worker is already registered for `spec.key`.
+    pub async fn ensure_exclusive_worker(&self, spec: WorkerSpec) -> Result<WorkerHandle> {
+        self.ensure_worker_inner(spec, ExistingWorkerPolicy::Reject)
+            .await
+    }
+
+    async fn ensure_worker_inner(
+        &self,
+        spec: WorkerSpec,
+        existing_policy: ExistingWorkerPolicy,
+    ) -> Result<WorkerHandle> {
+        let ensure_lock = self.ensure_lock_for_key(&spec.key);
+        let _guard = ensure_lock.lock().await;
         let existing_worker_id = {
             let service_to_worker = self.service_to_worker.read();
             service_to_worker.get(&spec.key).cloned()
@@ -44,6 +86,13 @@ impl ServiceManager {
             };
             if let Some(worker) = worker {
                 if worker.is_alive().await {
+                    if existing_policy == ExistingWorkerPolicy::Reject {
+                        return Err(WorkerAlreadyRunning {
+                            key: spec.key,
+                            worker_id: existing_id,
+                        }
+                        .into());
+                    }
                     info!(
                         worker_id = existing_id,
                         key = spec.key,
@@ -83,6 +132,18 @@ impl ServiceManager {
         Ok(WorkerHandle {
             worker_id: worker_id.clone(),
         })
+    }
+
+    fn ensure_lock_for_key(&self, key: &str) -> Arc<Mutex<()>> {
+        if let Some(lock) = self.ensure_locks.read().get(key).cloned() {
+            return lock;
+        }
+        let mut locks = self.ensure_locks.write();
+        Arc::clone(
+            locks
+                .entry(key.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(()))),
+        )
     }
 
     /// Count active workers under a key prefix for concurrency limits.
@@ -236,6 +297,27 @@ mod tests {
             .expect("same key should reuse existing one-shot worker");
 
         assert_eq!(first.worker_id, second.worker_id);
+        assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 1);
+    }
+
+    #[tokio::test]
+    async fn ensure_exclusive_worker_rejects_alive_worker_for_same_key() {
+        let manager = ServiceManager::new();
+        let first = manager
+            .ensure_exclusive_worker(missing_worker_spec("runtime_worker:session-exclusive"))
+            .await
+            .expect("first worker should be registered");
+
+        let error = manager
+            .ensure_exclusive_worker(missing_worker_spec("runtime_worker:session-exclusive"))
+            .await
+            .expect_err("same key should reject while the first worker is alive");
+        let duplicate = error
+            .downcast_ref::<super::WorkerAlreadyRunning>()
+            .expect("exclusive worker rejection should use a structured error");
+
+        assert_eq!(duplicate.key, "runtime_worker:session-exclusive");
+        assert_eq!(duplicate.worker_id, first.worker_id);
         assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 1);
     }
 

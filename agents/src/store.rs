@@ -25,6 +25,10 @@ pub struct AgentConfig {
     pub default_config: bool,
     #[serde(default)]
     pub reflection: bool,
+    #[serde(default = "default_op_manual")]
+    pub op_manual: bool,
+    #[serde(default)]
+    pub self_reflection: bool,
     pub provider: serde_json::Value,
     #[serde(default)]
     pub agent_prompt: Vec<serde_json::Value>,
@@ -61,6 +65,10 @@ pub struct StoredAgent {
 }
 
 fn default_report_to_user() -> bool {
+    true
+}
+
+fn default_op_manual() -> bool {
     true
 }
 
@@ -192,6 +200,8 @@ pub fn default_agent_config(project_root: &Path, agent_id: &str) -> Result<Agent
         report_to_user: true,
         default_config: false,
         reflection: false,
+        op_manual: true,
+        self_reflection: false,
         provider: serde_json::json!({
             "default_model_tier": "thinking",
             "tura_llm_name": "thinking",
@@ -369,6 +379,8 @@ mod tests {
         assert!(config.report_to_user);
         assert!(!config.default_config);
         assert!(!config.reflection);
+        assert!(config.op_manual);
+        assert!(!config.self_reflection);
         assert_eq!(config.provider["default_model_tier"], "thinking");
         assert_eq!(config.provider["tura_llm_name"], "thinking");
         assert_eq!(config.provider["model_reasoning_effort"], "high");
@@ -473,21 +485,29 @@ mod tests {
     }
 
     #[test]
-    fn built_in_agent_configs_only_enable_reflection_for_thoughtful() {
+    fn built_in_agent_configs_only_enable_reflective_flags_for_thoughtful() {
         let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("agents crate should live under project root");
 
-        for (agent_id, expected_reflection) in [
-            ("thoughtful", true),
-            ("balanced", false),
-            ("direct", false),
-            ("direct-text-only", false),
+        for (agent_id, expected_reflection, expected_op_manual, expected_self_reflection) in [
+            ("thoughtful", true, true, true),
+            ("balanced", false, true, false),
+            ("direct", false, false, false),
+            ("direct-text-only", false, false, false),
         ] {
             let agent = load_agent(project_root, agent_id).expect("built-in agent should load");
             assert_eq!(
                 agent.config.reflection, expected_reflection,
                 "unexpected reflection config for {agent_id}"
+            );
+            assert_eq!(
+                agent.config.op_manual, expected_op_manual,
+                "unexpected op_manual config for {agent_id}"
+            );
+            assert_eq!(
+                agent.config.self_reflection, expected_self_reflection,
+                "unexpected self_reflection config for {agent_id}"
             );
         }
     }

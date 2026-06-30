@@ -5,7 +5,7 @@ import { userFacingError } from "../gateway/errors.js";
 import type { MockGatewayClient } from "../gateway/mock-client.js";
 import type { ProviderAuthStatus } from "../types/provider.js";
 import type { Session } from "../types/session.js";
-import { isDraftSession, sessionUpdatedAt } from "../types/session.js";
+import { isDraftSession, sessionSortAt } from "../types/session.js";
 import { t } from "../i18n.js";
 import { reducer, type AppAction, type AppState } from "./reducer.js";
 import { createDraftSession } from "./session-state.js";
@@ -14,9 +14,14 @@ export type TuiGatewayClient = GatewayClient | MockGatewayClient;
 export type TuiDispatch = (action: AppAction) => void;
 export type TuiGetState = () => AppState;
 
-export async function pickInitialSession(client: TuiGatewayClient, cwd: string): Promise<Session> {
+export async function pickInitialSession(
+  client: TuiGatewayClient,
+  cwd: string,
+  initialSessionId?: string,
+): Promise<Session> {
+  if (initialSessionId) return client.getSession(initialSessionId);
   const sessions = await client.listSessions({ includeChildren: true, limit: 20 });
-  sessions.sort((left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left));
+  sessions.sort((left, right) => sessionSortAt(right) - sessionSortAt(left));
   if (sessions[0]) return sessions[0];
   return client.createSession().catch(() => createDraftSession(cwd));
 }
@@ -27,10 +32,11 @@ export async function hydrate(
   session: Session,
 ): Promise<AppState> {
   const draft = isDraftSession(session);
-  const [messages, providers, sessionConfig, agents, personas] = await Promise.all([
+  const [messages, providers, sessionConfig, modelConfig, agents, personas] = await Promise.all([
     draft ? Promise.resolve([]) : client.listMessages(session.id).catch(() => []),
     client.listProviders().catch(() => undefined),
     client.getSessionConfig().catch(() => undefined),
+    client.modelConfig().catch(() => undefined),
     client.listAgents().catch(() => []),
     client.listPersonas().catch(() => []),
   ]);
@@ -54,6 +60,7 @@ export async function hydrate(
       authMethods: auth.methods,
       authStatuses: auth.statuses,
       sessionConfig,
+      modelConfig,
     }),
     {
       type: "questions",
@@ -100,6 +107,7 @@ export async function eventLoop(
         value: t("eventStreamReconnecting", {
           error: userFacingError(error),
         }),
+        transient: true,
       });
       await delay(1000, undefined, { signal }).catch(() => undefined);
     } finally {

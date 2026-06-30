@@ -199,105 +199,8 @@ fn tool_call_persistent_to_store(tool_call: &SendAgentToolCall) -> bool {
     tool_call.tool_name != "command_run" && !is_transient_tool_call(tool_call)
 }
 
-fn tool_call_visible_to_frontend(tool_call: &SendAgentToolCall) -> bool {
-    if tool_call.tool_name != "command_run" {
-        return true;
-    }
-
-    let has_task_status = task_status_payload(&tool_call.state)
-        || tool_call.metadata.as_ref().is_some_and(task_status_payload);
-    if !has_task_status {
-        return true;
-    }
-
-    command_run_has_frontend_visible_payload(&tool_call.state)
-        || tool_call
-            .metadata
-            .as_ref()
-            .is_some_and(command_run_has_frontend_visible_payload)
-}
-
-fn task_status_payload(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Object(object) => {
-            object.contains_key("task_status")
-                || object
-                    .get("command_type")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|value| value.eq_ignore_ascii_case("task_status"))
-                || object.values().any(task_status_payload)
-        }
-        serde_json::Value::Array(items) => items.iter().any(task_status_payload),
-        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
-            .ok()
-            .is_some_and(|value| task_status_payload(&value)),
-        _ => false,
-    }
-}
-
-fn command_run_has_frontend_visible_payload(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Object(object) => {
-            ["commands", "results"].iter().any(|key| {
-                object
-                    .get(*key)
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|items| items.iter().any(command_run_visible_record))
-            }) || ["input", "output", "streamed_command_run_result", "metadata"]
-                .iter()
-                .any(|key| {
-                    object
-                        .get(*key)
-                        .is_some_and(command_run_has_frontend_visible_payload)
-                })
-        }
-        serde_json::Value::Array(items) => items.iter().any(command_run_visible_record),
-        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
-            .ok()
-            .is_some_and(|value| command_run_has_frontend_visible_payload(&value)),
-        _ => false,
-    }
-}
-
-fn command_run_visible_record(value: &serde_json::Value) -> bool {
-    if task_status_payload(value) {
-        return false;
-    }
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    [
-        "command_line",
-        "display_command",
-        "command",
-        "name",
-        "command_type",
-    ]
-    .iter()
-    .any(|key| {
-        object
-            .get(*key)
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty())
-    }) || object
-        .get("command")
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|command| {
-            [
-                "command_line",
-                "display_command",
-                "command",
-                "name",
-                "command_type",
-            ]
-            .iter()
-            .any(|key| {
-                command
-                    .get(*key)
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|value| !value.trim().is_empty())
-            })
-        })
+fn tool_call_visible_to_frontend(_tool_call: &SendAgentToolCall) -> bool {
+    true
 }
 
 fn transient_tool_message_response(
@@ -1500,7 +1403,7 @@ mod tests {
     }
 
     #[test]
-    fn command_run_task_status_is_neither_visible_nor_persistent() {
+    fn command_run_task_status_is_visible_but_not_persistent() {
         let tool_call = SendAgentToolCall {
             tool_name: "command_run".to_string(),
             call_id: "call-task-status".to_string(),
@@ -1517,7 +1420,7 @@ mod tests {
         };
 
         assert!(is_transient_tool_call(&tool_call));
-        assert!(!tool_call_visible_to_frontend(&tool_call));
+        assert!(tool_call_visible_to_frontend(&tool_call));
         assert!(!tool_call_persistent_to_store(&tool_call));
     }
 

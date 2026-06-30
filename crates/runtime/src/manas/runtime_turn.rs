@@ -1,4 +1,4 @@
-use crate::prompt_style::{agent_identity, compact_context, PromptBuilder};
+use crate::prompt_style::{agent_identity, compact_context, self_reflection, PromptBuilder};
 use crate::runtime::call_runtime::{call_runtime, CallRuntimeInput};
 use crate::runtime::create_runtime::{
     create_runtime, runtime_provider_config_from_tura, CreateRuntimeInput,
@@ -10,7 +10,7 @@ use crate::state_machine::session_management::SessionManagement;
 #[cfg(test)]
 use crate::state_machine::session_management::DEFAULT_CONTEXT_TOKEN_LIMIT;
 
-use super::agent_prompts::load_agent_system_prompt_messages;
+use super::agent_prompts::{active_persona_display_name, load_agent_system_prompt_messages};
 use super::constants::{COMMAND_RUN_TOOL, PLANNING_TOOL};
 use super::prompt_messages::messages_for_turn_with_context_limit;
 use super::tool_catalog::{
@@ -45,6 +45,7 @@ pub(crate) fn execute_turn(
     );
     let planning_enabled = agent_commands.contains(PLANNING_TOOL);
     let disable_tool_invocation = is_final_turn || force_no_tools;
+    let require_startup_task_state = session.task_type.is_empty();
     let mut tools = load_agent_capabilities_with_commands(agent, session, &agent_commands)?;
     if planning_tool_disabled() {
         tools.retain(|tool| tool_schema_name(tool) != Some(PLANNING_TOOL));
@@ -91,16 +92,14 @@ pub(crate) fn execute_turn(
             compact_prompt_injection_limit_tokens(settings.as_ref(), &runtime_provider_config);
         let language = session_language();
         let user_name = session_user_name();
-        let identity = PromptBuilder::new()
-            .part(agent_identity::agent_identity(
-                &agent.agent_name,
-                &user_name,
-                &runtime_provider_config.model_name,
-                &runtime_provider_config.llm_provider_name,
-                compact_limit_tokens,
-                &language,
-            ))
-            .render();
+        let identity = turn_identity(
+            agent,
+            &user_name,
+            &runtime_provider_config.model_name,
+            &runtime_provider_config.llm_provider_name,
+            compact_limit_tokens,
+            &language,
+        );
         let mut runtime_messages = vec![serde_json::json!({
             "role": "system",
             "content": identity,
@@ -131,6 +130,7 @@ pub(crate) fn execute_turn(
                 ),
             );
         }
+        append_self_reflection_tail_prompt(&mut runtime_messages, agent, session);
         session.context_tokens.input = provider_context_input_tokens(session).unwrap_or(0);
         session.context_tokens.limit = compact_limit_tokens;
         let (runtime, queue_item) = create_runtime(CreateRuntimeInput {
@@ -158,6 +158,7 @@ pub(crate) fn execute_turn(
                 tool_choice: tool_choice_for_turn(),
                 session_directory: session.session_directory.clone(),
                 allowed_command_run_commands: Some(agent_commands),
+                require_startup_task_state,
             },
             settings,
             config,
@@ -359,6 +360,45 @@ fn tool_choice_for_turn() -> Option<serde_json::Value> {
     Some(serde_json::json!("auto"))
 }
 
+fn turn_identity(
+    agent: &AgentManagement,
+    user_name: &str,
+    model_name: &str,
+    llm_provider_name: &str,
+    active_context_limit_tokens: u64,
+    language: &str,
+) -> String {
+    let persona_or_agent_name =
+        active_persona_display_name(agent).unwrap_or_else(|| agent.agent_name.clone());
+    PromptBuilder::new()
+        .part(agent_identity::agent_identity(
+            &persona_or_agent_name,
+            user_name,
+            model_name,
+            llm_provider_name,
+            active_context_limit_tokens,
+            language,
+        ))
+        .render()
+}
+
+fn append_self_reflection_tail_prompt(
+    messages: &mut Vec<serde_json::Value>,
+    agent: &AgentManagement,
+    session: &SessionManagement,
+) {
+    if !agent.self_reflection && !session.goal_mode {
+        return;
+    }
+
+    crate::prompt_style::tail_injection::append_tail_prompt(
+        messages,
+        crate::prompt_style::tail_injection::TailPrompt::developer(
+            self_reflection::self_reflection_tail_prompt(session),
+        ),
+    );
+}
+
 fn move_command_run_to_end(tools: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
     let (mut others, mut command_run): (Vec<_>, Vec<_>) = tools
         .into_iter()
@@ -374,9 +414,6 @@ mod tests {
     use crate::state_machine::runtime_management::RuntimeProviderConfig;
     use std::collections::HashMap;
     use std::ffi::OsString;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn turns_use_auto_tool_choice_for_prompt_cache_stability() {
@@ -384,8 +421,146 @@ mod tests {
     }
 
     #[test]
+    fn identity_uses_active_persona_display_name_instead_of_agent_name() {
+        let _guard = crate::manas::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let previous_persona = std::env::var_os("TURA_SESSION_PERSONA");
+        let previous_root = std::env::var_os("TURA_PROJECT_ROOT");
+        let previous_frontend_source = std::env::var_os("TURA_FRONTEND_SOURCE");
+        let run_id = format!(
+            "tura-runtime-identity-persona-test-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let root = std::env::temp_dir().join(run_id);
+        let agent_dir = root.join("agents").join("src").join("balanced");
+        let prompt_dir = root
+            .join("personas")
+            .join("src")
+            .join("guide")
+            .join("prompt");
+        std::fs::create_dir_all(&agent_dir).expect("agent dir should be created");
+        std::fs::create_dir_all(&prompt_dir).expect("persona prompt dir should be created");
+        std::fs::write(prompt_dir.join("persona.md"), "persona prompt")
+            .expect("persona prompt should be written");
+        std::fs::write(
+            root.join("personas")
+                .join("src")
+                .join("guide")
+                .join("persona_config.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "persona_name": "guide",
+                "display_name": "Guide",
+                "description": "Guide persona",
+                "short_description": "Guide",
+                "default_config": true,
+                "persona_directory": "personas/src/guide",
+                "prompt_directory": "personas/src/guide/prompt",
+                "media": null,
+                "metadata": {}
+            }))
+            .expect("persona config should encode"),
+        )
+        .expect("persona config should be written");
+
+        std::env::set_var("TURA_SESSION_PERSONA", "guide");
+        std::env::set_var("TURA_PROJECT_ROOT", &root);
+        std::env::remove_var("TURA_FRONTEND_SOURCE");
+
+        let agent = AgentManagement::new(
+            "agent-id".to_string(),
+            "balanced".to_string(),
+            agent_dir,
+            None,
+            true,
+            false,
+            false,
+            false,
+            ProviderConfig {
+                tura_llm_name: "fast".to_string(),
+                default_model_tier: None,
+                current_model: None,
+                stream: true,
+                temperature: 0.0,
+                max_tokens: 0,
+                tool_choice: ToolChoice::Auto,
+                time_out_ms: 30_000,
+            },
+            crate::state_machine::agent_management::ValidatorConfig {
+                need_validator: false,
+                validator_name: None,
+            },
+            chrono::Utc::now(),
+        );
+
+        let identity = turn_identity(&agent, "Local User", "gpt-5.5", "codex", 255_000, "en");
+
+        assert!(
+            identity.starts_with("You are Guide, an agent."),
+            "{identity}"
+        );
+        assert!(!identity.starts_with("You are balanced"), "{identity}");
+
+        restore_env("TURA_SESSION_PERSONA", previous_persona);
+        restore_env("TURA_PROJECT_ROOT", previous_root);
+        restore_env("TURA_FRONTEND_SOURCE", previous_frontend_source);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn self_reflection_tail_prompt_appends_for_reflective_agent_as_last_message() {
+        let mut session = session_for_tail_prompt();
+        session.task_type =
+            crate::prompt_style::runtime_prompt_manual::normalize_task_type_ids(["debug"]);
+        let mut agent = agent_for_tail_prompt(false);
+        agent.self_reflection = true;
+        let mut messages = vec![serde_json::json!({"role": "user", "content": "work"})];
+
+        append_self_reflection_tail_prompt(&mut messages, &agent, &session);
+
+        let tail = messages.last().expect("tail prompt should be appended");
+        assert_eq!(tail["role"], "developer");
+        let content = tail["content"].as_str().expect("tail content");
+        assert!(content.contains("Debug Operation Manual"), "{content}");
+        assert!(content.contains("complete the required `Self Reflection`"));
+    }
+
+    #[test]
+    fn self_reflection_tail_prompt_appends_for_goal_mode_without_agent_flag() {
+        let mut session = session_for_tail_prompt();
+        session.goal_mode = true;
+        session.task_type =
+            crate::prompt_style::runtime_prompt_manual::normalize_task_type_ids(["frontend"]);
+        let agent = agent_for_tail_prompt(false);
+        let mut messages = vec![serde_json::json!({"role": "user", "content": "work"})];
+
+        append_self_reflection_tail_prompt(&mut messages, &agent, &session);
+
+        let tail = messages.last().expect("tail prompt should be appended");
+        assert_eq!(tail["role"], "developer");
+        let content = tail["content"].as_str().expect("tail content");
+        assert!(
+            content.contains("Visual Operation Manual, Frontend Operation Manual"),
+            "{content}"
+        );
+    }
+
+    #[test]
+    fn self_reflection_tail_prompt_skips_when_disabled_and_not_goal_mode() {
+        let session = session_for_tail_prompt();
+        let agent = agent_for_tail_prompt(false);
+        let mut messages = vec![serde_json::json!({"role": "user", "content": "work"})];
+
+        append_self_reflection_tail_prompt(&mut messages, &agent, &session);
+
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
     fn compact_limits_use_distinct_model_percentages_when_smaller_than_caps() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _guard = crate::manas::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let _env = clean_context_limit_env();
         let settings = settings_with_model_context("openai", "gpt-small", 128_000);
         let provider = runtime_provider("openai", "gpt-small");
@@ -402,7 +577,9 @@ mod tests {
 
     #[test]
     fn compact_limits_use_distinct_caps_for_large_models() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _guard = crate::manas::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let _env = clean_context_limit_env();
         let settings = settings_with_model_context("openai", "gpt-large", 1_000_000);
         let provider = runtime_provider("openai", "gpt-large");
@@ -419,7 +596,9 @@ mod tests {
 
     #[test]
     fn compact_limits_honor_fixed_context_env_override() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _guard = crate::manas::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let _env = clean_context_limit_env();
         std::env::set_var("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", "4096");
         let settings = settings_with_model_context("openai", "gpt-large", 1_000_000);
@@ -539,7 +718,9 @@ mod tests {
 
     #[test]
     fn model_context_window_uses_catalog_without_compact_cap() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _guard = crate::manas::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let _env = clean_context_limit_env();
         let settings = settings_with_model_context("codex", "gpt-5.5", 1_050_000);
         let provider = runtime_provider("codex", "gpt-5.5");
@@ -603,6 +784,53 @@ mod tests {
             provider_url_name: provider_id.to_string(),
             llm_provider_name: provider_id.to_string(),
         }
+    }
+
+    fn agent_for_tail_prompt(self_reflection: bool) -> AgentManagement {
+        AgentManagement::new(
+            "agent-tail".to_string(),
+            "tail".to_string(),
+            std::path::PathBuf::from("agents/tail"),
+            None,
+            true,
+            false,
+            false,
+            self_reflection,
+            ProviderConfig {
+                tura_llm_name: "fast".to_string(),
+                default_model_tier: None,
+                current_model: None,
+                stream: true,
+                temperature: 0.0,
+                max_tokens: 0,
+                tool_choice: ToolChoice::Auto,
+                time_out_ms: 30_000,
+            },
+            crate::state_machine::agent_management::ValidatorConfig {
+                need_validator: false,
+                validator_name: None,
+            },
+            chrono::Utc::now(),
+        )
+    }
+
+    fn session_for_tail_prompt() -> SessionManagement {
+        SessionManagement::new(
+            "session-tail".to_string(),
+            "tail".to_string(),
+            std::path::PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            crate::state_machine::session_management::SessionInput {
+                user_input: "work".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "work".to_string(),
+            chrono::Utc::now(),
+        )
     }
 
     fn settings_with_model_context(

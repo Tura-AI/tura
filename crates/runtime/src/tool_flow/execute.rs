@@ -32,6 +32,7 @@ pub(crate) fn execute_tool_calls(
     _redis_url: &str,
 ) -> Result<Vec<ToolExecutionResult>, String> {
     let mut results = Vec::new();
+    let require_startup_task_state = session.task_type.is_empty();
     let project_directory = project_directory_with_tools()?;
     let tools_directory = project_directory.join("crates").join("tools").join("src");
     let allowed_command_run_commands = agent.map(|agent| {
@@ -50,17 +51,54 @@ pub(crate) fn execute_tool_calls(
             tool_call.arguments.clone(),
             &session.session_directory,
         );
+        let execution_arguments = command_run_arguments_before_startup_apply_patch(
+            &tool_call.tool_name,
+            normalized_arguments.clone(),
+            require_startup_task_state,
+        );
+        let startup_apply_patch_discarded = startup_apply_patch_was_discarded(
+            &tool_call.tool_name,
+            &normalized_arguments,
+            &execution_arguments,
+            require_startup_task_state,
+        );
+        let execution_tool_call = ToolCallData {
+            tool_name: tool_call.tool_name.clone(),
+            arguments: execution_arguments.clone(),
+            provider_metadata: tool_call.provider_metadata.clone(),
+        };
         let has_streamed_command_run_result = tool_call.tool_name == COMMAND_RUN_TOOL
             && streamed_command_run_result(runtime).is_some();
         if !has_streamed_command_run_result {
             publish_tool_call_started(
                 session,
                 runtime,
-                tool_call,
-                normalized_arguments.clone(),
+                &execution_tool_call,
+                execution_arguments.clone(),
                 tool_started_at,
             );
-            publish_step_summary(session, runtime, tool_call);
+            publish_step_summary(session, runtime, &execution_tool_call);
+        }
+        if startup_apply_patch_discarded && command_run_arguments_are_empty(&execution_arguments) {
+            let execution_result = ToolExecutionResult {
+                tool_name: tool_call.tool_name.clone(),
+                arguments: execution_arguments.clone(),
+                result: serde_json::json!({ "results": [] }),
+                success: true,
+                error: None,
+            };
+            publish_tool_call_record(
+                session,
+                runtime,
+                &execution_tool_call,
+                execution_arguments,
+                &execution_result.result,
+                true,
+                None,
+                tool_started_at,
+            );
+            results.push(execution_result);
+            continue;
         }
         if let Some(blocked_result) =
             permission_denial_for_tool(&tool_call.tool_name, &normalized_arguments, runtime)
@@ -68,8 +106,8 @@ pub(crate) fn execute_tool_calls(
             publish_tool_call_record(
                 session,
                 runtime,
-                tool_call,
-                normalized_arguments,
+                &execution_tool_call,
+                execution_arguments,
                 &blocked_result.result,
                 false,
                 blocked_result.error.as_deref(),
@@ -105,7 +143,7 @@ pub(crate) fn execute_tool_calls(
                 publish_tool_call_record(
                     session,
                     runtime,
-                    tool_call,
+                    &execution_tool_call,
                     streamed_arguments,
                     &execution_result.result,
                     execution_result.success,
@@ -118,7 +156,7 @@ pub(crate) fn execute_tool_calls(
         }
         let execute_input = ExecuteToolInput {
             tool_name: tool_call.tool_name.clone(),
-            arguments: normalized_arguments.clone(),
+            arguments: execution_arguments.clone(),
             session_id: session.session_id.clone(),
             runtime_id: runtime.runtime_id.clone(),
             session_directory: session.session_directory.clone(),
@@ -149,7 +187,7 @@ pub(crate) fn execute_tool_calls(
                 Ok(false) => {
                     result = Ok(ToolExecutionResult {
                         tool_name: tool_call.tool_name.clone(),
-                        arguments: normalized_arguments.clone(),
+                        arguments: execution_arguments.clone(),
                         result: serde_json::json!({
                             "ok": false,
                             "blocked": true,
@@ -163,7 +201,7 @@ pub(crate) fn execute_tool_calls(
                     let error_message = error.clone();
                     result = Ok(ToolExecutionResult {
                         tool_name: tool_call.tool_name.clone(),
-                        arguments: normalized_arguments.clone(),
+                        arguments: execution_arguments.clone(),
                         result: serde_json::json!({
                             "ok": false,
                             "blocked": true,
@@ -190,8 +228,8 @@ pub(crate) fn execute_tool_calls(
                 publish_tool_call_record(
                     session,
                     runtime,
-                    tool_call,
-                    normalized_arguments,
+                    &execution_tool_call,
+                    execution_arguments,
                     &execution_result.result,
                     execution_result.success,
                     execution_result.error.as_deref(),
@@ -204,8 +242,8 @@ pub(crate) fn execute_tool_calls(
                 publish_tool_call_record(
                     session,
                     runtime,
-                    tool_call,
-                    normalized_arguments,
+                    &execution_tool_call,
+                    execution_arguments.clone(),
                     &serde_json::Value::Null,
                     false,
                     Some(e.as_str()),
@@ -213,7 +251,7 @@ pub(crate) fn execute_tool_calls(
                 );
                 results.push(ToolExecutionResult {
                     tool_name: tool_call.tool_name.clone(),
-                    arguments: tool_call.arguments.clone(),
+                    arguments: execution_arguments,
                     result: serde_json::Value::Null,
                     success: false,
                     error: Some(e),
@@ -246,6 +284,66 @@ fn streamed_command_run_arguments(
             })
         })
         .unwrap_or_else(|| fallback.clone())
+}
+
+fn command_run_arguments_before_startup_apply_patch(
+    tool_name: &str,
+    arguments: serde_json::Value,
+    require_startup_task_state: bool,
+) -> serde_json::Value {
+    if !require_startup_task_state || tool_name != COMMAND_RUN_TOOL {
+        return arguments;
+    }
+    truncate_command_run_arguments_before_apply_patch(arguments)
+}
+
+fn truncate_command_run_arguments_before_apply_patch(
+    mut arguments: serde_json::Value,
+) -> serde_json::Value {
+    let Some(commands) = arguments
+        .get_mut("commands")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return arguments;
+    };
+    if let Some(index) = commands.iter().position(command_is_apply_patch) {
+        commands.truncate(index);
+    }
+    arguments
+}
+
+fn startup_apply_patch_was_discarded(
+    tool_name: &str,
+    original_arguments: &serde_json::Value,
+    execution_arguments: &serde_json::Value,
+    require_startup_task_state: bool,
+) -> bool {
+    require_startup_task_state
+        && tool_name == COMMAND_RUN_TOOL
+        && command_run_arguments_len(execution_arguments)
+            < command_run_arguments_len(original_arguments)
+}
+
+fn command_run_arguments_are_empty(arguments: &serde_json::Value) -> bool {
+    command_run_arguments_len(arguments) == 0
+}
+
+fn command_run_arguments_len(arguments: &serde_json::Value) -> usize {
+    arguments
+        .get("commands")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn command_is_apply_patch(command: &serde_json::Value) -> bool {
+    command
+        .get("command")
+        .or_else(|| command.get("command_type"))
+        .and_then(serde_json::Value::as_str)
+        .map(code_tools::commands::canonical_command)
+        .as_deref()
+        == Some("apply_patch")
 }
 
 fn command_run_result_success(output: &serde_json::Value) -> bool {
@@ -303,8 +401,10 @@ fn command_run_hit_workspace_sandbox(
 #[cfg(test)]
 mod tests {
     use super::{
+        command_run_arguments_are_empty, command_run_arguments_before_startup_apply_patch,
         command_run_hit_workspace_sandbox, command_run_result_error, command_run_result_success,
-        streamed_command_run_arguments, streamed_command_run_result,
+        startup_apply_patch_was_discarded, streamed_command_run_arguments,
+        streamed_command_run_result,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
@@ -374,6 +474,58 @@ mod tests {
             streamed_command_run_arguments(&fallback, &json!({ "commands": [] })),
             fallback
         );
+    }
+
+    #[test]
+    fn startup_task_state_command_run_arguments_stop_before_apply_patch() {
+        let original = json!({
+            "commands": [
+                { "command_type": "task_status", "command_line": "{\"task_type\":[\"debug\"]}" },
+                { "command_type": "apply_patch", "command_line": "ignored patch body" },
+                { "command_type": "shell_command", "command_line": "should not run" }
+            ]
+        });
+
+        let truncated =
+            command_run_arguments_before_startup_apply_patch("command_run", original.clone(), true);
+
+        assert_eq!(
+            truncated,
+            json!({
+                "commands": [
+                    { "command_type": "task_status", "command_line": "{\"task_type\":[\"debug\"]}" }
+                ]
+            })
+        );
+        assert!(startup_apply_patch_was_discarded(
+            "command_run",
+            &original,
+            &truncated,
+            true,
+        ));
+        assert!(!command_run_arguments_are_empty(&truncated));
+    }
+
+    #[test]
+    fn startup_task_state_leading_apply_patch_becomes_empty_command_run() {
+        let original = json!({
+            "commands": [
+                { "command_type": "apply_patch", "command_line": "ignored patch body" },
+                { "command_type": "shell_command", "command_line": "should not run" }
+            ]
+        });
+
+        let truncated =
+            command_run_arguments_before_startup_apply_patch("command_run", original.clone(), true);
+
+        assert_eq!(truncated, json!({ "commands": [] }));
+        assert!(command_run_arguments_are_empty(&truncated));
+        assert!(startup_apply_patch_was_discarded(
+            "command_run",
+            &original,
+            &truncated,
+            true,
+        ));
     }
 
     #[test]

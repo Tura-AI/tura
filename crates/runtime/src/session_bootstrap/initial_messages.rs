@@ -13,11 +13,11 @@ pub(crate) fn initial_messages_for_session(
 ) -> Result<Vec<serde_json::Value>, String> {
     if session.session_current_turn == 0 && !session_has_initial_user_message(session) {
         let snapshot_message = serde_json::json!({
-            "role": USER_AGENT_CONTEXT_ROLE,
+            "role": "developer",
             "content": workspace_snapshot_message(&session.session_directory),
         });
         let environment_message = serde_json::json!({
-            "role": USER_AGENT_CONTEXT_ROLE,
+            "role": "developer",
             "content": environment_context_message(&session.session_directory),
         });
         let runtime_context_message = runtime_context_message(session);
@@ -137,6 +137,7 @@ fn accumulate_initial_user_message(session: &mut SessionManagement) -> Result<()
         serde_json::to_string(&message).unwrap_or_else(|_| "message: user".to_string()),
         now,
     );
+    session.record_user_message_at(now);
     Ok(())
 }
 
@@ -301,10 +302,10 @@ mod tests {
     }
 
     #[test]
-    fn initial_messages_do_not_include_legacy_developer_permissions() {
+    fn initial_messages_inject_workspace_and_environment_as_developer() {
         let now = chrono::Utc::now();
         let mut session = SessionManagement::new(
-            "session-no-permissions".to_string(),
+            "session-developer-context".to_string(),
             "probe".to_string(),
             PathBuf::from("C:/workspace/no-permissions"),
             false,
@@ -322,15 +323,37 @@ mod tests {
 
         let provider_messages =
             initial_messages_for_session(&mut session).expect("initial messages should build");
-        assert!(!provider_messages.iter().any(|message| {
-            message.get("role").and_then(serde_json::Value::as_str) == Some("developer")
+        let developer_contexts = provider_messages
+            .iter()
+            .filter(|message| {
+                message.get("role").and_then(serde_json::Value::as_str) == Some("developer")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(developer_contexts.len(), 2, "{provider_messages:?}");
+        assert!(developer_contexts.iter().any(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("<WORKSPACE_SNAPSHOT>"))
         }));
-        assert!(!session.session_log.iter().any(|entry| {
-            serde_json::from_str::<serde_json::Value>(entry)
-                .ok()
-                .is_some_and(|value| {
-                    value.get("role").and_then(serde_json::Value::as_str) == Some("developer")
-                })
+        assert!(developer_contexts.iter().any(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("<environment_context>"))
         }));
+
+        let stored_developer_contexts = session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .filter(|value| {
+                value.get("role").and_then(serde_json::Value::as_str) == Some("developer")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            stored_developer_contexts.len(),
+            2,
+            "{:?}",
+            session.session_log
+        );
     }
 }

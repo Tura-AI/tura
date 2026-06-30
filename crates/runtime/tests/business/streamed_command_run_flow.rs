@@ -352,6 +352,7 @@ async fn streamed_command_batch_reports_timeouts_without_success_side_effects() 
         .as_str()
         .or_else(|| results[0]["stderr"].as_str())
         .or_else(|| results[0]["output"].as_str())
+        .or_else(|| results[0]["output"]["stderr"].as_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
     assert!(

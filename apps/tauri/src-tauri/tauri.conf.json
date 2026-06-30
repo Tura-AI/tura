@@ -12,15 +12,21 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Tura",
         "width": 1280,
         "height": 820,
         "minWidth": 960,
-        "minHeight": 640
+        "minHeight": 640,
+        "decorations": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {

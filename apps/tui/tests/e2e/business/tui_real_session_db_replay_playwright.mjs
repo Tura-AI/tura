@@ -28,18 +28,10 @@ const screenshotsDir = path.join(runRoot, "screenshots");
 const summaryPath = path.join(runRoot, "summary.json");
 const debugDir = path.join(repoRoot, "target", "debug");
 const exeSuffix = process.platform === "win32" ? ".exe" : "";
-const sourceWorkspace = path.resolve(process.env.TURA_REAL_SESSION_DB_WORKSPACE || repoRoot);
-const sourceIndexDb = path.resolve(
-  process.env.TURA_REAL_SESSION_DB_INDEX ||
-    path.join(repoRoot, "db", "session_log", "index.sqlite3"),
-);
-const sourceWorkspaceDb = path.resolve(
-  process.env.TURA_REAL_SESSION_DB_WORKSPACE_DB ||
-    path.join(sourceWorkspace, ".tura", "session_log.sqlite3"),
-);
 const copiedIndexDb = path.join(turaHome, "db", "session_log", "index.sqlite3");
 const copiedWorkspaceDb = path.join(workspace, ".tura", "session_log.sqlite3");
-const fixtureTitle = "REAL_DB_REPLAY_SESSION";
+const fixtureTitle = "MOCK_DB_REPLAY_SESSION";
+const fixtureSessionId = "mock-db-replay-session";
 const tuiRequire = createRequire(path.join(appRoot, "package.json"));
 const { chromium } = tuiRequire("playwright");
 
@@ -99,134 +91,222 @@ function ensureBuilds() {
   );
 }
 
-async function copySqliteFamily(source, destination) {
-  await fsp.mkdir(path.dirname(destination), { recursive: true });
-  await fsp.copyFile(source, destination);
-  for (const suffix of ["-wal", "-shm"]) {
-    const sidecar = `${source}${suffix}`;
-    if (fs.existsSync(sidecar)) await fsp.copyFile(sidecar, `${destination}${suffix}`);
-  }
-}
-
-async function prepareRealSessionDbCopy() {
-  if (!fs.existsSync(sourceIndexDb))
-    throw new Error(`missing real session index db: ${sourceIndexDb}`);
-  if (!fs.existsSync(sourceWorkspaceDb))
-    throw new Error(`missing real workspace session db: ${sourceWorkspaceDb}`);
+async function prepareMockSessionDb() {
   await fsp.rm(runRoot, { recursive: true, force: true });
   await fsp.mkdir(workspace, { recursive: true });
   await fsp.mkdir(logsDir, { recursive: true });
   await fsp.mkdir(screenshotsDir, { recursive: true });
-  await copySqliteFamily(sourceIndexDb, copiedIndexDb);
-  await copySqliteFamily(sourceWorkspaceDb, copiedWorkspaceDb);
-  return rewriteCopiedSessionDb();
+  await fsp.mkdir(path.dirname(copiedIndexDb), { recursive: true });
+  await fsp.mkdir(path.dirname(copiedWorkspaceDb), { recursive: true });
+  return createMockSessionDb();
 }
 
-function rewriteCopiedSessionDb() {
+function createMockSessionDb() {
   const script = String.raw`
 import json, sqlite3, sys, time
-index_db, workspace_db, source_workspace, source_workspace_db, target_workspace, target_workspace_db, title = sys.argv[1:]
+index_db, workspace_db, target_workspace, title, session_id = sys.argv[1:]
 def norm(value):
     value = value.replace("\\", "/").rstrip("/")
     if len(value) == 2 and value[1] == ":":
         return value + "/"
     return value
-source_workspace = norm(source_workspace)
-source_workspace_db = norm(source_workspace_db)
 target_workspace = norm(target_workspace)
-target_workspace_db = norm(target_workspace_db)
+workspace_db_text = norm(workspace_db)
 now_ms = int(time.time() * 1000)
+created_at = now_ms - 120000
+assistant_at = now_ms - 60000
+user_at = now_ms - 30000
+management = {
+    "session_id": session_id,
+    "session_name": title,
+    "session_directory": target_workspace,
+    "session_created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(created_at / 1000)),
+    "session_last_update_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(now_ms / 1000)),
+    "session_last_user_message_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(user_at / 1000)),
+    "state": "completed",
+}
+task_management = {
+    "plan_summary": title,
+    "tasks": [{
+        "task_id": "mock-db-replay-task",
+        "step": 1,
+        "task_summary": "Replay a seeded mock session DB in the TUI",
+        "deliverable": "The terminal can hydrate persisted session records and still accept input.",
+        "status": "done",
+        "start_condition": "user_action",
+    }],
+}
+session = {
+    "id": session_id,
+    "name": title,
+    "directory": target_workspace,
+    "model": "openai/gpt-5.5",
+    "agent": "coding_agent",
+    "session_type": "coding",
+    "status": "idle",
+    "message_count": 2,
+    "created_at": created_at,
+    "updated_at": now_ms,
+    "last_user_message_at": user_at,
+    "task_management": task_management,
+    "management": management,
+    "plan_summary": title,
+    "session_display_name": title,
+}
+messages = [
+    {
+        "id": "mock-db-replay-user",
+        "session_id": session_id,
+        "role": "user",
+        "parts": [{"id": "mock-db-replay-user-part", "type": "text", "text": "Load the mock session DB replay fixture."}],
+        "created_at": user_at,
+        "updated_at": user_at,
+        "parent_id": None,
+    },
+    {
+        "id": "mock-db-replay-assistant",
+        "session_id": session_id,
+        "role": "assistant",
+        "parts": [{"id": "mock-db-replay-assistant-part", "type": "text", "text": "MOCK_DB_REPLAY_SESSION_READY"}],
+        "created_at": assistant_at,
+        "updated_at": assistant_at,
+        "parent_id": "mock-db-replay-user",
+    },
+]
+
+def init_index_db(con):
+    con.executescript("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            workspace TEXT NOT NULL,
+            workspace_db_path TEXT NOT NULL,
+            name TEXT,
+            parent_id TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            last_user_message_at INTEGER,
+            state TEXT,
+            status TEXT,
+            message_count INTEGER NOT NULL DEFAULT 0,
+            task_management_json TEXT NOT NULL,
+            management_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_workspace_updated
+            ON sessions(workspace, updated_at DESC, session_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_parent
+            ON sessions(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_workspace_last_user_message
+            ON sessions(workspace, last_user_message_at DESC, session_id);
+        CREATE TABLE IF NOT EXISTS session_write_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            session_id TEXT NOT NULL,
+            turn_id TEXT NULL,
+            runtime_worker_id TEXT NULL,
+            command_run_id TEXT NULL,
+            command_id TEXT NULL,
+            event_seq INTEGER NULL,
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            applied_at INTEGER NULL,
+            last_error TEXT NULL
+        );
+    """)
+
+def init_workspace_db(con):
+    con.executescript("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            workspace TEXT NOT NULL,
+            name TEXT,
+            parent_id TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            last_user_message_at INTEGER,
+            state TEXT,
+            status TEXT,
+            message_count INTEGER NOT NULL DEFAULT 0,
+            task_management_json TEXT NOT NULL,
+            management_json TEXT NOT NULL,
+            session_json TEXT NOT NULL,
+            todos_json TEXT NOT NULL DEFAULT '[]'
+        );
+        CREATE INDEX IF NOT EXISTS idx_workspace_sessions_updated
+            ON sessions(workspace, updated_at DESC, session_id);
+        CREATE INDEX IF NOT EXISTS idx_workspace_sessions_last_user_message
+            ON sessions(workspace, last_user_message_at DESC, session_id);
+        CREATE TABLE IF NOT EXISTS session_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            record_json TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_records_session_created
+            ON session_records(session_id, created_at, id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_records_session_message
+            ON session_records(session_id, message_id);
+    """)
+
+session_json = json.dumps(session)
+management_json = json.dumps(management)
+task_management_json = json.dumps(task_management)
 con = sqlite3.connect(index_db)
+init_index_db(con)
 cur = con.cursor()
 cur.execute(
-    "UPDATE sessions SET workspace = ?1, workspace_db_path = ?2 WHERE replace(rtrim(workspace, '/'), '\\\\', '/') = ?3 OR replace(workspace_db_path, '\\\\', '/') = ?4",
-    (target_workspace, target_workspace_db, source_workspace, source_workspace_db),
-)
-index_rows = cur.rowcount
-row = cur.execute(
-    "SELECT session_id, message_count FROM sessions WHERE workspace = ?1 ORDER BY message_count DESC, updated_at DESC, session_id ASC LIMIT 1",
-    (target_workspace,),
-).fetchone()
-if row is None:
-    raise SystemExit(f"no copied sessions matched workspace {source_workspace}")
-session_id, message_count = row
-cur.execute(
-    "UPDATE sessions SET name = ?1, updated_at = ?2 WHERE session_id = ?3",
-    (title, now_ms, session_id),
+    """INSERT INTO sessions(
+        session_id, workspace, workspace_db_path, name, parent_id, created_at, updated_at,
+        last_user_message_at, state, status, message_count, task_management_json, management_json
+    ) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, 'completed', 'idle', ?8, ?9, ?10)""",
+    (session_id, target_workspace, workspace_db_text, title, created_at, now_ms, user_at, len(messages), task_management_json, management_json),
 )
 con.commit()
 con.close()
 
 con = sqlite3.connect(workspace_db)
+init_workspace_db(con)
 cur = con.cursor()
-row = cur.execute(
-    "SELECT session_json, management_json FROM sessions WHERE session_id = ?1",
-    (session_id,),
-).fetchone()
-if row is None:
-    raise SystemExit(f"copied workspace db does not contain {session_id}")
-session = json.loads(row[0])
-management = json.loads(row[1])
-session["id"] = session_id
-session["directory"] = target_workspace
-session["name"] = title
-session["session_display_name"] = title
-if isinstance(session.get("management"), dict):
-    session["management"]["session_id"] = session_id
-    session["management"]["session_name"] = title
-    session["management"]["session_directory"] = target_workspace
-management["session_id"] = session_id
-management["session_name"] = title
-management["session_directory"] = target_workspace
-session["management"] = management
 cur.execute(
-    "UPDATE sessions SET workspace = ?1, name = ?2, updated_at = ?3, session_json = ?4, management_json = ?5 WHERE session_id = ?6",
-    (target_workspace, title, now_ms, json.dumps(session), json.dumps(management), session_id),
+    """INSERT INTO sessions(
+        session_id, workspace, name, parent_id, created_at, updated_at, last_user_message_at,
+        state, status, message_count, task_management_json, management_json, session_json, todos_json
+    ) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, 'completed', 'idle', ?7, ?8, ?9, ?10, '[]')""",
+    (session_id, target_workspace, title, created_at, now_ms, user_at, len(messages), task_management_json, management_json, session_json),
 )
-records = cur.execute(
-    "SELECT COUNT(*) FROM session_records WHERE session_id = ?1",
-    (session_id,),
-).fetchone()[0]
-latest = cur.execute(
-    "SELECT record_json FROM session_records WHERE session_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
-    (session_id,),
-).fetchone()
-oldest = cur.execute(
-    "SELECT record_json FROM session_records WHERE session_id = ?1 ORDER BY created_at ASC, id ASC LIMIT 1",
-    (session_id,),
-).fetchone()
+for message in messages:
+    cur.execute(
+        """INSERT INTO session_records(session_id, message_id, role, created_at, updated_at, record_json)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6)""",
+        (session_id, message["id"], message["role"], message["created_at"], message["updated_at"], json.dumps(message)),
+    )
+records = len(messages)
 con.commit()
 con.close()
 
-def text_from(raw):
-    if not raw:
-        return ""
-    value = json.loads(raw[0])
-    parts = value.get("parts") or value.get("info", {}).get("parts") or []
+def text_from(value):
+    parts = value.get("parts") or []
     text = "".join((part.get("text") or part.get("content") or "") for part in parts if isinstance(part, dict))
     return text.replace("\r", "\n").replace("\n", " ").strip()[:160]
 
 print(json.dumps({
     "session_id": session_id,
-    "message_count": message_count,
+    "message_count": len(messages),
     "record_count": records,
-    "index_rows_rewritten": index_rows,
-    "latest_text": text_from(latest),
-    "oldest_text": text_from(oldest),
+    "index_rows_rewritten": 1,
+    "latest_text": text_from(messages[-1]),
+    "oldest_text": text_from(messages[0]),
 }))
 `;
   const result = spawnSync(
     "python",
-    [
-      "-",
-      copiedIndexDb,
-      copiedWorkspaceDb,
-      sourceWorkspace,
-      sourceWorkspaceDb,
-      workspace,
-      copiedWorkspaceDb,
-      fixtureTitle,
-    ],
+    ["-", copiedIndexDb, copiedWorkspaceDb, workspace, fixtureTitle, fixtureSessionId],
     {
       input: script,
       encoding: "utf8",
@@ -237,7 +317,7 @@ print(json.dumps({
   );
   if (result.status !== 0) {
     throw new Error(
-      `failed to rewrite copied session db\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`,
+      `failed to create mock session db\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`,
     );
   }
   return JSON.parse(result.stdout);
@@ -371,7 +451,7 @@ async function waitForTerminalBufferGrowth(page, minimumLength, timeoutMs = 10_0
 
 async function main() {
   ensureBuilds();
-  const dbSummary = await prepareRealSessionDbCopy();
+  const dbSummary = await prepareMockSessionDb();
   const gatewayPort = await freePort();
   const webPort = await freePort();
   let gateway;
@@ -383,41 +463,39 @@ async function main() {
     web = await startWebTerminal(gateway.url, webPort);
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-    await page.goto(`${web.url}/rich?instance=real-session-db`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${web.url}/rich?instance=mock-session-db`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => window.__turaTerminal);
     await page.evaluate(() => window.__turaFit());
     await waitForTerminalBufferGrowth(page, 1, 60_000);
     await page.screenshot({
-      path: path.join(screenshotsDir, "loaded-real-session-db.png"),
+      path: path.join(screenshotsDir, "loaded-mock-session-db.png"),
       fullPage: false,
     });
-    screenshots.push(path.join(screenshotsDir, "loaded-real-session-db.png"));
+    screenshots.push(path.join(screenshotsDir, "loaded-mock-session-db.png"));
 
     const before = await terminalBufferSnapshot(page);
-    await page.evaluate(() => window.__turaSendInput("REAL_DB_INPUT_OK"));
+    await page.evaluate(() => window.__turaSendInput("MOCK_DB_INPUT_OK"));
     await waitForTerminalBufferGrowth(page, before.length);
     await page.waitForTimeout(2500);
     const after = await terminalBufferSnapshot(page);
     assert.ok(after.text.length >= before.text.length, "terminal should accept input after replay");
     assert.ok(
       after.length <= before.length + 3,
-      `terminal buffer grew during idle real-db replay: before=${before.length} after=${after.length}`,
+      `terminal buffer grew during idle mock-db replay: before=${before.length} after=${after.length}`,
     );
-    assert.ok(dbSummary.record_count > 0, "copied real session db should contain records");
-    assert.ok(dbSummary.index_rows_rewritten > 0, "copied index should point at temp workspace");
+    assert.ok(dbSummary.record_count > 0, "mock session db should contain records");
+    assert.ok(dbSummary.index_rows_rewritten > 0, "mock index should point at temp workspace");
     await page.screenshot({
-      path: path.join(screenshotsDir, "composer-accepts-input-after-real-db-load.png"),
+      path: path.join(screenshotsDir, "composer-accepts-input-after-mock-db-load.png"),
       fullPage: false,
     });
-    screenshots.push(path.join(screenshotsDir, "composer-accepts-input-after-real-db-load.png"));
+    screenshots.push(path.join(screenshotsDir, "composer-accepts-input-after-mock-db-load.png"));
 
     const summary = {
       ok: true,
       runRoot,
       workspace,
       turaHome,
-      sourceIndexDb,
-      sourceWorkspaceDb,
       copiedIndexDb,
       copiedWorkspaceDb,
       dbSummary,
@@ -454,8 +532,6 @@ async function main() {
       runRoot,
       workspace,
       turaHome,
-      sourceIndexDb,
-      sourceWorkspaceDb,
       copiedIndexDb,
       copiedWorkspaceDb,
       error: error instanceof Error ? error.stack || error.message : String(error),

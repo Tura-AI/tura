@@ -82,7 +82,7 @@ async function startGateway() {
     directory: workspace,
     status: "idle",
     model: "openai/gpt-test",
-    agent: "fast",
+    agent: "direct",
     created_at: Date.now(),
     updated_at: Date.now(),
     message_count: 0,
@@ -108,7 +108,7 @@ async function startGateway() {
     if (url.pathname === "/session") return sendJson(res, [session]);
     if (url.pathname === `/session/${session.id}/message`) return sendJson(res, []);
     if (url.pathname === "/session/config")
-      return sendJson(res, { model: "openai/gpt-test", active_agent: "fast" });
+      return sendJson(res, { model: "openai/gpt-test", active_agent: "direct" });
     if (url.pathname === "/provider")
       return sendJson(res, { all: [], connected: [], default: {}, enums: {} });
     if (url.pathname === "/agent" || url.pathname === "/persona") return sendJson(res, []);

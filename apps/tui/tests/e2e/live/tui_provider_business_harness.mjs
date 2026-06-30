@@ -14,7 +14,7 @@ const exeSuffix = process.platform === "win32" ? ".exe" : "";
 const debugDir = path.join(repoRoot, "target", "debug");
 const tuiBin = path.join(appRoot, "dist", "index.js");
 const defaultModel = process.env.TURA_BUSINESS_MODEL || "codex/gpt-5.5";
-const defaultAgent = process.env.TURA_BUSINESS_AGENT || "fast";
+const defaultAgent = process.env.TURA_BUSINESS_AGENT || "direct";
 const defaultVariant = process.env.TURA_BUSINESS_MODEL_VARIANT || "medium";
 const defaultTimeoutMsByCase = {
   "single-request": 180_000,

@@ -7,7 +7,7 @@ use tracing::warn;
 
 const TURA_GIT_USER_NAME: &str = "Tura";
 const TURA_GIT_USER_EMAIL: &str = "tura@local.invalid";
-const TURA_EXCLUDE_LINE: &str = ".tura/";
+const TURA_EXCLUDE_LINES: &[&str] = &[".tura/", "sessions/"];
 
 pub fn ensure_workspace_git_repo(workspace: impl AsRef<Path>) -> Result<(), String> {
     let workspace = workspace.as_ref();
@@ -106,18 +106,23 @@ fn ensure_tura_git_exclude(workspace: &Path) -> Result<(), String> {
         })?;
     }
     let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
-    if existing
-        .lines()
-        .any(|line| line.trim() == TURA_EXCLUDE_LINE)
-    {
+    let existing_lines = existing.lines().map(str::trim).collect::<Vec<_>>();
+    let missing = TURA_EXCLUDE_LINES
+        .iter()
+        .copied()
+        .filter(|line| !existing_lines.iter().any(|existing| existing == line))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
         return Ok(());
     }
     let mut updated = existing;
     if !updated.is_empty() && !updated.ends_with('\n') {
         updated.push('\n');
     }
-    updated.push_str(TURA_EXCLUDE_LINE);
-    updated.push('\n');
+    for line in missing {
+        updated.push_str(line);
+        updated.push('\n');
+    }
     fs::write(&exclude_path, updated).map_err(|error| {
         format!(
             "failed to update git exclude {}: {error}",
@@ -205,6 +210,7 @@ mod tests {
         let exclude = temp.path().join(".git").join("info").join("exclude");
         let content = std::fs::read_to_string(exclude).expect("git exclude");
         assert!(content.lines().any(|line| line.trim() == ".tura/"));
+        assert!(content.lines().any(|line| line.trim() == "sessions/"));
     }
 
     #[test]
@@ -302,6 +308,36 @@ mod tests {
         assert!(message.contains("Task-Group: Runtime terminal checkpoint"));
         assert!(message.contains("Event: completed with spacing"));
         assert!(!message.contains("completed\nwith"));
+    }
+
+    #[test]
+    fn commit_session_checkpoint_ignores_nested_runtime_sessions_git_repo() {
+        let temp = tempfile::tempdir().expect("temp workspace");
+        std::fs::write(temp.path().join("src.txt"), "workspace content").expect("fixture file");
+        let sessions_dir = temp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).expect("nested sessions dir fixture");
+        let nested_init = Command::new("git")
+            .arg("-C")
+            .arg(&sessions_dir)
+            .arg("init")
+            .output()
+            .expect("nested sessions git init");
+        assert!(nested_init.status.success());
+
+        let session = test_session(temp.path(), "session-nested-state", "Nested runtime state");
+
+        commit_session_checkpoint(&session, "completed")
+            .expect("checkpoint must ignore nested runtime session state")
+            .expect("commit hash");
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(temp.path())
+            .args(["status", "--short", "--", "sessions"])
+            .output()
+            .expect("git status sessions");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
     }
 
     #[test]

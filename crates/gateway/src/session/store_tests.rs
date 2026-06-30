@@ -113,6 +113,7 @@ fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxilia
         parent_id: None,
         created_at: 1,
         updated_at: 10,
+        last_user_message_at: Some(1),
         state: Some("completed".to_string()),
         status: Some("idle".to_string()),
         message_count: 6,
@@ -229,6 +230,7 @@ fn persisted_session_log_hydration_preserves_command_run_runtime_state_over_even
         parent_id: None,
         created_at: runtime_start,
         updated_at: runtime_end,
+        last_user_message_at: Some(runtime_start),
         state: Some("completed".to_string()),
         status: Some("idle".to_string()),
         message_count: 3,
@@ -330,6 +332,95 @@ fn persisted_session_log_hydration_preserves_command_run_runtime_state_over_even
     assert_eq!(state["time"]["end"], runtime_end);
 }
 
+#[test]
+fn session_log_hydration_prefers_top_level_idle_state_over_stale_embedded_busy_state() {
+    let now = chrono::Utc::now();
+    let session_id = format!("hydrate-stale-busy-{}", uuid::Uuid::new_v4());
+    let workspace = std::env::temp_dir()
+        .join(format!("hydrate-stale-busy-{}", uuid::Uuid::new_v4()))
+        .to_string_lossy()
+        .to_string();
+    let mut management = runtime::state_machine::session_management::SessionManagement::new(
+        session_id.clone(),
+        "stale embedded busy".to_string(),
+        PathBuf::from(&workspace),
+        false,
+        "coding".to_string(),
+        runtime::state_machine::session_management::SessionInput {
+            user_input: "finish normally".to_string(),
+            file_input: Vec::new(),
+            agent: Some("direct-text-only".to_string()),
+            runtime_context: None,
+            planning_mode_override: None,
+        },
+        "finish normally".to_string(),
+        now,
+    );
+    management
+        .transition(SessionState::Running, now)
+        .expect("test fixture should enter running state");
+    let mut stale_info = SessionInfo::from_management(&management);
+    stale_info.status = SessionStatusMano::Busy;
+    let snapshot = SessionSnapshot {
+        session_id: session_id.clone(),
+        workspace,
+        name: Some("stale embedded busy".to_string()),
+        parent_id: None,
+        created_at: 1,
+        updated_at: 20,
+        last_user_message_at: Some(1),
+        state: Some("created".to_string()),
+        status: Some("idle".to_string()),
+        message_count: 2,
+        task_management: serde_json::json!({}),
+        management: serde_json::json!({
+            "session_id": session_id,
+            "state": "created"
+        }),
+        session: serde_json::to_value(&stale_info).expect("stale session json"),
+        todos: Vec::new(),
+    };
+    let records = vec![
+        session_record(
+            &snapshot.session_id,
+            "msg_runtime_user",
+            "user",
+            1,
+            message_record(
+                &snapshot.session_id,
+                "msg_runtime_user",
+                "user",
+                "visible user request",
+                1,
+            ),
+        ),
+        session_record(
+            &snapshot.session_id,
+            "msg_runtime_assistant",
+            "assistant",
+            2,
+            message_record(
+                &snapshot.session_id,
+                "msg_runtime_assistant",
+                "assistant",
+                "visible assistant reply",
+                2,
+            ),
+        ),
+    ];
+
+    let persisted =
+        persisted_record_from_session_log(snapshot, records).expect("hydrate persisted session");
+
+    assert_eq!(persisted.info.status, SessionStatusMano::Idle);
+    assert_eq!(persisted.info.management.state, SessionState::Created);
+    assert_eq!(persisted.messages.len(), 2);
+    assert!(persisted
+        .messages
+        .iter()
+        .any(|message| message.role == MessageRole::Assistant));
+}
+
 fn session_record(
     session_id: &str,
     message_id: &str,
@@ -387,6 +478,33 @@ fn upsert_runtime_owned_session_for_test(
         .into_iter()
         .map(|message| serde_json::to_value(message).expect("message json"))
         .collect::<Vec<_>>();
+    let response = session_log::ipc::call_service(&session_log::SessionLogCommand::UpsertSession(
+        session_log::UpsertSessionRequest {
+            session: serde_json::to_value(info).expect("session json"),
+            parent_id,
+            messages,
+            todos: store.get_todos(session_id),
+        },
+    ))
+    .expect("session_log upsert should reach test service");
+    match response {
+        session_log::SessionLogResponse::Ok => {}
+        session_log::SessionLogResponse::Error { error } => {
+            panic!("session_log upsert failed: {error}")
+        }
+        other => panic!("unexpected session_log upsert response: {other:?}"),
+    }
+}
+
+fn upsert_session_messages_for_test(
+    store: &SessionStore,
+    session_id: &str,
+    parent_id: Option<String>,
+    messages: Vec<serde_json::Value>,
+) {
+    let info = store
+        .get_session_info(session_id)
+        .unwrap_or_else(|| panic!("session {session_id} should exist before test DB upsert"));
     let response = session_log::ipc::call_service(&session_log::SessionLogCommand::UpsertSession(
         session_log::UpsertSessionRequest {
             session: serde_json::to_value(info).expect("session json"),
@@ -1651,6 +1769,63 @@ fn frontend_messages_filter_system_role_from_session_db_projection() {
         .get_session_db_messages(&session.id)
         .iter()
         .any(|message| message.role == MessageRole::System));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn idle_status_refreshes_session_db_message_cache_after_runtime_write() {
+    let _service = SessionDbTestService::start();
+    let root = std::env::temp_dir().join(format!("tura-stale-session-db-{}", Uuid::new_v4()));
+    let directory = root.to_string_lossy().to_string();
+    let store = SessionStore::new();
+    let session = store.create_session(
+        Some(directory),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let user = message_record(
+        &session.id,
+        "msg_runtime_user_before_completion",
+        "user",
+        "visible user request before runtime completion",
+        1,
+    );
+    upsert_session_messages_for_test(&store, &session.id, None, vec![user.clone()]);
+
+    let cached_before_completion = store.get_frontend_messages(&session.id);
+    assert_eq!(cached_before_completion.len(), 1);
+    assert_eq!(cached_before_completion[0].role, MessageRole::User);
+
+    let assistant = message_record(
+        &session.id,
+        "msg_runtime_assistant_after_completion",
+        "assistant",
+        "visible assistant reply after runtime completion",
+        2,
+    );
+    upsert_session_messages_for_test(&store, &session.id, None, vec![user, assistant]);
+
+    store.update_session_status(&session.id, SessionStatusMano::Idle);
+
+    let refreshed_after_idle = store.get_frontend_messages(&session.id);
+    assert!(
+        refreshed_after_idle.iter().any(|message| {
+            message.id == "msg_runtime_assistant_after_completion"
+                && message.role == MessageRole::Assistant
+                && message.parts.first().and_then(|part| part.text.as_deref())
+                    == Some("visible assistant reply after runtime completion")
+        }),
+        "idle completion must refresh the stale session_db message cache: {refreshed_after_idle:#?}"
+    );
 
     let _ = std::fs::remove_dir_all(root);
 }

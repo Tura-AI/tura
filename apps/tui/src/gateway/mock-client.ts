@@ -2,7 +2,7 @@ import type { AgentUpsertRequest, StoredAgent } from "../types/agent.js";
 import type { SessionConfig } from "../types/config.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
 import type { ListMessagesOptions } from "./client.js";
-import type { StoredPersona } from "../types/gateway.js";
+import type { StoredPersona, TuraConfigResponse, TuraConfigUpdate } from "../types/gateway.js";
 import type {
   OAuthAuthorizeResponse,
   ProviderAuthMethodsResponse,
@@ -78,6 +78,23 @@ export class MockGatewayClient {
   async patchSessionConfig(payload: SessionConfig): Promise<SessionConfig> {
     this.sessionConfig = canonicalSessionConfig({ ...this.sessionConfig, ...payload });
     return this.getSessionConfig();
+  }
+
+  async modelConfig(): Promise<TuraConfigResponse> {
+    return {
+      path: `${this.directory}/.tura/config.conf`,
+      tiers: [
+        {
+          tier: "thinking",
+          current: { provider: "codex", model: "gpt-5.5" },
+          options: [{ provider: "codex", model: "gpt-5.5" }],
+        },
+      ],
+    };
+  }
+
+  async putModelConfig(_payload: TuraConfigUpdate): Promise<TuraConfigResponse> {
+    return this.modelConfig();
   }
 
   async listSessions(): Promise<Session[]> {

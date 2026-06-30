@@ -11,7 +11,10 @@ export const activeSession: Session = {
   name: "Active",
   directory: "C:/repo",
   status: "idle",
+  created_at: 1,
+  task_start_at: 1,
   updated_at: 1,
+  last_user_message_at: 1,
   message_count: 2,
 };
 
@@ -20,7 +23,10 @@ export const otherSession: Session = {
   name: "Other",
   directory: "C:/repo",
   status: "idle",
+  created_at: 2,
+  task_start_at: 2,
   updated_at: 2,
+  last_user_message_at: 2,
   message_count: 3,
 };
 

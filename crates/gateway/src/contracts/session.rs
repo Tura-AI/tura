@@ -74,6 +74,10 @@ pub struct Session {
     pub parent_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_user_message_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_start_at: Option<i64>,
     pub directory: Option<String>,
     pub model: Option<String>,
     pub agent: Option<String>,

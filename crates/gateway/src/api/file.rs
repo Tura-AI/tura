@@ -12,7 +12,7 @@ use base64::Engine;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // ============================================================================
 // File List
@@ -271,6 +271,73 @@ pub async fn get_file_media(
         .into_response())
 }
 
+pub async fn save_input_file(
+    Query(params): Query<FileInputSaveQuery>,
+    Json(payload): Json<FileInputSaveRequest>,
+) -> Result<Json<FileInputSaveResponse>, (StatusCode, String)> {
+    let root = workspace_root(params.directory).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "No workspace directory was provided for input file save".to_string(),
+        )
+    })?;
+    if !payload.encoding.eq_ignore_ascii_case("base64") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Input file content must use base64 encoding".to_string(),
+        ));
+    }
+    if payload.content.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Input file payload is empty".to_string(),
+        ));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload.content.as_bytes())
+        .map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid base64 input file: {error}"),
+            )
+        })?;
+    if bytes.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Input file payload is empty".to_string(),
+        ));
+    }
+
+    let directory = safe_join(&root, ".tura/media/input").ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Input file path must stay inside the workspace".to_string(),
+        )
+    })?;
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create input media directory: {error}"),
+        )
+    })?;
+    let name = unique_input_file_name(&directory, &payload.name);
+    let path = directory.join(&name);
+    std::fs::write(&path, &bytes).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to save input file: {error}"),
+        )
+    })?;
+
+    Ok(Json(FileInputSaveResponse {
+        path: relative_display_path(&root, &path),
+        absolute: display_path(&path),
+        name,
+        mime_type: payload.mime_type,
+        size_bytes: bytes.len() as u64,
+    }))
+}
+
 pub async fn open_file(
     Query(params): Query<FileContentQuery>,
 ) -> Result<Json<FileOpenResponse>, (StatusCode, String)> {
@@ -408,6 +475,61 @@ fn media_mime_type(path: &Path) -> Option<&'static str> {
         Some("ogg") => Some("audio/ogg"),
         _ => None,
     }
+}
+
+fn unique_input_file_name(directory: &Path, requested: &str) -> String {
+    let sanitized = sanitize_input_file_name(requested);
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let prefix = format!("{stamp}-{}", std::process::id());
+    let candidate = format!("{prefix}-{sanitized}");
+    if !directory.join(&candidate).exists() {
+        return candidate;
+    }
+    for index in 1..1000 {
+        let candidate = format!("{prefix}-{index}-{sanitized}");
+        if !directory.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    format!("{prefix}-{}-{sanitized}", rand_suffix())
+}
+
+fn sanitize_input_file_name(value: &str) -> String {
+    let leaf = value
+        .rsplit(['/', '\\'])
+        .find(|part| !part.trim().is_empty())
+        .unwrap_or("attachment.bin");
+    let mut output = String::new();
+    let mut previous_dash = false;
+    for character in leaf.trim().chars() {
+        let valid = character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-');
+        let next = if valid { character } else { '-' };
+        if next == '-' {
+            if !previous_dash {
+                output.push(next);
+            }
+            previous_dash = true;
+        } else {
+            output.push(next);
+            previous_dash = false;
+        }
+    }
+    let cleaned = output.trim_matches(['.', '-', '_']).to_string();
+    if cleaned.is_empty() {
+        "attachment.bin".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn rand_suffix() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| format!("{:x}", duration.as_nanos()))
+        .unwrap_or_else(|_| "fallback".to_string())
 }
 
 fn open_with_system_default(path: &Path) -> std::io::Result<()> {

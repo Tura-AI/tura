@@ -70,7 +70,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["tests/e2e/**/*.mjs", "tests/live/**/*.mjs"],
+    files: ["tests/e2e/**/*.mjs", "tests/live/**/*.mjs", "tests/performance/**/*.mjs"],
     languageOptions: {
       globals: {
         ...nodeGlobals,

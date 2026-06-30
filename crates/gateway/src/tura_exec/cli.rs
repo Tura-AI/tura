@@ -30,6 +30,7 @@ Options:
   -a, --agent-id ID               agent id loaded from agents/src/
       --session-id ID             reuse a deterministic session id
       --goal                      keep the CLI session running until task_status marks done/question
+      --no-op                     disable operation manual injection unless goal/reflection overrides it
       --json                      emit JSONL events instead of final text only
       --quiet, --silent           suppress progress on stderr
       --output-last-message PATH  write the final assistant message to PATH
@@ -79,6 +80,7 @@ pub(crate) struct CliConfig {
     pub(crate) priority: bool,
     pub(crate) planning_mode: Option<bool>,
     pub(crate) goal_mode: bool,
+    pub(crate) no_op_manual: bool,
     pub(crate) max_tokens: Option<u64>,
     pub(crate) command_run_shell: Option<String>,
     pub(crate) command_run_sandbox: bool,
@@ -107,6 +109,7 @@ impl CliConfig {
             priority: false,
             planning_mode: None,
             goal_mode: false,
+            no_op_manual: false,
             max_tokens: None,
             command_run_shell: None,
             command_run_sandbox: false,
@@ -160,6 +163,10 @@ impl CliConfig {
                 }
                 "--goal" => {
                     config.goal_mode = true;
+                    index += 1;
+                }
+                "--no-op" => {
+                    config.no_op_manual = true;
                     index += 1;
                 }
                 "--bash" | "--zsh" | "--shll" => {
@@ -400,6 +407,19 @@ mod tests {
         .expect("parse goal cli");
 
         assert!(config.goal_mode);
+        assert_eq!(config.prompt().as_deref(), Ok("inspect"));
+    }
+
+    #[test]
+    fn no_op_flag_disables_operation_manuals() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--no-op".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse no-op cli");
+
+        assert!(config.no_op_manual);
         assert_eq!(config.prompt().as_deref(), Ok("inspect"));
     }
 

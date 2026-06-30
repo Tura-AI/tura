@@ -165,7 +165,11 @@ fn context_business_flow_accumulates_tool_result_with_metadata_and_strips_report
         true,
         None,
         Some("runtime-context-1"),
-        Some(json!({"provider": "local", "request_id": "req-context-1"})),
+        Some(json!({
+            "id": "call_context_1",
+            "provider": "local",
+            "request_id": "req-context-1"
+        })),
     )
     .expect("tool result should log");
 

@@ -132,6 +132,7 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
   let color: ColorMode = "auto";
   let display: DisplayMode = "auto";
   let language: Language | undefined;
+  let initialSessionId = process.env.TURA_TUI_INITIAL_SESSION_ID?.trim() || undefined;
   let json = false;
   let verbose = false;
   let mock = process.env.TURA_TUI_MOCK === "1" || process.env.TURA_TUI_MOCK === "true";
@@ -145,6 +146,11 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
     } else if (arg === "--cwd") cwd = takeValue(args, index--);
     else if (arg.startsWith("--cwd=")) {
       cwd = arg.slice("--cwd=".length);
+      args.splice(index--, 1);
+    } else if (arg === "--initial-session") {
+      initialSessionId = takeValue(args, index--);
+    } else if (arg.startsWith("--initial-session=")) {
+      initialSessionId = arg.slice("--initial-session=".length);
       args.splice(index--, 1);
     } else if (arg === "--json") {
       json = true;
@@ -195,6 +201,7 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
       color,
       display,
       language,
+      initialSessionId,
       verbose,
       mock,
       dev,

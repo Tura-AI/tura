@@ -65,28 +65,10 @@ pub(crate) async fn handle_ipc_request_with_notifications(
         "session.append_user_command" => Ok(state.user_commands.append(&request.payload)),
         "session.take_user_commands" => Ok(state.user_commands.take(&request.payload)),
         "session.clear_user_commands" => Ok(state.user_commands.clear(&request.payload)),
-        "execution.kill_session_workers" => {
-            let session_id = request
-                .payload
-                .get("session_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .map(str::to_string);
-            let stopped = if let Some(session_id) = session_id {
-                usize::from(
-                    state
-                        .manager
-                        .stop_worker_by_key(&format!("runtime_worker:{session_id}"))
-                        .await,
-                )
-            } else {
-                state
-                    .manager
-                    .stop_workers_with_prefix("runtime_worker:")
-                    .await
-            };
-            Ok(json!({ "status": "stopped", "stopped": stopped }))
-        }
+        "execution.kill_session_workers" => Ok(state
+            .execution
+            .kill_session_workers(state, request.payload)
+            .await),
         "execution.shutdown" => {
             let stopped = state
                 .manager
@@ -177,5 +159,43 @@ mod tests {
             ..command_run
         };
         assert_eq!(enqueue_turn_session_id(&blank_session), None);
+    }
+
+    #[test]
+    fn kill_session_workers_clears_router_active_turn_state() -> anyhow::Result<()> {
+        let state = build_state();
+        state
+            .execution
+            .set_session_state_for_test("kill-session", "running");
+
+        let response = tokio_runtime()?.block_on(handle_ipc_request(
+            &state,
+            ipc::IpcRequest {
+                request_id: "kill-session-workers-test".to_string(),
+                kind: "call".to_string(),
+                method: "execution.kill_session_workers".to_string(),
+                payload: json!({ "session_id": "kill-session" }),
+                deadline_ms: None,
+            },
+        ));
+
+        assert!(response.ok, "kill failed: {:?}", response.error);
+        assert_eq!(response.payload["status"], "stopped");
+        assert_eq!(response.payload["session_id"], "kill-session");
+        assert_eq!(response.payload["active_turn_removed"], true);
+
+        let probe = tokio_runtime()?.block_on(handle_ipc_request(
+            &state,
+            ipc::IpcRequest {
+                request_id: "probe-after-kill".to_string(),
+                kind: "call".to_string(),
+                method: "execution.probe_sessions".to_string(),
+                payload: json!({ "session_ids": ["kill-session"] }),
+                deadline_ms: None,
+            },
+        ));
+        assert_eq!(probe.payload["sessions"][0]["status"], "inactive");
+        assert_eq!(probe.payload["sessions"][0]["active_turn"], false);
+        Ok(())
     }
 }

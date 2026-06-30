@@ -155,6 +155,57 @@ fn stores_workspaces_sessions_and_last_record_page() {
 }
 
 #[test]
+fn list_sessions_orders_by_last_user_message_at_only() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let workspace = db.workspace(&format!("repo-last-user-{nonce}"));
+    let normalized_workspace = session_log::path::normalize_workspace(&workspace);
+
+    for (session_id, updated_at, last_user_message_at) in [
+        ("assistant-updated-later", 1_000, 10),
+        ("user-sent-later", 20, 200),
+    ] {
+        store
+            .upsert_session(UpsertSessionRequest {
+                session: serde_json::json!({
+                    "id": format!("{session_id}-{nonce}"),
+                    "name": session_id,
+                    "directory": workspace,
+                    "created_at": 1,
+                    "updated_at": updated_at,
+                    "last_user_message_at": last_user_message_at,
+                    "management": {
+                        "session_id": format!("{session_id}-{nonce}"),
+                        "session_name": session_id,
+                        "state": "running"
+                    }
+                }),
+                parent_id: None,
+                messages: vec![],
+                todos: vec![],
+            })
+            .expect("upsert session");
+    }
+
+    let (_page, sessions) = store
+        .list_sessions(ListSessionsRequest {
+            workspace: normalized_workspace,
+            page: 0,
+            page_size: 10,
+        })
+        .expect("sessions");
+
+    assert_eq!(sessions.len(), 2);
+    assert!(sessions[0].session_id.starts_with("user-sent-later-"));
+    assert_eq!(sessions[0].last_user_message_at, Some(200));
+    assert!(sessions[1]
+        .session_id
+        .starts_with("assistant-updated-later-"));
+    assert_eq!(sessions[1].last_user_message_at, Some(10));
+}
+
+#[test]
 fn rejects_non_canonical_internal_session_state() {
     let db = DirectDbGuard::new();
     let store = SessionLogStore::open_default().expect("store");

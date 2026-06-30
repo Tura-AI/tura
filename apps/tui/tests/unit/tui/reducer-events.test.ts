@@ -340,6 +340,187 @@ test("reducer merges command updates by command id and ignores stale event seq",
   assert.equal(commandState?.streamed_command_run_result?.results?.[0]?.success, true);
 });
 
+test("reducer keeps existing message creation time when command updates arrive late", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [
+      {
+        id: "msg-user",
+        sessionID: "sess-1",
+        role: "user",
+        created_at: 1_000,
+        updated_at: 1_000,
+        time: { created: 1_000, updated: 1_000 },
+        parts: [{ id: "part-user", type: "text", text: "run this" }],
+      },
+      {
+        id: "runtime-late-command.message",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 2_000,
+        updated_at: 2_000,
+        time: { created: 2_000, updated: 2_000 },
+        parts: [
+          {
+            id: "runtime-late-command.message",
+            sessionID: "sess-1",
+            messageID: "runtime-late-command.message",
+            type: "text",
+            text: "I will run it.",
+          },
+        ],
+      },
+    ],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "command.updated",
+        properties: {
+          sessionID: "sess-1",
+          messageID: "runtime-late-command.message",
+          partID: "runtime-late-command.tool.command_run",
+          createdAt: 500,
+          updatedAt: 2_500,
+          runtimeID: "runtime-late-command",
+          commandRunID: "runtime-late-command.tool.command_run",
+          commandID: "runtime-late-command.tool.command_run:call_1:0",
+          providerToolCallID: "call_1",
+          commandIndex: 0,
+          eventSeq: 40,
+          status: "completed",
+          command: {
+            command_id: "runtime-late-command.tool.command_run:call_1:0",
+            command_type: "shell_command",
+            command_line: "npm test",
+          },
+          result: {
+            command_id: "runtime-late-command.tool.command_run:call_1:0",
+            command_type: "shell_command",
+            command_line: "npm test",
+            success: true,
+          },
+        },
+      },
+    },
+  });
+
+  const assistant = state.messages.find((message) => message.id === "runtime-late-command.message");
+  assert.equal(assistant?.created_at, 2_000);
+  assert.equal(assistant?.time?.created, 2_000);
+  assert.equal(assistant?.updated_at, 2_500);
+  assert.equal(assistant?.time?.updated, 2_500);
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: {
+          sessionID: "sess-1",
+          info: {
+            id: "runtime-final.message",
+            sessionID: "sess-1",
+            role: "assistant",
+            created_at: 3_000,
+            updated_at: 3_000,
+            time: { created: 3_000, updated: 3_000 },
+            parts: [{ id: "runtime-final.message", type: "text", text: "done" }],
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    displayMessages(state).map((message) => message.id),
+    ["msg-user", "runtime-late-command.message", "runtime-final.message"],
+  );
+});
+
+test("reducer keeps command update order by creation instead of command index sorting", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [],
+    permissions: [],
+  });
+
+  const event = (
+    commandID: string,
+    commandIndex: number,
+    createdAt: number,
+    commandLine: string,
+  ) => ({
+    directory: "C:/repo",
+    payload: {
+      type: "command.updated" as const,
+      properties: {
+        sessionID: "sess-1",
+        messageID: "runtime-order.message",
+        partID: "runtime-order.tool.command_run",
+        createdAt,
+        updatedAt: createdAt + 1,
+        runtimeID: "runtime-order",
+        commandRunID: "runtime-order.tool.command_run",
+        commandID,
+        providerToolCallID: "call_1",
+        commandIndex,
+        eventSeq: createdAt + 1,
+        status: "completed",
+        command: {
+          command_id: commandID,
+          command_type: "shell_command",
+          command_line: commandLine,
+        },
+        result: {
+          command_id: commandID,
+          command_type: "shell_command",
+          command_line: commandLine,
+          success: true,
+        },
+      },
+    },
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: event("runtime-order.tool.command_run:call_1:1", 1, 10, "first-created"),
+  });
+  state = reducer(state, {
+    type: "event",
+    event: event("runtime-order.tool.command_run:call_1:0", 0, 20, "second-created"),
+  });
+
+  const assistant = displayMessages(state).find(
+    (message) => message.id === "runtime-order.message",
+  );
+  const commandPart = assistant?.parts.find((part) => part.tool === "command_run");
+  const commandState = commandPart?.state as
+    | {
+        input?: { commands?: Array<{ command_line?: string; created_at?: number }> };
+        streamed_command_run_result?: {
+          results?: Array<{ command_line?: string; created_at?: number }>;
+        };
+      }
+    | undefined;
+
+  assert.deepEqual(
+    commandState?.input?.commands?.map((command) => command.command_line),
+    ["first-created", "second-created"],
+  );
+  assert.deepEqual(
+    commandState?.streamed_command_run_result?.results?.map((result) => result.created_at),
+    [10, 20],
+  );
+});
+
 test("reducer keeps command updates when final runtime message has only text", () => {
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",

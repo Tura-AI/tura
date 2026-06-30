@@ -551,10 +551,14 @@ fn session_payload(session_id: &str, workspace: &Path, updated_at: i64) -> serde
         "directory": workspace.to_string_lossy(),
         "created_at": 1,
         "updated_at": updated_at,
+        "last_user_message_at": updated_at,
         "status": "idle",
         "management": {
             "session_id": session_id,
             "session_name": "Runtime Queue Recovery",
+            "session_last_user_message_at": chrono::DateTime::from_timestamp_millis(updated_at)
+                .unwrap_or_else(chrono::Utc::now)
+                .to_rfc3339(),
             "state": "created"
         }
     })

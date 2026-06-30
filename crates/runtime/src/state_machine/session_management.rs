@@ -232,6 +232,9 @@ pub struct SessionManagement {
     pub session_created_at: UtcDateTimeMs,
     /// Last activation time in UTC.
     pub session_last_update_at: UtcDateTimeMs,
+    /// Last user message received by this session in UTC.
+    #[serde(default = "Utc::now")]
+    pub session_last_user_message_at: UtcDateTimeMs,
     /// Current run start time in UTC.
     pub session_started_at: UtcDateTimeMs,
     /// Original input payload.
@@ -261,6 +264,12 @@ pub struct SessionManagement {
     /// Whether the active agent requests reflective task-status prompt style.
     #[serde(default)]
     pub reflection_enabled: bool,
+    /// Whether runtime operation manuals may be injected for active task types.
+    #[serde(default = "default_op_manual_enabled")]
+    pub op_manual_enabled: bool,
+    /// Whether the caller disabled operation manuals for this run.
+    #[serde(default)]
+    pub no_op_manual: bool,
     /// Whether this session should keep running until the goal is explicitly
     /// settled by task_status.
     #[serde(default)]
@@ -284,6 +293,16 @@ fn default_auto_session_name() -> bool {
     true
 }
 
+fn default_op_manual_enabled() -> bool {
+    true
+}
+
+fn no_op_manual_enabled_from_env() -> bool {
+    std::env::var("TURA_NO_OP_MANUAL")
+        .ok()
+        .is_some_and(|value| env_bool_flag(&value))
+}
+
 impl SessionManagement {
     /// Creates a new session in `Created` state.
     #[expect(
@@ -301,6 +320,7 @@ impl SessionManagement {
         now: UtcDateTimeMs,
     ) -> Self {
         let goal_mode = goal_mode_enabled_from_env();
+        let no_op_manual = no_op_manual_enabled_from_env();
         let current_objective = input.user_input.trim().to_string();
         let last_goal_user_input = if goal_mode {
             current_objective.clone()
@@ -319,6 +339,7 @@ impl SessionManagement {
             session_log: Vec::new(),
             session_created_at: now,
             session_last_update_at: now,
+            session_last_user_message_at: now,
             session_started_at: now,
             current_objective,
             input,
@@ -330,6 +351,8 @@ impl SessionManagement {
             disable_permission_restrictions: false,
             planning_enabled: false,
             reflection_enabled: false,
+            op_manual_enabled: true,
+            no_op_manual,
             goal_mode,
             last_goal_user_input,
             context_tokens: ContextTokenStats::default(),
@@ -363,7 +386,9 @@ impl SessionManagement {
             self.goal_mode = true;
             self.last_goal_user_input = current_objective;
         }
+        self.no_op_manual = no_op_manual_enabled_from_env();
         self.input = input;
+        self.session_last_user_message_at = now;
         if matches!(
             self.state,
             SessionState::Completed
@@ -449,6 +474,13 @@ impl SessionManagement {
     /// Appends a log entry and refreshes the update timestamp.
     pub fn push_log(&mut self, entry: impl Into<String>, now: UtcDateTimeMs) {
         self.session_log.push(entry.into());
+        self.session_last_update_at = now;
+    }
+
+    /// Records the timestamp of a user-authored message without coupling it to
+    /// assistant/tool updates.
+    pub fn record_user_message_at(&mut self, now: UtcDateTimeMs) {
+        self.session_last_user_message_at = now;
         self.session_last_update_at = now;
     }
 
@@ -569,12 +601,16 @@ where
 }
 
 fn goal_mode_enabled_from_env() -> bool {
-    std::env::var("TURA_GOAL_MODE").ok().is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on" | "enabled" | "goal"
-        )
-    })
+    std::env::var("TURA_GOAL_MODE")
+        .ok()
+        .is_some_and(|value| env_bool_flag(&value) || value.trim().eq_ignore_ascii_case("goal"))
+}
+
+fn env_bool_flag(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on" | "enabled"
+    )
 }
 
 fn deserialize_task_plan<'de, D>(deserializer: D) -> Result<TaskPlan, D::Error>

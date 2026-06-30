@@ -555,7 +555,9 @@ pub(crate) fn router_keeps_command_run_when_runtime_socket_disconnects(repo: &Pa
     Ok(())
 }
 
-pub(crate) fn gateway_stdin_eof_leaves_router_to_idle_self_shutdown(repo: &Path) -> Result<()> {
+pub(crate) fn gateway_stdin_eof_shuts_down_router_session_db_and_runtime(
+    repo: &Path,
+) -> Result<()> {
     let root = temp_root("workspace-process-gateway-router-idle")?;
     let home = root.join("home");
     let workspace = root.join("workspace");
@@ -589,7 +591,6 @@ pub(crate) fn gateway_stdin_eof_leaves_router_to_idle_self_shutdown(repo: &Path)
         .context("stdin-eof session_db endpoint did not become reachable")?;
     wait_for_router_fronts(&home, 1, Duration::from_secs(10))
         .context("router did not receive gateway heartbeat before stdin EOF")?;
-    let router_addr = read_endpoint_addr(&router_addr_path(&home))?;
     let router_pid = wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10))
         .context("stdin-eof router pid should be discoverable before idle shutdown")?;
 
@@ -599,14 +600,10 @@ pub(crate) fn gateway_stdin_eof_leaves_router_to_idle_self_shutdown(repo: &Path)
         status.success(),
         "stdin-eof gateway should exit cleanly after frontend pipe closes: {status}"
     );
-    assert!(
-        socket_reachable(&router_addr)?,
-        "gateway EOF must not proactively kill router; router should self-shutdown after idle"
-    );
     if let Err(error) = wait_for_file_missing(&router_addr_path(&home), PROCESS_EXIT_TIMEOUT) {
         let lifecycle = router_lifecycle_status(&home)
             .unwrap_or_else(|status_error| json!({ "status_error": status_error.to_string() }));
-        bail!("{error}; lifecycle={lifecycle}");
+        bail!("gateway EOF must explicitly shut down router/session_db/runtime-owned work: {error}; lifecycle={lifecycle}");
     }
     wait_for_file_missing(&service_addr_path(&home), PROCESS_EXIT_TIMEOUT)?;
     wait_for_process_dead(router_pid, PROCESS_EXIT_TIMEOUT).with_context(|| {

@@ -68,13 +68,7 @@ fn load_session_persona_messages(
         return Ok(Vec::new());
     }
 
-    let Some(persona_id) = session_persona_id() else {
-        return Ok(Vec::new());
-    };
-    let Some(project_root) = project_root_for_persona(agent) else {
-        return Ok(Vec::new());
-    };
-    let Some(persona) = tura_persona::store::load_persona(&project_root, &persona_id) else {
+    let Some(persona) = active_session_persona(agent) else {
         return Ok(Vec::new());
     };
 
@@ -89,6 +83,28 @@ fn load_session_persona_messages(
         messages.push(system_message(content));
     }
     Ok(messages)
+}
+
+pub(super) fn active_persona_display_name(agent: &AgentManagement) -> Option<String> {
+    active_session_persona(agent).map(|persona| persona_display_name(&persona))
+}
+
+fn active_session_persona(agent: &AgentManagement) -> Option<tura_persona::store::StoredPersona> {
+    if frontend_source_is_cli() {
+        return None;
+    }
+    let persona_id = session_persona_id()?;
+    let project_root = project_root_for_persona(agent)?;
+    tura_persona::store::load_persona(&project_root, &persona_id)
+}
+
+fn persona_display_name(persona: &tura_persona::store::StoredPersona) -> String {
+    let display_name = persona.summary.display_name.trim();
+    if display_name.is_empty() {
+        persona.summary.id.clone()
+    } else {
+        display_name.to_string()
+    }
 }
 
 fn system_message(content: String) -> serde_json::Value {
@@ -149,13 +165,12 @@ mod tests {
     };
     use chrono::Utc;
     use std::ffi::OsString;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn loader_includes_configured_session_persona_before_agent_prompt() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _guard = crate::manas::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let previous_persona = std::env::var_os("TURA_SESSION_PERSONA");
         let previous_root = std::env::var_os("TURA_PROJECT_ROOT");
         let previous_frontend_source = std::env::var_os("TURA_FRONTEND_SOURCE");
@@ -223,6 +238,10 @@ mod tests {
         let messages =
             load_agent_system_prompt_messages(&agent).expect("system prompts should load");
         assert_eq!(
+            active_persona_display_name(&agent),
+            Some("Guide".to_string())
+        );
+        assert_eq!(
             message_contents(&messages),
             vec![
                 "persona prompt",
@@ -239,7 +258,9 @@ mod tests {
 
     #[test]
     fn cli_loader_skips_persona_and_uses_cli_communication_style() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _guard = crate::manas::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let previous_persona = std::env::var_os("TURA_SESSION_PERSONA");
         let previous_root = std::env::var_os("TURA_PROJECT_ROOT");
         let previous_frontend_source = std::env::var_os("TURA_FRONTEND_SOURCE");
@@ -305,7 +326,9 @@ mod tests {
 
     #[test]
     fn runtime_environment_selects_persona_and_communication_prompts() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _guard = crate::manas::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let previous_persona = std::env::var_os("TURA_SESSION_PERSONA");
         let previous_root = std::env::var_os("TURA_PROJECT_ROOT");
         let previous_frontend_source = std::env::var_os("TURA_FRONTEND_SOURCE");
@@ -398,6 +421,7 @@ mod tests {
 
         std::env::set_var("TURA_SESSION_PERSONA", "guide");
         std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
+        assert_eq!(active_persona_display_name(&agent), None);
         assert_eq!(
             message_contents(&load_agent_system_prompt_messages(&agent).expect("cli persona")),
             vec!["cli communication style", "agent prompt"]
@@ -523,6 +547,7 @@ mod tests {
             true,
             false,
             false,
+            false,
             ProviderConfig {
                 tura_llm_name: "test".to_string(),
                 default_model_tier: None,
@@ -599,6 +624,7 @@ mod prompt_resource_tests {
             root.clone(),
             None,
             true,
+            false,
             false,
             false,
             provider,

@@ -1,7 +1,7 @@
 /// Fixed reminder injected when the model needs to settle task state.
-pub const TASK_STATUS: &str = "Reminder: task_status only updates internal task state; it is never a substitute for the user-visible assistant message. Keep task_group available as the few-word internal code work area for the active task, not as a concrete task detail, progress report, completion summary, or user reply. Correct task_group examples: PDF editing, storefront frontend, order settlement service. Wrong task_group examples: Create a slide deck about the fall of Constantinople in 1453, Add cart button animation, Check order system logs. Use task_status `task_type` to update the complete set of prompt and Operation Manual types needed by the current task. Update it as soon as you identify the task type. Keep each task_group paired with one corresponding task_type set, and update task_group and task_type together. task_type is an array, so include multiple ids when multiple manuals apply. When the task needs another Operation Manual, add that manual's id to task_type. Use task_status `doing` only when the task cannot be completed without additional command_run calls. Before changing task_status `status` to `done` or `question`, first send the normal assistant-channel natural language reply containing the actual answer, explanation, completion summary, blocker, or question for the user; then call task_status in the same assistant response. For simple questions, greetings, acknowledgements, or ordinary conversation, answer naturally in the assistant channel before any terminal task_status update and do not use task_status as the only response. Example: if the user says hello or asks a simple question that needs no tool call, reply directly to the user, then mark task_status `done` when the conversation is answered or `question` when you need user input; do not mark `doing` for ordinary conversation. If any required or reasonably runnable verification failed, timed out, was skipped, or could not start, continue working to fix the environment or implementation and rerun it. Mark `done` only after the task is complete, verified, and every media file you plan to send or show to the user has been read and inspected with read_media. Use task_status `compact_context` to create a context checkpoint when a meaningful phase is complete, when most previous context is no longer relevant to the next task, or when the active context reaches the 255,000 tokens hard cap. Only use task_status with compact_context when the new task no longer depends on the current main context and a handoff is needed. The user will receive all conversation from the current task and any previous summary; include only details not already covered by that conversation or prior summary. The compact_context handoff should preserve current user goal and Operation Manual, still-relevant user requirements and preferences, workflow rules that must continue, completed and incomplete work, key decisions and constraints, deliverables, file paths, validation standards, reference docs, relevant command results, directory requirements, and exactly what to do next. Keep compact_context concise and structured; do not exceed 10 sentences. If the current environment truly cannot run the verification after reasonable setup effort, clearly explain the blocker to the user and mark `question`.";
+pub const TASK_STATUS: &str = "Reminder: task_status only updates internal task state; it is never a substitute for the user-visible assistant message. When there is no task-state update to record--no status transition, no task_group/task_type correction, no required Operation Manual change, and no compact_context checkpoint--a task_status call is usually unnecessary, but it is not forbidden. Keep task_group available as the few-word internal code work area for the active task, not as a concrete task detail, progress report, completion summary, or user reply. Correct task_group examples: PDF editing, storefront frontend, order settlement service. Wrong task_group examples: Create a slide deck about the fall of Constantinople in 1453, Add cart button animation, Check order system logs. Use task_status `task_type` to update the complete set of prompt and Operation Manual types needed by the current task. Update it as soon as you identify the task type. Keep each task_group paired with one corresponding task_type set, and update task_group and task_type together. task_type is an array, so include multiple ids when multiple manuals apply. When the task needs another Operation Manual, add that manual's id to task_type. Use task_status `doing` only when the task cannot be completed without additional command_run calls. Before changing task_status `status` to `done` or `question`, first send the normal assistant-channel natural language reply containing the actual answer, explanation, completion summary, blocker, or question for the user; then call task_status in the same assistant response. For simple questions, greetings, acknowledgements, or ordinary conversation, answer naturally in the assistant channel. Usually avoid task_status unless the conversation actually changes task state or needs required user input, but a no-change task_status call is allowed when an explicit internal state touch is useful. Do not mark `doing` for ordinary conversation. If any required or reasonably runnable verification failed, timed out, was skipped, or could not start, continue working to fix the environment or implementation and rerun it. Mark `done` only after the task is complete, verified, and every media file you plan to send or show to the user has been read and inspected with read_media. Use task_status `compact_context` to create a context checkpoint when a meaningful phase is complete, when most previous context is no longer relevant to the next task, or when the active context reaches the 255,000 tokens hard cap. Only use task_status with compact_context when the new task no longer depends on the current main context and a handoff is needed. The user will receive all conversation from the current task and any previous summary; include only details not already covered by that conversation or prior summary. The compact_context handoff should preserve current user goal and Operation Manual, still-relevant user requirements and preferences, workflow rules that must continue, completed and incomplete work, key decisions and constraints, deliverables, file paths, validation standards, reference docs, relevant command results, directory requirements, and exactly what to do next. Keep compact_context concise and structured; do not exceed 10 sentences. If the current environment truly cannot run the verification after reasonable setup effort, clearly explain the blocker to the user and mark `question`.";
 
-pub const STARTUP_TASK_STATE_GATE: &str = "The current session state has no task_type. Before starting work, first define task_type based on the current context and the user's request, and include task_group in the same update.";
+pub const STARTUP_TASK_STATE_GATE: &str = "The current session state has no task_type. Before any apply_patch command or write-producing shell command, define task_type based on the current context and the user's request, and include task_group in the same update. You may do non-writing work such as searches, file reads, or tests in the same command_run batch as that task_status update.";
 
 pub fn task_status_prompt(require_startup_task_state: bool) -> String {
     let catalog = super::runtime_prompt_manual::task_type_catalog_for_prompt();
@@ -77,10 +77,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_status_prompt_requires_task_type_before_work_when_state_needs_it() {
+    fn task_status_prompt_requires_task_type_before_writes_when_state_needs_it() {
         let prompt = task_status_prompt(true);
 
         assert!(prompt.contains(STARTUP_TASK_STATE_GATE), "{prompt}");
+        assert!(
+            prompt.contains("Before any apply_patch command"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("You may do non-writing work"), "{prompt}");
         assert!(prompt.contains("Available `task_type` values:"));
     }
 
@@ -89,6 +94,17 @@ mod tests {
         let prompt = task_status_prompt(false);
 
         assert!(!prompt.contains(STARTUP_TASK_STATE_GATE), "{prompt}");
+        assert!(
+            prompt.contains("a task_status call is usually unnecessary"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("but it is not forbidden"), "{prompt}");
+        assert!(
+            prompt.contains(
+                "a no-change task_status call is allowed when an explicit internal state touch is useful"
+            ),
+            "{prompt}"
+        );
         assert!(prompt.contains("Available `task_type` values:"));
     }
 

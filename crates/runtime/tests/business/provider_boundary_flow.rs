@@ -331,10 +331,14 @@ async fn runtime_openai_business_flow_replays_final_command_run_once_and_records
         output.pointer("/streamed_command_run_result/results/0/success"),
         Some(&json!(true))
     );
-    assert!(output
-        .pointer("/streamed_command_run_result/results/0/output")
-        .and_then(Value::as_str)
-        .is_some_and(|text| text.contains("Exit code: 0")));
+    assert_eq!(
+        output.pointer("/streamed_command_run_result/results/0/output/exit_code"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        output.pointer("/streamed_command_run_result/results/0/output/stderr"),
+        Some(&json!(""))
+    );
     let usage = result.usage.expect("openai usage");
     assert_eq!(usage.input_tokens, 32);
     assert_eq!(usage.output_tokens, 6);

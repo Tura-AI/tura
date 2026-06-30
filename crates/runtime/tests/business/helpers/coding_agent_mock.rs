@@ -132,8 +132,12 @@ pub(crate) struct MockProvider {
 pub(crate) enum MockMode {
     CommandRun,
     CodexStreamingProbe,
+    CodexStreamingSingleTaskStatusMissingFinalToolCall,
     RateLimit,
     TaskStatusDoingWithVisibleReply,
+    TaskStatusOnlyThenFinal,
+    TaskStatusDoneWithShortVisibleReply,
+    TaskStatusDoneWithLongVisibleReply,
 }
 
 impl MockProvider {
@@ -145,12 +149,31 @@ impl MockProvider {
         Self::start_with_mode(MockMode::CodexStreamingProbe, Some(workspace))
     }
 
+    pub(crate) fn start_codex_streaming_single_task_status_missing_final_tool_call() -> Self {
+        Self::start_with_mode(
+            MockMode::CodexStreamingSingleTaskStatusMissingFinalToolCall,
+            None,
+        )
+    }
+
     pub(crate) fn start_rate_limit() -> Self {
         Self::start_with_mode(MockMode::RateLimit, None)
     }
 
     pub(crate) fn start_task_status_doing_with_visible_reply() -> Self {
         Self::start_with_mode(MockMode::TaskStatusDoingWithVisibleReply, None)
+    }
+
+    pub(crate) fn start_task_status_only_then_final() -> Self {
+        Self::start_with_mode(MockMode::TaskStatusOnlyThenFinal, None)
+    }
+
+    pub(crate) fn start_task_status_done_with_short_visible_reply() -> Self {
+        Self::start_with_mode(MockMode::TaskStatusDoneWithShortVisibleReply, None)
+    }
+
+    pub(crate) fn start_task_status_done_with_long_visible_reply() -> Self {
+        Self::start_with_mode(MockMode::TaskStatusDoneWithLongVisibleReply, None)
     }
 
     fn start_with_mode(mode: MockMode, workspace: Option<PathBuf>) -> Self {
@@ -233,10 +256,26 @@ pub(crate) fn handle_provider_connection(
                 write_codex_final_response(stream, "streaming command probe completed.");
             }
         }
+        MockMode::CodexStreamingSingleTaskStatusMissingFinalToolCall => {
+            if index == 0 {
+                write_codex_streaming_single_task_status_missing_final_tool_call(stream);
+            } else {
+                write_codex_final_response(stream, "I saw the streamed task_status backfill.");
+            }
+        }
         MockMode::RateLimit => {
             write_rate_limit_response(stream);
         }
         MockMode::TaskStatusDoingWithVisibleReply => {
+            write_command_run_responses(stream, &response);
+        }
+        MockMode::TaskStatusOnlyThenFinal => {
+            write_command_run_responses(stream, &response);
+        }
+        MockMode::TaskStatusDoneWithShortVisibleReply => {
+            write_command_run_responses(stream, &response);
+        }
+        MockMode::TaskStatusDoneWithLongVisibleReply => {
             write_command_run_responses(stream, &response);
         }
     }
@@ -246,9 +285,19 @@ pub(crate) fn provider_response(index: usize, mode: MockMode) -> Value {
     match mode {
         MockMode::CommandRun => command_run_provider_response(index),
         MockMode::CodexStreamingProbe => assistant_response("streaming probe completed."),
+        MockMode::CodexStreamingSingleTaskStatusMissingFinalToolCall => {
+            assistant_response("streamed task_status fallback completed.")
+        }
         MockMode::RateLimit => json!({}),
         MockMode::TaskStatusDoingWithVisibleReply => {
             task_status_doing_with_visible_reply_response(index)
+        }
+        MockMode::TaskStatusOnlyThenFinal => task_status_only_then_final_response(index),
+        MockMode::TaskStatusDoneWithShortVisibleReply => {
+            task_status_done_with_short_visible_reply_response(index)
+        }
+        MockMode::TaskStatusDoneWithLongVisibleReply => {
+            task_status_done_with_long_visible_reply_response(index)
         }
     }
 }
@@ -399,6 +448,63 @@ pub(crate) fn write_codex_streaming_probe_response(
                         ]
                     }).to_string()
                 }],
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2
+                }
+            }
+        }),
+    );
+    write_codex_sse_raw(stream, "data: [DONE]\n\n");
+    let _ = write!(stream, "0\r\n\r\n");
+    let _ = stream.flush();
+}
+
+pub(crate) fn write_codex_streaming_single_task_status_missing_final_tool_call(
+    stream: &mut TcpStream,
+) {
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.output_item.added",
+            "item": {
+                "id": "fc_stream_task_status_only",
+                "type": "function_call",
+                "call_id": "call_stream_task_status_only",
+                "name": "command_run",
+                "arguments": ""
+            }
+        }),
+    );
+    let command = json!({
+        "step": 1,
+        "command_type": "task_status",
+        "command_line": json!({
+            "task_group": "GUI avatar effect",
+            "task_type": ["frontend", "visual"],
+            "status": "doing"
+        }).to_string()
+    });
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_stream_task_status_only",
+            "delta": format!("{{\"commands\":[{command}")
+        }),
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_task_status_only",
+                "output": [],
                 "usage": {
                     "input_tokens": 1,
                     "output_tokens": 1,
@@ -669,6 +775,76 @@ pub(crate) fn task_status_doing_with_visible_reply_response(index: usize) -> Val
             "Done. The requested work is complete.",
         ),
         _ => assistant_response("Unexpected follow-up turn."),
+    }
+}
+
+pub(crate) fn task_status_only_then_final_response(index: usize) -> Value {
+    match index {
+        0 => tool_response_message(
+            "call_task_status_only",
+            "command_run",
+            json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "task_status",
+                        "command_line": json!({
+                            "task_group": "GUI avatar effect",
+                            "task_type": ["frontend", "visual"],
+                            "status": "doing"
+                        }).to_string()
+                    }
+                ]
+            }),
+            Value::Null,
+        ),
+        _ => assistant_response("I saw the task_status backfill and Operation Manual."),
+    }
+}
+
+pub(crate) fn task_status_done_with_long_visible_reply_response(index: usize) -> Value {
+    match index {
+        0 => tool_response_with_content(
+            "call_task_status_done_long",
+            "command_run",
+            json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "task_status",
+                        "command_line": json!({
+                            "task_group": "runtime backfill",
+                            "status": "done"
+                        }).to_string()
+                    }
+                ]
+            }),
+            &format!("Done. {}", "x".repeat(1_050)),
+        ),
+        _ => assistant_response("Unexpected follow-up turn."),
+    }
+}
+
+pub(crate) fn task_status_done_with_short_visible_reply_response(index: usize) -> Value {
+    match index {
+        0 => tool_response_with_content(
+            "call_task_status_done_short",
+            "command_run",
+            json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "task_status",
+                        "command_line": json!({
+                            "task_group": "runtime backfill",
+                            "status": "done"
+                        }).to_string()
+                    }
+                ]
+            }),
+            "Done. Short visible reply.",
+        ),
+        _ => assistant_response("I saw the short done task_status backfill."),
     }
 }
 

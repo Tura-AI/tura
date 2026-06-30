@@ -110,7 +110,7 @@ export function promptRuntimeSelection(state: AppState): PromptRuntimeSelection 
 }
 
 function configuredModel(state: AppState): string | undefined {
-  return runtimeModelFromConfig(state.sessionConfig);
+  return runtimeModelFromConfig(state.sessionConfig, state.modelConfig);
 }
 
 function stringOrUndefined(value: unknown): string | undefined {

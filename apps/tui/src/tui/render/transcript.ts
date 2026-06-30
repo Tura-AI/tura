@@ -22,7 +22,6 @@ import {
   commandSectionLines,
   commandsForPart,
   partTranscriptLines,
-  uniqueCommands,
   type CommandInfo,
 } from "./commands.js";
 import { displayMessageText, renderRichText } from "../render-rich-text.js";
@@ -103,7 +102,7 @@ export function transcriptLiveRenderLines(state: AppState, cols: number): Transc
 }
 
 export function transcriptThinkingLines(state: AppState, cols: number): string[] {
-  return isThinking(state) ? ["", thinkingLine(state, cols)] : [];
+  return ["", isThinking(state) ? thinkingLine(state, cols) : ""];
 }
 
 function renderTranscriptMessages(
@@ -358,7 +357,7 @@ function orderedMessageBlocks(message: Message, includeCommands: boolean): Order
     if (commands.length) {
       blocks.push({
         kind: "commands",
-        commands: uniqueCommands(commands),
+        commands,
       });
       continue;
     }
@@ -451,7 +450,7 @@ function thinkingLine(state: AppState, cols: number): string {
   return secondaryText(text);
 }
 
-function thinkingWaveText(value: string, frame: number): string {
+export function thinkingWaveText(value: string, frame: number): string {
   const segments = graphemes(value);
   if (!segments.length) return value;
   const center = frame % (segments.length + 6);

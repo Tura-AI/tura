@@ -44,6 +44,9 @@ pub(crate) fn run_via_router(
     if let Some(planning_mode) = config.planning_mode {
         payload["planning_mode_override"] = json!(planning_mode);
     }
+    if config.no_op_manual {
+        payload["no_op_manual"] = json!(true);
+    }
     let worker_env = worker_env_from_current_process();
     if !worker_env.is_empty() {
         payload["worker_env"] = Value::Object(worker_env);
@@ -356,6 +359,7 @@ fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
         "TURA_SESSION_ACCELERATION_ENABLED",
         "TURA_SESSION_MAX_TOKENS",
         "TURA_GOAL_MODE",
+        "TURA_NO_OP_MANUAL",
         "TURA_FRONTEND_SOURCE",
         "TURA_SESSION_LANGUAGE",
         "TURA_SESSION_USER_NAME",
@@ -566,6 +570,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let previous_model = std::env::var_os("TURA_SESSION_MAX_TOKENS");
         let previous_goal = std::env::var_os("TURA_GOAL_MODE");
+        let previous_no_op = std::env::var_os("TURA_NO_OP_MANUAL");
         let previous_empty = std::env::var_os("TURA_SESSION_LANGUAGE");
         let previous_other = std::env::var_os("TURA_UNRELATED_ENV_FOR_TEST");
         let legacy_timeout_key = ["TURA_WORKER", "INVOKE_TIMEOUT_SECS"].join("_");
@@ -573,6 +578,7 @@ mod tests {
 
         std::env::set_var("TURA_SESSION_MAX_TOKENS", "4096");
         std::env::set_var("TURA_GOAL_MODE", "1");
+        std::env::set_var("TURA_NO_OP_MANUAL", "1");
         std::env::set_var("TURA_SESSION_LANGUAGE", "");
         std::env::set_var("TURA_UNRELATED_ENV_FOR_TEST", "must-not-forward");
         std::env::set_var(&legacy_timeout_key, "1");
@@ -581,6 +587,7 @@ mod tests {
 
         assert_eq!(env.get("TURA_SESSION_MAX_TOKENS"), Some(&json!("4096")));
         assert_eq!(env.get("TURA_GOAL_MODE"), Some(&json!("1")));
+        assert_eq!(env.get("TURA_NO_OP_MANUAL"), Some(&json!("1")));
         assert!(!env.contains_key("TURA_SESSION_LANGUAGE"));
         assert!(!env.contains_key("TURA_UNRELATED_ENV_FOR_TEST"));
         assert!(
@@ -591,6 +598,7 @@ mod tests {
 
         restore_env("TURA_SESSION_MAX_TOKENS", previous_model);
         restore_env("TURA_GOAL_MODE", previous_goal);
+        restore_env("TURA_NO_OP_MANUAL", previous_no_op);
         restore_env("TURA_SESSION_LANGUAGE", previous_empty);
         restore_env("TURA_UNRELATED_ENV_FOR_TEST", previous_other);
         restore_env(&legacy_timeout_key, previous_timeout);

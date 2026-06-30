@@ -808,7 +808,7 @@ fn codex_oauth_payload_keeps_system_messages_in_input() {
 
     assert_eq!(
         payload["instructions"],
-        "Follow the user request and answer concisely."
+        "Follow the user request and Operation Manual, and answer concisely."
     );
     assert_eq!(payload["input"][0]["role"], "system");
     assert_eq!(

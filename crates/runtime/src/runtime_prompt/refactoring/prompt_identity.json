@@ -1,6 +1,6 @@
 {
   "id": "refactoring",
-  "display_name": "Source Porting Operation Manual",
+  "display_name": "Refactoring Operation Manual",
   "description": "Use for rebuild, refactor, or compatibility from existing binary or code base.",
   "father_ids": [],
   "capabilities": ["apply_patch", "shells"]

@@ -78,8 +78,8 @@ async fn gateway_abort_session_stops_router_worker_without_workspace_process_sca
         .expect("abort should report router cleanup");
     assert_eq!(cleanup.session_id, session.id);
     assert!(
-        matches!(cleanup.status.as_str(), "idle" | "cancelling" | "error"),
-        "router cleanup status should be explicit: {cleanup:#?}"
+        matches!(cleanup.status.as_str(), "stopped" | "error"),
+        "router cleanup status should report force-stop result: {cleanup:#?}"
     );
     assert!(
         scoped_child.is_running()?,

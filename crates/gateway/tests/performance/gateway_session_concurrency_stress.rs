@@ -6,11 +6,11 @@
 
 use anyhow::{anyhow, Context, Result};
 use axum::extract::{Json, Path, Query};
-use gateway::api::session::{
-    create_session, list_messages, list_sessions, send_agent_message, CreateSessionRequest,
-    MessageListParams, SendAgentMessageRequest, SessionDirectoryParams, SessionListParams,
+use gateway::api::session::{create_session, list_messages, list_sessions, send_agent_message};
+use gateway::contracts::{
+    CreateSessionRequest, MessageListParams, SendAgentMessageRequest, SendMessageRequest,
+    SessionDirectoryParams, SessionListParams, SessionStatus,
 };
-use gateway::contracts::{SendMessageRequest, SessionStatus};
 use gateway::session::MessageRole;
 use gateway::session_store;
 use runtime::state_machine::runtime_management::{
@@ -31,17 +31,20 @@ use tokio::sync::Mutex;
 
 static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
-const SESSION_COUNT: usize = 10;
+const WORKSPACE_COUNT: usize = 10;
+const TASKS_PER_WORKSPACE: usize = 20;
+const SESSION_COUNT: usize = WORKSPACE_COUNT * TASKS_PER_WORKSPACE;
 const ROUTER_TURNS_PER_SESSION: usize = 1;
-const MOCK_RUNTIME_WRITES_PER_SESSION: usize = 100;
+const MOCK_RUNTIME_WRITES_PER_SESSION: usize = 8;
 const EXPECTED_MESSAGES_PER_SESSION: usize =
     ROUTER_TURNS_PER_SESSION * 2 + MOCK_RUNTIME_WRITES_PER_SESSION;
 const EXPECTED_TOTAL_MESSAGES: usize = SESSION_COUNT * EXPECTED_MESSAGES_PER_SESSION;
-const OPERATION_BUDGET: Duration = Duration::from_secs(30);
-const TEST_TIMEOUT: Duration = Duration::from_secs(90);
+const OPERATION_BUDGET: Duration = Duration::from_secs(120);
+const TEST_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn gateway_session_db_mock_runtime_handles_1000_plus_messages_under_30s() -> Result<()> {
+async fn gateway_session_db_mock_runtime_handles_10_workspaces_20_tasks_2000_rich_records(
+) -> Result<()> {
     tokio::time::timeout(
         TEST_TIMEOUT,
         gateway_session_db_mock_runtime_pressure_impl(),
@@ -54,16 +57,26 @@ async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");
-    let workspace = root.path().join("workspace");
+    let workspace = root.path().join("workspace-0");
     std::fs::create_dir_all(&home)?;
-    std::fs::create_dir_all(&workspace)?;
+    let workspaces = (0..WORKSPACE_COUNT)
+        .map(|index| root.path().join(format!("workspace-{index}")))
+        .collect::<Vec<_>>();
+    for workspace in &workspaces {
+        std::fs::create_dir_all(workspace)?;
+    }
     let _env = EnvGuard::new(&home, &workspace);
     let service = ServiceThread::start()?;
     let router = MockRuntimeRouter::start(&home)?;
-    let workspace_string = workspace.to_string_lossy().to_string();
+    let workspace_strings = workspaces
+        .iter()
+        .map(|workspace| workspace.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
 
     let mut sessions = Vec::with_capacity(SESSION_COUNT);
     for index in 0..SESSION_COUNT {
+        let workspace_index = index / TASKS_PER_WORKSPACE;
+        let workspace_string = workspace_strings[workspace_index].clone();
         let Json(session) = create_session(
             axum::http::HeaderMap::new(),
             Query(SessionDirectoryParams { directory: None }),
@@ -78,13 +91,13 @@ async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
             })),
         )
         .await;
-        sessions.push((index, session.id));
+        sessions.push((index, workspace_index, workspace_string, session.id));
     }
 
     let started = Instant::now();
     tokio::time::timeout(
         OPERATION_BUDGET,
-        run_concurrent_session_turns(sessions.clone(), workspace_string.clone()),
+        run_concurrent_session_turns(sessions.clone()),
     )
     .await
     .context("gateway stress operation exceeded 30s")??;
@@ -92,6 +105,11 @@ async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
     assert!(
         elapsed <= OPERATION_BUDGET,
         "gateway stress operation took {elapsed:?}, over {OPERATION_BUDGET:?}"
+    );
+
+    eprintln!(
+        "gateway_session_concurrency_stress summary: workspaces={WORKSPACE_COUNT} tasks_per_workspace={TASKS_PER_WORKSPACE} sessions={SESSION_COUNT} total_rich_records={EXPECTED_TOTAL_MESSAGES} operation_ms={}",
+        elapsed.as_millis()
     );
 
     assert_eq!(
@@ -104,55 +122,83 @@ async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
         "mock runtime router should observe concurrent gateway enqueues"
     );
 
-    let Json(listed_sessions) = list_sessions(
-        axum::http::HeaderMap::new(),
-        Query(SessionListParams {
-            directory: Some(workspace_string.clone()),
-            limit: Some(SESSION_COUNT + 5),
-            include_children: true,
-            ..SessionListParams::default()
-        }),
-    )
-    .await;
-    let listed_ids = listed_sessions
-        .iter()
-        .map(|session| session.id.clone())
-        .collect::<BTreeSet<_>>();
-    for (_, session_id) in &sessions {
-        assert!(
-            listed_ids.contains(session_id),
-            "gateway list_sessions should include stress session {session_id}"
-        );
+    for workspace_string in &workspace_strings {
+        let Json(listed_sessions) = list_sessions(
+            axum::http::HeaderMap::new(),
+            Query(SessionListParams {
+                directory: Some(workspace_string.clone()),
+                limit: Some(TASKS_PER_WORKSPACE + 5),
+                include_children: true,
+                ..SessionListParams::default()
+            }),
+        )
+        .await;
+        let listed_ids = listed_sessions
+            .iter()
+            .map(|session| session.id.clone())
+            .collect::<BTreeSet<_>>();
+        for (_, _, session_workspace, session_id) in &sessions {
+            if session_workspace == workspace_string {
+                assert!(
+                    listed_ids.contains(session_id),
+                    "gateway list_sessions should include stress session {session_id} for workspace {workspace_string}"
+                );
+            }
+        }
     }
 
     let client = gateway::session_db_client::SessionDbClient::discover()?;
     wait_until_async(Duration::from_secs(10), || {
         let client = client.clone();
-        let workspace_string = workspace_string.clone();
-        let session_ids = sessions
-            .iter()
-            .map(|(_, id)| id.clone())
-            .collect::<Vec<_>>();
+        let workspace_strings = workspace_strings.clone();
+        let sessions = sessions.clone();
         async move {
-            let Ok((_, snapshots)) = client.list_sessions(workspace_string, 1, 100) else {
-                return false;
-            };
-            let counts = snapshots
-                .into_iter()
-                .map(|snapshot| (snapshot.session_id, snapshot.message_count))
-                .collect::<BTreeMap<_, _>>();
-            session_ids.iter().all(|id| {
-                counts
-                    .get(id)
-                    .is_some_and(|count| *count >= EXPECTED_MESSAGES_PER_SESSION as u64)
-            })
+            for workspace_string in workspace_strings {
+                let Ok((page, snapshots)) = client.list_sessions(workspace_string.clone(), 0, 500)
+                else {
+                    return false;
+                };
+                if page.total != TASKS_PER_WORKSPACE as u64 {
+                    return false;
+                }
+                let counts = snapshots
+                    .into_iter()
+                    .map(|snapshot| (snapshot.session_id, snapshot.message_count))
+                    .collect::<BTreeMap<_, _>>();
+                if !sessions
+                    .iter()
+                    .filter(|(_, _, session_workspace, _)| session_workspace == &workspace_string)
+                    .all(|(_, _, _, id)| {
+                        counts
+                            .get(id)
+                            .is_some_and(|count| *count >= EXPECTED_MESSAGES_PER_SESSION as u64)
+                    })
+                {
+                    return false;
+                }
+            }
+            true
         }
     })
     .await
     .context("session_db did not converge to expected stress message counts")?;
 
     let mut total_messages = 0usize;
-    for (_, session_id) in &sessions {
+    let workspace_summaries = client.list_workspaces()?;
+    let summary_counts = workspace_summaries
+        .into_iter()
+        .map(|summary| (summary.directory, summary.session_count))
+        .collect::<BTreeMap<_, _>>();
+    for workspace_string in &workspace_strings {
+        let workspace_key = session_log::path::normalize_workspace(workspace_string);
+        assert_eq!(
+            summary_counts.get(&workspace_key).copied(),
+            Some(TASKS_PER_WORKSPACE as u64),
+            "session_db workspace summary should include all tasks for {workspace_string}"
+        );
+    }
+
+    for (_, _, _, session_id) in &sessions {
         let Json(messages) = list_messages(
             Path(session_id.clone()),
             Query(MessageListParams {
@@ -176,7 +222,7 @@ async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
             "session_db message_count for {session_id} should be at least {EXPECTED_MESSAGES_PER_SESSION}, got {}",
             persisted.message_count
         );
-        let (_, records) = client.list_session_records(session_id.clone(), 1, 200)?;
+        let (_, records) = client.list_session_records(session_id.clone(), 0, 500)?;
         assert!(
             records.len() >= EXPECTED_MESSAGES_PER_SESSION,
             "session_db records for {session_id} should include all messages, got {}",
@@ -190,19 +236,15 @@ async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
     Ok(())
 }
 
-async fn run_concurrent_session_turns(
-    sessions: Vec<(usize, String)>,
-    workspace: String,
-) -> Result<()> {
+async fn run_concurrent_session_turns(sessions: Vec<(usize, usize, String, String)>) -> Result<()> {
     let mut tasks = Vec::with_capacity(sessions.len());
-    for (session_index, session_id) in sessions {
-        let workspace = workspace.clone();
+    for (session_index, workspace_index, workspace, session_id) in sessions {
         tasks.push(tokio::spawn(async move {
             for turn in 0..ROUTER_TURNS_PER_SESSION {
                 let Json(reply) = gateway::api::session::send_message(
                     Path(session_id.clone()),
                     Json(SendMessageRequest {
-                        content: format!("stress prompt session={session_index} turn={turn}"),
+                        content: rich_text_payload(workspace_index, session_index, turn, "gateway prompt"),
                         attachments: None,
                         parent_id: None,
                     }),
@@ -238,11 +280,11 @@ async fn run_concurrent_session_turns(
                     &message_id,
                     &part_id,
                     "assistant",
-                    &format!("mock runtime write session={session_index} message={write}"),
+                    &rich_text_payload(workspace_index, session_index, write, "mock runtime write"),
                     10_000 + message_number as i64,
                 ));
                 let flush_snapshot =
-                    write % 20 == 0 || write + 1 == MOCK_RUNTIME_WRITES_PER_SESSION;
+                    write % 4 == 0 || write + 1 == MOCK_RUNTIME_WRITES_PER_SESSION;
                 if flush_snapshot {
                     upsert_runtime_snapshot_for_test(
                         &session_id,
@@ -262,8 +304,8 @@ async fn run_concurrent_session_turns(
                             context_tokens: None,
                             usage: None,
                             command_updates: Vec::new(),
-                            created_at: Some(10_000 + message_number as i64),
-                            updated_at: Some(10_000 + message_number as i64),
+                            created_at: 10_000 + message_number as i64,
+                            updated_at: 10_000 + message_number as i64,
                         }),
                     )
                     .await;
@@ -271,7 +313,7 @@ async fn run_concurrent_session_turns(
                     assert_eq!(response.session_id, session_id);
                 }
 
-                if write % 20 == 0 {
+                if write % 4 == 0 {
                     let Json(messages) = list_messages(
                         Path(session_id.clone()),
                         Query(MessageListParams {
@@ -360,6 +402,29 @@ fn db_text_message(
         "created_at": timestamp,
         "updated_at": timestamp
     })
+}
+
+fn rich_text_payload(
+    workspace_index: usize,
+    session_index: usize,
+    record_index: usize,
+    label: &str,
+) -> String {
+    format!(
+        "### {label} workspace-{workspace_index} task-{session_index} record-{record_index}\n\n\
+This rich transcript record exercises gateway, router, runtime, and session_db history pressure with markdown tables, code blocks, links, and inline HTML.\n\n\
+| surface | workspace | task | record |\n\
+| --- | ---: | ---: | ---: |\n\
+| gateway | {workspace_index} | {session_index} | {record_index} |\n\
+| runtime | {workspace_index} | {session_index} | {record_index} |\n\n\
+```ts\n\
+const workspace = {workspace_index};\n\
+const task = {session_index};\n\
+const record = {record_index};\n\
+console.log(workspace, task, record);\n\
+```\n\n\
+<b>rich text marker</b> [local](file:///tmp/tura/workspace-{workspace_index}/task-{session_index})"
+    )
 }
 
 fn finished_runtime_status(runtime_id: &str) -> RuntimeSessionSyncStatus {

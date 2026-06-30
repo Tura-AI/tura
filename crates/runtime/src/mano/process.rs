@@ -98,6 +98,7 @@ fn orchestrate_with_config_and_session(
     apply_planning_capability_override(&mut agents, &session);
     session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
     session.reflection_enabled = agents.first().is_some_and(|agent| agent.reflection);
+    session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agents);
 
     if let Err(e) = initialize_agent_state_machine(&mut agents, &session) {
         error!(error = %e, "failed to initialize agent state machine");
@@ -187,6 +188,15 @@ fn agent_has_planning_capability(agent: &AgentManagement) -> bool {
         .any(|capability| capability.capability_name == "planning")
 }
 
+fn operation_manual_enabled_for_session(
+    session: &SessionManagement,
+    agents: &[AgentManagement],
+) -> bool {
+    session.goal_mode
+        || session.reflection_enabled
+        || (!session.no_op_manual && agents.first().is_some_and(|agent| agent.op_manual))
+}
+
 pub fn process_from_user_internal(
     input: SessionInput,
     overrides: ManoOverrides,
@@ -203,10 +213,12 @@ pub fn process_from_user_internal(
             apply_planning_capability_override(&mut agts, &session);
             session.planning_enabled = agts.first().is_some_and(agent_has_planning_capability);
             session.reflection_enabled = agts.first().is_some_and(|agent| agent.reflection);
+            session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agts);
             initialize_agent_state_machine(&mut agts, &session)?;
             agts
         }
     };
+    session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agents);
 
     Ok(ManoProcessResult {
         session,
@@ -454,7 +466,7 @@ mod tests {
             .as_str()
             .expect("snapshot content should be text")
             .contains("src/lib.rs"));
-        assert_eq!(initial_snapshot["role"], USER_AGENT_CONTEXT_ROLE);
+        assert_eq!(initial_snapshot["role"], "developer");
         let replayed_snapshot = replayed
             .iter()
             .find(|message| {
@@ -463,7 +475,7 @@ mod tests {
                     .is_some_and(|content| content.contains("<WORKSPACE_SNAPSHOT>"))
             })
             .expect("replayed context should include workspace snapshot");
-        assert_eq!(replayed_snapshot["role"], "user");
+        assert_eq!(replayed_snapshot["role"], "developer");
         assert_eq!(replayed_snapshot["content"], initial_snapshot["content"]);
 
         let _ = fs::remove_dir_all(root);

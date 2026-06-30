@@ -5,6 +5,7 @@ use axum::{
     routing::{get, patch, post, put},
     Router,
 };
+use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use tower_http::cors::{Any, CorsLayer};
@@ -123,6 +124,7 @@ pub fn build_router() -> Router {
         .route("/file", get(api::file::list_files))
         .route("/file/content", get(api::file::get_file_content))
         .route("/file/media", get(api::file::get_file_media))
+        .route("/file/input", post(api::file::save_input_file))
         .route("/file/open", post(api::file::open_file))
         .route("/file/open-location", post(api::file::open_file_location))
         // Provider
@@ -259,6 +261,13 @@ fn build_oauth_callback_router() -> Router {
 // ============================================================================
 
 pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    run_server_until_shutdown(port, std::future::pending::<()>()).await
+}
+
+pub async fn run_server_until_shutdown(
+    port: u16,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
     let startup_started = std::time::Instant::now();
 
     tracing_subscriber::fmt()
@@ -276,11 +285,19 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     start_openai_oauth_callback_server(port).await;
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    let gateway_url = format!("http://{addr}");
+    if let Err(error) =
+        tura_path::write_active_gateway_url_for_home(tura_path::instance_home(), &gateway_url)
+    {
+        eprintln!("gateway failed to write active URL {gateway_url}: {error}");
+    }
     println!(
         "⏱️ Gateway startup ready in {:.2}s",
         startup_started.elapsed().as_secs_f64()
     );
-    axum::serve(listener, router).await?;
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown)
+        .await?;
 
     Ok(())
 }
@@ -321,7 +338,7 @@ pub async fn main() {
     let port = std::env::var("PORT")
         .ok()
         .and_then(|value| value.trim().parse::<u16>().ok())
-        .unwrap_or(4156);
+        .unwrap_or_else(|| tura_path::default_gateway_port_for_build_kind(tura_path::build_kind()));
 
     if let Err(error) = run_server(port).await {
         eprintln!("gateway server stopped with error: {error}");

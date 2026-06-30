@@ -250,6 +250,42 @@ test("reducer keeps refresh cursor stable on event reconnect", () => {
   assert.equal(state.refreshState["sess-1"]?.lastFinalMessageCount, 1);
 });
 
+test("reducer clears transient reconnect notices without rewriting history", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-1",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 1,
+        parts: [{ id: "part-1", type: "text", text: "stable history" }],
+      },
+    ],
+    permissions: [],
+  });
+  state = reducer(state, {
+    type: "notice",
+    value: "Gateway disconnected; reconnecting...",
+    transient: true,
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "global",
+      payload: { type: "server.connected", properties: {} },
+    },
+  });
+
+  assert.equal(state.notice, undefined);
+  assert.deepEqual(
+    state.messages.map((message) => message.id),
+    ["msg-1"],
+  );
+});
+
 test("reducer orders assistant text before command parts even when tool arrives first", () => {
   const state = reducer(initialState("C:/repo"), {
     type: "hydrate",

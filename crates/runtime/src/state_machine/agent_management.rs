@@ -95,6 +95,10 @@ pub enum AgentState {
     Failed,
 }
 
+fn default_op_manual() -> bool {
+    true
+}
+
 impl AgentState {
     /// Returns true if transitioning from `self` to `next` is allowed.
     pub fn can_transition_to(self, next: AgentState) -> bool {
@@ -128,6 +132,12 @@ pub struct AgentManagement {
     pub default_config: bool,
     /// Whether this agent receives reflective task-status prompt style.
     pub reflection: bool,
+    /// Whether this agent receives operation manuals when task types are active.
+    #[serde(default = "default_op_manual")]
+    pub op_manual: bool,
+    /// Whether this agent receives per-turn self-reflection tail prompts.
+    #[serde(default)]
+    pub self_reflection: bool,
     /// Provider/LLM configuration.
     pub provider: ProviderConfig,
     /// Prompts bound to this agent.
@@ -158,6 +168,7 @@ impl AgentManagement {
         report_to_user: bool,
         default_config: bool,
         reflection: bool,
+        self_reflection: bool,
         provider: ProviderConfig,
         validator: ValidatorConfig,
         now: UtcDateTimeMs,
@@ -170,6 +181,8 @@ impl AgentManagement {
             report_to_user,
             default_config,
             reflection,
+            op_manual: true,
+            self_reflection,
             provider,
             agent_prompt: Vec::new(),
             agent_capabilities: Vec::new(),
@@ -242,6 +255,7 @@ mod tests {
             PathBuf::from("agents/test"),
             None,
             true,
+            false,
             false,
             false,
             provider_config(),

@@ -8,7 +8,7 @@ import pty from "node-pty";
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(appRoot, "..", "..");
 const port = Number(process.env.PORT || "8799");
-const gatewayUrl = process.env.TURA_GATEWAY_URL || "http://127.0.0.1:4126";
+const gatewayUrl = process.env.TURA_GATEWAY_URL || readActiveGatewayUrl() || defaultGatewayUrl();
 const workspace = process.env.TURA_CWD || repoRoot;
 const mockMode = process.env.TURA_TUI_MOCK === "1";
 const shell = process.env.TURA_WEB_TERMINAL_SHELL || defaultShell();
@@ -16,6 +16,41 @@ const nodeBin = process.execPath;
 const tuiBin = path.join(appRoot, "dist", "index.js");
 const tuiCommand = process.env.TURA_TUI_BIN || nodeBin;
 const tuiBaseArgs = process.env.TURA_TUI_BIN ? [] : [tuiBin];
+
+function defaultGatewayUrl() {
+  return `http://127.0.0.1:${defaultGatewayPort()}`;
+}
+
+function defaultGatewayPort() {
+  if (process.env.TURA_BUILD_KIND === "release") return "4126";
+  return process.execPath.replace(/\\/g, "/").toLowerCase().includes("/target/release/")
+    ? "4126"
+    : "4125";
+}
+
+function readActiveGatewayUrl() {
+  try {
+    const raw = fs.readFileSync(path.join(instanceHome(), ".tura", "gateway-active.env"), "utf8");
+    for (const line of raw.split(/\r?\n/u)) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("TURA_GATEWAY_URL=")) continue;
+      const value = trimmed
+        .slice("TURA_GATEWAY_URL=".length)
+        .trim()
+        .replace(/^["']|["']$/gu, "");
+      if (value) return value.replace(/\/+$/u, "");
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function instanceHome() {
+  const fromEnv = process.env.TURA_HOME?.trim();
+  return path.resolve(fromEnv || repoRoot);
+}
+
 function defaultShell() {
   if (process.platform === "win32") return "powershell.exe";
   const userShell = process.env.SHELL?.trim();
@@ -246,6 +281,7 @@ function html(profileId, profile, instance) {
       const withSlash = isWindowsFilePath(normalized) ? "/" + normalized : normalized;
       return "file://" + encodeURI(withSlash);
     };
+    const isWorkspaceInputPath = (filePath) => String(filePath).replaceAll(String.fromCharCode(92), "/").startsWith(".tura/media/input/");
     const isWindowsFilePath = (value) =>
       value.length >= 3 && /^[A-Za-z]$/u.test(value[0]) && value[1] === ":" && value[2] === "/";
     const isMediaPath = (filePath) => {
@@ -260,7 +296,7 @@ function html(profileId, profile, instance) {
       while (clean.endsWith("/") || clean.endsWith(String.fromCharCode(92))) clean = clean.slice(0, -1);
       const slashIndex = Math.max(clean.lastIndexOf("/"), clean.lastIndexOf(String.fromCharCode(92)));
       const label = slashIndex >= 0 ? clean.slice(slashIndex + 1) || filePath : clean || filePath;
-      return "[" + label + "](" + fileUrl(filePath) + ")";
+      return "[" + label + "](" + (isWorkspaceInputPath(filePath) ? filePath : fileUrl(filePath)) + ")";
     };
     const normalizeDroppedUri = (value) => {
       const trimmed = String(value || "").trim().replace(/^['\"]|['\"]$/gu, "");
@@ -329,8 +365,18 @@ function html(profileId, profile, instance) {
       if (!response.ok) throw new Error("drop upload failed: " + response.status);
       return (await response.json()).path;
     };
+    const uploadDroppedPath = async (filePath) => {
+      const response = await fetch("/" + profile + "/drop-path" + instanceQuery, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: filePath })
+      });
+      if (!response.ok) throw new Error("drop path copy failed: " + response.status);
+      return (await response.json()).path;
+    };
     const handleDroppedData = async (dataTransfer) => {
-      const paths = droppedTextPaths(dataTransfer);
+      const paths = [];
+      for (const filePath of droppedTextPaths(dataTransfer)) paths.push(await uploadDroppedPath(filePath));
       const filesToUpload = [...(dataTransfer.files || [])].filter((file) => {
         const nativePath = file.path || file.webkitRelativePath;
         return !normalizeDroppedUri(nativePath);
@@ -379,6 +425,15 @@ function html(profileId, profile, instance) {
       handleDroppedData(event.dataTransfer).catch((error) => {
         console.warn("drop failed", error);
         term.write("\\r\\n[drop failed: " + String(error?.message || error) + "]\\r\\n");
+      });
+    });
+    shellHost.addEventListener("paste", (event) => {
+      const files = [...(event.clipboardData?.files || [])];
+      if (!files.length) return;
+      event.preventDefault();
+      handleDroppedData(event.clipboardData).catch((error) => {
+        console.warn("paste failed", error);
+        term.write("\\r\\n[paste failed: " + String(error?.message || error) + "]\\r\\n");
       });
     });
     const resizeObserver = new ResizeObserver(() => {
@@ -444,12 +499,25 @@ async function saveDroppedFile(body) {
   const name = sanitizeDropFileName(body?.name || "attachment.bin");
   const data = typeof body?.data === "string" ? body.data : "";
   if (!data) throw new Error("drop file payload is empty");
-  const attachmentsDir = path.resolve(workspace, ".tura", "attachments");
+  return saveInputBytes(name, Buffer.from(data, "base64"));
+}
+async function saveDroppedPath(body) {
+  const rawPath = typeof body?.path === "string" ? body.path.trim() : "";
+  if (!rawPath) throw new Error("drop path is empty");
+  const sourcePath = path.resolve(rawPath);
+  if (!path.isAbsolute(rawPath)) throw new Error("drop path must be absolute");
+  const stat = await fsp.stat(sourcePath);
+  if (!stat.isFile()) throw new Error("drop path is not a file");
+  return saveInputBytes(path.basename(sourcePath), await fsp.readFile(sourcePath));
+}
+async function saveInputBytes(name, bytes) {
+  const attachmentsDir = path.resolve(workspace, ".tura", "media", "input");
   await fsp.mkdir(attachmentsDir, { recursive: true });
+  const safeName = sanitizeDropFileName(name || "attachment.bin");
   const prefix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-  const filePath = path.join(attachmentsDir, `${prefix}-${name}`);
-  await fsp.writeFile(filePath, Buffer.from(data, "base64"));
-  return filePath;
+  const filePath = path.join(attachmentsDir, `${prefix}-${safeName}`);
+  await fsp.writeFile(filePath, bytes);
+  return path.relative(workspace, filePath).replaceAll(path.sep, "/");
 }
 function sanitizeDropFileName(value) {
   const cleaned = path
@@ -467,6 +535,7 @@ function runtimeFor(profile, key) {
       clients: new Set(),
       term: undefined,
       initialComposer: "",
+      initialSessionId: "",
       outputBuffer: "",
       outputFlush: undefined,
     };
@@ -526,6 +595,9 @@ function startTui(profile, runtime, size = undefined) {
   if (runtime.term) return runtime.term;
   const cols = Number(size?.cols) || 120;
   const rows = Number(size?.rows) || 22;
+  const initialSessionArgs = runtime.initialSessionId
+    ? ["--initial-session", runtime.initialSessionId]
+    : [];
   const term = pty.spawn(
     tuiCommand,
     [
@@ -533,6 +605,7 @@ function startTui(profile, runtime, size = undefined) {
       ...(mockMode ? ["--mock"] : ["--gateway-url", gatewayUrl]),
       "--cwd",
       workspace,
+      ...initialSessionArgs,
       ...profile.args,
     ],
     {
@@ -581,6 +654,9 @@ const server = http.createServer(async (req, res) => {
   const runtime = runtimeFor(profile, instance);
   const initialComposer = url.searchParams.get("initialComposer");
   if (initialComposer !== null && !runtime.term) runtime.initialComposer = initialComposer;
+  const initialSessionId =
+    url.searchParams.get("sessionId") ?? url.searchParams.get("initialSession");
+  if (initialSessionId !== null && !runtime.term) runtime.initialSessionId = initialSessionId;
   const leaf = `/${url.pathname.split("/").filter(Boolean).slice(1).join("/")}`;
   if (req.method === "GET" && leaf === "/") {
     return send(res, html(url.pathname.split("/").filter(Boolean)[0], profile, instance));
@@ -607,6 +683,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && leaf === "/drop-file") {
     try {
       const filePath = await saveDroppedFile(await readJson(req));
+      return send(res, { ok: true, path: filePath });
+    } catch (error) {
+      return send(res, { error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  }
+  if (req.method === "POST" && leaf === "/drop-path") {
+    try {
+      const filePath = await saveDroppedPath(await readJson(req));
       return send(res, { ok: true, path: filePath });
     } catch (error) {
       return send(res, { error: error instanceof Error ? error.message : String(error) }, 400);

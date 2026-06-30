@@ -1,9 +1,15 @@
 import type { AppState } from "./reducer.js";
 
 export function hasActiveAnimation(state: AppState): boolean {
+  if (state.sessionLoading) return true;
   if (isBusyState(state)) return true;
+  if (hasVisibleBusySession(state)) return true;
   if (state.questions.length || state.permissions.length) return true;
   return false;
+}
+
+function hasVisibleBusySession(state: AppState): boolean {
+  return state.sessionsOpen && state.sessions.some((session) => session.status === "busy");
 }
 
 export function isBusyState(state: AppState): boolean {

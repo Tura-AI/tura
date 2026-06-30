@@ -111,7 +111,6 @@ pub(crate) fn normalize_command_run_frontend_state(
 ) {
     let results_snapshot = command_run_frontend_results_snapshot(state, metadata);
     if let Some(object) = state.as_object_mut() {
-        strip_task_status_command_run_records(object);
         if let Some(results) = results_snapshot {
             upsert_streamed_command_run_results(object, results);
         }
@@ -119,56 +118,6 @@ pub(crate) fn normalize_command_run_frontend_state(
     let commands = command_run_frontend_commands(state, metadata);
     if let Some(object) = state.as_object_mut() {
         object.insert("commands".to_string(), serde_json::Value::Array(commands));
-    }
-}
-
-fn strip_task_status_command_run_records(object: &mut serde_json::Map<String, serde_json::Value>) {
-    strip_nested_command_run_records(object, &["input", "metadata"], "commands");
-    strip_nested_command_run_records(object, &["output", "metadata"], "results");
-    strip_array_field(object, "commands");
-    strip_array_field(object, "results");
-    if let Some(stream) = object
-        .get_mut("streamed_command_run_result")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        strip_array_field(stream, "commands");
-        strip_array_field(stream, "results");
-    }
-    if let Some(output) = object
-        .get_mut("output")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        if let Some(stream) = output
-            .get_mut("streamed_command_run_result")
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            strip_array_field(stream, "commands");
-            strip_array_field(stream, "results");
-        }
-    }
-}
-
-fn strip_nested_command_run_records(
-    object: &mut serde_json::Map<String, serde_json::Value>,
-    parent_keys: &[&str],
-    array_key: &str,
-) {
-    for key in parent_keys {
-        if let Some(parent) = object
-            .get_mut(*key)
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            strip_array_field(parent, array_key);
-        }
-    }
-}
-
-fn strip_array_field(object: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
-    if let Some(items) = object
-        .get_mut(key)
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        items.retain(|item| !is_task_status_command(item));
     }
 }
 
@@ -209,9 +158,6 @@ fn command_run_frontend_commands(
     for index in 0..count {
         let spec = specs.get(index);
         let result = results.get(index);
-        if spec.is_some_and(is_task_status_command) || result.is_some_and(is_task_status_command) {
-            continue;
-        }
         let Some(command) = command_line_from_result_or_spec(result, spec) else {
             continue;
         };
@@ -239,30 +185,19 @@ fn command_run_frontend_results_snapshot(
         return None;
     }
     if specs.is_empty() {
-        return Some(
-            results
-                .into_iter()
-                .filter(|result| !is_task_status_command(result))
-                .collect(),
-        );
+        return Some(results);
     }
 
     let fallback_status = string_field_from_value(state, "status");
     let mut used_results = vec![false; results.len()];
     let mut snapshot = Vec::new();
     for (index, spec) in specs.iter().enumerate() {
-        if is_task_status_command(spec) {
-            continue;
-        }
         let result_index =
             command_result_index_for_spec(index, spec, &specs, &results, &used_results);
         let result = result_index.map(|index| {
             used_results[index] = true;
             &results[index]
         });
-        if result.is_some_and(is_task_status_command) {
-            continue;
-        }
         snapshot.push(command_result_snapshot_item(
             index,
             result,
@@ -272,7 +207,7 @@ fn command_run_frontend_results_snapshot(
     }
 
     for (index, result) in results.iter().enumerate() {
-        if used_results[index] || is_task_status_command(result) {
+        if used_results[index] {
             continue;
         }
         snapshot.push(command_result_snapshot_item(
@@ -294,7 +229,7 @@ fn command_result_index_for_spec(
     used_results: &[bool],
 ) -> Option<usize> {
     if let Some(index) = results.iter().enumerate().find_map(|(index, result)| {
-        if used_results[index] || is_task_status_command(result) {
+        if used_results[index] {
             return None;
         }
         command_result_matches_spec(result, spec).then_some(index)
@@ -303,10 +238,7 @@ fn command_result_index_for_spec(
     }
 
     let result = results.get(spec_index)?;
-    if used_results[spec_index]
-        || is_task_status_command(result)
-        || command_line_from_value(result).is_some()
-    {
+    if used_results[spec_index] || command_line_from_value(result).is_some() {
         return None;
     }
     if results.len() == specs.len() || spec_index < results.len() {
@@ -557,41 +489,6 @@ fn command_status_from_result_or_spec(
     fallback.map(ToString::to_string)
 }
 
-fn is_task_status_command(value: &serde_json::Value) -> bool {
-    if task_status_payload(value) {
-        return true;
-    }
-    let Some(record) = record_like(value) else {
-        return false;
-    };
-    string_field(&record, "name")
-        .or_else(|| command_type_from_record(&record))
-        .is_some_and(|name| name.trim().eq_ignore_ascii_case("task_status"))
-        || object_field(&record, "command").is_some_and(|command| {
-            string_field(&command, "name")
-                .or_else(|| command_type_from_record(&command))
-                .is_some_and(|name| name.trim().eq_ignore_ascii_case("task_status"))
-        })
-}
-
-fn task_status_payload(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Object(object) => {
-            object.contains_key("task_status")
-                || object.values().any(task_status_payload)
-                || object
-                    .get("command_type")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|value| value.eq_ignore_ascii_case("task_status"))
-        }
-        serde_json::Value::Array(items) => items.iter().any(task_status_payload),
-        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
-            .ok()
-            .is_some_and(|value| task_status_payload(&value)),
-        _ => false,
-    }
-}
-
 fn command_type_from_record(record: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
     string_field(record, "command_type")
         .or_else(|| string_field(record, "commandType"))
@@ -811,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn command_run_frontend_state_filters_task_status_without_dropping_mixed_batch() {
+    fn command_run_frontend_state_keeps_task_status_as_regular_command() {
         let mut state = json!({
             "status": "completed",
             "input": {
@@ -865,17 +762,19 @@ mod tests {
             .pointer("/streamed_command_run_result/results")
             .and_then(serde_json::Value::as_array)
             .expect("normalized command_run results should be present");
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 3);
         assert_eq!(results[0]["command_line"], "npm test");
-        assert_eq!(results[1]["command_line"], "npm run build");
+        assert_eq!(results[1]["command_type"], "task_status");
+        assert_eq!(results[2]["command_line"], "npm run build");
 
         let commands = state["commands"]
             .as_array()
             .expect("commands should be normalized from visible command records");
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 3);
         assert_eq!(commands[0]["command"], "npm test");
-        assert_eq!(commands[1]["command"], "npm run build");
+        assert_eq!(commands[1]["name"], "task_status");
+        assert_eq!(commands[2]["command"], "npm run build");
         let serialized = serde_json::to_string(&state).expect("state should serialize");
-        assert!(!serialized.contains("task_status"));
+        assert!(serialized.contains("task_status"));
     }
 }

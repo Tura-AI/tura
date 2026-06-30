@@ -19,7 +19,7 @@ import {
   wrap,
 } from "./render-terminal.js";
 import { composerLines } from "./render/composer.js";
-import { busyAnimationFrame } from "./render/busy-animation.js";
+import { busyAnimationFrame, thinkingAnimationFrame } from "./render/busy-animation.js";
 import {
   finalizeFrame,
   plainFrame,
@@ -32,6 +32,7 @@ import {
   transcriptRenderLines,
   transcriptRenderLinesForMessages,
   transcriptThinkingLines,
+  thinkingWaveText,
   type TranscriptRenderLine,
 } from "./render/transcript.js";
 import { secondaryText } from "./styles/text.js";
@@ -340,6 +341,7 @@ function renderPlainFrame(state: AppState): RenderedFrame {
 }
 
 function chatTranscriptLines(state: AppState, cols: number): string[] {
+  if (state.sessionLoading && !state.messages.length) return [sessionLoadingLine(state, cols)];
   const transcript = transcriptRenderLines(state, cols);
   const liveLines = liveLinesWithCacheBoundary(transcript, transcriptLiveRenderLines(state, cols));
   return [...transcript, ...liveLines].map((line) => line.text);
@@ -355,6 +357,7 @@ function liveLinesWithCacheBoundary(
 
 function shouldShowComposer(state: AppState): boolean {
   if (state.settingInput) return true;
+  if (state.sessionLoading && !state.messages.length) return false;
   return !(
     state.help ||
     state.sessionsOpen ||
@@ -419,7 +422,7 @@ function panelPageInfo(state: AppState): PanelPageInfo | undefined {
 }
 
 function bottomMetaModel(state: AppState): string | undefined {
-  const configuredModel = runtimeModelFromConfig(state.sessionConfig);
+  const configuredModel = runtimeModelFromConfig(state.sessionConfig, state.modelConfig);
   if (configuredModel) return configuredModel;
   const sessionModel = stringOrUndefined(state.session?.model);
   if (sessionModel?.includes("/")) return sessionModel;
@@ -485,14 +488,9 @@ function contextTokenSummary(state: AppState): string | undefined {
 function usageSummary(state: AppState): string | undefined {
   const usage = state.session?.usage;
   if (!usage) return undefined;
-  const tokens = usage.tokens && typeof usage.tokens === "object" ? usage.tokens : {};
-  const totalTokens = numberField(tokens as Record<string, unknown>, "total_tokens");
   const cost = typeof usage.cost === "number" && Number.isFinite(usage.cost) ? usage.cost : 0;
-  if (totalTokens <= 0 && cost <= 0) return undefined;
-  const pieces: string[] = [];
-  if (totalTokens > 0) pieces.push(`tokens ${compactTokenCount(totalTokens)}`);
-  if (cost > 0) pieces.push(formatUsageCost(cost, usage.currency));
-  return pieces.join(" / ");
+  if (cost <= 0) return undefined;
+  return formatUsageCost(cost, usage.currency);
 }
 
 function formatUsageCost(cost: number, currency: string | null | undefined): string {
@@ -556,14 +554,16 @@ function lastMessagePreview(messages: Message[]): string {
 
 function sessionLines(state: AppState, cols: number, maxLines: number): string[] {
   const lines = sectionLines(t("sessions"), cols);
-  lines.push(
-    sectionBodyLine(
-      secondaryText(
-        `${t("selectSessions")}  ${t("enterOpenSession")}  ${t("shiftEnterCopySession")}  ${t("deleteSessionHint")}`,
+  if (state.sessionLoading) lines.push(sessionLoadingLine(state, cols));
+  else
+    lines.push(
+      sectionBodyLine(
+        secondaryText(
+          `${t("selectSessions")}  ${t("enterOpenSession")}  ${t("shiftEnterCopySession")}  ${t("deleteSessionHint")}`,
+        ),
+        cols,
       ),
-      cols,
-    ),
-  );
+    );
   const entries = state.sessions.map((session) => {
     const marker = sessionStateMarker(state, session);
     const label = [sessionTitle(session), marker].filter(Boolean).join(" ");
@@ -587,6 +587,18 @@ function sessionLines(state: AppState, cols: number, maxLines: number): string[]
     lines.push(sectionBodyLine(t("noSessions"), cols));
   lines.push(sectionBlankLine(cols));
   return lines.slice(0, maxLines);
+}
+
+function sessionLoadingLine(state: AppState, cols: number): string {
+  const frame = activeCapabilities.unicode
+    ? thinkingAnimationFrame(state.thinkingFrame, true)
+    : (["|", "/", "-", "\\"][state.thinkingFrame % 4] ?? ".");
+  const title = state.sessionLoading?.title?.trim();
+  const label =
+    state.sessionLoading?.kind === "deleting" ? t("sessionDeleting") : t("sessionLoading");
+  const text = title ? `${frame} ${label} ${title}` : `${frame} ${label}`;
+  if (activeCapabilities.level === "plain") return sectionBodyLine(secondaryText(text), cols);
+  return sectionBodyLine(thinkingWaveText(text, state.thinkingFrame), cols);
 }
 
 function sessionPageInfo(state: AppState, maxLines: number): PanelPageInfo {

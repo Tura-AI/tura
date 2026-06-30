@@ -8,7 +8,9 @@ use tracing::error;
 
 use crate::gateway_events::publish_streamed_agent_text;
 use crate::provider_flow::command_run_streaming::{
-    apply_cancelled_streamed_command_run_result, spawn_streamed_command_run_task,
+    apply_cancelled_streamed_command_run_result,
+    apply_startup_apply_patch_discarded_streamed_command_run_result,
+    ensure_streamed_command_run_tool_record, spawn_streamed_command_run_task,
     SpawnStreamedCommandRunTask, StreamedCommandRunState,
 };
 use crate::provider_flow::errors::{finish_runtime_failure, runtime_timeout};
@@ -27,6 +29,7 @@ pub(crate) async fn call_runtime_streaming(
     options: tura_llm_rust::CallOptions,
     session_directory: PathBuf,
     allowed_command_run_commands: Option<BTreeSet<String>>,
+    require_startup_task_state: bool,
 ) -> Result<(), String> {
     let started_at = Utc::now();
     let timeout_duration = runtime_timeout(runtime);
@@ -93,6 +96,7 @@ pub(crate) async fn call_runtime_streaming(
         started_at,
         state: command_state.clone(),
         runtime_status: runtime.session_sync_status(),
+        require_startup_task_state,
     });
 
     let route_config_for_task = route_config.clone();
@@ -199,6 +203,29 @@ pub(crate) async fn call_runtime_streaming(
                     let _ = command_task.join();
                     return Ok(());
                 }
+                if command_state.should_finish_startup_apply_patch_discard() {
+                    let finished_at = Utc::now();
+                    let snapshot = command_state.snapshot();
+                    apply_startup_apply_patch_discarded_streamed_command_run_result(
+                        runtime,
+                        &snapshot.commands,
+                        &snapshot.events,
+                        &snapshot.results,
+                        finished_at,
+                    );
+                    let first_token_at = first_stream_output_or(&first_stream_output_at, finished_at);
+                    runtime
+                        .mark_first_token(first_token_at)
+                        .map_err(|e| format!("failed to mark first token: {e}"))?;
+                    runtime
+                        .finish_success(finished_at, None)
+                        .map_err(|e| format!("failed to finish runtime success: {e}"))?;
+                    provider_task.abort();
+                    let _ = (&mut provider_task).await;
+                    drop(final_response_stream_tx);
+                    let _ = command_task.join();
+                    return Ok(());
+                }
             }
         }
     };
@@ -217,19 +244,32 @@ pub(crate) async fn call_runtime_streaming(
         joined_command_results
     };
 
+    let startup_apply_patch_discarded = command_state.startup_apply_patch_discarded();
+    let has_streamed_command_run_result =
+        startup_apply_patch_discarded || !streamed_command_results.is_empty();
     let mut runtime_output = response.content.clone();
-    if !streamed_command_results.is_empty() {
+    if has_streamed_command_run_result {
         runtime_output = serde_json::json!({
-            "provider_content": tool_dispatch_content,
             "streamed_command_run_result": {
                 "commands": snapshot.commands,
                 "command_events": snapshot.events,
                 "results": streamed_command_results,
             }
         });
+        if !startup_apply_patch_discarded {
+            runtime_output["provider_content"] = tool_dispatch_content.clone();
+        }
     }
     runtime.set_output(runtime_output);
-    apply_provider_response_with_options(runtime, &tool_dispatch_content, finished_at, false);
+    apply_provider_response_with_options(
+        runtime,
+        &tool_dispatch_content,
+        finished_at,
+        has_streamed_command_run_result,
+    );
+    if has_streamed_command_run_result {
+        ensure_streamed_command_run_tool_record(runtime, &snapshot.commands, finished_at);
+    }
 
     if let Some(stream) = response.content.get("stream").and_then(|s| s.as_array()) {
         for chunk in stream {

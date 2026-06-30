@@ -21,6 +21,7 @@ pub(super) struct WorkspacePayload {
     pub(super) parent_id: Option<String>,
     pub(super) created_at: i64,
     pub(super) updated_at: i64,
+    pub(super) last_user_message_at: Option<i64>,
     pub(super) state: Option<String>,
     pub(super) status: Option<String>,
     pub(super) message_count: i64,
@@ -36,6 +37,7 @@ pub(super) struct WorkspaceSessionSummaryPayload {
     pub(super) parent_id: Option<String>,
     pub(super) created_at: i64,
     pub(super) updated_at: i64,
+    pub(super) last_user_message_at: Option<i64>,
     pub(super) state: Option<String>,
     pub(super) status: Option<String>,
     pub(super) message_count: i64,
@@ -58,7 +60,7 @@ pub(super) fn load_workspace_session_payload(
     }
     let payload = with_connection(workspace_db_path, init_workspace_db, |conn| {
         conn.query_row(
-            "SELECT workspace, name, parent_id, created_at, updated_at, state, status,
+            "SELECT workspace, name, parent_id, created_at, updated_at, last_user_message_at, state, status,
                     message_count, task_management_json, management_json, session_json, todos_json
              FROM sessions
              WHERE session_id = ?1",
@@ -70,13 +72,14 @@ pub(super) fn load_workspace_session_payload(
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
-                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<i64>>(5)?,
                     row.get::<_, Option<String>>(6)?,
-                    row.get::<_, i64>(7)?,
-                    row.get::<_, String>(8)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, i64>(8)?,
                     row.get::<_, String>(9)?,
                     row.get::<_, String>(10)?,
                     row.get::<_, String>(11)?,
+                    row.get::<_, String>(12)?,
                 ))
             },
         )
@@ -91,6 +94,7 @@ pub(super) fn load_workspace_session_payload(
                 parent_id,
                 created_at,
                 updated_at,
+                last_user_message_at,
                 state,
                 status,
                 message_count,
@@ -105,6 +109,7 @@ pub(super) fn load_workspace_session_payload(
                     parent_id,
                     created_at,
                     updated_at,
+                    last_user_message_at,
                     state,
                     status,
                     message_count,
@@ -135,7 +140,7 @@ pub(super) fn load_workspace_session_summary_payload(
     }
     let payload = with_connection(workspace_db_path, init_workspace_db, |conn| {
         conn.query_row(
-            "SELECT workspace, name, parent_id, created_at, updated_at, state, status,
+            "SELECT workspace, name, parent_id, created_at, updated_at, last_user_message_at, state, status,
                     message_count, task_management_json
              FROM sessions
              WHERE session_id = ?1",
@@ -147,10 +152,11 @@ pub(super) fn load_workspace_session_summary_payload(
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
-                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<i64>>(5)?,
                     row.get::<_, Option<String>>(6)?,
-                    row.get::<_, i64>(7)?,
-                    row.get::<_, String>(8)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, String>(9)?,
                 ))
             },
         )
@@ -165,6 +171,7 @@ pub(super) fn load_workspace_session_summary_payload(
                 parent_id,
                 created_at,
                 updated_at,
+                last_user_message_at,
                 state,
                 status,
                 message_count,
@@ -176,6 +183,7 @@ pub(super) fn load_workspace_session_summary_payload(
                     parent_id,
                     created_at,
                     updated_at,
+                    last_user_message_at,
                     state,
                     status,
                     message_count,

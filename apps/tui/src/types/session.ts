@@ -19,6 +19,8 @@ export interface Session {
   parent_id?: string | null;
   created_at?: number;
   updated_at?: number;
+  last_user_message_at?: number | null;
+  task_start_at?: number;
   directory?: string | null;
   model?: string | null;
   agent?: string | null;
@@ -130,7 +132,11 @@ export function isDraftSession(session: Session | undefined): boolean {
 }
 
 export function sessionUpdatedAt(session: Session): number {
-  return session.updated_at ?? session.created_at ?? 0;
+  return session.last_user_message_at ?? 0;
+}
+
+export function sessionSortAt(session: Session): number {
+  return session.last_user_message_at ?? 0;
 }
 
 export function sessionStatusText(status: unknown): SessionStatusValue {

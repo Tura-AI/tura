@@ -16,21 +16,11 @@
             "type": "string",
             "description": "Positive image prompt."
           },
-          "positive_prompt": {
-            "type": "string",
-            "x-tura-optional": true,
-            "description": "Alias for prompt."
-          },
           "references": {
             "type": "array",
             "items": { "type": "string" },
             "x-tura-optional": true,
             "description": "Local paths, data URLs, or public URLs used as image references."
-          },
-          "reference": {
-            "type": "string",
-            "x-tura-optional": true,
-            "description": "Single reference image path or URL."
           },
           "output_dir": {
             "type": "string",

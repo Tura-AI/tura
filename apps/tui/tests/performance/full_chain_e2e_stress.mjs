@@ -48,14 +48,20 @@ async function main() {
     const pressure = startGatewayReadPressure(backend, targets);
     const replays = [];
     for (const [index, target] of targets.entries()) {
-      const targetMarker = marker(target.workspaceIndex, target.taskIndex, backend.config.turnsPerSession - 1);
-      replays.push(await measureTuiOpen({
-        webTerminalUrl: webTerminal.url,
-        target,
-        targetMarker,
-        outDir: backend.runRoot,
-        index,
-      }));
+      const targetMarker = marker(
+        target.workspaceIndex,
+        target.taskIndex,
+        backend.config.turnsPerSession - 1,
+      );
+      replays.push(
+        await measureTuiOpen({
+          webTerminalUrl: webTerminal.url,
+          target,
+          targetMarker,
+          outDir: backend.runRoot,
+          index,
+        }),
+      );
     }
     const pressureSummary = await pressure.stop();
     const frontendChecks = checkFrontendReplays(replays, proxy);
@@ -81,9 +87,11 @@ async function main() {
     assert.equal(frontendChecks.ok, true, frontendChecks.message);
     completedOk = true;
   } catch (error) {
-    const failureDiagnostics = await backend.collectFailureDiagnostics().catch((diagnosticError) => ({
-      error: String(diagnosticError?.stack || diagnosticError?.message || diagnosticError),
-    }));
+    const failureDiagnostics = await backend
+      .collectFailureDiagnostics()
+      .catch((diagnosticError) => ({
+        error: String(diagnosticError?.stack || diagnosticError?.message || diagnosticError),
+      }));
     const summary = backend.summaryBase({
       ok: false,
       owner: "tui",
@@ -94,7 +102,9 @@ async function main() {
       failureDiagnostics,
       error: error instanceof Error ? error.stack || error.message : String(error),
     });
-    await fsp.writeFile(backend.summaryPath, JSON.stringify(summary, null, 2)).catch(() => undefined);
+    await fsp
+      .writeFile(backend.summaryPath, JSON.stringify(summary, null, 2))
+      .catch(() => undefined);
     console.error(JSON.stringify(summary, null, 2));
     process.exitCode = 1;
   } finally {
@@ -136,8 +146,12 @@ async function startWebTerminal(port, gatewayUrl, workspace, logsDir) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  child.stdout.pipe(fs.createWriteStream(path.join(logsDir, "tui-web-terminal.stdout.log"), { flags: "a" }));
-  child.stderr.pipe(fs.createWriteStream(path.join(logsDir, "tui-web-terminal.stderr.log"), { flags: "a" }));
+  child.stdout.pipe(
+    fs.createWriteStream(path.join(logsDir, "tui-web-terminal.stdout.log"), { flags: "a" }),
+  );
+  child.stderr.pipe(
+    fs.createWriteStream(path.join(logsDir, "tui-web-terminal.stderr.log"), { flags: "a" }),
+  );
   const url = `http://127.0.0.1:${port}`;
   await waitForHtml(url, child, "Tura TUI", 10_000);
   return { child, url };
@@ -147,7 +161,8 @@ async function waitForHtml(url, child, text, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`${url} exited before readiness: ${child.exitCode}`);
+    if (child.exitCode !== null)
+      throw new Error(`${url} exited before readiness: ${child.exitCode}`);
     try {
       const response = await fetch(url);
       const body = await response.text();
@@ -226,7 +241,10 @@ async function startRecordingProxy(upstreamUrl) {
       record.error = String(error?.stack || error?.message || error);
       record.endedAt = Date.now();
       record.elapsedMs = record.endedAt - startedAt;
-      res.writeHead(502, { "content-type": "application/json", "access-control-allow-origin": "*" });
+      res.writeHead(502, {
+        "content-type": "application/json",
+        "access-control-allow-origin": "*",
+      });
       res.end(JSON.stringify({ error: record.error }));
     }
   });
@@ -238,13 +256,17 @@ async function startRecordingProxy(upstreamUrl) {
     url: `http://127.0.0.1:${port}`,
     records,
     messageReads(sessionId) {
-      return records.filter((record) => decodeURIComponent(record.path) === `/session/${sessionId}/message`);
+      return records.filter(
+        (record) => decodeURIComponent(record.path) === `/session/${sessionId}/message`,
+      );
     },
     summary() {
       return {
         url: `http://127.0.0.1:${port}`,
         totalRequests: records.length,
-        messageReads: records.filter((record) => /\/session\/[^/]+\/message$/u.test(decodeURIComponent(record.path))).length,
+        messageReads: records.filter((record) =>
+          /\/session\/[^/]+\/message$/u.test(decodeURIComponent(record.path)),
+        ).length,
         errors: records.filter((record) => record.error).slice(0, 10),
       };
     },
@@ -318,7 +340,13 @@ function startGatewayReadPressure(backend, targets) {
     async stop() {
       stopped = true;
       await Promise.race([done, delay(5_000)]);
-      return { concurrency, maxRequests, completed, sampleMs: samples, errors: errors.slice(0, 10) };
+      return {
+        concurrency,
+        maxRequests,
+        completed,
+        sampleMs: samples,
+        errors: errors.slice(0, 10),
+      };
     },
   };
 }
@@ -343,7 +371,9 @@ async function measureTuiOpen({ webTerminalUrl, target, targetMarker, outDir, in
       waitUntil: "domcontentloaded",
       timeout: config.openBudgetMs,
     });
-    await page.waitForFunction(() => window.__turaTerminal, undefined, { timeout: config.openBudgetMs });
+    await page.waitForFunction(() => window.__turaTerminal, undefined, {
+      timeout: config.openBudgetMs,
+    });
     await page.evaluate(() => window.__turaFit?.());
     await page.waitForFunction(
       (source) => {
@@ -442,8 +472,12 @@ function checkFrontendReplays(replays, proxy) {
   const failures = [];
   for (const replay of replays) {
     attachReadMetrics(replay, proxy);
-    if (!replay.read) failures.push(`TUI did not record a session message read for ${replay.sessionId}`);
-    if (replay.browserErrors.length > 0) failures.push(`TUI browser errors for ${replay.sessionId}: ${JSON.stringify(replay.browserErrors)}`);
+    if (!replay.read)
+      failures.push(`TUI did not record a session message read for ${replay.sessionId}`);
+    if (replay.browserErrors.length > 0)
+      failures.push(
+        `TUI browser errors for ${replay.sessionId}: ${JSON.stringify(replay.browserErrors)}`,
+      );
     if (replay.textLength <= 0 || replay.bufferLines <= 0) {
       failures.push(
         `TUI terminal buffer did not hydrate for ${replay.sessionId}: ${JSON.stringify({ bufferLines: replay.bufferLines, textLength: replay.textLength })}`,
@@ -516,13 +550,20 @@ function attachReadMetrics(replay, proxy) {
 function averageReplayMetrics(replays) {
   return {
     totalOpenMs: round(mean(replays.map((replay) => replay.totalOpenMs))),
-    readMs: round(mean(replays.map((replay) => replay.read?.elapsedMs ?? Number.NaN).filter(Number.isFinite))),
-    renderMs: round(mean(replays.map((replay) => replay.renderMs ?? Number.NaN).filter(Number.isFinite))),
+    readMs: round(
+      mean(replays.map((replay) => replay.read?.elapsedMs ?? Number.NaN).filter(Number.isFinite)),
+    ),
+    renderMs: round(
+      mean(replays.map((replay) => replay.renderMs ?? Number.NaN).filter(Number.isFinite)),
+    ),
     frameCount: round(mean(replays.map((replay) => replay.frame?.frameCount ?? 0))),
     avgFps: round(mean(replays.map((replay) => replay.frame?.avgFps ?? 0))),
     minFps: round(Math.min(...replays.map((replay) => replay.frame?.minFps ?? 0))),
     maxFrameGapMs: round(Math.max(...replays.map((replay) => replay.frame?.maxFrameGapMs ?? 0))),
-    longFrameCount: replays.reduce((total, replay) => total + (replay.frame?.longFrameCount ?? 0), 0),
+    longFrameCount: replays.reduce(
+      (total, replay) => total + (replay.frame?.longFrameCount ?? 0),
+      0,
+    ),
   };
 }
 

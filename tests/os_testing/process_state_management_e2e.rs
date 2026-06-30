@@ -35,8 +35,8 @@ fn process_state_management_handles_orphans_restarts_conflicts_and_cleanup() -> 
         .context("scenario gateway adopts orphan router")?;
     router_keeps_command_run_when_runtime_socket_disconnects(&repo)
         .context("scenario router keeps command_run after runtime disconnect")?;
-    gateway_stdin_eof_leaves_router_to_idle_self_shutdown(&repo)
-        .context("scenario gateway EOF leaves router to idle self-shutdown")?;
+    gateway_stdin_eof_shuts_down_router_session_db_and_runtime(&repo)
+        .context("scenario gateway EOF shuts down router/session_db/runtime")?;
     session_db_restart_marks_running_sessions_interrupted_without_losing_history(&repo)
         .context("scenario session_db restart marks running sessions interrupted")?;
 

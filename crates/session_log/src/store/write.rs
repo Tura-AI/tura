@@ -1,7 +1,8 @@
 use super::connection::{init_workspace_db, with_connection};
 use super::helpers::{
     i64_at, management_task_management, millis_at, path_text, remove_sqlite_files,
-    session_state_from_management, session_state_text, set_object_string, string_at,
+    session_state_from_management, session_state_text, set_object_i64, set_object_string,
+    string_at,
 };
 use super::payload::mark_workspace_session_interrupted;
 use super::SessionLogStore;
@@ -181,6 +182,11 @@ impl SessionLogStore {
         let updated_at = i64_at(&session, &["updated_at"])
             .or_else(|| millis_at(&management, &["session_last_update_at"]))
             .unwrap_or(created_at);
+        let last_user_message_at = i64_at(&session, &["last_user_message_at"])
+            .or_else(|| millis_at(&management, &["session_last_user_message_at"]));
+        if let Some(last_user_message_at) = last_user_message_at {
+            set_object_i64(&mut session, "last_user_message_at", last_user_message_at);
+        }
         let requested_message_count = messages.len() as i64;
         let name =
             string_at(&session, &["name"]).or_else(|| string_at(&management, &["session_name"]));
@@ -211,15 +217,16 @@ impl SessionLogStore {
             tx.execute(
                 "INSERT INTO sessions(
                     session_id, workspace, name, parent_id, created_at, updated_at,
-                    state, status, message_count, task_management_json, management_json,
-                    session_json, todos_json
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                    last_user_message_at, state, status, message_count, task_management_json,
+                    management_json, session_json, todos_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace=excluded.workspace,
                     name=excluded.name,
                     parent_id=excluded.parent_id,
                     created_at=excluded.created_at,
                     updated_at=excluded.updated_at,
+                    last_user_message_at=excluded.last_user_message_at,
                     state=excluded.state,
                     status=excluded.status,
                     message_count=excluded.message_count,
@@ -234,6 +241,7 @@ impl SessionLogStore {
                     parent_id,
                     created_at,
                     updated_at,
+                    last_user_message_at,
                     state_text,
                     status,
                     requested_message_count,
@@ -373,8 +381,8 @@ impl SessionLogStore {
             conn.execute(
                 "INSERT INTO sessions(
                     session_id, workspace, workspace_db_path, name, parent_id, created_at,
-                    updated_at, state, status, message_count, task_management_json, management_json
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    updated_at, last_user_message_at, state, status, message_count, task_management_json, management_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace=excluded.workspace,
                     workspace_db_path=excluded.workspace_db_path,
@@ -382,6 +390,7 @@ impl SessionLogStore {
                     parent_id=excluded.parent_id,
                     created_at=excluded.created_at,
                     updated_at=excluded.updated_at,
+                    last_user_message_at=excluded.last_user_message_at,
                     state=excluded.state,
                     status=excluded.status,
                     message_count=excluded.message_count,
@@ -395,6 +404,7 @@ impl SessionLogStore {
                     parent_id,
                     created_at,
                     updated_at,
+                    last_user_message_at,
                     state_text,
                     status,
                     message_count,

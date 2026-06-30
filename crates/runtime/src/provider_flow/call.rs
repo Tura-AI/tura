@@ -33,6 +33,7 @@ pub struct CallRuntimeInput {
     pub tool_choice: Option<serde_json::Value>,
     pub session_directory: PathBuf,
     pub allowed_command_run_commands: Option<BTreeSet<String>>,
+    pub require_startup_task_state: bool,
 }
 
 pub async fn call_runtime(
@@ -183,6 +184,7 @@ pub async fn call_runtime(
             call_options,
             input.session_directory.clone(),
             input.allowed_command_run_commands.clone(),
+            input.require_startup_task_state,
         )
         .await
     } else {
@@ -405,6 +407,7 @@ mod tests {
                 tool_choice: None,
                 session_directory: std::env::temp_dir(),
                 allowed_command_run_commands: Some(BTreeSet::new()),
+                require_startup_task_state: false,
             },
             settings,
             config,

@@ -428,26 +428,17 @@ async function main() {
     await page.evaluate(() => window.__turaSendInput("\t"));
     await waitForSessionPicker(page);
     captures.push(await capture(page, "00-session-picker-cleared"));
-    assertSessionPickerCleared(
-      captures.at(-1).visibleText,
-      "session picker after typed rounds",
-    );
+    assertSessionPickerCleared(captures.at(-1).visibleText, "session picker after typed rounds");
     assertSessionPickerCleared(
       await terminalBufferText(page),
       "session picker buffer after typed rounds",
     );
     await scrollTerminalTo(page, "top");
     captures.push(await capture(page, "00-session-picker-scrolled-top"));
-    assertSessionPickerCleared(
-      captures.at(-1).visibleText,
-      "session picker scrolled top",
-    );
+    assertSessionPickerCleared(captures.at(-1).visibleText, "session picker scrolled top");
     await scrollTerminalTo(page, "bottom");
     captures.push(await capture(page, "00-session-picker-scrolled-bottom"));
-    assertSessionPickerCleared(
-      captures.at(-1).visibleText,
-      "session picker scrolled bottom",
-    );
+    assertSessionPickerCleared(captures.at(-1).visibleText, "session picker scrolled bottom");
     await page.evaluate(() => window.__turaSendInput("\x1b"));
     await waitForComposer(page);
 
@@ -568,7 +559,10 @@ async function main() {
     captures.push(await capture(page, "07-final"));
 
     const bufferText = await terminalBufferText(page);
-    assert.ok(nonEmptyLineCount(bufferText) >= 10, "streamed transcript should populate scrollback");
+    assert.ok(
+      nonEmptyLineCount(bufferText) >= 10,
+      "streamed transcript should populate scrollback",
+    );
     await scrollTerminalTo(page, "top");
     await scrollTerminalTo(page, "bottom");
     const bufferTextAfterScroll = await terminalBufferText(page);
@@ -597,7 +591,11 @@ async function main() {
       "raw terminal controls should not leak into UI text",
     );
 
-    assert.equal(messagePartCount("msg-stream-main"), 1, "stream should finalize into one text part");
+    assert.equal(
+      messagePartCount("msg-stream-main"),
+      1,
+      "stream should finalize into one text part",
+    );
     assert.equal(
       completedCommandCount(commands.map((entry) => entry.id)),
       commands.length,
@@ -705,7 +703,11 @@ async function main() {
       nonEmptyLineCount(round2Buffer) >= nonEmptyLineCount(bufferTextAfterScroll),
       "second round should keep terminal scrollback populated",
     );
-    assert.equal(messagePartCount(round2MessageID), 1, "second round should finalize into one text part");
+    assert.equal(
+      messagePartCount(round2MessageID),
+      1,
+      "second round should finalize into one text part",
+    );
 
     // Phase 6: a focused frame-by-frame handoff check. Keep a live text message
     // and a running command visible, then finalize both into cache while a

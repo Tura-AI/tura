@@ -163,6 +163,55 @@ test("sessions panel shows names, previews, and status diamonds", () => {
   assert.doesNotMatch(plain, /Enter: send/);
 });
 
+test("sessions panel shows dedicated loading animation and hides unlocked controls", () => {
+  const active = {
+    id: "sess-loading-active",
+    session_display_name: "Active Chat",
+    status: "idle" as const,
+    message_count: 1,
+  };
+  const loading = {
+    id: "sess-loading-target",
+    session_display_name: "Target Chat",
+    status: "idle" as const,
+    message_count: 2,
+  };
+  const state = {
+    ...reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session: active,
+      messages: [],
+      permissions: [],
+      sessions: [active, loading],
+    }),
+    sessionsOpen: true,
+    selectedSessionIndex: 1,
+    thinkingFrame: 10,
+    sessionLoading: { sessionID: loading.id, title: loading.session_display_name },
+  };
+
+  const plain = stripAnsi(render(state, richCapabilities()));
+
+  assert.match(plain, /Loading session Target Chat/);
+  assert.doesNotMatch(plain, /Up\/Down select/);
+  assert.doesNotMatch(plain, /Shift\+Enter copy context/);
+  assert.doesNotMatch(plain, /Delete remove/);
+});
+
+test("startup session loading uses the session picker loading animation", () => {
+  const state = {
+    ...initialState("C:/repo"),
+    thinkingFrame: 10,
+    sessionLoading: { title: "Startup Chat" },
+  };
+
+  const plain = stripAnsi(render(state, richCapabilities()));
+
+  assert.match(plain, /Loading session Startup Chat/);
+  assert.doesNotMatch(plain, /> Enter: send/);
+  assert.doesNotMatch(plain, /Up\/Down select/);
+});
+
 test("sessions panel uses remaining terminal width for previews", () => {
   const active = {
     id: "sess-active-width",

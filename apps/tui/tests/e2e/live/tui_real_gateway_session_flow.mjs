@@ -516,7 +516,7 @@ async function main() {
           "--model",
           "codex/gpt-5.5",
           "--agent",
-          "fast",
+          "direct",
           "--model-variant",
           "low",
           "--priority",

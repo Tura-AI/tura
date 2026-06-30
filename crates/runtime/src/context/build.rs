@@ -489,8 +489,13 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
             || role == "developer"
             || role == "assistant"
         {
+            let content = obj.get("content");
             let provider_role = if role == USER_AGENT_CONTEXT_ROLE {
-                "user"
+                if content.is_some_and(is_developer_context_injection) {
+                    "developer"
+                } else {
+                    "user"
+                }
             } else {
                 role
             };
@@ -506,157 +511,46 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
         }
     }
 
-    match obj.get("type").and_then(|kind| kind.as_str()) {
-        Some("tool_result") => {}
-        Some("streamed_command_event") => {
-            return immutable_streamed_command_event_context_messages(&value);
-        }
-        _ => return Vec::new(),
+    if obj.get("type").and_then(|kind| kind.as_str()) != Some("tool_result") {
+        return Vec::new();
     }
 
     if let Some(messages) = obj
         .get("context_messages")
         .and_then(|messages| messages.as_array())
     {
-        return messages
-            .iter()
-            .cloned()
-            .map(strip_context_reporting_fields)
-            .collect();
+        if value.get("tool_name").and_then(|name| name.as_str()) != Some("command_run")
+            || command_run_cached_context_messages_are_valid(messages)
+        {
+            return messages
+                .iter()
+                .cloned()
+                .map(strip_context_reporting_fields)
+                .collect();
+        }
     }
 
     immutable_tool_result_context_messages(&value)
 }
 
-fn immutable_streamed_command_event_context_messages(
-    value: &serde_json::Value,
-) -> Vec<serde_json::Value> {
-    let Some(mut tool_result) = streamed_command_event_as_command_run_tool_result(value) else {
-        return Vec::new();
-    };
-    tool_result["context_cache"] = tool_result_context_cache(&tool_result);
-    immutable_tool_result_context_messages(&tool_result)
-}
-
-fn streamed_command_event_as_command_run_tool_result(
-    value: &serde_json::Value,
-) -> Option<serde_json::Value> {
-    if value.get("type").and_then(|kind| kind.as_str()) != Some("streamed_command_event") {
-        return None;
-    }
-    let command = streamed_command_event_command_for_context(value);
-    let result = streamed_command_event_result_for_context(value);
-    if command.is_null() && result.is_null() {
-        return None;
-    }
-    let success = streamed_command_event_success(value, &result);
-    let mut output_result = result;
-    if let Some(object) = output_result.as_object_mut() {
-        for key in ["step", "command_type", "command_line"] {
-            if !object.contains_key(key) {
-                if let Some(field) = value.get(key).filter(|field| !field.is_null()) {
-                    object.insert(key.to_string(), field.clone());
-                }
-            }
-        }
-        object
-            .entry("success".to_string())
-            .or_insert_with(|| serde_json::Value::Bool(success));
-    }
-    let error = value
-        .get("error")
-        .cloned()
-        .or_else(|| output_result.get("error").cloned())
-        .unwrap_or(serde_json::Value::Null);
-    let sequence = value
-        .get("event_index")
-        .cloned()
-        .or_else(|| value.get("result_index").cloned())
-        .unwrap_or(serde_json::Value::Null);
-    let timestamp = value
-        .get("timestamp")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    Some(serde_json::json!({
-        "type": "tool_result",
-        "tool_name": "command_run",
-        "input": {
-            "commands": [command]
-        },
-        "output": {
-            "results": [output_result]
-        },
-        "success": success,
-        "error": error,
-        "sequence": sequence,
-        "timestamp": timestamp,
-    }))
-}
-
-fn streamed_command_event_command_for_context(value: &serde_json::Value) -> serde_json::Value {
-    if let Some(command) = value.get("command").filter(|command| command.is_object()) {
-        return command.clone();
-    }
-    let mut command = serde_json::Map::new();
-    for key in ["step", "command_type", "command_line"] {
-        if let Some(field) = value.get(key).filter(|field| !field.is_null()) {
-            command.insert(key.to_string(), field.clone());
-        }
-    }
-    if command.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::Value::Object(command)
-    }
-}
-
-fn streamed_command_event_result_for_context(value: &serde_json::Value) -> serde_json::Value {
-    let result = value
-        .get("result")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    if result.is_object() {
-        return result;
-    }
-    let mut output = serde_json::Map::new();
-    for key in ["step", "command_type", "command_line", "status"] {
-        if let Some(field) = value.get(key).filter(|field| !field.is_null()) {
-            output.insert(key.to_string(), field.clone());
-        }
-    }
-    if !result.is_null() {
-        output.insert("output".to_string(), result);
-    }
-    if output.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::Value::Object(output)
-    }
-}
-
-fn streamed_command_event_success(value: &serde_json::Value, result: &serde_json::Value) -> bool {
-    result
-        .get("success")
-        .or_else(|| value.get("success"))
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or_else(|| {
-            !matches!(
-                value.get("status").and_then(serde_json::Value::as_str),
-                Some("error" | "failed" | "cancelled")
-            )
-        })
+fn is_developer_context_injection(content: &serde_json::Value) -> bool {
+    content.as_str().is_some_and(|content| {
+        let content = content.trim_start();
+        content.starts_with("<WORKSPACE_SNAPSHOT>") || content.starts_with("<environment_context>")
+    })
 }
 
 use super::tool_results::{
-    immutable_tool_result_context_messages, last_tool_call_response_from_session,
-    strip_context_reporting_fields, strip_tool_reporting_fields, tool_result_context_cache,
+    command_run_cached_context_messages_are_valid, immutable_tool_result_context_messages,
+    last_tool_call_response_from_session, strip_context_reporting_fields,
+    strip_tool_reporting_fields, tool_result_context_cache,
 };
 
 #[cfg(test)]
 mod tests {
     use super::{
-        accumulate_message, accumulate_tool_result, build_context, build_messages_from_session,
-        ContextInput,
+        accumulate_message, accumulate_tool_result, accumulate_tool_result_with_provider_metadata,
+        build_context, build_messages_from_session, ContextInput,
     };
     use crate::context::USER_AGENT_CONTEXT_ROLE;
     use crate::context::{compact_session_context, compact_session_context_automatically};
@@ -866,9 +760,12 @@ mod tests {
         assert!(joined.contains("src/lib.rs"));
         assert!(
             joined.contains("old-tool-secret"),
-            "compact should replay the immediately preceding command_run output as tool context: {joined}"
+            "compact should replay the immediately preceding command_run output as context: {joined}"
         );
-        assert!(joined.contains("\"type\":\"function_call_output\""));
+        assert!(
+            !joined.contains("\"type\":\"function_call_output\""),
+            "command_run context without provider metadata must not create orphan tool outputs: {joined}"
+        );
         assert!(joined.contains("new-output"));
     }
 
@@ -1353,7 +1250,7 @@ mod tests {
         let now = Utc::now();
         let mut session = session();
         session.session_directory = root.path().to_path_buf();
-        accumulate_tool_result(
+        accumulate_tool_result_with_provider_metadata(
             &mut session,
             "command_run",
             json!({
@@ -1368,6 +1265,8 @@ mod tests {
             }),
             true,
             None,
+            Some("runtime-before-compact"),
+            Some(json!({ "id": "call_before_compact" })),
         )
         .expect("tool result before compact");
 
@@ -1451,6 +1350,10 @@ mod tests {
                 && function_call_index < function_output_index
                 && function_output_index < prompt_style_index,
             "compact must replay previous command_run through normal tool context before prompt_style: {joined}"
+        );
+        assert_eq!(
+            messages[function_call_index]["call_id"], messages[function_output_index]["call_id"],
+            "tool call and output must remain paired: {joined}"
         );
         assert!(
             messages[function_output_index]
@@ -1561,6 +1464,128 @@ mod tests {
         assert!(
             !compact_content.contains("STREAMED_TOOL_RESULT_SENTINEL"),
             "compact core must not absorb streamed command output: {compact_content}"
+        );
+    }
+
+    #[test]
+    fn streamed_command_events_do_not_duplicate_final_batch_context() {
+        let now = Utc::now();
+        let mut session = session();
+        for (index, (command_line, output)) in [
+            ("apply_patch failing-one", "STREAMED_PER_COMMAND_ONE"),
+            ("apply_patch failing-two", "STREAMED_PER_COMMAND_TWO"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            session.push_log(
+                serde_json::json!({
+                    "type": "streamed_command_event",
+                    "status": "completed",
+                    "event_index": index,
+                    "step": 1,
+                    "command_type": "apply_patch",
+                    "command_line": command_line,
+                    "command": {
+                        "step": 1,
+                        "command_type": "apply_patch",
+                        "command_line": command_line,
+                    },
+                    "result": {
+                        "step": 1,
+                        "command_type": "apply_patch",
+                        "success": index == 1,
+                        "output": output,
+                    },
+                    "timestamp": (now + Duration::seconds(index as i64)).to_rfc3339(),
+                    "created_at": (now + Duration::seconds(index as i64)).timestamp_millis(),
+                    "updated_at": (now + Duration::seconds(index as i64)).timestamp_millis(),
+                })
+                .to_string(),
+                now + Duration::seconds(index as i64),
+            );
+        }
+
+        accumulate_tool_result_with_provider_metadata(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [
+                    { "step": 1, "command_type": "apply_patch", "command_line": "apply_patch failing-one" },
+                    { "step": 1, "command_type": "apply_patch", "command_line": "apply_patch failing-two" },
+                    { "step": 1, "command_type": "apply_patch", "command_line": "apply_patch success-three" }
+                ]
+            }),
+            json!({
+                "results": [{
+                    "mode": "batch",
+                    "results": [
+                        { "step": 1, "command_type": "apply_patch", "success": false, "output": "FINAL_BATCH_FAILURE_ONE" },
+                        { "step": 1, "command_type": "apply_patch", "success": false, "output": "FINAL_BATCH_FAILURE_TWO" },
+                        { "step": 1, "command_type": "apply_patch", "success": true, "output": "FINAL_BATCH_SUCCESS_THREE" }
+                    ]
+                }]
+            }),
+            false,
+            Some("two commands failed".to_string()),
+            Some("runtime-final-batch"),
+            Some(json!({ "id": "call_final_batch" })),
+        )
+        .expect("final command_run batch should be logged");
+
+        let messages = build_messages_from_session(&session);
+        let function_calls = messages
+            .iter()
+            .filter(|message| {
+                message.get("type").and_then(serde_json::Value::as_str) == Some("function_call")
+            })
+            .collect::<Vec<_>>();
+        let function_outputs = messages
+            .iter()
+            .filter(|message| {
+                message.get("type").and_then(serde_json::Value::as_str)
+                    == Some("function_call_output")
+            })
+            .collect::<Vec<_>>();
+        let joined = messages
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(
+            function_calls.len(),
+            1,
+            "one command_run call should replay: {joined}"
+        );
+        assert_eq!(
+            function_outputs.len(),
+            1,
+            "only final batch output should replay: {joined}"
+        );
+        assert_eq!(
+            function_calls[0]["call_id"], function_outputs[0]["call_id"],
+            "command_run call and output must replay as a matched pair: {joined}"
+        );
+
+        let output = function_outputs[0]
+            .get("output")
+            .and_then(serde_json::Value::as_str)
+            .expect("function output");
+        let output_json: serde_json::Value =
+            serde_json::from_str(output).expect("structured command_run output");
+        assert_eq!(output_json["results"].as_array().expect("results").len(), 3);
+        assert_eq!(
+            output_json["results"][2]["command_line"],
+            "apply_patch success-three"
+        );
+        assert!(output.contains("FINAL_BATCH_FAILURE_ONE"), "{output}");
+        assert!(output.contains("FINAL_BATCH_FAILURE_TWO"), "{output}");
+        assert!(output.contains("FINAL_BATCH_SUCCESS_THREE"), "{output}");
+        assert!(
+            !joined.contains("STREAMED_PER_COMMAND_ONE")
+                && !joined.contains("STREAMED_PER_COMMAND_TWO"),
+            "streamed audit entries must not enter provider context: {joined}"
         );
     }
 
@@ -1757,7 +1782,7 @@ mod tests {
         accumulate_message(
             &mut session,
             USER_AGENT_CONTEXT_ROLE,
-            json!("<environment_context>client context</environment_context>"),
+            json!("client runtime context"),
         )
         .expect("user-agent context should log");
 
@@ -1773,10 +1798,51 @@ mod tests {
             .find(|message| {
                 message["content"]
                     .as_str()
-                    .is_some_and(|content| content.contains("client context"))
+                    .is_some_and(|content| content.contains("client runtime context"))
             })
             .expect("user-agent context should be replayed");
 
         assert_eq!(context["role"], "user");
+    }
+
+    #[test]
+    fn build_context_replays_workspace_and_environment_user_agent_records_as_developer() {
+        let mut session = session();
+        accumulate_message(
+            &mut session,
+            USER_AGENT_CONTEXT_ROLE,
+            json!("<WORKSPACE_SNAPSHOT>workspace</WORKSPACE_SNAPSHOT>"),
+        )
+        .expect("workspace context should log");
+        accumulate_message(
+            &mut session,
+            USER_AGENT_CONTEXT_ROLE,
+            json!("<environment_context>client context</environment_context>"),
+        )
+        .expect("environment context should log");
+
+        let output = build_context(ContextInput {
+            runtime: runtime(&session),
+            session,
+            additional_messages: vec![],
+        })
+        .expect("context should build");
+        let developer_contexts = output
+            .messages
+            .iter()
+            .filter(|message| message["role"] == "developer")
+            .collect::<Vec<_>>();
+
+        assert_eq!(developer_contexts.len(), 2, "{:?}", output.messages);
+        assert!(developer_contexts.iter().any(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("<WORKSPACE_SNAPSHOT>"))
+        }));
+        assert!(developer_contexts.iter().any(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("<environment_context>"))
+        }));
     }
 }

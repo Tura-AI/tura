@@ -74,7 +74,13 @@ pub(crate) fn normalize_provider_messages(
         }
 
         let (role, content) = match role {
-            role if role == USER_AGENT_CONTEXT_ROLE => ("user", content),
+            role if role == USER_AGENT_CONTEXT_ROLE => {
+                if is_developer_context_injection(&content) {
+                    ("developer", content)
+                } else {
+                    ("user", content)
+                }
+            }
             "system" | "developer" | "user" | "assistant" | "tool" => (role, content),
             other => (
                 "user",
@@ -104,6 +110,13 @@ pub(crate) fn normalize_provider_messages(
         }),
     );
     normalized
+}
+
+fn is_developer_context_injection(content: &serde_json::Value) -> bool {
+    content.as_str().is_some_and(|content| {
+        let content = content.trim_start();
+        content.starts_with("<WORKSPACE_SNAPSHOT>") || content.starts_with("<environment_context>")
+    })
 }
 
 fn message_content_value(message: &serde_json::Value) -> serde_json::Value {
@@ -541,7 +554,7 @@ mod tests {
         ]);
 
         assert_eq!(normalized.len(), 7);
-        assert_eq!(normalized[3]["role"], "user");
+        assert_eq!(normalized[3]["role"], "developer");
         assert_eq!(
             normalized[3]["content"],
             "<environment_context>stable</environment_context>"

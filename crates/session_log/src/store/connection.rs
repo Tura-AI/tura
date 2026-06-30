@@ -90,6 +90,7 @@ pub(super) fn init_index_db(conn: &Connection) -> Result<()> {
             parent_id TEXT,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
+            last_user_message_at INTEGER,
             state TEXT,
             status TEXT,
             message_count INTEGER NOT NULL DEFAULT 0,
@@ -119,6 +120,13 @@ pub(super) fn init_index_db(conn: &Connection) -> Result<()> {
         );
         ",
     )?;
+    ensure_column(conn, "sessions", "last_user_message_at", "INTEGER")?;
+    conn.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_sessions_workspace_last_user_message
+            ON sessions(workspace, last_user_message_at DESC, session_id);
+        ",
+    )?;
     Ok(())
 }
 
@@ -132,6 +140,7 @@ pub(super) fn init_workspace_db(conn: &Connection) -> Result<()> {
             parent_id TEXT,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
+            last_user_message_at INTEGER,
             state TEXT,
             status TEXT,
             message_count INTEGER NOT NULL DEFAULT 0,
@@ -164,5 +173,27 @@ pub(super) fn init_workspace_db(conn: &Connection) -> Result<()> {
             ON session_records(session_id, message_id);
         ",
     )?;
+    ensure_column(conn, "sessions", "last_user_message_at", "INTEGER")?;
+    conn.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_workspace_sessions_last_user_message
+            ON sessions(workspace, last_user_message_at DESC, session_id);
+        ",
+    )?;
+    Ok(())
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .any(|name| name == column);
+    if !exists {
+        conn.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+        ))?;
+    }
     Ok(())
 }

@@ -10,8 +10,6 @@ use std::path::Path;
 mod access;
 #[path = "src/args.rs"]
 mod args;
-#[path = "src/asset.rs"]
-mod asset;
 #[path = "src/download.rs"]
 mod download;
 #[path = "src/files.rs"]

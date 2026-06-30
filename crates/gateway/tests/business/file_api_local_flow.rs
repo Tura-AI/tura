@@ -1,14 +1,19 @@
+use axum::body::{self, Body};
 use axum::extract::{Json, Query};
 use axum::http::StatusCode;
+use axum::http::{header, Method, Request};
 use axum::response::IntoResponse;
 use gateway::api::file::{
-    get_file_content, get_file_media, list_files, open_file, open_file_location,
+    get_file_content, get_file_media, list_files, open_file, open_file_location, save_input_file,
 };
-use gateway::contracts::{FileContentQuery, ListFilesQuery};
+use gateway::contracts::{
+    FileContentQuery, FileInputSaveQuery, FileInputSaveRequest, ListFilesQuery,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tower::ServiceExt;
 
 #[tokio::test]
 async fn gateway_file_api_business_flow_lists_reads_and_rejects_workspace_escape() {
@@ -121,6 +126,99 @@ async fn gateway_file_api_business_flow_lists_reads_and_rejects_workspace_escape
     .await
     .expect_err("missing file should be not found");
     assert_eq!(missing.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn gateway_file_api_business_flow_saves_input_files_under_tura_media_input() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let root = workspace.path();
+
+    let Json(saved) = save_input_file(
+        Query(FileInputSaveQuery {
+            directory: Some(root.to_string_lossy().to_string()),
+        }),
+        Json(FileInputSaveRequest {
+            name: "../screen shot.png".to_string(),
+            content: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                [0x89, b'P', b'N', b'G'],
+            ),
+            encoding: "base64".to_string(),
+            mime_type: Some("image/png".to_string()),
+        }),
+    )
+    .await
+    .expect("save input file");
+
+    assert!(saved.path.starts_with(".tura/media/input/"));
+    assert!(saved.path.ends_with("screen-shot.png"));
+    assert_eq!(saved.mime_type.as_deref(), Some("image/png"));
+    assert_eq!(
+        fs::read(root.join(&saved.path)).expect("saved bytes"),
+        [0x89, b'P', b'N', b'G']
+    );
+
+    let escape = save_input_file(
+        Query(FileInputSaveQuery {
+            directory: Some(root.to_string_lossy().to_string()),
+        }),
+        Json(FileInputSaveRequest {
+            name: "empty.png".to_string(),
+            content: String::new(),
+            encoding: "base64".to_string(),
+            mime_type: Some("image/png".to_string()),
+        }),
+    )
+    .await
+    .expect_err("empty payload should be rejected");
+    assert_eq!(escape.0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn gateway_file_input_route_accepts_directory_without_path_query() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let root = workspace.path();
+    let body = serde_json::json!({
+        "name": "drop.png",
+        "content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0x89, b'P', b'N', b'G']),
+        "encoding": "base64",
+        "mimeType": "image/png"
+    });
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(format!(
+            "/file/input?directory={}",
+            url::form_urlencoded::byte_serialize(root.to_string_lossy().as_bytes())
+                .collect::<String>()
+        ))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request");
+
+    let response = gateway::web::build_router()
+        .oneshot(request)
+        .await
+        .expect("router response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    let saved: serde_json::Value = serde_json::from_slice(&bytes).expect("json response");
+    let path = saved
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .expect("saved relative path");
+    assert!(path.starts_with(".tura/media/input/"));
+    assert!(path.ends_with("drop.png"));
+    assert_eq!(
+        saved.get("mimeType").and_then(serde_json::Value::as_str),
+        Some("image/png")
+    );
+    assert_eq!(
+        fs::read(root.join(path)).expect("saved bytes"),
+        [0x89, b'P', b'N', b'G']
+    );
 }
 
 #[tokio::test]

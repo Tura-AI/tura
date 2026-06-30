@@ -176,6 +176,7 @@ mod tests {
             parent_id: None,
             created_at: 1,
             updated_at: 2,
+            last_user_message_at: Some(1),
             state: Some("running".to_string()),
             status: Some("running".to_string()),
             message_count: 3,

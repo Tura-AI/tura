@@ -130,6 +130,12 @@ impl TuraSessionConfig {
     }
 
     pub fn fill_model_parts(&mut self) {
+        if non_empty(self.model.as_deref()).is_some_and(|model| !model.contains('/')) {
+            self.active_provider = None;
+            self.active_model = None;
+            return;
+        }
+
         if let (Some(provider), Some(model_id)) = (
             non_empty(self.active_provider.as_deref()).map(ToString::to_string),
             non_empty(self.active_model.as_deref()).map(ToString::to_string),
@@ -545,6 +551,37 @@ active_model=qwen/qwen3.7-max
         assert_eq!(config.model.as_deref(), Some("openrouter/qwen/qwen3.7-max"));
         assert_eq!(config.active_provider.as_deref(), Some("openrouter"));
         assert_eq!(config.active_model.as_deref(), Some("qwen/qwen3.7-max"));
+    }
+
+    #[test]
+    fn tier_model_preserves_tier_over_stale_active_pair() {
+        let config = parse_config(
+            r#"
+model=thinking
+active_provider=codex
+active_model=gpt-5.5
+"#,
+        );
+
+        assert_eq!(config.model.as_deref(), Some("thinking"));
+        assert_eq!(config.active_provider, None);
+        assert_eq!(config.active_model, None);
+    }
+
+    #[test]
+    fn tier_model_serializes_without_stale_active_pair() {
+        let config = TuraSessionConfig {
+            model: Some("thinking".to_string()),
+            active_provider: Some("codex".to_string()),
+            active_model: Some("gpt-5.5".to_string()),
+            ..TuraSessionConfig::default()
+        };
+
+        let serialized = serialize_config(&config);
+
+        assert!(serialized.contains("model=thinking"));
+        assert!(!serialized.contains("active_provider="));
+        assert!(!serialized.contains("active_model="));
     }
 
     #[test]

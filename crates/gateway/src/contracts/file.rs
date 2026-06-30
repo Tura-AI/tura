@@ -43,3 +43,27 @@ pub struct FileOpenResponse {
     pub path: String,
     pub opened: bool,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileInputSaveRequest {
+    pub name: String,
+    pub content: String,
+    pub encoding: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileInputSaveQuery {
+    pub directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FileInputSaveResponse {
+    pub path: String,
+    pub absolute: String,
+    pub name: String,
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    pub size_bytes: u64,
+}

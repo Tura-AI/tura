@@ -295,6 +295,9 @@ pub(super) fn route_by_name<'a>(
 }
 
 pub(super) fn provider_display_name(provider_id: &str) -> String {
+    if provider_id == "codex" {
+        return "Codex".to_string();
+    }
     tura_llm_rust::provider_auth_registry_entry(provider_id)
         .map(|entry| entry.display_name)
         .unwrap_or(provider_id)
@@ -351,6 +354,9 @@ pub(super) fn provider_display_name_from_settings(
     settings: Option<&tura_llm_rust::Settings>,
     provider_id: &str,
 ) -> Option<String> {
+    if provider_id == "codex" {
+        return Some("Codex".to_string());
+    }
     settings?
         .model_catalog
         .providers
@@ -894,6 +900,10 @@ mod tests {
         assert_eq!(
             provider_display_name_from_settings(Some(&settings), "local").as_deref(),
             Some("Local Provider")
+        );
+        assert_eq!(
+            provider_display_name_from_settings(Some(&settings), "codex").as_deref(),
+            Some("Codex")
         );
         assert_eq!(
             provider_env_from_settings(Some(&settings), "local"),

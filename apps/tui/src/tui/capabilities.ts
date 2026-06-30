@@ -75,7 +75,7 @@ export function richCapabilities(): TerminalCapabilities {
     unicode: true,
     osc8: true,
     richText: "richMarkdown",
-    mediaOpen: true,
+    mediaOpen: false,
     interactive: true,
   };
 }

@@ -88,12 +88,13 @@ fn sanitize(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::ProcessLock;
+    use tura_path::{DEBUG_GATEWAY_PORT, RELEASE_GATEWAY_PORT};
 
     #[test]
     fn rejects_second_owner_for_same_root_mode_even_on_different_port() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let first =
-            ProcessLock::acquire(temp.path(), "gateway", "dev", Some(4126)).expect("first lock");
+        let first = ProcessLock::acquire(temp.path(), "gateway", "dev", Some(DEBUG_GATEWAY_PORT))
+            .expect("first lock");
         let second = ProcessLock::acquire(temp.path(), "gateway", "dev", Some(4999));
         assert!(second.is_err());
         assert!(first.path().exists());
@@ -102,9 +103,14 @@ mod tests {
     #[test]
     fn allows_different_modes() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let _dev =
-            ProcessLock::acquire(temp.path(), "gateway", "dev", Some(4126)).expect("dev lock");
-        let _release = ProcessLock::acquire(temp.path(), "gateway", "release", Some(4156))
-            .expect("release lock");
+        let _dev = ProcessLock::acquire(temp.path(), "gateway", "dev", Some(DEBUG_GATEWAY_PORT))
+            .expect("dev lock");
+        let _release = ProcessLock::acquire(
+            temp.path(),
+            "gateway",
+            "release",
+            Some(RELEASE_GATEWAY_PORT),
+        )
+        .expect("release lock");
     }
 }

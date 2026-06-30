@@ -5,7 +5,7 @@ import { drawChatChromeOverlay } from "../../../src/tui/draw.js";
 import { renderChatFrameParts } from "../../../src/tui/render.js";
 import { initialState, reducer } from "../../../src/tui/reducer.js";
 import { richCapabilities } from "../../../src/tui/capabilities.js";
-import { clear as terminalClear } from "../../../src/tui/render-terminal.js";
+import { clear as terminalClear, stripAnsi } from "../../../src/tui/render-terminal.js";
 import {
   activeSession,
   otherSession,
@@ -697,6 +697,40 @@ test("draw appends reservation rows so live and chrome remain visible after full
   assert.match(output, /\r\n/, "live/chrome reservation must extend scrollback");
   assert.match(output, /FULL_CACHE_LIVE_MARKER/);
   assert.match(output, /Active[\s\S]*Enter: send/);
+});
+
+test("chat chrome keeps the composer row stable when thinking stops", () => {
+  const busySession = { ...activeSession, status: "busy" as const };
+  const idleSession = { ...activeSession, status: "idle" as const };
+  const busyState = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: busySession,
+    messages: [],
+    permissions: [],
+    sessions: [busySession],
+  });
+  const idleState = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: idleSession,
+    messages: [],
+    permissions: [],
+    sessions: [idleSession],
+  });
+
+  const busyChrome = renderChatFrameParts(busyState, richCapabilities());
+  const idleChrome = renderChatFrameParts(idleState, richCapabilities());
+  const busyPlain = stripAnsi(busyChrome.chromeFrame);
+  const idlePlain = stripAnsi(idleChrome.chromeFrame);
+  const busyLines = busyChrome.chromeFrame.split("\n");
+  const idleLines = idleChrome.chromeFrame.split("\n");
+  const busyTitleRow = busyLines.findIndex((line) => line.includes("Active"));
+  const idleTitleRow = idleLines.findIndex((line) => line.includes("Active"));
+
+  assert.match(busyPlain, /thinking/);
+  assert.doesNotMatch(idlePlain, /thinking/);
+  assert.equal(idleLines.length, busyLines.length);
+  assert.equal(idleTitleRow, busyTitleRow);
+  assert.equal(idleChrome.chromeCursor?.row, busyChrome.chromeCursor?.row);
 });
 
 test("idle chrome overlay repaints stale busy chrome without clearing first", () => {

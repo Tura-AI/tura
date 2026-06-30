@@ -109,12 +109,19 @@ Gateway startup must also adopt a compatible already-running router for the same
 home rather than starting a second backend owner. The published router endpoint
 contains `addr`, `version`, `pid`, and `process_start_time`; gateway health
 checks the socket before reuse and only force-terminates a stuck daemon when the
-PID start-time fingerprint still matches. GUI/TUI launchers pass
-`TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF=1` and keep gateway stdin piped; when the
-front closes that pipe, gateway exits without killing router. Router receives
-periodic `lifecycle.front_heartbeat` leases from live gateways and self-shuts
-down after its idle grace when no valid gateway lease, exec socket, active
-runtime worker, or active turn remains.
+PID start-time fingerprint still matches. GUI/TUI launchers keep gateway stdin
+ignored and leave the gateway alive when the front exits. The gateway owns the
+desktop tray/menu lifecycle: a tray left click launches the packaged `tura_gui`
+desktop app with gateway/workspace/session arguments, while the context menu
+keeps short localized labels and delegates GUI items to the same desktop entry
+instead of opening the browser-served web GUI. The Tauri shell owns the GUI
+single-instance boundary, so any duplicate tray, session, or direct executable
+launch is intercepted by the running `tura_gui` process, navigates with the new
+arguments, unminimizes the main window, and focuses it instead of creating a
+second GUI process. Router receives periodic
+`lifecycle.front_heartbeat` leases from live gateways and self-shuts down after
+its idle grace when no valid gateway lease, exec socket, active runtime worker,
+or active turn remains.
 Process/state regressions are
 covered by the mandatory root test
 `tests/os_testing/process_state_management_e2e.rs`: stale endpoints, gateway

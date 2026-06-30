@@ -30,7 +30,7 @@ const nodeBin = process.execPath;
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 
 const model = process.env.TUI_SNAKE_MODEL || "codex/gpt-5.5";
-const agent = process.env.TUI_SNAKE_AGENT || "fast";
+const agent = process.env.TUI_SNAKE_AGENT || "direct";
 const modelVariant = process.env.TUI_SNAKE_MODEL_VARIANT || "low";
 const priority = process.env.TUI_SNAKE_PRIORITY !== "0";
 const timeoutMs = Number(process.env.TUI_SNAKE_TIMEOUT_MS || 240_000);

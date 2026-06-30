@@ -1,10 +1,10 @@
 import { emitKeypressEvents } from "node:readline";
 import { GatewayClient } from "../gateway/client.js";
-import { ensureGatewayAvailable, killOwnedGateway } from "../gateway/autostart.js";
+import { ensureGatewayAvailable } from "../gateway/autostart.js";
 import { userFacingError } from "../gateway/errors.js";
 import { MockGatewayClient } from "../gateway/mock-client.js";
 import { CliUsageError, type CliContext } from "../types/common.js";
-import { isDraftSession } from "../types/session.js";
+import { isDraftSession, sessionTitle } from "../types/session.js";
 import { sessionConfigPatchFromAssignments } from "../commands/config-values.js";
 import { initialState, reducer, type AppAction, type AppState } from "./reducer.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
@@ -35,9 +35,25 @@ import {
   SESSION_PICKER_REFRESH_MS,
 } from "./session-picker.js";
 import { applySelectedSetting, submitSettingInput } from "./settings-actions.js";
-import { hasActiveAnimation, isBusyState } from "./busy-state.js";
-import { createAndSelectSession, submitPrompt } from "./session-actions.js";
+import { hasActiveAnimation } from "./busy-state.js";
+import {
+  createAndSelectSession,
+  loadAndSelectSession,
+  loadAndSelectSessionByID,
+  submitPrompt,
+} from "./session-actions.js";
 import { createResizeDrawGate, createTerminalResizeHandler } from "./resize.js";
+import { mediaTokenForInputPath, saveClipboardImageInput } from "./clipboard-image.js";
+
+export type TuiKeypressKey = {
+  name?: string;
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+  sequence?: unknown;
+};
+
+type TuiKeypressExit = () => void;
 
 export { clearTerminalForSurfaceTransition, draw, resetDrawState } from "./draw.js";
 export { createResizeDrawGate, createTerminalResizeHandler } from "./resize.js";
@@ -47,7 +63,12 @@ export {
   openSessionPicker,
   refreshOpenSessionPicker,
 } from "./session-picker.js";
-export { createAndSelectSession, submitPrompt } from "./session-actions.js";
+export {
+  createAndSelectSession,
+  loadAndSelectSession,
+  loadAndSelectSessionByID,
+  submitPrompt,
+} from "./session-actions.js";
 
 function isActiveSessionIdleEvent(action: AppAction, state: AppState): boolean {
   if (action.type !== "event") return false;
@@ -79,11 +100,6 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new CliUsageError(t("tuiRequiresTty"));
   }
-  // Kill the owned gateway on any exit (crash, SIGTERM, unhandled rejection, etc.).
-  // killOwnedGateway() is idempotent so calling it from both here and the normal
-  // exit path is safe.
-  process.on("exit", killOwnedGateway);
-
   const capabilities = detectTerminalCapabilities(context.display);
   let client: TuiGatewayClient;
   let devLogPath: string | undefined;
@@ -110,6 +126,12 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     await client.syncWorkspace();
   }
   let state = initialState(context.cwd);
+  state = reducer(state, {
+    type: "session-loading",
+    value: context.initialSessionId
+      ? { sessionID: context.initialSessionId, title: context.initialSessionId }
+      : {},
+  });
   resetDrawState();
   if (devLogPath) {
     state = reducer(state, { type: "notice", value: t("devModeActive", { path: devLogPath }) });
@@ -199,12 +221,11 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     void eventLoop(client, () => state, controller.signal, dispatch);
   }
   const heartbeatTimer = setInterval(() => {
-    if (!isBusyState(state) && !state.questions.length && !state.permissions.length) return;
-    if (hasActiveAnimation(state)) dispatch({ type: "tick" });
-    else scheduleDraw();
+    if (!hasActiveAnimation(state)) return;
+    dispatch({ type: "tick" });
   }, TUI_DRAW_INTERVAL_MS);
   const sessionPickerRefreshTimer = setInterval(() => {
-    if (!state.sessionsOpen) return;
+    if (!state.sessionsOpen || state.sessionLoading) return;
     void refreshOpenSessionPicker(client, () => state, dispatch);
   }, SESSION_PICKER_REFRESH_MS);
 
@@ -214,7 +235,11 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   // Any failure surfaces as a notice instead of hanging or crashing the TUI.
   void (async () => {
     try {
-      const session = await pickInitialSession(client, context.cwd);
+      const session = await pickInitialSession(client, context.cwd, context.initialSessionId);
+      dispatch({
+        type: "session-loading",
+        value: { sessionID: session.id, title: sessionTitle(session) },
+      });
       const next = await hydrate(initialState(context.cwd), client, session);
       if (!shouldApplyInitialHydrate(state, session.id)) return;
       applyConfiguredLanguage(next.sessionConfig?.language, context.language);
@@ -230,6 +255,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
         authMethods: next.authMethods,
         authStatuses: next.authStatuses,
         sessionConfig: next.sessionConfig,
+        modelConfig: next.modelConfig,
       });
       const mockInitialComposer = context.mock ? process.env.TURA_TUI_MOCK_INITIAL_COMPOSER : "";
       if (mockInitialComposer) dispatch({ type: "composer", value: mockInitialComposer });
@@ -238,13 +264,12 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
         await submitPrompt(client, () => state, dispatch, initialPrompt);
       }
     } catch (error) {
-      dispatch({ type: "notice", value: userFacingError(error) });
+      dispatch({ type: "session-loading", value: undefined });
+      dispatch({ type: "notice", value: userFacingError(error), transient: true });
     }
   })();
 
   await inputLoop(client, () => state, dispatch, capabilities, resizeDrawGate.enterResize);
-  // Normal exit path: kill gateway immediately so it doesn't outlive the TUI.
-  killOwnedGateway();
   clearInterval(heartbeatTimer);
   clearInterval(sessionPickerRefreshTimer);
   controller.abort();
@@ -266,209 +291,13 @@ async function inputLoop(
   if (process.stdin.isTTY && capabilities.interactive) process.stdin.setRawMode(true);
   return new Promise((resolve) => {
     const onTerminalResize = createTerminalResizeHandler(getState, dispatch, { onResize });
-    const onKeypress = async (
-      text: string,
-      key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean } | undefined,
-    ) => {
-      try {
-        const state = getState();
-        const sequence = keySequence(key) ?? text ?? "";
-        if (key?.ctrl && key.name === "c") {
-          process.stdin.off("keypress", onKeypress);
-          process.stdout.off("resize", onTerminalResize);
-          resolve();
-          return;
-        }
-        if (key?.name === "tab" || sequence === "\t") {
-          await openSessionPicker(client, getState, dispatch);
-          return;
-        }
-        if (key?.name === "escape") {
-          if (state.help) dispatch({ type: "toggle-help" });
-          if (state.sessionsOpen) {
-            clearTerminalForSurfaceTransition();
-            dispatch({ type: "toggle-sessions" });
-          }
-          if (state.modelsOpen) dispatch({ type: "toggle-models" });
-          if (state.authOpen) dispatch({ type: "toggle-auth" });
-          if (state.settingInput) {
-            dispatch({ type: "setting-input", value: undefined });
-            dispatch({ type: "composer", value: "" });
-            return;
-          }
-          if (state.settingsOpen) {
-            if (state.settingDetail === "providerAuth")
-              dispatch({ type: "open-setting-detail", detail: "provider" });
-            else if (state.settingDetail) dispatch({ type: "close-setting-detail" });
-            else dispatch({ type: "toggle-settings" });
-          }
-          if (state.personasOpen) dispatch({ type: "toggle-personas" });
-          return;
-        }
-        if (
-          key?.name === "up" ||
-          key?.name === "down" ||
-          sequence === "\x1b[A" ||
-          sequence === "\x1b[B"
-        ) {
-          if (state.settingInput) return;
-          const delta = key?.name === "up" || sequence === "\x1b[A" ? -1 : 1;
-          if (state.sessionsOpen) dispatch({ type: "select-session", delta });
-          else if (state.modelsOpen) dispatch({ type: "select-model", delta });
-          else if (state.personasOpen) dispatch({ type: "select-persona", delta });
-          else if (state.settingsOpen && state.settingDetail)
-            dispatch({ type: "select-setting-option", delta });
-          else if (state.settingsOpen) dispatch({ type: "select-settings", delta });
-          else return;
-          return;
-        }
-        if (
-          key?.name === "left" ||
-          key?.name === "right" ||
-          sequence === "\x1b[D" ||
-          sequence === "\x1b[C"
-        ) {
-          if (state.settingInput) return;
-          const direction = key?.name === "left" || sequence === "\x1b[D" ? -1 : 1;
-          if (state.sessionsOpen) {
-            dispatch({
-              type: "select-session",
-              delta: pageSelectionDelta(
-                state.selectedSessionIndex,
-                sessionPanelPageSize(),
-                state.sessions.length + 1,
-                direction,
-              ),
-            });
-          } else if (state.settingsOpen && state.settingDetail) {
-            dispatch({
-              type: "select-setting-option",
-              delta: pageSelectionDelta(
-                state.selectedSettingOptionIndex,
-                settingsPanelPageSize(state),
-                settingOptions(state).length,
-                direction,
-              ),
-            });
-          } else if (state.settingsOpen) {
-            dispatch({
-              type: "select-settings",
-              delta: pageSelectionDelta(
-                state.selectedSettingsIndex,
-                settingsPanelPageSize(state),
-                settingsEntries(state).length,
-                direction,
-              ),
-            });
-          } else return;
-          return;
-        }
-        if (key?.name === "pageup" || sequence === "\x1b[5~") {
-          return;
-        }
-        if (key?.name === "pagedown" || sequence === "\x1b[6~") {
-          return;
-        }
-        if (state.sessionsOpen && (key?.name === "delete" || sequence === "\x1b[3~")) {
-          await deleteSelectedSession(client, getState, dispatch);
-          return;
-        }
-        if (key?.name === "return") {
-          if (state.settingInput) {
-            await submitSettingInput(client, getState, dispatch);
-            return;
-          }
-          if (state.sessionsOpen && !state.composer.trim()) {
-            if (key.shift) {
-              await forkSelectedSession(client, getState, dispatch);
-              return;
-            }
-            if (state.selectedSessionIndex === 0) {
-              clearTerminalForSurfaceTransition();
-              await createAndSelectSession(client, getState, dispatch, true);
-              return;
-            }
-            const target = state.sessions[state.selectedSessionIndex - 1];
-            if (target) {
-              clearTerminalForSurfaceTransition();
-              const next = await hydrate(getState(), client, target);
-              dispatch({
-                type: "hydrate",
-                session: next.session!,
-                messages: next.messages,
-                permissions: next.permissions,
-                providers: next.providers,
-                agents: next.agents,
-                personas: next.personas,
-                sessions: next.sessions,
-                closePanels: true,
-              });
-              dispatch({ type: "questions", value: next.questions });
-            }
-            return;
-          }
-          if (state.modelsOpen && !state.composer.trim()) {
-            const model = selectedModel(state);
-            if (model) {
-              const config = await client.patchSessionConfig(
-                sessionConfigPatchFromAssignments([`model=${model}`]),
-              );
-              dispatch({ type: "session-config", value: config });
-              dispatch({ type: "notice", value: undefined });
-            }
-            return;
-          }
-          if (state.personasOpen && !state.composer.trim()) {
-            const persona = selectedPersonaID(state);
-            if (persona) {
-              const config = await client.patchSessionConfig({ active_persona: persona });
-              dispatch({ type: "session-config", value: config });
-              dispatch({ type: "notice", value: undefined });
-            }
-            return;
-          }
-          if (state.settingsOpen && !state.composer.trim()) {
-            if (state.settingDetail) {
-              await applySelectedSetting(client, getState, dispatch);
-            } else {
-              const detail = selectedSettingDetail(state);
-              if (detail) dispatch({ type: "open-setting-detail", detail });
-            }
-            return;
-          }
-          const value = state.composer.trim();
-          dispatch({ type: "composer", value: "" });
-          if (!value) return;
-          if (value.startsWith("/")) {
-            const shouldExit = await slashCommand(client, getState, dispatch, value);
-            if (shouldExit) {
-              process.stdin.off("keypress", onKeypress);
-              process.stdout.off("resize", onTerminalResize);
-              resolve();
-            }
-          } else await submitPrompt(client, getState, dispatch, value);
-          return;
-        }
-        if (state.settingsOpen && !state.settingInput) return;
-        if (key?.ctrl && key.name === "j") {
-          dispatch({ type: "composer", value: `${state.composer}\n` });
-          return;
-        }
-        if (key?.ctrl && key.name === "l") {
-          dispatch({ type: "notice", value: state.notice });
-          return;
-        }
-        if (key?.name === "backspace") {
-          dispatch({ type: "composer", value: state.composer.slice(0, -1) });
-          return;
-        }
-        const printable = text ?? printableSequence(keySequence(key));
-        if (printable && !key?.ctrl && !key?.meta) {
-          dispatch({ type: "composer", value: state.composer + printable });
-        }
-      } catch (error) {
-        dispatch({ type: "notice", value: userFacingError(error) });
-      }
+    const onExit = () => {
+      process.stdin.off("keypress", onKeypress);
+      process.stdout.off("resize", onTerminalResize);
+      resolve();
+    };
+    const onKeypress = async (text: string, key: TuiKeypressKey | undefined) => {
+      await handleTuiKeypress(client, getState, dispatch, text, key, onExit);
     };
     process.stdin.on("keypress", onKeypress);
     process.stdout.on("resize", onTerminalResize);
@@ -495,6 +324,204 @@ function pageSelectionDelta(
         ? lastPageStart
         : pageStart - safePageSize;
   return target - safeIndex;
+}
+
+export async function handleTuiKeypress(
+  client: TuiGatewayClient,
+  getState: () => AppState,
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  text: string,
+  key: TuiKeypressKey | undefined,
+  onExit?: TuiKeypressExit,
+): Promise<void> {
+  try {
+    const state = getState();
+    const sequence = keySequence(key) ?? text ?? "";
+    if (key?.ctrl && key.name === "c") {
+      onExit?.();
+      return;
+    }
+    if (state.sessionLoading) return;
+    if (key?.name === "tab" || sequence === "\t") {
+      await openSessionPicker(client, getState, dispatch);
+      return;
+    }
+    if (key?.name === "escape") {
+      if (state.help) dispatch({ type: "toggle-help" });
+      if (state.sessionsOpen) {
+        clearTerminalForSurfaceTransition();
+        dispatch({ type: "toggle-sessions" });
+      }
+      if (state.modelsOpen) dispatch({ type: "toggle-models" });
+      if (state.authOpen) dispatch({ type: "toggle-auth" });
+      if (state.settingInput) {
+        dispatch({ type: "setting-input", value: undefined });
+        dispatch({ type: "composer", value: "" });
+        return;
+      }
+      if (state.settingsOpen) {
+        if (state.settingDetail === "providerAuth")
+          dispatch({ type: "open-setting-detail", detail: "provider" });
+        else if (state.settingDetail) dispatch({ type: "close-setting-detail" });
+        else dispatch({ type: "toggle-settings" });
+      }
+      if (state.personasOpen) dispatch({ type: "toggle-personas" });
+      return;
+    }
+    if (
+      key?.name === "up" ||
+      key?.name === "down" ||
+      sequence === "\x1b[A" ||
+      sequence === "\x1b[B"
+    ) {
+      if (state.settingInput) return;
+      const delta = key?.name === "up" || sequence === "\x1b[A" ? -1 : 1;
+      if (state.sessionsOpen) dispatch({ type: "select-session", delta });
+      else if (state.modelsOpen) dispatch({ type: "select-model", delta });
+      else if (state.personasOpen) dispatch({ type: "select-persona", delta });
+      else if (state.settingsOpen && state.settingDetail)
+        dispatch({ type: "select-setting-option", delta });
+      else if (state.settingsOpen) dispatch({ type: "select-settings", delta });
+      else return;
+      return;
+    }
+    if (
+      key?.name === "left" ||
+      key?.name === "right" ||
+      sequence === "\x1b[D" ||
+      sequence === "\x1b[C"
+    ) {
+      if (state.settingInput) return;
+      const direction = key?.name === "left" || sequence === "\x1b[D" ? -1 : 1;
+      if (state.sessionsOpen) {
+        dispatch({
+          type: "select-session",
+          delta: pageSelectionDelta(
+            state.selectedSessionIndex,
+            sessionPanelPageSize(),
+            state.sessions.length + 1,
+            direction,
+          ),
+        });
+      } else if (state.settingsOpen && state.settingDetail) {
+        dispatch({
+          type: "select-setting-option",
+          delta: pageSelectionDelta(
+            state.selectedSettingOptionIndex,
+            settingsPanelPageSize(state),
+            settingOptions(state).length,
+            direction,
+          ),
+        });
+      } else if (state.settingsOpen) {
+        dispatch({
+          type: "select-settings",
+          delta: pageSelectionDelta(
+            state.selectedSettingsIndex,
+            settingsPanelPageSize(state),
+            settingsEntries(state).length,
+            direction,
+          ),
+        });
+      } else return;
+      return;
+    }
+    if (key?.name === "pageup" || sequence === "\x1b[5~") {
+      return;
+    }
+    if (key?.name === "pagedown" || sequence === "\x1b[6~") {
+      return;
+    }
+    if (state.sessionsOpen && (key?.name === "delete" || sequence === "\x1b[3~")) {
+      await deleteSelectedSession(client, getState, dispatch);
+      return;
+    }
+    if (key?.name === "return") {
+      if (state.settingInput) {
+        await submitSettingInput(client, getState, dispatch);
+        return;
+      }
+      if (state.sessionsOpen) {
+        if (key.shift) {
+          await forkSelectedSession(client, getState, dispatch);
+          return;
+        }
+        if (state.selectedSessionIndex === 0) {
+          clearTerminalForSurfaceTransition();
+          await createAndSelectSession(client, getState, dispatch, true);
+          return;
+        }
+        const target = state.sessions[state.selectedSessionIndex - 1];
+        if (target) {
+          clearTerminalForSurfaceTransition();
+          await loadAndSelectSession(client, getState, dispatch, target, true);
+        }
+        return;
+      }
+      if (state.modelsOpen && !state.composer.trim()) {
+        const model = selectedModel(state);
+        if (model) {
+          const config = await client.patchSessionConfig(
+            sessionConfigPatchFromAssignments([`model=${model}`]),
+          );
+          dispatch({ type: "session-config", value: config });
+          dispatch({ type: "notice", value: undefined });
+        }
+        return;
+      }
+      if (state.personasOpen && !state.composer.trim()) {
+        const persona = selectedPersonaID(state);
+        if (persona) {
+          const config = await client.patchSessionConfig({ active_persona: persona });
+          dispatch({ type: "session-config", value: config });
+          dispatch({ type: "notice", value: undefined });
+        }
+        return;
+      }
+      if (state.settingsOpen && !state.composer.trim()) {
+        if (state.settingDetail) {
+          await applySelectedSetting(client, getState, dispatch);
+        } else {
+          const detail = selectedSettingDetail(state);
+          if (detail) dispatch({ type: "open-setting-detail", detail });
+        }
+        return;
+      }
+      const value = state.composer.trim();
+      dispatch({ type: "composer", value: "" });
+      if (!value) return;
+      if (value.startsWith("/")) {
+        const shouldExit = await slashCommand(client, getState, dispatch, value);
+        if (shouldExit) onExit?.();
+      } else await submitPrompt(client, getState, dispatch, value);
+      return;
+    }
+    if (state.settingsOpen && !state.settingInput) return;
+    if (key?.ctrl && key.name === "j") {
+      dispatch({ type: "composer", value: `${state.composer}\n` });
+      return;
+    }
+    if (key?.ctrl && key.name === "v") {
+      const path = await saveClipboardImageInput(state.cwd);
+      if (path)
+        dispatch({ type: "composer", value: state.composer + mediaTokenForInputPath(path) });
+      return;
+    }
+    if (key?.ctrl && key.name === "l") {
+      dispatch({ type: "notice", value: state.notice });
+      return;
+    }
+    if (key?.name === "backspace") {
+      dispatch({ type: "composer", value: state.composer.slice(0, -1) });
+      return;
+    }
+    const printable = text ?? printableSequence(keySequence(key));
+    if (printable && !key?.ctrl && !key?.meta) {
+      dispatch({ type: "composer", value: state.composer + printable });
+    }
+  } catch (error) {
+    dispatch({ type: "notice", value: userFacingError(error), transient: true });
+  }
 }
 
 function panelMaxLines(): number {
@@ -540,21 +567,7 @@ async function slashCommand(
   else if (name === "resume") {
     const id = args[0];
     if (!id) dispatch({ type: "notice", value: t("usageResume") });
-    else {
-      const session = await client.getSession(id);
-      const next = await hydrate(getState(), client, session);
-      dispatch({
-        type: "hydrate",
-        session: next.session!,
-        messages: next.messages,
-        permissions: next.permissions,
-        providers: next.providers,
-        agents: next.agents,
-        personas: next.personas,
-        sessions: next.sessions,
-      });
-      dispatch({ type: "questions", value: next.questions });
-    }
+    else await loadAndSelectSessionByID(client, getState, dispatch, id, true);
   } else if (name === "sessions") {
     await openSessionPicker(client, getState, dispatch);
   } else if (name === "models") dispatch({ type: "toggle-models" });

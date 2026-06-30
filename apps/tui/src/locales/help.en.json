@@ -30,9 +30,10 @@
     "options": [
       {
         "flags": "--gateway-url URL",
-        "summary": "Gateway base URL; defaults to TURA_GATEWAY_URL or http://127.0.0.1:4126"
+        "summary": "Gateway base URL; defaults to TURA_GATEWAY_URL, the project active URL, then dev 4125 / release 4126"
       },
       { "flags": "--cwd PATH", "summary": "Workspace directory sent to gateway" },
+      { "flags": "--initial-session ID", "summary": "open the interactive TUI on a specific session" },
       { "flags": "--json", "summary": "JSON output where supported" },
       { "flags": "--color MODE", "summary": "auto, always, or never" },
       { "flags": "--lang zh-CN|en", "summary": "display language" },

@@ -52,13 +52,17 @@ pub async fn list_sessions(
         directory.as_deref(),
     );
     sessions.sort_by(|a, b| {
-        b.updated_at
-            .cmp(&a.updated_at)
+        session_sort_time(b)
+            .cmp(&session_sort_time(a))
             .then_with(|| a.id.cmp(&b.id))
     });
 
     if let Some(limit) = params.limit.filter(|limit| *limit > 0) {
         sessions.truncate(limit);
+    }
+
+    fn session_sort_time(session: &Session) -> i64 {
+        session.last_user_message_at.unwrap_or(0)
     }
 
     Json(sessions)
@@ -107,7 +111,7 @@ fn inactive_sessions_from_probe(
             let active = entry
                 .get("status")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|value| value == "active")
+                .is_some_and(|value| matches!(value, "active" | "queued" | "running"))
                 || entry
                     .get("active_turn")
                     .and_then(serde_json::Value::as_bool)
@@ -234,6 +238,8 @@ pub async fn get_session(Path(session_id): Path<String>) -> Json<Session> {
                 parent_id: None,
                 created_at: 0,
                 updated_at: 0,
+                last_user_message_at: None,
+                task_start_at: None,
                 directory: None,
                 model: None,
                 agent: None,
@@ -415,14 +421,12 @@ fn hex(value: u8) -> Option<u8> {
 
 pub async fn delete_session(Path(session_id): Path<String>) -> Json<bool> {
     let info = session_store().get_session(&session_id);
-    if session_has_busy_cancellation_scope(&session_id) {
-        let abort = abort_session_scope(&session_id);
-        tracing::info!(
-            session_id,
-            aborted_sessions = ?abort.sessions,
-            "aborted running session before delete"
-        );
-    }
+    let abort = abort_session_scope(&session_id);
+    tracing::info!(
+        session_id,
+        aborted_sessions = ?abort.sessions,
+        "aborted session scope before delete"
+    );
     let write_result =
         write_session_log_command(SessionLogCommand::DeleteSession(DeleteSessionRequest {
             session_id: session_id.clone(),
@@ -447,17 +451,6 @@ pub async fn delete_session(Path(session_id): Path<String>) -> Json<bool> {
         }
     }
     Json(deleted || write_result.is_ok())
-}
-
-fn session_has_busy_cancellation_scope(session_id: &str) -> bool {
-    session_store()
-        .cancellation_scope_session_ids(session_id)
-        .into_iter()
-        .any(|id| {
-            session_store()
-                .get_session(&id)
-                .is_some_and(|session| matches!(session.status, SessionStatus::Busy))
-        })
 }
 
 pub async fn update_session(
@@ -486,6 +479,8 @@ pub async fn update_session(
             parent_id: None,
             created_at: 0,
             updated_at: 0,
+            last_user_message_at: None,
+            task_start_at: None,
             directory: None,
             model: None,
             agent: Some("thoughtful".to_string()),
@@ -539,6 +534,8 @@ pub async fn update_session_task_management(
             parent_id: None,
             created_at: 0,
             updated_at: 0,
+            last_user_message_at: None,
+            task_start_at: None,
             directory: None,
             model: None,
             agent: Some("thoughtful".to_string()),
@@ -576,7 +573,7 @@ fn abort_session_scope(session_id: &str) -> AbortResponse {
     let mut cleanups = Vec::new();
     let router = RouterClient::global();
     for id in &aborted_sessions {
-        cleanups.push(match router.cancel_turn(id, None) {
+        cleanups.push(match router.kill_session_workers(id) {
             Ok(payload) => AbortCleanup {
                 session_id: id.clone(),
                 status: payload

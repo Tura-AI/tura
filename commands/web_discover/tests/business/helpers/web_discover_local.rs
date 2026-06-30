@@ -17,29 +17,29 @@ impl PageServer {
     }
 }
 
-pub(crate) struct MultiAssetServer {
+pub(crate) struct MultiResponseServer {
     pub(crate) addr: std::net::SocketAddr,
     pub(crate) join: thread::JoinHandle<Vec<String>>,
 }
 
-impl MultiAssetServer {
+impl MultiResponseServer {
     pub(crate) fn url_for(&self, path: &str) -> String {
         format!("http://{}{}", self.addr, path)
     }
 
     pub(crate) fn join(self) -> Vec<String> {
-        self.join.join().expect("multi asset server joins")
+        self.join.join().expect("multi response server joins")
     }
 }
 
-pub(crate) struct AssetResponse {
+pub(crate) struct StubResponse {
     pub(crate) path: String,
     pub(crate) status: u16,
     pub(crate) content_type: String,
     pub(crate) body: Vec<u8>,
 }
 
-impl AssetResponse {
+impl StubResponse {
     pub(crate) fn ok(path: &str, content_type: &str, body: Vec<u8>) -> Self {
         Self::status(path, 200, content_type, body)
     }
@@ -54,42 +54,46 @@ impl AssetResponse {
     }
 }
 
-pub(crate) fn spawn_multi_asset_server(mut assets: Vec<AssetResponse>) -> MultiAssetServer {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind multi asset server");
-    let addr = listener.local_addr().expect("multi asset server addr");
+pub(crate) fn spawn_multi_response_server(mut responses: Vec<StubResponse>) -> MultiResponseServer {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind multi response server");
+    let addr = listener.local_addr().expect("multi response server addr");
     let join = thread::spawn(move || {
         let mut requests = Vec::new();
-        let expected = assets.len();
+        let expected = responses.len();
         for _ in 0..expected {
-            let (mut stream, _) = listener.accept().expect("accept multi asset request");
+            let (mut stream, _) = listener.accept().expect("accept multi response request");
             let request = read_request_head(&mut stream);
             let request_path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
-            let index = assets
+            let index = responses
                 .iter()
-                .position(|asset| asset.path == request_path)
+                .position(|response| response.path == request_path)
                 .unwrap_or_else(|| {
-                    panic!("unexpected asset request path {request_path}; request was {request}")
+                    panic!("unexpected response request path {request_path}; request was {request}")
                 });
-            let asset = assets.remove(index);
-            let reason = if asset.status == 200 { "OK" } else { "ERROR" };
+            let response = responses.remove(index);
+            let reason = if response.status == 200 {
+                "OK"
+            } else {
+                "ERROR"
+            };
             let headers = format!(
                 "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                asset.status,
+                response.status,
                 reason,
-                asset.content_type,
-                asset.body.len()
+                response.content_type,
+                response.body.len()
             );
             stream
                 .write_all(headers.as_bytes())
-                .expect("write multi asset headers");
+                .expect("write multi response headers");
             stream
-                .write_all(&asset.body)
-                .expect("write multi asset body");
+                .write_all(&response.body)
+                .expect("write multi response body");
             requests.push(request);
         }
         requests
     });
-    MultiAssetServer { addr, join }
+    MultiResponseServer { addr, join }
 }
 
 pub(crate) fn spawn_page_server(title: &str) -> PageServer {
@@ -510,17 +514,6 @@ pub(crate) fn tiny_png_bytes() -> &'static [u8] {
         0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xe2, 0x21, 0xbc, 0x33, 0x00, 0x00, 0x00, 0x00, 0x49,
         0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
     ]
-}
-
-pub(crate) fn test_zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
-    let cursor = std::io::Cursor::new(Vec::new());
-    let mut writer = zip::ZipWriter::new(cursor);
-    let options = zip::write::SimpleFileOptions::default();
-    for (path, bytes) in entries {
-        writer.start_file(*path, options).expect("start zip entry");
-        writer.write_all(bytes).expect("write zip entry");
-    }
-    writer.finish().expect("finish zip").into_inner()
 }
 
 pub(crate) fn write_fake_ytdlp(dir: &Path) -> std::path::PathBuf {

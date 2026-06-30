@@ -3,16 +3,14 @@ use serde_json::{json, Value};
 
 use crate::process_info::current_process_start_time;
 use crate::services::managed_process::repo_root;
-use crate::services::manager::ServiceManager;
+use crate::services::manager::{ServiceManager, WorkerAlreadyRunning};
 use crate::services::models::{CallContext, WorkerSpec};
+use crate::services::runtime_workers::MAX_ACTIVE_RUNTIME_WORKERS;
 use crate::{app::AppState, ipc};
 use tura_router::registry::resolve_binary_target;
 
 /// Maximum recursion depth for child sub-sessions (fork-bomb guard, T5.4).
 const MAX_PLANNING_DEPTH: usize = 3;
-/// Concurrent runtime-worker cap (fork-bomb guard, T5.4).
-const MAX_RUNTIME_WORKERS: usize = 24;
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct RunAgentRequest {
     #[serde(default)]
@@ -54,6 +52,25 @@ pub(crate) async fn dispatch_run_agent(
     req: RunAgentRequest,
     ipc_request_id: String,
     notifications: Option<ipc::IpcNotificationSender>,
+) -> (u16, Value) {
+    dispatch_run_agent_inner(state, req, ipc_request_id, notifications, false).await
+}
+
+pub(crate) async fn dispatch_run_agent_with_runtime_slot(
+    state: &AppState,
+    req: RunAgentRequest,
+    ipc_request_id: String,
+    notifications: Option<ipc::IpcNotificationSender>,
+) -> (u16, Value) {
+    dispatch_run_agent_inner(state, req, ipc_request_id, notifications, true).await
+}
+
+async fn dispatch_run_agent_inner(
+    state: &AppState,
+    req: RunAgentRequest,
+    ipc_request_id: String,
+    notifications: Option<ipc::IpcNotificationSender>,
+    runtime_slot_acquired: bool,
 ) -> (u16, Value) {
     let session_id = req
         .session_id
@@ -98,15 +115,26 @@ pub(crate) async fn dispatch_run_agent(
             }),
         );
     }
+    let runtime_worker_key = format!("runtime_worker:{session_id}");
+    if state.manager.worker_alive_by_key(&runtime_worker_key).await {
+        return (
+            409,
+            json!({
+                "ok": false,
+                "session_id": session_id,
+                "error": format!("session {session_id} already has a running runtime")
+            }),
+        );
+    }
     let active_workers = state.manager.count_workers_with_prefix("runtime_worker:");
-    if active_workers >= MAX_RUNTIME_WORKERS {
+    if !runtime_slot_acquired && active_workers >= MAX_ACTIVE_RUNTIME_WORKERS {
         return (
             429,
             json!({
                 "ok": false,
                 "session_id": session_id,
                 "error": format!(
-                    "runtime worker concurrency limit reached ({active_workers}/{MAX_RUNTIME_WORKERS})"
+                    "runtime worker concurrency limit reached ({active_workers}/{MAX_ACTIVE_RUNTIME_WORKERS})"
                 )
             }),
         );
@@ -195,16 +223,26 @@ pub(crate) async fn dispatch_run_agent(
     }
 
     let spec = WorkerSpec {
-        key: format!("runtime_worker:{session_id}"),
+        key: runtime_worker_key,
         service_name: "runtime_worker".to_string(),
         executable: worker_binary,
         args: Vec::new(),
         env,
     };
 
-    let worker = match state.manager.ensure_worker(spec).await {
+    let worker = match state.manager.ensure_exclusive_worker(spec).await {
         Ok(worker) => worker,
         Err(error) => {
+            if error.downcast_ref::<WorkerAlreadyRunning>().is_some() {
+                return (
+                    409,
+                    json!({
+                        "ok": false,
+                        "session_id": session_id,
+                        "error": format!("session {session_id} already has a running runtime")
+                    }),
+                );
+            }
             return (
                 502,
                 json!({
@@ -368,7 +406,7 @@ mod tests {
         let runtime = tokio_runtime()?;
 
         runtime.block_on(async {
-            for index in 0..MAX_RUNTIME_WORKERS {
+            for index in 0..MAX_ACTIVE_RUNTIME_WORKERS {
                 state
                     .manager
                     .ensure_worker(WorkerSpec {
@@ -385,7 +423,7 @@ mod tests {
 
             assert_eq!(
                 state.manager.count_workers_with_prefix("runtime_worker:"),
-                MAX_RUNTIME_WORKERS
+                MAX_ACTIVE_RUNTIME_WORKERS
             );
 
             let request = serde_json::from_value(json!({
@@ -406,7 +444,7 @@ mod tests {
             );
             assert_eq!(
                 state.manager.count_workers_with_prefix("runtime_worker:"),
-                MAX_RUNTIME_WORKERS,
+                MAX_ACTIVE_RUNTIME_WORKERS,
                 "rejected dispatch must not create another worker"
             );
 
@@ -414,7 +452,56 @@ mod tests {
                 .manager
                 .stop_workers_with_prefix("runtime_worker:")
                 .await;
-            assert_eq!(stopped, MAX_RUNTIME_WORKERS);
+            assert_eq!(stopped, MAX_ACTIVE_RUNTIME_WORKERS);
+            Ok::<_, anyhow::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_run_agent_rejects_duplicate_running_runtime_for_session() -> anyhow::Result<()> {
+        let state = build_state();
+        let runtime = tokio_runtime()?;
+
+        runtime.block_on(async {
+            let handle = state
+                .manager
+                .ensure_worker(WorkerSpec {
+                    key: "runtime_worker:duplicate-session".to_string(),
+                    service_name: "runtime_worker".to_string(),
+                    executable: std::path::PathBuf::from(
+                        "definitely-missing-runtime-worker-for-duplicate-session-test",
+                    ),
+                    args: Vec::new(),
+                    env: vec![("TURA_WORKER_MODE".to_string(), "one-shot".to_string())],
+                })
+                .await?;
+            assert_eq!(
+                state.manager.count_workers_with_prefix("runtime_worker:"),
+                1
+            );
+
+            let request = serde_json::from_value(json!({
+                "session_id": "duplicate-session",
+                "prompt": "a second runtime for this session must be rejected"
+            }))?;
+            let (status, body) =
+                dispatch_run_agent(&state, request, "duplicate-request".to_string(), None).await;
+
+            assert_eq!(status, 409);
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["session_id"], "duplicate-session");
+            assert!(
+                body["error"].as_str().is_some_and(|error| error
+                    .contains("session duplicate-session already has a running runtime")),
+                "unexpected duplicate-session error body: {body}"
+            );
+            assert_eq!(
+                state.manager.count_workers_with_prefix("runtime_worker:"),
+                1,
+                "duplicate dispatch must not create or replace the running worker"
+            );
+            assert!(state.manager.stop_worker(&handle.worker_id).await);
             Ok::<_, anyhow::Error>(())
         })?;
         Ok(())

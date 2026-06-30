@@ -468,7 +468,7 @@ fn pass_web_discover_website_download_writes_markdown() {
 }
 
 #[test]
-fn pass_web_discover_direct_website_without_download_returns_clean_text_only() {
+fn pass_web_discover_direct_website_returns_structured_record_and_markdown() {
     let root = temp_workspace("web-discover-direct-text");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     let addr = listener.local_addr().expect("local addr");
@@ -505,13 +505,21 @@ fn pass_web_discover_direct_website_without_download_returns_clean_text_only() {
         .as_array()
         .expect("results");
     assert_eq!(results.len(), 1);
-    let text = results[0]
-        .as_str()
-        .expect("website result should be text only");
-    assert!(text.contains("Hello Web"));
-    assert!(text.contains("[truncated]"));
-    assert!(!text.contains("hidden()"));
-    assert!(text.chars().count() <= 1_000);
+    let record = results[0]
+        .as_object()
+        .expect("website result should be a structured record");
+    assert_eq!(
+        record.get("url").and_then(Value::as_str),
+        Some(page_url.as_str())
+    );
+    let downloaded = output["results"][0]["output"]["downloaded_files"]
+        .as_array()
+        .expect("downloaded files");
+    assert_eq!(downloaded.len(), 1);
+    let relative = downloaded[0]["path"].as_str().expect("relative path");
+    let markdown = fs::read_to_string(root.join(relative)).expect("read markdown");
+    assert!(markdown.contains("Hello Web"));
+    assert!(!markdown.contains("hidden()"));
 }
 
 fn write_http_response(stream: &mut std::net::TcpStream, content_type: &str, body: &str) {

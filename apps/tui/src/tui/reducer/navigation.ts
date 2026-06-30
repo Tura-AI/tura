@@ -1,5 +1,5 @@
 import type { Session } from "../../types/session.js";
-import { sessionUpdatedAt } from "../../types/session.js";
+import { sessionSortAt } from "../../types/session.js";
 import type { ProviderListResponse } from "../../types/provider.js";
 import type { SessionConfig } from "../../types/config.js";
 import type { StoredAgent } from "../../types/agent.js";
@@ -28,7 +28,7 @@ export function selectedSettingOptionIndex(state: AppState, detail: SettingDetai
   }
   if (detail === "providerAuth") return 0;
   if (detail === "agent") {
-    const active = state.session?.agent ?? config?.active_agent;
+    const active = config?.active_agent;
     const index = state.agents.findIndex((agent) => storedAgentID(agent) === active);
     return index >= 0 ? index : 0;
   }
@@ -62,8 +62,11 @@ export function selectedSettingOptionIndex(state: AppState, detail: SettingDetai
 export function upsertSession(sessions: Session[], session: Session): Session[] {
   const next = sessions.filter((item) => item.id !== session.id);
   next.push(session);
-  next.sort((left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left));
-  return next;
+  return sortSessions(next);
+}
+
+export function sortSessions(sessions: Session[]): Session[] {
+  return [...sessions].sort((left, right) => sessionSortAt(right) - sessionSortAt(left));
 }
 
 export function seedSeenSessionCounts(

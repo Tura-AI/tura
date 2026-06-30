@@ -1,30 +1,24 @@
 {
   "name": "web_discover",
-  "description": "Discover websites, media, or reusable assets. Without download_dir, website mode returns cleaned text and media/asset modes return links. With download_dir, websites are saved as cleaned Markdown, media files are downloaded, and asset archives are extracted into typed folders. A single website or direct file URL is fetched directly.",
+  "description": "Discover websites or media. Without download_dir, website mode returns cleaned text and media modes return links. With download_dir, websites are saved as cleaned Markdown and media files are downloaded. A single website or direct file URL is fetched directly.",
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
       "cli": {
         "type": "string",
-        "description": "Optional CLI-form command line. Example: asset 3d \"space cruiser\" --download-dir assets"
+        "description": "Optional CLI-form command line. Example: image \"space cruiser\" --download-dir media"
       },
       "type": {
         "type": "string",
-        "enum": ["website", "image", "video", "audio", "sound", "asset"],
+        "enum": ["website", "image", "video", "audio", "sound"],
         "x-tura-optional": true,
         "description": "Discovery type. Defaults to website."
-      },
-      "asset_type": {
-        "type": "string",
-        "enum": ["auto", "shader", "texture", "2d", "3d", "audio", "sfx", "sound", "model", "material", "sprite"],
-        "x-tura-optional": true,
-        "description": "Asset subtype for type=asset. Supports shader, texture, 2d, 3d, audio, or auto."
       },
       "query": {
         "type": "string",
         "x-tura-optional": true,
-        "description": "Literal search query, direct webpage URL, or direct media/asset file URL. 3 key words maximum. Use explicit CLI fields such as include_regex and exclude_regex for filtering."
+        "description": "Literal search query, direct webpage URL, or direct media file URL. 3 key words maximum. Use explicit CLI fields such as include_regex and exclude_regex for filtering."
       },
       "include_regex": {
         "type": "string",
@@ -45,19 +39,19 @@
       "download_dir": {
         "type": "string",
         "x-tura-optional": true,
-        "description": "Workspace-relative or absolute directory for saved files. If omitted, nothing is downloaded or saved. Asset downloads are placed in subtype folders and zip files are extracted."
+        "description": "Workspace-relative or absolute directory for saved files. If omitted, nothing is downloaded or saved."
       },
       "min_size": {
         "type": "integer",
         "minimum": 0,
         "x-tura-optional": true,
-        "description": "Minimum downloaded media or asset file size in bytes."
+        "description": "Minimum downloaded media file size in bytes."
       },
       "max_size": {
         "type": "integer",
         "minimum": 1,
         "x-tura-optional": true,
-        "description": "Maximum downloaded media or asset file size in bytes."
+        "description": "Maximum downloaded media file size in bytes."
       },
       "format": {
         "type": "string",

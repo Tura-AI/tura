@@ -17,11 +17,6 @@
         "items": { "type": "string" },
         "description": "Workspace-relative or absolute media paths to inspect."
       },
-      "path": {
-        "type": "string",
-        "x-tura-optional": true,
-        "description": "Single workspace-relative or absolute media path to inspect."
-      },
       "files": {
         "type": "array",
         "minItems": 1,
@@ -29,11 +24,6 @@
         "items": { "type": "string" },
         "x-tura-optional": true,
         "description": "Alias for paths."
-      },
-      "file": {
-        "type": "string",
-        "x-tura-optional": true,
-        "description": "Alias for path."
       },
       "include_text": {
         "type": "boolean",

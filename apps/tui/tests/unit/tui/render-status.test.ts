@@ -275,7 +275,8 @@ test("session status event updates bottom meta context without rehydrating", () 
   });
 
   assert.match(stripAnsi(render(updated, richCapabilities())), /context 90k\/200k ██▓░░░/u);
-  assert.match(stripAnsi(render(updated, richCapabilities())), /tokens 123 \/ \$0\.04/u);
+  assert.doesNotMatch(stripAnsi(render(updated, richCapabilities())), /tokens 123/u);
+  assert.match(stripAnsi(render(updated, richCapabilities())), /\$0\.04/u);
   assert.equal(updated.session?.context_tokens?.input, 90_000);
   assert.equal(updated.sessions[0]?.context_tokens?.input, 90_000);
   assert.equal(updated.session?.usage?.cost, 0.045);
@@ -283,6 +284,30 @@ test("session status event updates bottom meta context without rehydrating", () 
   assert.equal(updated.sessions[0]?.usage?.currency, "USD");
   assert.equal(updated.session?.updated_at, 1_234);
   assert.equal(updated.sessions[0]?.updated_at, 1_234);
+});
+
+test("render bottom meta hides standalone token usage totals", () => {
+  const session = sessionFixture("sess-token-only-usage", "Token Only Usage", "idle", {
+    model: "codex/gpt-5.5",
+    usage: {
+      context_tokens: null,
+      tokens: { total_tokens: 88_500 },
+      cost: null,
+      currency: null,
+    },
+  });
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  const output = stripAnsi(render(state, richCapabilities()));
+  assert.match(output, /codex\/gpt-5\.5/u);
+  assert.doesNotMatch(output, /tokens 88\.5k/u);
 });
 
 test("hydrate restores session usage for reselected sessions", () => {

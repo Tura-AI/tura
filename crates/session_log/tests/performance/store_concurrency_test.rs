@@ -7,6 +7,10 @@ use std::time::{Duration, Instant};
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 const CHILD_TIMEOUT: Duration = Duration::from_secs(30);
+const WORKSPACE_COUNT: usize = 10;
+const TASKS_PER_WORKSPACE: usize = 20;
+const RICH_RECORDS_PER_TASK: usize = 10;
+const TOTAL_RICH_RECORDS: usize = WORKSPACE_COUNT * TASKS_PER_WORKSPACE * RICH_RECORDS_PER_TASK;
 
 struct EnvRestore {
     keys: Vec<(&'static str, Option<std::ffi::OsString>)>,
@@ -184,6 +188,89 @@ fn cross_process_writers_share_one_queued_local_database() {
 }
 
 #[test]
+fn multi_workspace_rich_history_10_by_20_persists_2000_records() {
+    let test_started = Instant::now();
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let workspaces = (0..WORKSPACE_COUNT)
+        .map(|index| db.workspace(&format!("rich-history-{nonce}-{index}")))
+        .collect::<Vec<_>>();
+    let started = Instant::now();
+    let mut workers = Vec::with_capacity(WORKSPACE_COUNT * TASKS_PER_WORKSPACE);
+
+    for (workspace_index, workspace) in workspaces.iter().enumerate() {
+        for task_index in 0..TASKS_PER_WORKSPACE {
+            let store = store.clone();
+            let workspace = workspace.clone();
+            let session_id = format!("rich-{nonce}-{workspace_index}-{task_index}");
+            workers.push(std::thread::spawn(move || {
+                store
+                    .upsert_session(rich_upsert(
+                        &session_id,
+                        &workspace,
+                        workspace_index,
+                        task_index,
+                    ))
+                    .expect("rich upsert");
+            }));
+        }
+    }
+
+    for worker in workers {
+        join_thread_with_timeout(
+            worker,
+            remaining_timeout(
+                test_started,
+                TEST_TIMEOUT,
+                "multi-workspace rich history pressure",
+            ),
+            "multi-workspace rich history worker",
+        );
+    }
+
+    let elapsed = started.elapsed();
+    for (workspace_index, workspace) in workspaces.iter().enumerate() {
+        let (page, sessions) = store
+            .list_sessions(ListSessionsRequest {
+                workspace: workspace.clone(),
+                page: 0,
+                page_size: 500,
+            })
+            .expect("workspace sessions");
+        assert_eq!(
+            page.total, TASKS_PER_WORKSPACE as u64,
+            "workspace {workspace_index} should contain every task session"
+        );
+        assert_eq!(sessions.len(), TASKS_PER_WORKSPACE);
+        assert!(
+            sessions
+                .iter()
+                .all(|session| session.message_count == RICH_RECORDS_PER_TASK as u64),
+            "workspace {workspace_index} sessions should each expose {RICH_RECORDS_PER_TASK} rich records"
+        );
+    }
+
+    let summaries = store.list_workspaces().expect("workspace summaries");
+    for workspace in &workspaces {
+        let summary = summaries
+            .iter()
+            .find(|summary| summary.directory == *workspace)
+            .unwrap_or_else(|| panic!("missing workspace summary for {workspace}"));
+        assert_eq!(summary.session_count, TASKS_PER_WORKSPACE as u64);
+    }
+
+    eprintln!(
+        "session_log_store_multi_workspace_rich_history summary: workspaces={WORKSPACE_COUNT} tasks_per_workspace={TASKS_PER_WORKSPACE} total_rich_records={TOTAL_RICH_RECORDS} elapsed_ms={}",
+        elapsed.as_millis()
+    );
+    assert!(
+        elapsed < Duration::from_secs(60),
+        "multi-workspace rich history pressure took {elapsed:?}"
+    );
+}
+
+#[test]
 fn cross_process_session_log_helper() {
     let Ok(mode) = std::env::var("SESSION_LOG_CROSS_PROCESS_MODE") else {
         return;
@@ -239,6 +326,71 @@ fn upsert(session_id: &str, workspace: &str, sequence: i64) -> UpsertSessionRequ
         })],
         todos: vec![],
     }
+}
+
+fn rich_upsert(
+    session_id: &str,
+    workspace: &str,
+    workspace_index: usize,
+    task_index: usize,
+) -> UpsertSessionRequest {
+    let sequence = (workspace_index * TASKS_PER_WORKSPACE + task_index) as i64;
+    UpsertSessionRequest {
+        session: serde_json::json!({
+            "id": session_id,
+            "name": format!("Rich Workspace {workspace_index} Task {task_index}"),
+            "directory": workspace,
+            "created_at": sequence,
+            "updated_at": 10_000 + sequence,
+            "status": "idle",
+            "management": {
+                "session_id": session_id,
+                "session_name": format!("Rich Workspace {workspace_index} Task {task_index}"),
+                "state": "created",
+                "task_plan": {
+                    "plan_summary": "multi workspace rich history pressure",
+                    "detailed_tasks": [{
+                        "id": format!("task-{workspace_index}-{task_index}"),
+                        "status": "done"
+                    }]
+                }
+            }
+        }),
+        parent_id: None,
+        messages: (0..RICH_RECORDS_PER_TASK)
+            .map(|record_index| {
+                let created = sequence * 100 + record_index as i64;
+                serde_json::json!({
+                    "id": format!("rich-message-{workspace_index}-{task_index}-{record_index}"),
+                    "session_id": session_id,
+                    "role": if record_index % 2 == 0 { "user" } else { "assistant" },
+                    "created_at": created,
+                    "updated_at": created,
+                    "parts": [{
+                        "type": "text",
+                        "text": rich_text_payload(workspace_index, task_index, record_index),
+                    }]
+                })
+            })
+            .collect(),
+        todos: vec![serde_json::json!({
+            "id": format!("todo-{workspace_index}-{task_index}"),
+            "content": "persist rich concurrent workspace history",
+            "status": "done"
+        })],
+    }
+}
+
+fn rich_text_payload(workspace_index: usize, task_index: usize, record_index: usize) -> String {
+    format!(
+        "### Workspace {workspace_index} task {task_index} record {record_index}\n\n\
+Rich text payload for session_db pressure with markdown, HTML, table rows, local links, and a code fence.\n\n\
+| component | workspace | task | record |\n\
+| --- | ---: | ---: | ---: |\n\
+| session_db | {workspace_index} | {task_index} | {record_index} |\n\n\
+```json\n{{\"workspace\":{workspace_index},\"task\":{task_index},\"record\":{record_index}}}\n```\n\n\
+<b>bold marker</b> [workspace](file:///tmp/tura/workspace-{workspace_index}/task-{task_index})"
+    )
 }
 
 fn join_thread_with_timeout<T>(handle: JoinHandle<T>, timeout: Duration, label: &str) -> T

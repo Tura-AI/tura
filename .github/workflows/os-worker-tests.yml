@@ -1,0 +1,75 @@
+name: OS Worker Tests
+
+on:
+  push:
+    branches:
+      - "codex/**"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  backend-os:
+    name: Backend OS ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: os-worker-${{ matrix.os }}
+          cache-on-failure: true
+      - name: Install Linux tray dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            wget
+      - name: Run backend OS tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./xtask/scripts/run-backend-os-tests.ps1 -TimeoutSeconds 360
+      - name: Run backend OS tests (Unix)
+        if: runner.os != 'Windows'
+        run: sh ./xtask/scripts/run-backend-os-tests.sh --timeout-seconds 360
+
+  tui-gateway:
+    name: TUI Gateway Lifecycle ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/tui/package-lock.json
+      - name: Install TUI dependencies
+        run: npm ci --prefix apps/tui
+      - name: Run TUI unit tests
+        run: npm --prefix apps/tui run test:unit

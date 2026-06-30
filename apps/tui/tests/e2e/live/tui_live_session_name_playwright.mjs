@@ -24,7 +24,7 @@ const prompt =
 const model =
   process.env.TURA_TUI_SESSION_NAME_MODEL || process.env.TURA_E2E_MODEL || "openai/gpt-5.5";
 const agent =
-  process.env.TURA_TUI_SESSION_NAME_AGENT || process.env.TURA_E2E_AGENT || "fast-text-only";
+  process.env.TURA_TUI_SESSION_NAME_AGENT || process.env.TURA_E2E_AGENT || "direct-text-only";
 const timeoutMs = Number(process.env.TURA_TUI_SESSION_NAME_TIMEOUT_MS || 180_000);
 
 function freePort() {

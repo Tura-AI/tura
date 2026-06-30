@@ -626,10 +626,7 @@ async fn run_command_run_item(
             step: command.effective_step(),
             command_type: command_name.clone(),
             success: result.result.success_for_logging(),
-            output: Some(command_run_model_output(
-                &command_name,
-                result.result.code_mode_result(),
-            )),
+            output: Some(result.result.code_mode_result()),
             error: None,
         },
         Err(err) => CommandRunItemResult::failed(
@@ -774,18 +771,6 @@ fn command_run_task_status_result(command: CommandItem) -> CommandRunItemResult 
             error,
         ),
     }
-}
-
-fn command_run_model_output(command_name: &str, value: Value) -> Value {
-    if !matches!(command_name, "shell_command" | "bash" | "zsh") {
-        return value;
-    }
-    value
-        .as_object()
-        .and_then(|object| object.get("transcript"))
-        .and_then(Value::as_str)
-        .map(|text| Value::String(text.to_string()))
-        .unwrap_or(value)
 }
 
 fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall, String> {

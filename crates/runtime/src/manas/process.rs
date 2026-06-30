@@ -41,13 +41,14 @@ use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
 use crate::turn_loop::provider_step::accumulate_session_from_runtime;
 use crate::turn_loop::retry_policy::env_flag;
 use crate::turn_loop::task_progress::{
-    active_doing_task_user_message, active_task_user_message,
-    command_run_result_has_non_status_command, command_run_result_terminal_task_status,
+    active_doing_task_user_message, active_task_user_message, command_run_result_has_command,
+    command_run_result_is_single_task_status, command_run_result_terminal_task_status,
     record_task_focus_message, record_task_focus_message_for_terminal_done,
 };
 use crate::turn_loop::tool_step::{command_run_results_empty, extract_compact_context_results};
 
 const DEFAULT_MANAS_MAX_TURNS: u64 = 256;
+const DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF: usize = 1_000;
 
 pub struct ManasInput<'a> {
     pub agents: &'a mut [AgentManagement],
@@ -288,11 +289,11 @@ pub fn process_manas_internal(
             let visible_reply_before_tool = visible_runtime_reply(&runtime);
             let visible_reply_published_before_terminal_status =
                 visible_reply_before_tool.is_some();
-            if let Some(content) = visible_reply_before_tool {
+            if let Some(content) = visible_reply_before_tool.as_deref() {
                 if let Err(error) = publish_gateway_agent_message_from_runtime(
                     &session.session_id,
                     &runtime,
-                    content,
+                    content.to_string(),
                     String::new(),
                 ) {
                     warn!(
@@ -312,9 +313,9 @@ pub fn process_manas_internal(
             let terminal_task_status = tool_results
                 .iter()
                 .find_map(|result| command_run_result_terminal_task_status(&result.result));
-            let terminal_status_followed_real_command = tool_results
+            let terminal_status_followed_command = tool_results
                 .iter()
-                .any(|result| command_run_result_has_non_status_command(&result.result));
+                .any(|result| command_run_result_has_command(&result.result));
 
             for (index, tool_result) in tool_results.iter().enumerate() {
                 if command_run_results_empty(&tool_result.result) {
@@ -334,6 +335,22 @@ pub fn process_manas_internal(
                 )?;
             }
             persist_session_checkpoint(session, "tool_results");
+
+            if pending_compact_contexts.is_empty()
+                && should_end_turn_without_task_status_backfill(
+                    &tool_results,
+                    terminal_task_status.as_deref(),
+                    visible_reply_before_tool.as_deref(),
+                )
+            {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    runtime_id = %runtime.runtime_id,
+                    "single done task_status followed a long visible assistant reply; ending turn without tool-result backfill"
+                );
+                break;
+            }
 
             if !pending_compact_contexts.is_empty() {
                 for pending in &pending_compact_contexts {
@@ -417,7 +434,7 @@ pub fn process_manas_internal(
                 supports_planning,
                 terminal_task_status.as_deref(),
                 visible_reply_published_before_terminal_status,
-                terminal_status_followed_real_command,
+                terminal_status_followed_command,
             ) {
                 if complete_active_doing_task_after_non_planning_reply(session, true) {
                     persist_session_checkpoint(session, "task_auto_completed");
@@ -427,7 +444,7 @@ pub fn process_manas_internal(
                     turn = turn,
                     supports_planning = supports_planning,
                     supports_task_status = supports_task_status,
-                    "non-planning agent returned visible final text with only task_status doing; active task was auto-completed and loop ended"
+                    "non-planning agent returned visible final text without a command_run result that needs backfill; active task was auto-completed and loop ended"
                 );
                 break;
             }
@@ -435,7 +452,7 @@ pub fn process_manas_internal(
                 let final_response_published = if terminal_status_needs_final_response_turn(
                     terminal_task_status.as_deref(),
                     visible_reply_published_before_terminal_status,
-                    terminal_status_followed_real_command,
+                    terminal_status_followed_command,
                 ) {
                     run_terminal_final_response_turn(
                         agents,
@@ -723,13 +740,34 @@ fn should_auto_complete_non_planning_doing_after_tool_turn(
     supports_planning: bool,
     terminal_task_status: Option<&str>,
     visible_reply_already_published: bool,
-    terminal_status_followed_real_command: bool,
+    terminal_status_followed_command: bool,
 ) -> bool {
     !goal_mode
         && !supports_planning
         && terminal_task_status == Some("doing")
         && visible_reply_already_published
-        && !terminal_status_followed_real_command
+        && !terminal_status_followed_command
+}
+
+fn should_end_turn_without_task_status_backfill(
+    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+    terminal_task_status: Option<&str>,
+    visible_reply: Option<&str>,
+) -> bool {
+    terminal_task_status == Some("done")
+        && visible_reply
+            .is_some_and(|reply| reply.len() > DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF)
+        && command_run_has_only_done_task_status_result(tool_results)
+}
+
+fn command_run_has_only_done_task_status_result(
+    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+) -> bool {
+    let [tool_result] = tool_results else {
+        return false;
+    };
+    tool_result.tool_name == crate::manas::COMMAND_RUN_TOOL
+        && command_run_result_is_single_task_status(&tool_result.result, "done")
 }
 
 fn messages_with_initial_context_prefix(
@@ -861,13 +899,11 @@ fn estimated_new_context_tokens(
 fn terminal_status_needs_final_response_turn(
     terminal_task_status: Option<&str>,
     visible_reply_already_published: bool,
-    terminal_status_followed_real_command: bool,
+    terminal_status_followed_command: bool,
 ) -> bool {
     match terminal_task_status {
-        Some("done") => !visible_reply_already_published || terminal_status_followed_real_command,
-        Some("question") => {
-            !visible_reply_already_published || terminal_status_followed_real_command
-        }
+        Some("done") => true,
+        Some("question") => !visible_reply_already_published || terminal_status_followed_command,
         _ => false,
     }
 }
@@ -879,8 +915,9 @@ mod tests {
         complete_active_doing_task_after_non_planning_reply, increment_turn_with_fresh_timestamp,
         manas_max_turns, messages_with_initial_context_prefix,
         should_auto_complete_non_planning_doing_after_tool_turn,
-        should_continue_no_tool_task_status_retry, should_retry_no_tool_task_status,
-        terminal_status_needs_final_response_turn, DEFAULT_MANAS_MAX_TURNS,
+        should_continue_no_tool_task_status_retry, should_end_turn_without_task_status_backfill,
+        should_retry_no_tool_task_status, terminal_status_needs_final_response_turn,
+        DEFAULT_MANAS_MAX_TURNS,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{
@@ -1132,8 +1169,58 @@ mod tests {
     }
 
     #[test]
+    fn long_visible_done_task_status_can_end_without_backfill_only_when_single_status_call() {
+        let status_result = ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"task_status"}]}),
+            result: json!({"results":[{
+                "command_type":"task_status",
+                "success":true,
+                "output":{"task_status":{"status":"done"}}
+            }]}),
+            success: true,
+            error: None,
+        };
+        let long_reply = "x".repeat(1_001);
+
+        assert!(should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&status_result),
+            Some("done"),
+            Some(&long_reply),
+        ));
+        assert!(!should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&status_result),
+            Some("done"),
+            Some(&"x".repeat(1_000)),
+        ));
+        assert!(!should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&status_result),
+            Some("question"),
+            Some(&long_reply),
+        ));
+
+        let mut with_command = status_result.clone();
+        with_command.result = json!({"results":[
+            {"command_type":"shell_command","success":true,"output":"ok"},
+            {"command_type":"task_status","success":true,"output":{"task_status":{"status":"done"}}}
+        ]});
+        assert!(!should_end_turn_without_task_status_backfill(
+            &[with_command],
+            Some("done"),
+            Some(&long_reply),
+        ));
+
+        let multibyte_reply_over_byte_cutoff = "完".repeat(400);
+        assert!(should_end_turn_without_task_status_backfill(
+            &[status_result],
+            Some("done"),
+            Some(&multibyte_reply_over_byte_cutoff),
+        ));
+    }
+
+    #[test]
     fn terminal_done_skips_final_response_turn_when_reply_is_already_visible() {
-        assert!(!terminal_status_needs_final_response_turn(
+        assert!(terminal_status_needs_final_response_turn(
             Some("done"),
             true,
             false,

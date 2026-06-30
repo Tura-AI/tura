@@ -275,10 +275,7 @@ async function createSeedSession(gatewayUrl) {
   const payload = {
     directory: workspace,
     agent:
-      process.env.TUI_ZIP_PASSWORD_AGENT ||
-      config.active_agent ||
-      config.agent ||
-      "thinking-planning",
+      process.env.TUI_ZIP_PASSWORD_AGENT || config.active_agent || config.agent || "thoughtful",
     model: process.env.TUI_ZIP_PASSWORD_MODEL || config.active_model || config.model || undefined,
     model_variant: process.env.TUI_ZIP_PASSWORD_VARIANT || config.model_variant || undefined,
     model_acceleration_enabled:
