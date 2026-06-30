@@ -44,8 +44,12 @@ pub(crate) fn stale_endpoints_are_replaced_gateway_restarts_and_conflicts_fail(
 
     let first_port = free_port()?;
     let mut gateway = GatewayGuard::start(repo, &home, &workspace, first_port)?;
-    wait_for_http_ok(first_port, "/global/health", Duration::from_secs(30))
-        .context("stale/restart first gateway did not become healthy")?;
+    if let Err(error) = wait_for_http_ok(first_port, "/global/health", Duration::from_secs(30)) {
+        bail!(
+            "stale/restart first gateway did not become healthy: {error}; {}",
+            gateway.health_context()
+        );
+    }
     let router_addr =
         wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
             .context("stale/restart first router endpoint did not become reachable")?;
@@ -738,28 +742,40 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
 pub(crate) struct GatewayGuard {
     child: Option<Child>,
     home: PathBuf,
+    stdout_log: PathBuf,
+    stderr_log: PathBuf,
 }
 
 impl GatewayGuard {
     fn start(repo: &Path, home: &Path, workspace: &Path, port: u16) -> Result<Self> {
+        let stdout_log = process_log_path(home, &format!("gateway-{port}.stdout.log"));
+        let stderr_log = process_log_path(home, &format!("gateway-{port}.stderr.log"));
         let child = Command::new(debug_bin(repo, "tura_gateway"))
             .current_dir(workspace)
             .envs(gateway_env(repo, home, workspace, port))
             .stdin(Stdio::null())
-            .stdout(Stdio::from(process_log_file(
-                home,
-                &format!("gateway-{port}.stdout.log"),
-            )?))
-            .stderr(Stdio::from(process_log_file(
-                home,
-                &format!("gateway-{port}.stderr.log"),
-            )?))
+            .stdout(Stdio::from(process_log_file_at(&stdout_log)?))
+            .stderr(Stdio::from(process_log_file_at(&stderr_log)?))
             .spawn()
             .context("spawn tura_gateway")?;
         Ok(Self {
             child: Some(child),
             home: home.to_path_buf(),
+            stdout_log,
+            stderr_log,
         })
+    }
+
+    fn health_context(&mut self) -> String {
+        let child_status = match self.child.as_mut().and_then(|child| child.try_wait().ok()) {
+            Some(status) => format!("exited with {status}"),
+            None => "still running or unavailable".to_string(),
+        };
+        format!(
+            "gateway process {child_status}; stdout tail: {}; stderr tail: {}",
+            file_tail(&self.stdout_log, 4096),
+            file_tail(&self.stderr_log, 4096)
+        )
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -1851,9 +1867,26 @@ pub(crate) fn reserved_closed_addr() -> Result<String> {
 }
 
 pub(crate) fn process_log_file(home: &Path, name: &str) -> Result<std::fs::File> {
-    let dir = home.join(".tura").join("test-logs");
-    std::fs::create_dir_all(&dir)?;
-    std::fs::File::create(dir.join(name)).with_context(|| format!("create process log {name}"))
+    process_log_file_at(&process_log_path(home, name))
+}
+
+pub(crate) fn process_log_path(home: &Path, name: &str) -> PathBuf {
+    home.join(".tura").join("test-logs").join(name)
+}
+
+pub(crate) fn process_log_file_at(path: &Path) -> Result<std::fs::File> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::File::create(path).with_context(|| format!("create process log {}", path.display()))
+}
+
+pub(crate) fn file_tail(path: &Path, max_bytes: usize) -> String {
+    let Ok(bytes) = std::fs::read(path) else {
+        return format!("{} unavailable", path.display());
+    };
+    let start = bytes.len().saturating_sub(max_bytes);
+    String::from_utf8_lossy(&bytes[start..]).replace(['\r', '\n'], "\\n")
 }
 
 pub(crate) fn read_pipe(pipe: Option<impl Read>) -> String {
