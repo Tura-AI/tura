@@ -166,10 +166,7 @@ fn process_scope_management_command_run_timeout_kills_spawned_child_tree() -> Re
     );
     assert_eq!(output["results"][0]["success"], false, "{output}");
     assert!(
-        output["results"][0]["output"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("Timed out after"),
+        command_run_output_text(&output["results"][0]["output"]).contains("Timed out after"),
         "{output}"
     );
     let child_pid = wait_for_pid_file(&pid_file, PID_DISCOVERY_TIMEOUT)?;
@@ -225,6 +222,17 @@ struct StrategyContract {
     parent_crash_cleanup: bool,
     spawned_child_cleanup: bool,
     direct_child_only: bool,
+}
+
+fn command_run_output_text(output: &serde_json::Value) -> String {
+    if let Some(text) = output.as_str() {
+        return text.to_string();
+    }
+    ["stdout", "stderr"]
+        .into_iter()
+        .filter_map(|key| output.get(key).and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn command_run_child_tree_command(script: &Path) -> Result<String> {
