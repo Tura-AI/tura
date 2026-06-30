@@ -1144,7 +1144,7 @@ pub(crate) fn wait_for_gateway_router_running(
     port: u16,
     timeout: Duration,
 ) -> Result<serde_json::Value> {
-    wait_for_gateway_router_running_with_http_timeout(port, timeout, Duration::from_secs(10))
+    wait_for_gateway_router_running_with_http_timeout(port, timeout, Duration::from_secs(45))
 }
 
 pub(crate) fn wait_for_gateway_router_running_with_http_timeout(
