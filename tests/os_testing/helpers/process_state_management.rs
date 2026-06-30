@@ -625,6 +625,7 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
 
     let session_id = format!("process-recovery-{}", std::process::id());
     let message_id = "process-recovery-message-1";
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
     let mut session_db = SessionDbGuard::start(repo, &home)?;
     wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
         .context("recovery initial session_db endpoint did not become reachable")?;
@@ -632,9 +633,9 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
         &home,
         &json!({
             "command": "upsert_session",
-            "session": running_session_payload(&session_id, &workspace, 100),
+            "session": running_session_payload(&session_id, &workspace, timestamp),
             "messages": [
-                message_payload(&session_id, message_id, "user", 100, "resume this work")
+                message_payload(&session_id, message_id, "user", timestamp, "resume this work")
             ],
             "todos": [
                 {"id": "todo-recovery", "content": "keep history across restart", "status": "doing"}
