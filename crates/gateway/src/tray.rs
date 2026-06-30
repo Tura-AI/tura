@@ -56,9 +56,24 @@ pub struct GatewayTrayApp {
 }
 
 pub fn tray_enabled() -> bool {
-    std::env::var("TURA_GATEWAY_TRAY")
+    let enabled = std::env::var("TURA_GATEWAY_TRAY")
         .map(|value| !matches!(value.trim(), "0" | "false" | "off" | "no"))
-        .unwrap_or(true)
+        .unwrap_or(true);
+    enabled && display_session_available()
+}
+
+fn display_session_available() -> bool {
+    if !cfg!(target_os = "linux") {
+        return true;
+    }
+    env_var_has_value("DISPLAY") || env_var_has_value("WAYLAND_DISPLAY")
+}
+
+fn env_var_has_value(name: &str) -> bool {
+    std::env::var_os(name)
+        .and_then(|value| value.into_string().ok())
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
 }
 
 impl GatewayTrayApp {
@@ -661,12 +676,16 @@ fn apple_script_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        gui_args, is_active_session, load_tura_icon, parse_tray_language, session_label, tray_text,
-        tui_command, TrayLanguage, TrayText,
+        gui_args, is_active_session, load_tura_icon, parse_tray_language, session_label,
+        tray_enabled, tray_text, tui_command, TrayLanguage, TrayText,
     };
     use serde_json::json;
     use session_log::SessionSummary;
+    use std::ffi::OsString;
     use std::path::Path;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn summary(status: Option<&str>, state: Option<&str>) -> SessionSummary {
         SessionSummary {
@@ -689,6 +708,53 @@ mod tests {
         assert!(is_active_session(&summary(Some("busy"), None)));
         assert!(is_active_session(&summary(None, Some("running"))));
         assert!(!is_active_session(&summary(Some("idle"), None)));
+    }
+
+    #[test]
+    fn tray_enabled_respects_explicit_disable() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous = std::env::var_os("TURA_GATEWAY_TRAY");
+        std::env::set_var("TURA_GATEWAY_TRAY", "0");
+
+        assert!(!tray_enabled());
+
+        restore_env_var("TURA_GATEWAY_TRAY", previous);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn tray_enabled_rejects_headless_linux_session() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous_tray = std::env::var_os("TURA_GATEWAY_TRAY");
+        let previous_display = std::env::var_os("DISPLAY");
+        let previous_wayland = std::env::var_os("WAYLAND_DISPLAY");
+        std::env::remove_var("TURA_GATEWAY_TRAY");
+        std::env::remove_var("DISPLAY");
+        std::env::remove_var("WAYLAND_DISPLAY");
+
+        assert!(!tray_enabled());
+
+        restore_env_var("TURA_GATEWAY_TRAY", previous_tray);
+        restore_env_var("DISPLAY", previous_display);
+        restore_env_var("WAYLAND_DISPLAY", previous_wayland);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn tray_enabled_accepts_linux_display_session() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous_tray = std::env::var_os("TURA_GATEWAY_TRAY");
+        let previous_display = std::env::var_os("DISPLAY");
+        let previous_wayland = std::env::var_os("WAYLAND_DISPLAY");
+        std::env::remove_var("TURA_GATEWAY_TRAY");
+        std::env::set_var("DISPLAY", ":99");
+        std::env::remove_var("WAYLAND_DISPLAY");
+
+        assert!(tray_enabled());
+
+        restore_env_var("TURA_GATEWAY_TRAY", previous_tray);
+        restore_env_var("DISPLAY", previous_display);
+        restore_env_var("WAYLAND_DISPLAY", previous_wayland);
     }
 
     #[test]
@@ -745,5 +811,13 @@ mod tests {
         assert!(command.contains("repo with spaces"));
         assert!(command.contains("--initial-session"));
         assert!(command.contains("session-123"));
+    }
+
+    fn restore_env_var(name: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(name, value);
+        } else {
+            std::env::remove_var(name);
+        }
     }
 }
