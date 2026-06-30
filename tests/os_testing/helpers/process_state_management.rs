@@ -1431,7 +1431,14 @@ pub(crate) fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
 pub(crate) fn process_alive(pid: u32) -> bool {
     let mut system = sysinfo::System::new_all();
     system.refresh_processes();
-    system.process(sysinfo::Pid::from_u32(pid)).is_some()
+    system
+        .process(sysinfo::Pid::from_u32(pid))
+        .is_some_and(|process| {
+            !matches!(
+                process.status(),
+                sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+            )
+        })
 }
 
 pub(crate) struct TargetBackendCleanup {
