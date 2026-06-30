@@ -329,8 +329,7 @@ pub(crate) fn router_health_restarts_crashed_session_db(repo: &Path) -> Result<(
     let service_before =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
             .context("session_db crash initial service endpoint did not become reachable")?;
-    let session_db_pid =
-        wait_for_process_pid("tura_session_db", &workspace, Duration::from_secs(10))?;
+    let session_db_pid = wait_for_session_db_pid(&home, &workspace, Duration::from_secs(10))?;
 
     kill_process(session_db_pid)
         .with_context(|| format!("kill session_db pid {session_db_pid}"))?;
@@ -350,12 +349,17 @@ pub(crate) fn router_health_restarts_crashed_session_db(repo: &Path) -> Result<(
         service_after, service_before,
         "router should publish a fresh session_db endpoint after a crash restart"
     );
-    let restarted_session_db_pid = wait_for_process_pid_change(
-        "tura_session_db",
-        &workspace,
-        session_db_pid,
-        Duration::from_secs(10),
-    )?;
+    let restarted_session_db_pid = session_db_pid_from_health(&health)
+        .or_else(|| {
+            wait_for_session_db_pid_change(
+                &home,
+                &workspace,
+                session_db_pid,
+                Duration::from_secs(10),
+            )
+            .ok()
+        })
+        .context("session_db crash restarted health did not expose a pid")?;
     assert_ne!(
         restarted_session_db_pid, session_db_pid,
         "session_db restart should be owned by a different process"
@@ -386,8 +390,7 @@ pub(crate) fn router_health_restarts_unresponsive_session_db(repo: &Path) -> Res
     let service_before =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
             .context("session_db unresponsive initial service endpoint did not become reachable")?;
-    let session_db_pid =
-        wait_for_process_pid("tura_session_db", &workspace, Duration::from_secs(10))?;
+    let session_db_pid = wait_for_session_db_pid(&home, &workspace, Duration::from_secs(10))?;
     assert_process_alive(
         session_db_pid,
         "managed session_db before unresponsive endpoint swap",
@@ -421,12 +424,17 @@ pub(crate) fn router_health_restarts_unresponsive_session_db(repo: &Path) -> Res
     wait_for_process_dead(session_db_pid, Duration::from_secs(10)).with_context(|| {
         format!("unresponsive managed session_db pid {session_db_pid} should die")
     })?;
-    let restarted_session_db_pid = wait_for_process_pid_change(
-        "tura_session_db",
-        &workspace,
-        session_db_pid,
-        Duration::from_secs(10),
-    )?;
+    let restarted_session_db_pid = session_db_pid_from_health(&health)
+        .or_else(|| {
+            wait_for_session_db_pid_change(
+                &home,
+                &workspace,
+                session_db_pid,
+                Duration::from_secs(10),
+            )
+            .ok()
+        })
+        .context("session_db unresponsive restarted health did not expose a pid")?;
     assert_ne!(
         restarted_session_db_pid, session_db_pid,
         "unresponsive session_db restart should be owned by a different process"
@@ -1562,6 +1570,92 @@ pub(crate) fn wait_for_process_pid_change(
     )
 }
 
+pub(crate) fn wait_for_session_db_pid(home: &Path, cwd: &Path, timeout: Duration) -> Result<u32> {
+    let started = Instant::now();
+    let mut last_error = None;
+    while started.elapsed() < timeout {
+        match session_db_lock_pid(home) {
+            Ok(Some(pid)) => return Ok(pid),
+            Ok(None) => {
+                match wait_for_process_pid("tura_session_db", cwd, Duration::from_millis(200)) {
+                    Ok(pid) => return Ok(pid),
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            Err(error) => last_error = Some(error),
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("session_db pid did not appear")))
+}
+
+pub(crate) fn wait_for_session_db_pid_change(
+    home: &Path,
+    cwd: &Path,
+    previous: u32,
+    timeout: Duration,
+) -> Result<u32> {
+    let started = Instant::now();
+    let mut last_seen = None;
+    while started.elapsed() < timeout {
+        if let Some(pid) = session_db_lock_pid(home)? {
+            last_seen = Some(pid);
+            if pid != previous {
+                return Ok(pid);
+            }
+        }
+        for pid in process_pids_by_name_and_cwd("tura_session_db", cwd)? {
+            last_seen = Some(pid);
+            if pid != previous {
+                return Ok(pid);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    bail!(
+        "session_db process pid did not change from {previous}; last seen {:?}",
+        last_seen
+    )
+}
+
+pub(crate) fn session_db_pid_from_health(health: &serde_json::Value) -> Option<u32> {
+    health["payload"]["session_db"]["pid"]
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+pub(crate) fn session_db_lock_pid(home: &Path) -> Result<Option<u32>> {
+    for lock in lock_files(home, "session-db")? {
+        let raw = std::fs::read_to_string(&lock)
+            .with_context(|| format!("read session_db lock {}", lock.display()))?;
+        let mut pid = None;
+        let mut kind = None;
+        let mut build_kind = None;
+        let mut lock_home = None;
+        for line in raw.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            match key.trim() {
+                "pid" => pid = value.trim().parse::<u32>().ok(),
+                "kind" => kind = Some(value.trim().to_string()),
+                "build_kind" => build_kind = Some(value.trim().to_string()),
+                "home" => lock_home = Some(PathBuf::from(value.trim())),
+                _ => {}
+            }
+        }
+        if kind.as_deref() == Some("session_db")
+            && build_kind.as_deref().is_some_and(|value| !value.is_empty())
+            && lock_home
+                .as_deref()
+                .is_some_and(|value| same_path(value, home))
+        {
+            return Ok(pid);
+        }
+    }
+    Ok(None)
+}
+
 pub(crate) fn process_pids_by_name_and_cwd(binary: &str, cwd: &Path) -> Result<Vec<u32>> {
     let expected_cwd = canonical_or_self(cwd);
     let mut system = sysinfo::System::new_all();
@@ -1589,6 +1683,16 @@ pub(crate) fn process_name_matches(name: &str, binary: &str) -> bool {
 
 pub(crate) fn canonical_or_self(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub(crate) fn same_path(left: &Path, right: &Path) -> bool {
+    let left = canonical_or_self(left);
+    let right = canonical_or_self(right);
+    if cfg!(windows) {
+        left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
+    } else {
+        left == right
+    }
 }
 
 pub(crate) fn lock_files(home: &Path, kind: &str) -> Result<Vec<PathBuf>> {
