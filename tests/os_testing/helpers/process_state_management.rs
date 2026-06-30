@@ -173,10 +173,14 @@ pub(crate) fn gateway_status_restarts_crashed_router_and_adopts_session_db(
     let router_before =
         wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
             .context("router crash initial router endpoint did not become reachable")?;
+    let router_before_endpoint = read_endpoint_json(&router_addr_path(&home))?;
     let service_before =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
             .context("router crash initial session_db endpoint did not become reachable")?;
-    let router_pid = wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10))?;
+    let router_pid = endpoint_pid(&router_before_endpoint)
+        .or_else(|| wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10)).ok())
+        .context("router crash initial endpoint did not expose a pid")?;
+    assert_process_alive(router_pid, "router crash initial endpoint pid")?;
 
     kill_process(router_pid).with_context(|| format!("kill router pid {router_pid}"))?;
     wait_for_addr_unreachable(&router_before, Duration::from_secs(10))
@@ -191,20 +195,27 @@ pub(crate) fn gateway_status_restarts_crashed_router_and_adopts_session_db(
     let router_after =
         wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
             .context("router crash restarted router endpoint did not become reachable")?;
+    let router_after_endpoint = read_endpoint_json(&router_addr_path(&home))?;
     assert_ne!(
         router_after, router_before,
         "gateway should publish a fresh router endpoint after a crash restart"
     );
-    let restarted_router_pid = wait_for_process_pid_change(
-        "tura_router",
-        &workspace,
-        router_pid,
-        Duration::from_secs(10),
-    )?;
+    let restarted_router_pid = endpoint_pid(&router_after_endpoint)
+        .or_else(|| {
+            wait_for_process_pid_change(
+                "tura_router",
+                &workspace,
+                router_pid,
+                Duration::from_secs(10),
+            )
+            .ok()
+        })
+        .context("router crash restarted endpoint did not expose a pid")?;
     assert_ne!(
         restarted_router_pid, router_pid,
         "router restart should be owned by a different process"
     );
+    assert_process_alive(restarted_router_pid, "router crash restarted endpoint pid")?;
 
     let service_after =
         wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
