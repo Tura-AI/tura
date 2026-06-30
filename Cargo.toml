@@ -88,7 +88,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tray-icon = "0.23.1"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 agents = { path = "agents" }
 provider = { path = "crates/provider" }

@@ -11,15 +11,20 @@ env:
 
 jobs:
   backend-os:
-    name: Backend OS ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Backend OS ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
+        include:
+          - label: ubuntu-latest
+            runner: ubuntu-latest
+          - label: macos-latest
+            runner: macos-latest
+          - label: windows-2022
+            runner: windows-2022
+          - label: windows-2025
+            runner: windows-2025
     steps:
       - uses: actions/checkout@v4
       - name: Rust toolchain
@@ -27,7 +32,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: os-worker-${{ matrix.os }}
+          key: os-worker-${{ matrix.label }}
           cache-on-failure: true
       - name: Install Linux tray dependencies
         if: runner.os == 'Linux'
@@ -52,15 +57,20 @@ jobs:
         run: sh ./xtask/scripts/run-backend-os-tests.sh --timeout-seconds 360
 
   tui-gateway:
-    name: TUI Gateway Lifecycle ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: TUI Gateway Lifecycle ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
+        include:
+          - label: ubuntu-latest
+            runner: ubuntu-latest
+          - label: macos-latest
+            runner: macos-latest
+          - label: windows-2022
+            runner: windows-2022
+          - label: windows-2025
+            runner: windows-2025
     steps:
       - uses: actions/checkout@v4
       - name: Node setup

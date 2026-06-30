@@ -827,6 +827,7 @@ function localFilesystemPath(value: string, workspaceDirectory?: string): string
     }
   }
   if (!isLocalPathReference(trimmed)) return undefined;
+  if (/^[A-Za-z]:[\\/]/u.test(trimmed)) return trimmed;
   if (path.isAbsolute(trimmed)) return trimmed;
   return path.resolve(workspaceDirectory || process.cwd(), trimmed);
 }
