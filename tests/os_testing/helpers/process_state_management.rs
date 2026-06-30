@@ -1810,11 +1810,48 @@ pub(crate) fn http_get(port: u16, path: &str, timeout: Duration) -> Result<Strin
     stream
         .write_all(request.as_bytes())
         .with_context(|| format!("write HTTP request {path} to {addr}"))?;
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .with_context(|| format!("read HTTP response {path} from {addr}"))?;
-    Ok(response)
+    read_http_response(&mut stream, path, addr)
+}
+
+fn read_http_response(stream: &mut TcpStream, path: &str, addr: SocketAddr) -> Result<String> {
+    let mut reader = BufReader::new(stream);
+    let mut header = Vec::new();
+    loop {
+        let mut byte = [0_u8; 1];
+        let read = reader
+            .read(&mut byte)
+            .with_context(|| format!("read HTTP response header {path} from {addr}"))?;
+        if read == 0 {
+            break;
+        }
+        header.push(byte[0]);
+        if header.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    if !header.ends_with(b"\r\n\r\n") {
+        bail!(
+            "HTTP response {path} from {addr} ended before complete headers: {}",
+            String::from_utf8_lossy(&header)
+        );
+    }
+    let header_text = String::from_utf8_lossy(&header);
+    let content_length = header_text
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .ok_or_else(|| anyhow!("HTTP response {path} from {addr} missing Content-Length"))?;
+    let mut body = vec![0_u8; content_length];
+    reader
+        .read_exact(&mut body)
+        .with_context(|| format!("read HTTP response body {path} from {addr}"))?;
+    let mut response = header;
+    response.extend_from_slice(&body);
+    String::from_utf8(response).context("HTTP response was not valid UTF-8")
 }
 
 pub(crate) fn ensure_backend_binaries(repo: &Path) -> Result<()> {
@@ -1860,6 +1897,45 @@ pub(crate) fn router_addr_path(home: &Path) -> PathBuf {
 
 pub(crate) fn service_addr_path(home: &Path) -> PathBuf {
     home.join("db").join("session_log").join("service.addr")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_get_returns_complete_content_length_response_without_waiting_for_close() -> Result<()> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = listener.local_addr()?.port();
+        let handle = thread::spawn(move || -> Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+            let mut request_line = String::new();
+            BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+            assert!(
+                request_line.starts_with("GET /service/status HTTP/1.1"),
+                "unexpected request line: {request_line}"
+            );
+            let body = r#"{"router":{"status":"running"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+                body.len(),
+                body
+            )?;
+            stream.flush()?;
+            thread::sleep(Duration::from_secs(1));
+            Ok(())
+        });
+
+        let response = http_get(port, "/service/status", Duration::from_millis(200))?;
+        assert!(response.starts_with("HTTP/1.1 200"));
+        assert!(response.ends_with(r#"{"router":{"status":"running"}}"#));
+        handle
+            .join()
+            .map_err(|_| anyhow!("HTTP fixture thread panicked"))??;
+        Ok(())
+    }
 }
 
 pub(crate) fn temp_root(prefix: &str) -> Result<PathBuf> {
