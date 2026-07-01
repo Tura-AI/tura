@@ -32,9 +32,6 @@ describe("composer attachment drag and sizing", () => {
       'if (event.key !== "Enter" || event.shiftKey || event.isComposing) {',
     );
     expect(composerSource).toContain("event.preventDefault();");
-    expect(composerSource).toContain("(event.metaKey || event.ctrlKey) && props.onQueueSubmit");
-    expect(composerSource).toContain("? props.onQueueSubmit()\n      : props.onSubmit()");
-
     const submitFromControlBlock = composerSource.slice(
       composerSource.indexOf("function submitFromControl"),
       composerSource.indexOf("function submitFromKeyboard"),

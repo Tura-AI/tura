@@ -8,7 +8,6 @@ import Play from "lucide-solid/icons/play";
 import Plus from "lucide-solid/icons/plus";
 import ScrollText from "lucide-solid/icons/scroll-text";
 import Search from "lucide-solid/icons/search";
-import Timer from "lucide-solid/icons/timer";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { t } from "../../i18n";
@@ -226,20 +225,16 @@ export function PlanComposerControls(props: {
   onStartCondition: (value: StartCondition) => void;
   queueOnly?: boolean;
 }) {
+  if (props.queueOnly) {
+    return null;
+  }
   let root: HTMLElement | undefined;
   const [open, setOpen] = createSignal(false);
   const startConditions = createMemo<Array<{
     id: StartCondition;
     label: string;
     icon: (props: { size?: number; strokeWidth?: number }) => JSX.Element;
-  }>>(() =>
-    props.queueOnly
-      ? [{ id: "session_idle", label: t("sessionIdle"), icon: Timer }]
-      : [
-          { id: "user_action", label: t("runNow"), icon: Play },
-          { id: "session_idle", label: t("sessionIdle"), icon: Timer },
-        ],
-  );
+  }>>(() => [{ id: "user_action", label: t("runNow"), icon: Play }]);
   const selectedCondition = createMemo(
     () =>
       startConditions().find((condition) => condition.id === props.startCondition) ??

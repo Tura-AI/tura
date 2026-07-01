@@ -8,9 +8,7 @@ import {
   type TuraConfigModelPair,
 } from "@tura/gateway-sdk";
 import ArrowLeft from "lucide-solid/icons/arrow-left";
-import FolderSearch from "lucide-solid/icons/folder-search";
 import LayoutList from "lucide-solid/icons/layout-list";
-import MessageSquare from "lucide-solid/icons/message-square";
 import Search from "lucide-solid/icons/search";
 import {
   createEffect,
@@ -74,13 +72,7 @@ export function MainTabs(props: {
     label: string;
     icon?: JSX.Element;
   }> = [
-    {
-      id: "conversation",
-      label: props.conversationLabel ?? t("session"),
-      icon: <MessageSquare size={15} />,
-    },
     { id: "plan", label: t("plan"), icon: <LayoutList size={15} /> },
-    { id: "files", label: t("fileBrowser"), icon: <FolderSearch size={15} /> },
   ];
   return (
     <nav class="main-tabs">
@@ -92,11 +84,6 @@ export function MainTabs(props: {
           >
             <Show when={item.icon}>{(icon) => icon()}</Show>
             <span>{item.label}</span>
-            <Show when={item.id === "conversation"}>
-              <span class="main-tab-hidden-alias">
-                {t("sessionHistory")} {t("newSession")}
-              </span>
-            </Show>
           </button>
         )}
       </For>

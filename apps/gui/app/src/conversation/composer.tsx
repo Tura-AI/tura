@@ -79,9 +79,7 @@ export function Composer(props: {
       return;
     }
     lastSubmitAt = now;
-    void ((event.metaKey || event.ctrlKey) && props.onQueueSubmit
-      ? props.onQueueSubmit()
-      : props.onSubmit());
+    void props.onSubmit();
   }
 
   const sendButtonTitle = createMemo(() =>

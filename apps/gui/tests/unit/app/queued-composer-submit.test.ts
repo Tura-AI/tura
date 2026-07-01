@@ -18,10 +18,4 @@ describe("GUI composer submission contract", () => {
     expect(submitPrompt).toContain("await submitDirectPrompt(content)");
     expect(submitPrompt).not.toContain('submitQueuedPrompt(content, "session_idle")');
   });
-
-  test("keeps idle queue submission behind the explicit queue path", () => {
-    const queuePrompt = functionBlock(appSource, "queuePrompt");
-
-    expect(queuePrompt).toContain('await submitQueuedPrompt(content, "session_idle")');
-  });
 });

@@ -279,7 +279,7 @@ export const zhCN = {
   secureTokenPlaceholder: "已用黑色加码保护",
   selectStep: "选择步骤",
   send: "发送",
-  sendButtonHint: "Enter 立即执行\nShift+Enter 换行\n{modifier}+Enter 空闲时排队",
+  sendButtonHint: "Enter 立即执行\nShift+Enter 换行",
   sidebar: "侧边栏",
   session: "会话",
   sessionHistory: "会话",

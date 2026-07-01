@@ -1,35 +1,34 @@
 {
   "agent_name": "balanced",
-  "description": "Balances self-reflection with intuitive response, using verification and reflective checks.",
+  "description": "Responds quickly and directly, follows intuition into action, and keeps verification light.",
   "aliases": [
-    "thinking",
-    "coding_agent_thinking"
+    "fast-text-only"
   ],
-  "icon_emoji": "🔮",
+  "icon_emoji": "✨",
   "agent_directory": "agents/src\\balanced",
   "parent_agent_id": null,
   "report_to_user": true,
   "default_config": true,
   "reflection": false,
-  "op_manual": true,
+  "op_manual": false,
   "self_reflection": false,
   "provider": {
     "current_model": "codex/gpt-5.5",
-    "default_model_tier": "thinking",
+    "default_model_tier": "fast",
     "max_tokens": 0,
     "model_acceleration_enabled": true,
-    "model_reasoning_effort": "high",
+    "model_reasoning_effort": "medium",
     "service_tier": "priority",
     "stream": true,
     "temperature": 0.2,
     "time_out_ms": 120000,
     "tool_choice": "Auto",
-    "tura_llm_name": "thinking"
+    "tura_llm_name": "fast"
   },
   "agent_prompt": [
     {
-      "agent_prompt": "balanced",
-      "prompt_directory": "agents/src/balanced"
+      "agent_prompt": "direct-text-only",
+      "prompt_directory": "agents/src/direct-text-only"
     }
   ],
   "agent_capabilities": [
