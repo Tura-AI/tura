@@ -44,11 +44,6 @@ export function settingsEntries(state: AppState): SettingEntry[] {
       label: t("settingPriority"),
       value: config.model_acceleration_enabled ?? true,
     },
-    {
-      detail: "commands",
-      label: t("settingCommandExpansion"),
-      value: config.show_command_instructions !== false,
-    },
   ];
 }
 
@@ -146,7 +141,6 @@ function settingHint(state: AppState): string {
   if (detail === "persona") return t("settingPersonaHint");
   if (detail === "language") return t("settingLanguageHint");
   if (detail === "session") return t("settingSessionHint");
-  if (detail === "commands") return t("settingCommandExpansionHint");
   if (detail === "validator") return t("settingValidatorHint");
   if (detail === "stallGuard") return t("settingStallGuardHint");
   return t("settingDetailHint");
@@ -169,7 +163,6 @@ function settingLabel(detail: Exclude<SettingDetail, "providerAuth">): string {
     session: t("settingSession"),
     variant: t("settingReasoning"),
     priority: t("settingPriority"),
-    commands: t("settingCommandExpansion"),
     validator: t("settingValidator"),
     stallGuard: t("settingStallGuard"),
   };
@@ -187,7 +180,6 @@ function settingCommandLabel(detail: SettingDetail): string {
     session: "/session <type>",
     variant: "/variant <name>",
     priority: "/priority <on/off>",
-    commands: "/commands <on/off>",
     validator: "/validator <on/off>",
     stallGuard: "/stall-guard <profile>",
   };
@@ -276,11 +268,6 @@ export function settingOptions(state: AppState): Array<[string, string, unknown]
       [t("on"), t("priority"), true],
       [t("off"), t("priority"), false],
     ];
-  if (state.settingDetail === "commands")
-    return [
-      [t("on"), t("settingCommandExpansion"), true],
-      [t("off"), t("settingCommandExpansion"), false],
-    ];
   if (state.settingDetail === "validator")
     return [
       [t("on"), t("settingValidator"), true],
@@ -362,7 +349,6 @@ function activeSettingValue(state: AppState): unknown {
   if (state.settingDetail === "session") return config?.session_type ?? "coding";
   if (state.settingDetail === "variant") return config?.model_variant ?? "high";
   if (state.settingDetail === "priority") return config?.model_acceleration_enabled ?? true;
-  if (state.settingDetail === "commands") return config?.show_command_instructions !== false;
   if (state.settingDetail === "validator") return Boolean(config?.validator_enabled);
   if (state.settingDetail === "stallGuard")
     return config?.command_run_stall_guard_profile ?? "balanced_20s";

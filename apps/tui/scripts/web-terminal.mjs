@@ -201,7 +201,6 @@ function html(profileId, profile, instance) {
   </section>
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-unicode11@0.6.0/lib/xterm-addon-unicode11.min.js"></script>
   <script>
     const terminalHost = document.getElementById("terminal");
     const shellHost = document.querySelector(".shell");
@@ -228,6 +227,43 @@ function html(profileId, profile, instance) {
         if (window.__turaHoveredLink === text) window.__turaHoveredLink = "";
       },
     };
+    const loadScript = (src, timeoutMs = 5000) =>
+      new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        const timer = setTimeout(() => {
+          script.remove();
+          reject(new Error("script load timed out: " + src));
+        }, timeoutMs);
+        script.onload = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        script.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error("script load failed: " + src));
+        };
+        script.src = src;
+        document.head.appendChild(script);
+      });
+    const enableUnicode11 = async (targetTerm) => {
+      try {
+        if (!globalThis.Unicode11Addon && !globalThis.XTermAddonUnicode11) {
+          await loadScript("https://cdn.jsdelivr.net/npm/xterm-addon-unicode11@0.6.0/lib/xterm-addon-unicode11.min.js");
+        }
+        const Unicode11Ctor =
+          globalThis.Unicode11Addon?.Unicode11Addon ||
+          globalThis.Unicode11Addon ||
+          globalThis.XTermAddonUnicode11?.Unicode11Addon;
+        if (Unicode11Ctor) {
+          targetTerm.loadAddon(new Unicode11Ctor());
+          if (targetTerm.unicode) targetTerm.unicode.activeVersion = "11";
+        }
+      } catch (error) {
+        console.warn("Unicode11 addon unavailable", error);
+      } finally {
+        window.__turaUnicode11Loaded = targetTerm.unicode?.activeVersion === "11";
+      }
+    };
     const createTerminal = () => {
       const nextTerm = new Terminal({
         allowProposedApi: true,
@@ -241,21 +277,9 @@ function html(profileId, profile, instance) {
         convertEol: true
       });
       const nextFit = new FitAddon.FitAddon();
-      try {
-        const Unicode11Ctor =
-          globalThis.Unicode11Addon?.Unicode11Addon ||
-          globalThis.Unicode11Addon ||
-          globalThis.XTermAddonUnicode11?.Unicode11Addon;
-        if (Unicode11Ctor) {
-          nextTerm.loadAddon(new Unicode11Ctor());
-          if (nextTerm.unicode) nextTerm.unicode.activeVersion = "11";
-          window.__turaUnicode11Loaded = nextTerm.unicode?.activeVersion === "11";
-        }
-      } catch (error) {
-        console.warn("Unicode11 addon unavailable", error);
-      }
       nextTerm.loadAddon(nextFit);
       nextTerm.open(terminalHost);
+      enableUnicode11(nextTerm).then(() => window.__turaFit?.());
       nextFit.fit();
       nextTerm.onData((data) => send({ data }));
       term = nextTerm;

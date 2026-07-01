@@ -548,21 +548,7 @@ async function slashCommand(
   const [name, ...args] = input.slice(1).trim().split(/\s+/).filter(Boolean);
   if (!name || name === "help") dispatch({ type: "toggle-help" });
   else if (name === "chat") dispatch({ type: "close-panels" });
-  else if (name === "commands") {
-    if (args[0]) {
-      const config = await client.patchSessionConfig(
-        sessionConfigPatchFromAssignments([
-          `show_command_instructions=${args[0]}`,
-          ...args.slice(1),
-        ]),
-      );
-      dispatch({ type: "session-config", value: config, open: true });
-      dispatch({ type: "notice", value: undefined });
-    } else {
-      dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
-      dispatch({ type: "open-setting-detail", detail: "commands" });
-    }
-  } else if (name === "quit" || name === "exit") return true;
+  else if (name === "quit" || name === "exit") return true;
   else if (name === "new") await createAndSelectSession(client, getState, dispatch);
   else if (name === "resume") {
     const id = args[0];

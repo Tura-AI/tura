@@ -62,9 +62,6 @@ export function settingPatch(
   if (detail === "priority") {
     return { model_acceleration_enabled: Boolean(value) };
   }
-  if (detail === "commands") {
-    return { show_command_instructions: Boolean(value) };
-  }
   if (detail === "validator") {
     return { validator_enabled: Boolean(value) };
   }

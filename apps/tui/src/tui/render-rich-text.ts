@@ -268,7 +268,7 @@ function renderMarkdownTables(
 ): string {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const output: string[] = [];
-  for (let index = 0; index < lines.length;) {
+  for (let index = 0; index < lines.length; ) {
     if (isMarkdownTableStart(lines, index)) {
       pushBlankBeforeBlock(output);
       const table: string[][] = [tableCells(lines[index])];
@@ -530,7 +530,7 @@ function normalizeDisplayPath(value: string): string {
 function renderLinkTarget(
   target: string,
   label: string,
-  options: RenderRichTextOptions = {},
+  _options: RenderRichTextOptions = {},
 ): string {
   const visibleLabel = stripAnsi(label).trim() || stripAnsi(target).trim();
   if (!isWebUrl(target)) return visibleLabel;

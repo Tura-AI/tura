@@ -186,7 +186,6 @@ function richHelpEntryLines(
 export function commandHelpEntries(): Array<[string, string]> {
   return [
     ["/chat", t("helpChat")],
-    ["/commands", t("helpCommands")],
     ["/new", t("helpNew")],
     ["/resume <id>", t("helpResume")],
     ["/auth", t("providerLogin")],

@@ -47,7 +47,6 @@ export function selectedSettingOptionIndex(state: AppState, detail: SettingDetai
       ["low", "medium", "high", "xhigh"].indexOf(String(config?.model_variant ?? "high")),
     );
   if (detail === "priority") return (config?.model_acceleration_enabled ?? true) ? 0 : 1;
-  if (detail === "commands") return config?.show_command_instructions !== false ? 0 : 1;
   if (detail === "validator") return config?.validator_enabled ? 0 : 1;
   if (detail === "stallGuard")
     return Math.max(
