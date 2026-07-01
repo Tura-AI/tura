@@ -96,8 +96,8 @@
 
 .rich-table-scroll {
   max-width: 100%;
-  overflow-x: auto;
-  overflow-y: visible;
+  max-height: min(36vh, 320px);
+  overflow: auto;
   scrollbar-width: none;
   scrollbar-gutter: auto;
   overscroll-behavior: contain;
@@ -115,16 +115,14 @@
 }
 
 .rich-table-scroll table {
-  width: max-content;
-  min-width: 100%;
+  min-width: max-content;
   border-collapse: collapse;
   border-spacing: 0;
   color: var(--ink);
   font-family: inherit;
   font-size: inherit;
   font-weight: 400;
-  line-height: 1.44;
-  table-layout: auto;
+  line-height: 1.32;
 }
 
 .rich-table-scroll caption {
@@ -138,30 +136,39 @@
 
 .rich-table-scroll th,
 .rich-table-scroll td {
-  min-width: 10rem;
-  padding: 15px 18px;
+  min-width: 14.5rem;
+  max-width: 18rem;
+  padding: 3px 10px;
   border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
-  overflow: visible;
-  text-align: left;
-  text-overflow: clip;
+  overflow: hidden;
+  text-overflow: ellipsis;
   vertical-align: top;
-  white-space: normal;
-  overflow-wrap: normal;
-  word-break: normal;
+  white-space: nowrap;
 }
 
 .rich-table-scroll th:first-child,
 .rich-table-scroll td:first-child {
-  min-width: 10rem;
-  text-align: left;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 5.5rem;
+  max-width: 7rem;
+  background: var(--paper);
+  text-align: right;
 }
 
 .rich-table-scroll th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   background: var(--paper);
-  border-bottom-color: color-mix(in srgb, var(--line-strong) 64%, transparent);
+  border-bottom: 1px solid var(--line-strong);
   color: var(--ink);
   font-weight: 700;
+}
+
+.rich-table-scroll th:first-child {
+  z-index: 3;
 }
 
 .rich-table-overflow-bar {
@@ -183,6 +190,20 @@
 .rich-table-overflow-x > div {
   top: 1px;
   bottom: 1px;
+}
+
+.rich-table-overflow-y {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: min(36vh, 320px);
+  cursor: ns-resize;
+}
+
+.rich-table-overflow-y > div {
+  right: 1px;
+  left: 1px;
 }
 
 .rich-spoiler {
