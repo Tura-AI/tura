@@ -59,6 +59,7 @@ import {
   toolStatus,
 } from "./message-tools";
 import { assistantFooterMetaText } from "./assistant-footer-meta";
+import { transcriptNearBottom } from "./transcript-scroll";
 
 const INSPECTOR_MIN_WIDTH = 320;
 const INSPECTOR_MAX_WIDTH = 680;
@@ -70,27 +71,12 @@ const AGENT_AVATAR_BOTTOM_SETTLE_MS = 0;
 const VIRTUAL_MESSAGE_ESTIMATED_HEIGHT = 64;
 const VIRTUAL_MESSAGE_OVERSCAN = 300;
 const LOAD_EARLIER_SCROLL_TOP = 480;
-const TRANSCRIPT_FOLLOW_BOTTOM_RATIO = 0.03;
-const TRANSCRIPT_FOLLOW_BOTTOM_MIN_PX = 28;
 const TRANSCRIPT_BOTTOM_SETTLE_FRAMES = 6;
 const SCROLL_RESTORE_FRAMES = 8;
 const MAX_TRANSCRIPT_HEIGHT_CACHE_SESSIONS = 20;
 const ASSISTANT_THINKING_TEXT_ICON = "✦";
 const transcriptHeightCacheBySession = new Map<string, Map<string, number>>();
 const transcriptMountedRowsBySession = new Map<string, Set<string>>();
-
-function transcriptBottomDistance(element: HTMLElement) {
-  return Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
-}
-
-function transcriptFollowBottomThreshold(element: HTMLElement) {
-  const scrollableHeight = Math.max(0, element.scrollHeight - element.clientHeight);
-  return Math.max(TRANSCRIPT_FOLLOW_BOTTOM_MIN_PX, scrollableHeight * TRANSCRIPT_FOLLOW_BOTTOM_RATIO);
-}
-
-function transcriptNearBottom(element: HTMLElement) {
-  return transcriptBottomDistance(element) <= transcriptFollowBottomThreshold(element);
-}
 
 function scrollElementToBottom(element: HTMLElement, behavior: ScrollBehavior = "auto") {
   element.scrollTo({ top: element.scrollHeight, behavior });
@@ -590,14 +576,18 @@ function Transcript(props: {
     const end = scrollTop() + clientHeight() + VIRTUAL_MESSAGE_OVERSCAN;
     syncMountedTranscriptRows(mountedMessageIds, items);
     const visibleEntries = items.map((item, index) => ({
-        item,
-        index,
-        top: layout.offsets[index] ?? 0,
-        height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
-      }));
+      item,
+      index,
+      top: layout.offsets[index] ?? 0,
+      height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
+    }));
     let mountedChanged = false;
     for (const entry of visibleEntries) {
-      if (entry.top + entry.height >= start && entry.top <= end && !mountedMessageIds.has(entry.item.message.id)) {
+      if (
+        entry.top + entry.height >= start &&
+        entry.top <= end &&
+        !mountedMessageIds.has(entry.item.message.id)
+      ) {
         mountedMessageIds.add(entry.item.message.id);
         mountedChanged = true;
       }
@@ -1133,10 +1123,7 @@ function cachedMountedMessageIdsForSession(sessionId: string | undefined): Set<s
   return mounted;
 }
 
-function syncMountedTranscriptRows(
-  mountedIds: Set<string>,
-  items: ConversationReactionItem[],
-) {
+function syncMountedTranscriptRows(mountedIds: Set<string>, items: ConversationReactionItem[]) {
   const currentIds = new Set(items.map((item) => item.message.id));
   for (const id of mountedIds) {
     if (!currentIds.has(id)) {

@@ -142,8 +142,8 @@ body.resizing-inspector * {
 .inspector-steps button,
 .inspector-record-toggle {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-3);
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: var(--space-2);
   align-items: center;
   min-height: 32px;
   padding: 0 var(--space-2);
@@ -165,6 +165,11 @@ body.resizing-inspector * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.inspector-record-step {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .inspector-steps small {

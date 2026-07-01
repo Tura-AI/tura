@@ -78,11 +78,13 @@ describe("assistant command run blocks", () => {
               command_id: "runtime-mixed.tool.command_run:call_1:0",
               command_type: "shell_command",
               command_line: "npm test",
+              step: 1,
             },
             {
               command_id: "runtime-mixed.tool.command_run:call_1:1",
               command_type: "task_status",
               command_line: '{"status":"done"}',
+              step: 2,
             },
           ],
         },
@@ -92,12 +94,14 @@ describe("assistant command run blocks", () => {
               command_id: "runtime-mixed.tool.command_run:call_1:0",
               command_type: "shell_command",
               command_line: "npm test",
+              step: 1,
               success: true,
               output: "tests passed",
             },
             {
               command_id: "runtime-mixed.tool.command_run:call_1:1",
               command_type: "task_status",
+              step: 2,
               success: true,
               output: { task_status: { status: "done" } },
             },
@@ -110,7 +114,39 @@ describe("assistant command run blocks", () => {
 
     expect(records).toHaveLength(2);
     expect(records.map((record) => record.command)).toEqual(["npm test", '{"status":"done"}']);
+    expect(records.map((record) => record.step)).toEqual([1, 2]);
+    expect(records.map((record) => record.hasResult)).toEqual([true, true]);
     expect(records[1]?.output).toContain("task_status");
+  });
+
+  test("marks scheduled command records without streamed results", () => {
+    const part: MessagePart = {
+      id: "runtime-scheduled.tool.command_run",
+      sessionID: "s1",
+      messageID: "runtime-scheduled.message",
+      type: "tool",
+      tool: "command_run",
+      state: {
+        status: "running",
+        input: {
+          commands: [
+            {
+              command_id: "runtime-scheduled.tool.command_run:call_1:0",
+              command_type: "shell_command",
+              command_line: '{"command":"npm test","timeout_ms":300000}',
+              step: 3,
+              created_at: 100,
+            },
+          ],
+        },
+      },
+    };
+
+    const records = toolRecords([part]);
+
+    expect(records[0]?.step).toBe(3);
+    expect(records[0]?.hasResult).toBe(false);
+    expect(records[0]?.timeoutMs).toBe(300_000);
   });
 
   test("does not merge consecutive assistant command_run messages", () => {

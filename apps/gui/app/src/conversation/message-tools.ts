@@ -9,10 +9,12 @@ export type ToolRecord = {
   partId: string;
   groupId?: string;
   kind: "command" | "patch" | "tool";
+  step?: number;
   title: string;
   command: string;
   output: string;
   status: string;
+  hasResult: boolean;
   durationMs?: number;
   timeoutMs?: number;
   exitCode?: number;
@@ -153,12 +155,14 @@ export function toolPartRecords(part: MessagePart): ToolRecord[] {
     );
     return specs
       .map((spec, index) => ({ result: resultForSpec(resultsById, spec), spec, index }))
-      .map(({ result, spec, index }) => commandRecord(part, result ?? spec, spec, index));
+      .map(({ result, spec, index }) =>
+        commandRecord(part, result ?? spec, spec, index, result !== undefined),
+      );
   }
   const visibleStreamed = streamed.map((value, index) => ({ result: asRecord(value), index }));
   if (visibleStreamed.length > 0) {
     return visibleStreamed.map(({ result, index }) =>
-      commandRecord(part, result, undefined, index),
+      commandRecord(part, result, undefined, index, true),
     );
   }
   const patchRecords = patchRecordsFromState(part, state);
@@ -197,6 +201,7 @@ function commandRecord(
   result: JsonRecord,
   spec: JsonRecord | undefined,
   index: number,
+  hasResult: boolean,
 ): ToolRecord {
   const commandSource =
     stringField(result, "command_line") ||
@@ -223,10 +228,12 @@ function commandRecord(
     partId: part.id,
     groupId: toolGroupId(part),
     kind: isPatchCommand(commandType, rawCommand) ? "patch" : "command",
+    step: commandStep(result, spec),
     title: commandTitle(commandType, rawCommand, index),
     command,
     output,
     status,
+    hasResult,
     durationMs: commandDurationMs(result, spec, status, output),
     timeoutMs: commandTimeoutMs(result, spec, commandSource),
     exitCode,
@@ -245,10 +252,12 @@ function patchRecordsFromState(part: MessagePart, state: JsonRecord): ToolRecord
       partId: part.id,
       groupId: toolGroupId(part),
       kind: "patch",
+      step: commandStep(state, undefined),
       title: commandTitle(part.tool ?? "apply_patch", command, 0),
       command: cleanCommandLine(part.tool ?? "apply_patch", command),
       output,
       status: toolStatus(state),
+      hasResult: Boolean(output.trim()) || ["completed", "failed", "success", "done"].includes(toolStatus(state)),
       durationMs:
         toolDurationMs(part) ?? durationFromText(output) ?? fallbackDurationMs(toolStatus(state)),
       timeoutMs: commandTimeoutMs(state, undefined, command),
@@ -269,10 +278,12 @@ function fallbackRecord(part: MessagePart): ToolRecord {
     partId: part.id,
     groupId: toolGroupId(part),
     kind: isPatchCommand(part.tool ?? "", command) ? "patch" : "tool",
+    step: commandStep(state, undefined),
     title: commandTitle(part.tool ?? part.type, command, 0),
     command: cleanCommandLine(part.tool ?? part.type, command),
     output,
     status: toolStatus(state),
+    hasResult: Boolean(output.trim()) || ["completed", "failed", "success", "done"].includes(toolStatus(state)),
     durationMs:
       toolDurationMs(part) ?? durationFromText(output) ?? fallbackDurationMs(toolStatus(state)),
     timeoutMs: commandTimeoutMs(state, undefined, command),
@@ -294,6 +305,17 @@ function commandRecordID(record: JsonRecord | undefined): string | undefined {
     return undefined;
   }
   return stringField(record, "command_id") || stringField(record, "commandID");
+}
+
+function commandStep(result: JsonRecord, spec: JsonRecord | undefined): number | undefined {
+  const resultCommand = asRecord(result.command);
+  const specCommand = asRecord(spec?.command);
+  return (
+    numberField(result, "step") ??
+    numberField(resultCommand, "step") ??
+    numberField(spec ?? {}, "step") ??
+    numberField(specCommand, "step")
+  );
 }
 
 function uniqueCommandRecords(records: unknown[]): unknown[] {

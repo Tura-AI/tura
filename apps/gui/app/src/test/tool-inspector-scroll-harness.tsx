@@ -43,7 +43,13 @@ function Harness() {
         commands: Array.from({ length: 40 }, (_, index) => ({
           command_id: index === 0 ? commandId : `${partId}:call_1:${index}`,
           command_type: "shell_command",
-          command_line: index === 0 ? "run long command" : `queued command ${index}`,
+          command_line:
+            index === 1
+              ? '{"command":"queued command 1","timeout_ms":300000}'
+              : index === 0
+                ? "run long command"
+                : `queued command ${index}`,
+          step: index + 1,
         })),
       },
       streamed_command_run_result: {
@@ -52,6 +58,7 @@ function Harness() {
             command_id: commandId,
             command_type: "shell_command",
             command_line: "run long command",
+            step: 1,
             success: true,
             output: output(),
           },

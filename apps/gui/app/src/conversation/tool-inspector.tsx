@@ -230,10 +230,16 @@ export function ToolInspector(props: {
                           setExpandedId(expanded() ? undefined : record().id);
                         }}
                       >
+                        <span class="inspector-record-step">
+                          {record().step === undefined ? "" : `#${record().step}`}
+                        </span>
                         <span>{record().title}</span>
                         <small>
-                          {toolStatusLabel(record().status)} ·{" "}
-                          {formatCommandTiming(record().durationMs, record().timeoutMs)}
+                          {toolStatusLabel(record().status)}
+                          <Show when={!record().hasResult}>
+                            {" · "}
+                            {formatCommandTiming(record().durationMs, record().timeoutMs)}
+                          </Show>
                         </small>
                       </button>
                       <Show when={expanded()}>

@@ -338,19 +338,20 @@ async def assert_near_bottom_stream_delta_follows_bottom(page) -> None:
         """
         (el) => {
           const max = Math.max(0, el.scrollHeight - el.clientHeight);
-          const remaining = Math.max(32, Math.floor(max * 0.02));
+          const threshold = Math.max(2, max * 0.005);
+          const remaining = Math.min(threshold, Math.max(3, Math.floor(threshold * 0.8)));
           el.scrollTop = Math.max(0, max - remaining);
           el.dispatchEvent(new Event('scroll', { bubbles: true }));
           return {
             max,
             remaining: el.scrollHeight - el.scrollTop - el.clientHeight,
-            threshold: max * 0.03,
+            threshold,
           };
         }
         """
     )
-    if not (28 < geometry_before["remaining"] <= geometry_before["threshold"]):
-        raise AssertionError(f"near-bottom setup did not land in the 3% band: {geometry_before}")
+    if not (0 <= geometry_before["remaining"] <= geometry_before["threshold"]):
+        raise AssertionError(f"near-bottom setup did not land in the 0.5% band: {geometry_before}")
     for index in range(4):
         await append_stream_delta(page, index, " near-bottom-live-update" * 32)
         await page.wait_for_timeout(80)
