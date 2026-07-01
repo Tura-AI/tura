@@ -4,7 +4,6 @@ import type {
   AgentUpsertRequest,
   Message,
   PlanStatus,
-  PollInterval,
   ProductIssue,
   Project,
   ProviderAuthMethod,
@@ -47,8 +46,6 @@ export type AppShellViewModel = {
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ) => Promise<void>;

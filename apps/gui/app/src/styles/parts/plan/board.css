@@ -3,11 +3,6 @@
   overflow: hidden;
 }
 
-.plan-board.calendar-mode {
-  min-height: 0;
-  overflow: hidden;
-}
-
 .board-shell {
   position: relative;
   display: grid;

@@ -104,15 +104,6 @@ export function PlanPageOutlet(props: {
           planDraftStartCondition,
         }))
       }
-      onDraftStartAt={(planDraftStartAt) =>
-        props.setState((previous) => ({ ...previous, planDraftStartAt }))
-      }
-      onDraftPollInterval={(planDraftPollInterval) =>
-        props.setState((previous) => ({
-          ...previous,
-          planDraftPollInterval,
-        }))
-      }
       onDraftSession={(planDraftSessionId) => void selectDraftSession(planDraftSessionId)}
       onCreateTicket={createPlanTicket}
       onStatus={updatePlanTicketStatus}

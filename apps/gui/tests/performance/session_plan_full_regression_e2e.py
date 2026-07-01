@@ -169,9 +169,6 @@ async def run_viewport(browser, viewport: dict, browser_errors: list[dict]) -> l
         gantt_ms = await switch_mode(page, "gantt", ".plan-gantt")
         results.append({"name": f"{name}:gantt-switch-under-budget", "ok": gantt_ms <= MODE_SWITCH_BUDGET_MS, "ms": gantt_ms})
 
-        calendar_ms = await switch_mode(page, "calendar", ".plan-calendar")
-        results.append({"name": f"{name}:calendar-switch-under-budget", "ok": calendar_ms <= MODE_SWITCH_BUDGET_MS, "ms": calendar_ms})
-
         todo_ms = await switch_mode(page, "todo", ".plan-board .board-card")
         results.append({"name": f"{name}:todo-switch-under-budget", "ok": todo_ms <= MODE_SWITCH_BUDGET_MS, "ms": todo_ms})
 

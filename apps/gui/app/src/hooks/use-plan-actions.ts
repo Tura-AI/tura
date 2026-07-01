@@ -4,7 +4,6 @@ import {
   GatewayError,
   type Message,
   type PlanStatus,
-  type PollInterval,
   type Session,
   type TaskManagement,
 } from "@tura/gateway-sdk";
@@ -14,7 +13,6 @@ import {
   applyTaskPatchToSession,
   defaultPollInterval,
   firstRunnableTask,
-  localDateTimeToUtcIso,
   planSessionStatus,
   reorderTasksInSession,
   sessionAttentionKey,
@@ -22,7 +20,6 @@ import {
   taskDisplayText,
   taskNonceId,
   taskSummaryText,
-  timedTaskPatch,
 } from "../features/plan/tasks";
 import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
@@ -411,8 +408,6 @@ export function usePlanActions(options: PlanActionsOptions) {
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ) {
@@ -497,8 +492,6 @@ export function usePlanActions(options: PlanActionsOptions) {
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ): Session {
@@ -535,8 +528,6 @@ export function usePlanActions(options: PlanActionsOptions) {
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ): boolean {
@@ -677,12 +668,10 @@ export function usePlanActions(options: PlanActionsOptions) {
     const existingSession = draftSessionId
       ? state().sessions.find((session) => session.id === draftSessionId)
       : undefined;
-    const startAt = localDateTimeToUtcIso(state().planDraftStartAt);
-    const timingPatch = timedTaskPatch(
-      state().planDraftStartCondition,
-      startAt,
-      state().planDraftPollInterval,
-    );
+    const timingPatch =
+      state().planDraftStartCondition === "session_idle"
+        ? { start_condition: "session_idle" as const }
+        : {};
     const nonceId = existingSession
       ? `${existingSession.id}:${Date.now()}`
       : `plan-task:${Date.now()}`;

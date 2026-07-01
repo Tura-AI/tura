@@ -43,7 +43,7 @@ export type SettingsSection =
   | "agents"
   | "personalization";
 export type ThemeMode = "light" | "dark" | "caral" | "uruk" | "liangzhu";
-export type PlanMode = "todo" | "gantt" | "calendar";
+export type PlanMode = "todo" | "gantt";
 export type ProviderAuthPanel = {
   providerId: string;
   reason?: string;

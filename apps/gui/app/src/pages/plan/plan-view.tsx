@@ -2,7 +2,6 @@ import {
   type Command,
   type Message,
   type PlanStatus,
-  type PollInterval,
   type Session,
   type StartCondition,
   type TaskManagement,
@@ -35,8 +34,6 @@ import { rootSessions } from "../../state/session-tree";
 
 import { PlanDragGhost, beginPlanPointerDrag, type PlanDragState } from "../../features/plan/drag";
 import {
-  defaultPollInterval,
-  localDateTimeToUtcIso,
   planSessionStatus,
   sessionTaskState,
   sessionTasks,
@@ -45,15 +42,10 @@ import {
   sortedSessionTasks,
   taskDisplayText,
   taskNonceId,
-  taskPollInterval,
-  taskStartAt,
   taskStartCondition,
   taskSummaryText,
-  timedTaskPatch,
-  utcIsoToLocalDateTime,
 } from "../../features/plan/tasks";
 import { relativeSessionTime, samePath, shortWorkspaceLabel } from "../../utils/app-format";
-import { PlanCalendarView } from "./plan-calendar";
 import {
   PlanComposerControls,
   PlanConversationFeedbackNotice,
@@ -81,8 +73,6 @@ export function PlanView(props: {
   onSearch: (value: string) => void;
   onDraftLane: (value: PlanStatus | undefined) => void;
   onDraftStartCondition: (value: StartCondition) => void;
-  onDraftStartAt: (value: string) => void;
-  onDraftPollInterval: (value: PollInterval) => void;
   onDraftSession: (value: string | undefined) => void;
   onCreateTicket: (sessionId?: string) => void;
   onStatus: (session: Session, status: PlanStatus) => void;
@@ -92,8 +82,6 @@ export function PlanView(props: {
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ) => void;
@@ -283,17 +271,6 @@ export function PlanView(props: {
     props.onDraftLane(lane);
     props.onDraftSession(undefined);
     props.onDraftStartCondition("user_action");
-    props.onDraftStartAt("");
-    props.onDraftPollInterval(defaultPollInterval());
-    props.onComposerText("");
-  }
-
-  function openDraftAt(startAt: string) {
-    props.onDraftLane("todo");
-    props.onDraftSession(undefined);
-    props.onDraftStartCondition("scheduled_task");
-    props.onDraftStartAt(utcIsoToLocalDateTime(startAt));
-    props.onDraftPollInterval(defaultPollInterval());
     props.onComposerText("");
   }
 
@@ -361,9 +338,7 @@ export function PlanView(props: {
           </div>
         </header>
 
-        <main
-          class={classNames("plan-board", props.state.planMode === "calendar" && "calendar-mode")}
-        >
+        <main class="plan-board">
           <Switch>
             <Match when={props.state.planMode === "gantt"}>
               <PlanGanttView
@@ -376,20 +351,6 @@ export function PlanView(props: {
                   props.onEditTask(session, task, taskDisplayText(task));
                 }}
                 onReorder={props.onReorderTasks}
-              />
-            </Match>
-            <Match when={props.state.planMode === "calendar"}>
-              <PlanCalendarView
-                sessions={visibleSessions()}
-                selectedSessionId={props.state.planPreviewSessionId}
-                onOpenSession={props.onOpenSession}
-                onCreateAt={openDraftAt}
-                onSchedule={(session, task, startAt) =>
-                  props.onTask(session, {
-                    task_id: taskNonceId(task),
-                    start_at: startAt,
-                  })
-                }
               />
             </Match>
             <Match when={true}>
@@ -460,11 +421,7 @@ export function PlanView(props: {
                   />
                   <PlanComposerControls
                     startCondition={props.state.planDraftStartCondition}
-                    startAt={props.state.planDraftStartAt}
-                    pollInterval={props.state.planDraftPollInterval}
                     onStartCondition={props.onDraftStartCondition}
-                    onStartAt={props.onDraftStartAt}
-                    onPollInterval={props.onDraftPollInterval}
                   />
                   {agentMenu()}
                 </div>
@@ -472,11 +429,7 @@ export function PlanView(props: {
                 <>
                   <PlanComposerControls
                     startCondition={props.state.planDraftStartCondition}
-                    startAt={props.state.planDraftStartAt}
-                    pollInterval={props.state.planDraftPollInterval}
                     onStartCondition={props.onDraftStartCondition}
-                    onStartAt={props.onDraftStartAt}
-                    onPollInterval={props.onDraftPollInterval}
                   />
                   {agentMenu()}
                 </>
@@ -484,38 +437,20 @@ export function PlanView(props: {
                 <>
                   <PlanComposerControls
                     startCondition={taskStartCondition(composerTask()!)}
-                    startAt={utcIsoToLocalDateTime(taskStartAt(composerTask()!))}
-                    pollInterval={taskPollInterval(composerTask()!)}
                     onStartCondition={(startCondition) => {
                       const currentTask = composerTask()!;
                       if (startCondition === "user_action") {
                         props.onRunTask(props.previewSession!, taskWithComposerText(currentTask));
                         return;
                       }
-                      const startAt = localDateTimeToUtcIso(
-                        utcIsoToLocalDateTime(taskStartAt(currentTask)),
-                      );
                       props.onTask(props.previewSession!, {
                         task_id: composerTaskNonce(),
                         status: "todo",
-                        ...timedTaskPatch(startCondition, startAt, taskPollInterval(currentTask)),
+                        start_condition: "session_idle",
+                        start_at: undefined,
+                        poll_interval: undefined,
                       });
                     }}
-                    onStartAt={(value) => {
-                      const start_at = localDateTimeToUtcIso(value);
-                      if (start_at) {
-                        props.onTask(props.previewSession!, {
-                          task_id: composerTaskNonce(),
-                          start_at,
-                        });
-                      }
-                    }}
-                    onPollInterval={(poll_interval) =>
-                      props.onTask(props.previewSession!, {
-                        task_id: composerTaskNonce(),
-                        poll_interval,
-                      })
-                    }
                   />
                   {agentMenu()}
                 </>

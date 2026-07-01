@@ -31,8 +31,10 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-GUI_URL = os.environ.setdefault("TURA_GUI_URL", f"http://127.0.0.1:{free_port()}")
-GATEWAY_URL = os.environ.setdefault("TURA_GATEWAY_URL", f"http://127.0.0.1:{free_port()}")
+GUI_URL = f"http://127.0.0.1:{free_port()}"
+GATEWAY_URL = f"http://127.0.0.1:{free_port()}"
+os.environ["TURA_GUI_URL"] = GUI_URL
+os.environ["TURA_GATEWAY_URL"] = GATEWAY_URL
 
 
 def now_ms() -> int:
@@ -653,22 +655,10 @@ async def choose_trigger(page, condition: str):
     condition_index = {
         "user_action": 0,
         "session_idle": 1,
-        "scheduled_task": 2,
-        "polling_task": 3,
     }[condition]
     await page.locator(".plan-trigger-button").first.click()
     await expect(page.locator(".plan-trigger-menu")).to_be_visible()
     await page.locator(".plan-trigger-option").nth(condition_index).click()
-    if condition in {"scheduled_task", "polling_task"}:
-        await expect(page.locator(".plan-schedule-dialog")).to_be_visible()
-        date_input = page.locator(".plan-schedule-dialog input[type='date']").first
-        time_input = page.locator(".plan-schedule-dialog input[type='time']").first
-        if await date_input.count() > 0:
-            await date_input.fill("2026-05-26")
-        if await time_input.count() > 0:
-            await time_input.fill("10:45")
-        await page.locator(".plan-schedule-dialog .primary").click()
-        await expect(page.locator(".plan-schedule-dialog")).to_have_count(0)
 
 
 async def close_plan_panel(page):
@@ -760,7 +750,7 @@ async def run_flow():
 
         await goto_app(page, "new")
         await shot(page, "02-new-session-tab")
-        await page.locator(".new-session-view .bottom-composer textarea").fill("Plan session backend conversation\n\nCreated for scheduled and queued task appends")
+        await page.locator(".new-session-view .bottom-composer textarea").fill("Plan session backend conversation\n\nCreated for queued task appends")
         await shot(page, "03-new-session-composed")
         await page.locator(".new-session-view .composer-send").click()
         await wait_for_records(lambda records: len(records_of(records, "session.prompt_async")) >= 1)
@@ -776,9 +766,9 @@ async def run_flow():
         await open_plan_session_card(page, session_id)
         await shot(page, "05-created-session-panel")
 
-        await submit_plan_panel(page, "Scheduled task append\n\nDelivered to the same session", "scheduled_task", browser_errors=browser_errors)
+        await submit_plan_panel(page, "Queued task append one\n\nDelivered to the same session", "session_idle", browser_errors=browser_errors)
         await wait_for_records(lambda records: len(records_of(records, "sessionmanagement.update")) >= 1)
-        await shot(page, "06-scheduled-task-added")
+        await shot(page, "06-queued-task-added")
 
         await submit_plan_panel(page, "Queued task append\n\nDelivered to the same session", "session_idle", browser_errors=browser_errors)
         await wait_for_records(lambda records: len(records_of(records, "sessionmanagement.update")) >= 2)
@@ -817,7 +807,7 @@ async def run_flow():
             {"name": "backend-sessionmanagement-updated", "ok": "sessionmanagement.update" in record_types, "records": records["records"]},
             {"name": "backend-task-management-updated-for-appends", "ok": record_types.count("sessionmanagement.update") >= 2, "records": records["records"]},
             {"name": "backend-same-session-has-three-tasks", "ok": len(tasks) >= 3, "tasks": tasks},
-            {"name": "backend-recorded-scheduled", "ok": any(task.get("start_condition") == "scheduled_task" and task.get("start_at") for task in tasks), "tasks": tasks},
+            {"name": "backend-did-not-record-timed-task", "ok": not any(task.get("start_condition") in {"scheduled_task", "polling_task"} for task in tasks), "tasks": tasks},
             {"name": "backend-recorded-queued", "ok": any(task.get("start_condition") == "session_idle" for task in tasks), "tasks": tasks},
             {
                 "name": "browser-has-no-errors",

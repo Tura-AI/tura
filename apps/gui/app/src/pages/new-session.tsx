@@ -1,10 +1,4 @@
-import {
-  type Command,
-  type FileInfo,
-  type PollInterval,
-  type Project,
-  type StartCondition,
-} from "@tura/gateway-sdk";
+import { type Command, type FileInfo, type Project, type StartCondition } from "@tura/gateway-sdk";
 import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
 import FolderOpen from "lucide-solid/icons/folder-open";
@@ -26,8 +20,6 @@ export function ConversationEmptyView(props: {
   onComposerText: (value: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
   onDraftStartCondition: (value: StartCondition) => void;
-  onDraftStartAt: (value: string) => void;
-  onDraftPollInterval: (value: PollInterval) => void;
   agentMenu?: JSX.Element;
   onSubmit: () => void;
   onQueueSubmit?: () => void;
@@ -82,11 +74,7 @@ export function ConversationEmptyView(props: {
               />
               <PlanComposerControls
                 startCondition={props.state.planDraftStartCondition}
-                startAt={props.state.planDraftStartAt}
-                pollInterval={props.state.planDraftPollInterval}
                 onStartCondition={props.onDraftStartCondition}
-                onStartAt={props.onDraftStartAt}
-                onPollInterval={props.onDraftPollInterval}
               />
               {props.agentMenu}
             </>

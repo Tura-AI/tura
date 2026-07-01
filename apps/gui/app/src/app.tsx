@@ -31,12 +31,9 @@ import { isToolPart } from "./conversation/message-tools";
 import { DEFAULT_AGENT_ID } from "./config/defaults";
 import {
   appendTaskToSession,
-  defaultLocalStartAt,
   defaultPollInterval,
-  localDateTimeToUtcIso,
   materializeComposerContent,
   sessionTasks,
-  timedTaskPatch,
 } from "./features/plan/tasks";
 import { useAppGatewayLifecycle } from "./hooks/use-app-gateway-lifecycle";
 import { useFileBrowserActions } from "./hooks/use-file-browser-actions";
@@ -848,14 +845,10 @@ export function App() {
 
   async function submitQueuedPrompt(content: string, forcedStartCondition?: StartCondition) {
     const startCondition = forcedStartCondition ?? state().planDraftStartCondition;
-    const startAt =
-      startCondition === "scheduled_task" || startCondition === "polling_task"
-        ? (localDateTimeToUtcIso(state().planDraftStartAt || defaultLocalStartAt()) ??
-          localDateTimeToUtcIso(defaultLocalStartAt()))
-        : undefined;
+    const timingPatch =
+      startCondition === "session_idle" ? { start_condition: "session_idle" as const } : {};
     const [summaryLine = "", ...deliverableLines] = content.split(/\r?\n/u);
     const title = summaryLine.trim() || t("newTask");
-    const timingPatch = timedTaskPatch(startCondition, startAt, state().planDraftPollInterval);
     const currentSession = state().selectedSessionId
       ? state().sessions.find((session) => session.id === state().selectedSessionId)
       : undefined;
@@ -960,7 +953,6 @@ export function App() {
   }
 
   function createSessionPayload() {
-    const startAt = localDateTimeToUtcIso(state().planDraftStartAt);
     return {
       directory: state().directory,
       model: state().selectedModel,
@@ -969,11 +961,10 @@ export function App() {
       model_acceleration_enabled: state().accelerationEnabled,
       disable_permission_restrictions: disablePermissionRestrictions,
       auto_session_name: true,
-      task_management: timedTaskPatch(
-        state().planDraftStartCondition,
-        startAt,
-        state().planDraftPollInterval,
-      ),
+      task_management:
+        state().planDraftStartCondition === "session_idle"
+          ? { start_condition: "session_idle" as const }
+          : {},
     };
   }
 

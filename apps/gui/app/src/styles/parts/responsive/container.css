@@ -215,10 +215,3 @@
     border-bottom: 1px solid var(--line);
   }
 }
-
-@container (max-width: 560px) {
-  .plan-schedule-datetime,
-  .plan-schedule-presets {
-    grid-template-columns: 1fr;
-  }
-}

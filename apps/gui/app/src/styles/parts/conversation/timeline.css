@@ -1,5 +1,4 @@
-.plan-gantt,
-.plan-calendar {
+.plan-gantt {
   min-height: 0;
 }
 
@@ -27,14 +26,6 @@
 }
 
 @media (max-width: 560px) {
-  .plan-schedule-datetime {
-    grid-template-columns: 1fr;
-  }
-
-  .plan-schedule-presets {
-    grid-template-columns: 1fr;
-  }
-
   .plan-timeline-grid {
     --plan-left-width: 76px;
     --plan-scale-height: 78px;
@@ -227,8 +218,7 @@
   background: transparent;
 }
 
-.plan-timeline-bar,
-.plan-calendar-event {
+.plan-timeline-bar {
   z-index: 1;
   align-self: center;
   display: grid;
@@ -319,21 +309,14 @@
   transform: none;
 }
 
-.plan-calendar-event {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
 .plan-timeline-bar:hover,
-.plan-timeline-bar:focus-visible,
-.plan-calendar-event:hover,
-.plan-calendar-event:focus-visible {
+.plan-timeline-bar:focus-visible {
   border-color: var(--line-strong);
   background: var(--wash);
   box-shadow: 0 5px 14px rgb(28 28 24 / 10%);
 }
 
-.plan-timeline-bar.selected,
-.plan-calendar-event.selected {
+.plan-timeline-bar.selected {
   border-color: var(--line-strong);
   background: color-mix(in srgb, var(--wash) 72%, var(--paper));
   box-shadow: 0 6px 16px rgb(28 28 24 / 12%);
