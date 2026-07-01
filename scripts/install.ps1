@@ -23,11 +23,11 @@ Usage:
 Installs project dependencies without building Tura. The root installer verifies
 git and shell_command/bash/zsh coverage, installs missing git/bash/zsh dependencies when
 possible, ensures user-local uv/bun are available, runs command-owned installers
-under commands/*, and installs Bun workspaces in their own directories.
+under commands/*, and installs JavaScript workspaces in their own directories.
 
 Options:
   -SkipCommands  skip commands/*/install.* scripts
-  -SkipApps      skip Bun installs for apps/tui, apps/gui, and apps/tauri
+  -SkipApps      skip JavaScript installs for apps/tui, apps/gui, and apps/tauri
   -SkipUv        do not install or verify uv
   -SkipBun       do not install or verify bun
   -CheckOnly     verify expected tools/environments without installing
@@ -570,29 +570,45 @@ function Invoke-CommandInstallers {
   }
 }
 
-function Invoke-BunWorkspaceInstall {
+function Invoke-JsWorkspaceInstall {
   param([string]$Directory)
   if ($SkipApps -or -not (Test-Path -LiteralPath (Join-Path $Directory "package.json"))) {
     return
   }
 
-  Ensure-Bun
   if ($CheckOnly) {
-    Write-Host "Bun workspace present: $Directory"
+    Write-Host "JavaScript workspace present: $Directory"
     return
   }
 
-  Write-Step "Installing Bun workspace: $Directory"
+  Write-Step "Installing JavaScript workspace: $Directory"
   Push-Location $Directory
   try {
-    $bunArgs = @("install")
     if (Test-Path -LiteralPath "bun.lock") {
-      $bunArgs += "--frozen-lockfile"
+      Ensure-Bun
+      $bunArgs = @("install", "--frozen-lockfile")
+      if ($Offline) {
+        $bunArgs += "--offline"
+      }
+      & bun @bunArgs
+    } elseif (Test-Path -LiteralPath "package-lock.json") {
+      $npm = Get-Command "npm" -ErrorAction SilentlyContinue
+      if (-not $npm) {
+        throw "npm was not found on PATH. Install Node.js/npm or add npm to PATH, then rerun."
+      }
+      $npmArgs = @("ci")
+      if ($Offline) {
+        $npmArgs += "--offline"
+      }
+      & $npm.Source @npmArgs
+    } else {
+      Ensure-Bun
+      $bunArgs = @("install")
+      if ($Offline) {
+        $bunArgs += "--offline"
+      }
+      & bun @bunArgs
     }
-    if ($Offline) {
-      $bunArgs += "--offline"
-    }
-    & bun @bunArgs
     if ($LASTEXITCODE -ne 0) {
       exit $LASTEXITCODE
     }
@@ -612,10 +628,10 @@ Ensure-Bun
 Invoke-CommandInstallers
 
 if (-not $SkipApps) {
-  Invoke-BunWorkspaceInstall (Join-Path $RepoRoot "scripts\packages\playwright_node")
-  Invoke-BunWorkspaceInstall (Join-Path $RepoRoot "apps\tui")
-  Invoke-BunWorkspaceInstall (Join-Path $RepoRoot "apps\gui")
-  Invoke-BunWorkspaceInstall (Join-Path $RepoRoot "apps\tauri")
+  Invoke-JsWorkspaceInstall (Join-Path $RepoRoot "scripts\packages\playwright_node")
+  Invoke-JsWorkspaceInstall (Join-Path $RepoRoot "apps\tui")
+  Invoke-JsWorkspaceInstall (Join-Path $RepoRoot "apps\gui")
+  Invoke-JsWorkspaceInstall (Join-Path $RepoRoot "apps\tauri")
 }
 
 Write-Step "Tura dependency install completed"

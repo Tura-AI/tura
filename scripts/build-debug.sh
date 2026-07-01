@@ -54,6 +54,28 @@ copy_gui_dist() {
   cp -R "$src"/. "$dst"/
 }
 
+install_js_if_missing() {
+  workspace_dir=$1
+  shift
+  [ -f "$workspace_dir/package.json" ] || return 0
+
+  missing=0
+  for sentinel in "$@"; do
+    [ -e "$workspace_dir/$sentinel" ] || { missing=1; break; }
+  done
+  [ "$missing" -eq 1 ] || return 0
+
+  echo "Installing JavaScript dependencies in $workspace_dir"
+  if [ -f "$workspace_dir/bun.lock" ]; then
+    (cd "$workspace_dir" && bun install --frozen-lockfile)
+  elif [ -f "$workspace_dir/package-lock.json" ]; then
+    command -v npm >/dev/null 2>&1 || { echo "npm was not found on PATH." >&2; exit 1; }
+    (cd "$workspace_dir" && npm ci)
+  else
+    (cd "$workspace_dir" && bun install)
+  fi
+}
+
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=dev cargo build -p gateway --bin tura_exec --bin tura_gateway)
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=dev cargo build -p router --bin tura_router)
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=dev cargo build -p session_log --bin tura_session_db)
@@ -62,8 +84,10 @@ copy_gui_dist() {
 
 if [ "$SKIP_TUI" -eq 0 ]; then
   mkdir -p "$TARGET_DIR"
+  install_js_if_missing "$REPO_ROOT/apps/gui" "app/node_modules/vite/package.json"
   (cd "$REPO_ROOT/apps/gui" && bun run build)
   copy_gui_dist
+  install_js_if_missing "$REPO_ROOT/apps/tui" "node_modules/typescript/package.json"
   case "$(uname -s 2>/dev/null || echo unknown)" in
   MINGW*|MSYS*|CYGWIN*)
     (cd "$REPO_ROOT" && bun build --compile --windows-icon "$ICON_PATH" --outfile "$TARGET_DIR/tura" apps/tui/src/index.ts)

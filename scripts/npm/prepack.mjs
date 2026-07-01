@@ -17,6 +17,13 @@ const requiredFiles = [
   "commands/generate_media/install.sh",
   "commands/web_discover/install.ps1",
   "commands/web_discover/install.sh",
+  "apps/gui/package.json",
+  "apps/gui/bun.lock",
+  "apps/gui/app/package.json",
+  "apps/gui/app/vite.config.ts",
+  "apps/gui/sdk/gateway/package.json",
+  "apps/tauri/package.json",
+  "apps/tauri/bun.lock",
   "npm/tura.mjs"
 ];
 
