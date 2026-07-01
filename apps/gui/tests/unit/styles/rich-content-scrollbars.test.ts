@@ -37,6 +37,9 @@ describe("rich content table scrollbars", () => {
       "text-align: left;",
     );
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
+      "padding: var(--space-3) 10px;",
+    );
+    expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
       "white-space: normal;",
     );
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(

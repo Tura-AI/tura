@@ -140,7 +140,7 @@
   min-width: 14.5rem;
   width: max(14.5rem, var(--rich-table-cell-width, 26ch));
   max-width: max(14.5rem, var(--rich-table-cell-width, 26ch));
-  padding: var(--space-2) 10px;
+  padding: var(--space-3) 10px;
   border: 0;
   overflow: hidden;
   text-align: left;
