@@ -98,25 +98,20 @@ button.section-title:focus-visible {
 }
 
 .rail-menu {
-  position: fixed;
-  top: 0;
-  right: var(--space-4);
-  bottom: auto;
-  left: auto;
+  position: absolute;
+  top: 28px;
+  right: 0;
   z-index: 90;
   display: grid;
   gap: 2px;
   width: max-content;
   min-width: 188px;
   max-width: min(240px, calc(100vw - var(--space-5)));
-  max-height: calc(100vh - 32px);
-  overflow: auto;
   padding: var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--paper);
   box-shadow: var(--shadow-menu);
-  overscroll-behavior: contain;
 }
 
 .rail-menu button {

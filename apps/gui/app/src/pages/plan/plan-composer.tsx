@@ -14,7 +14,6 @@ import { Dynamic } from "solid-js/web";
 import { t } from "../../i18n";
 import { classNames } from "../../state/format";
 import { sessionTitle, type PlanMode } from "../../state/global-store";
-import { rightTopFloatingMenuStyle, type FloatingMenuStyle } from "../../utils/floating-menu";
 
 import {
   firstRunnableTask,
@@ -118,7 +117,6 @@ export function PlanDraftSessionPicker(props: {
 }) {
   let root: HTMLElement | undefined;
   const [open, setOpen] = createSignal(false);
-  const [menuStyle, setMenuStyle] = createSignal<FloatingMenuStyle>({});
   const [query, setQuery] = createSignal("");
   const selectedSession = createMemo(() =>
     props.selectedSessionId
@@ -141,30 +139,15 @@ export function PlanDraftSessionPicker(props: {
   });
   createEffect(() => {
     if (!open()) {
-      setMenuStyle({});
       return;
     }
-    const updatePosition = () => {
-      if (root) {
-        setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 260, maxWidth: 340 }));
-      }
-    };
-    updatePosition();
-    const frame = window.requestAnimationFrame(updatePosition);
     const closeOutside = (event: PointerEvent) => {
       if (!root?.contains(event.target as Node)) {
         setOpen(false);
       }
     };
     document.addEventListener("pointerdown", closeOutside);
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    onCleanup(() => {
-      window.cancelAnimationFrame(frame);
-      document.removeEventListener("pointerdown", closeOutside);
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    });
+    onCleanup(() => document.removeEventListener("pointerdown", closeOutside));
   });
   return (
     <section class="plan-session-picker" ref={root}>
@@ -179,7 +162,7 @@ export function PlanDraftSessionPicker(props: {
         <ChevronDown size={13} strokeWidth={1.8} />
       </button>
       <Show when={open()}>
-        <div class="plan-session-menu" style={menuStyle()}>
+        <div class="plan-session-menu">
           <label class="workspace-search-row">
             <Search size={14} strokeWidth={1.7} />
             <input
@@ -245,7 +228,6 @@ export function PlanComposerControls(props: {
 }) {
   let root: HTMLElement | undefined;
   const [open, setOpen] = createSignal(false);
-  const [menuStyle, setMenuStyle] = createSignal<FloatingMenuStyle>({});
   const startConditions = createMemo<Array<{
     id: StartCondition;
     label: string;
@@ -273,30 +255,15 @@ export function PlanComposerControls(props: {
   };
   createEffect(() => {
     if (!open()) {
-      setMenuStyle({});
       return;
     }
-    const updatePosition = () => {
-      if (root) {
-        setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 220, maxWidth: 340 }));
-      }
-    };
-    updatePosition();
-    const frame = window.requestAnimationFrame(updatePosition);
     const closeOutside = (event: PointerEvent) => {
       if (!root?.contains(event.target as Node)) {
         setOpen(false);
       }
     };
     document.addEventListener("pointerdown", closeOutside);
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    onCleanup(() => {
-      window.cancelAnimationFrame(frame);
-      document.removeEventListener("pointerdown", closeOutside);
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    });
+    onCleanup(() => document.removeEventListener("pointerdown", closeOutside));
   });
   return (
     <section class="plan-trigger-control" ref={root}>
@@ -306,7 +273,7 @@ export function PlanComposerControls(props: {
         <ChevronDown size={13} strokeWidth={1.8} />
       </button>
       <Show when={open()}>
-        <div class="plan-session-menu plan-trigger-menu" style={menuStyle()}>
+        <div class="plan-session-menu plan-trigger-menu">
           <For each={startConditions()}>
             {(condition) => (
               <button

@@ -7,7 +7,6 @@ import { t } from "../i18n";
 import { classNames } from "../state/format";
 import type { SettingsSection } from "../state/global-store";
 import { agentDisplayName, visibleConfigurableAgents } from "../utils/agent-display";
-import { rightTopFloatingMenuStyle } from "../utils/floating-menu";
 
 export function AgentComposerMenu(props: {
   agents: Agent[];
@@ -18,6 +17,7 @@ export function AgentComposerMenu(props: {
   onSettings: (section: SettingsSection) => void;
 }) {
   let root: HTMLElement | undefined;
+  let menu: HTMLDivElement | undefined;
   const [open, setOpen] = createSignal(false);
   const [menuStyle, setMenuStyle] = createSignal<Record<string, string>>({});
   const visibleAgents = createMemo(() => visibleConfigurableAgents(props.agents));
@@ -33,10 +33,19 @@ export function AgentComposerMenu(props: {
   );
 
   function updateMenuPosition() {
-    if (!root) {
+    if (!root || !menu) {
       return;
     }
-    setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 260, maxWidth: 380 }));
+    const edge = 12;
+    const rootRect = root.getBoundingClientRect();
+    const menuWidth = Math.min(380, Math.max(0, window.innerWidth - edge * 2));
+    const preferredLeft = rootRect.left;
+    const maxLeft = Math.max(edge, window.innerWidth - menuWidth - edge);
+    const viewportLeft = Math.min(Math.max(preferredLeft, edge), maxLeft);
+    setMenuStyle({
+      left: `${viewportLeft - rootRect.left}px`,
+      width: `${menuWidth}px`,
+    });
   }
 
   createEffect(() => {
@@ -87,7 +96,10 @@ export function AgentComposerMenu(props: {
       <Show when={open()}>
         <div
           class="plan-session-menu agent-trigger-menu"
-          ref={() => window.requestAnimationFrame(updateMenuPosition)}
+          ref={(element) => {
+            menu = element;
+            window.requestAnimationFrame(updateMenuPosition);
+          }}
           style={menuStyle()}
         >
           <div class="agent-trigger-list">
