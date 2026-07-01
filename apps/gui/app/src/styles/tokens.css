@@ -84,7 +84,7 @@ html[data-theme="caral"] {
   --surface: #fffaf5;
   --ink: #251c18;
   --ink-invert: #f8f7f2;
-  --accent: #000000;
+  --accent: var(--ink);
   --accent-ink: #ffffff;
   --link: #a5b1a9;
   --danger: #a5b1a9;
