@@ -1,8 +1,19 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { SdkProvider } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import { mainTabEntries } from "../../../../app/src/pages/settings/main-tabs";
 import { providerDomains } from "../../../../app/src/pages/settings/provider-domain";
 import { configDraftToPatch } from "../../../../app/src/utils/settings";
+
+const settingsViewSource = readFileSync(
+  resolve(import.meta.dir, "../../../../app/src/pages/settings/settings-view.tsx"),
+  "utf8",
+);
+const navigationCss = readFileSync(
+  resolve(import.meta.dir, "../../../../app/src/styles/parts/base/navigation.css"),
+  "utf8",
+);
 
 function provider(overrides: Partial<SdkProvider>): SdkProvider {
   return {
@@ -71,6 +82,13 @@ describe("MainTabs", () => {
 
     expect(entries).toEqual([{ id: "conversation", label: "Session" }]);
     expect(entries.some((entry) => entry.id === "plan")).toBe(false);
+  });
+
+  test("uses the no-icon grid so the session label is not clipped into the icon column", () => {
+    expect(navigationCss).toContain(".main-tabs button.no-icon");
+    expect(settingsViewSource).toContain(
+      'classNames("no-icon", props.active === item.id && "selected")',
+    );
   });
 });
 

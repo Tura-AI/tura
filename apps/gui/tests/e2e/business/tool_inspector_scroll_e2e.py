@@ -107,6 +107,29 @@ async def main() -> None:
             await page.wait_for_selector(".tool-inspector.open .inspector-console", timeout=15_000)
             await page.screenshot(path=str(OUT / "tool-inspector-command-steps.png"), full_page=True)
 
+            layout = await page.evaluate("window.__toolInspectorHarness.snapshot()")
+            checks.append(
+                {
+                    "name": "inspector-starts-below-titlebar",
+                    "ok": layout["inspectorTop"] >= layout["titlebarBottom"] - 0.5,
+                    "value": layout,
+                }
+            )
+            checks.append(
+                {
+                    "name": "inspector-header-visible-below-titlebar",
+                    "ok": layout["headerTop"] >= layout["titlebarBottom"] - 0.5,
+                    "value": layout,
+                }
+            )
+            checks.append(
+                {
+                    "name": "inspector-height-stays-inside-content-viewport",
+                    "ok": layout["inspectorBottom"] <= layout["viewportHeight"] + 0.5,
+                    "value": layout,
+                }
+            )
+
             record_headers = await page.evaluate(
                 """
                 () => Array.from(document.querySelectorAll('.inspector-record-toggle')).slice(0, 2).map((button) => ({

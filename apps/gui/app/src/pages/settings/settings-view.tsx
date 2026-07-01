@@ -64,7 +64,7 @@ export function MainTabs(props: {
       <For each={tabs()}>
         {(item) => (
           <button
-            class={classNames(props.active === item.id && "selected")}
+            class={classNames("no-icon", props.active === item.id && "selected")}
             onClick={() => props.onChange(item.id)}
           >
             <span>{item.label}</span>

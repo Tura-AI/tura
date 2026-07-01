@@ -1,6 +1,6 @@
 .tool-inspector {
   position: fixed;
-  top: 0;
+  top: var(--app-titlebar-height);
   right: 0;
   z-index: 10;
   display: grid;
@@ -9,7 +9,7 @@
     var(--inspector-max-width, 680px),
     max(var(--inspector-min-width, 320px), var(--inspector-width, 430px))
   );
-  height: 100vh;
+  height: calc(100dvh - var(--app-titlebar-height));
   min-width: var(--inspector-min-width, 320px);
   max-width: calc(100vw - 96px);
   min-height: 0;

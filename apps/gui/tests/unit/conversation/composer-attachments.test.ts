@@ -34,7 +34,7 @@ describe("composer attachment drag and sizing", () => {
     expect(composerSource).toContain("event.preventDefault();");
     const submitFromControlBlock = composerSource.slice(
       composerSource.indexOf("function submitFromControl"),
-      composerSource.indexOf("function submitFromKeyboard"),
+      composerSource.indexOf("function stopFromControl"),
     );
     const submitFromKeyboardBlock = composerSource.slice(
       composerSource.indexOf("function submitFromKeyboard"),

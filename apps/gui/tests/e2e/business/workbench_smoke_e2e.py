@@ -235,13 +235,21 @@ async def main() -> None:
             await page.screenshot(path=OUT / "01-new-session.png", full_page=True)
             checks.append({"name": "new-session-visible", "ok": True})
 
-            await page.get_by_role("button", name="计划").click()
+            await goto_app(
+                page,
+                f"{GUI_URL}/?{urlencode({'tab': 'plan', 'e2eFixture': 'communication-protocol'})}",
+                ".plan-workbench",
+            )
             await expect(page.locator(".plan-workbench")).to_be_visible(timeout=15000)
             await assert_root_viewport_locked(page, checks, "plan")
             await page.screenshot(path=OUT / "02-plan.png", full_page=True)
             checks.append({"name": "plan-visible", "ok": True})
 
-            await page.get_by_role("button", name="文件浏览器").click()
+            await goto_app(
+                page,
+                f"{GUI_URL}/?{urlencode({'tab': 'files', 'e2eFixture': 'communication-protocol'})}",
+                ".files-view",
+            )
             await expect(page.locator(".files-view")).to_be_visible(timeout=15000)
             await page.screenshot(path=OUT / "03-files.png", full_page=True)
             checks.append({"name": "files-visible", "ok": True})

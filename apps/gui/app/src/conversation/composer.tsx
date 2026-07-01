@@ -3,10 +3,12 @@ import ArrowUp from "lucide-solid/icons/arrow-up";
 import ExternalLink from "lucide-solid/icons/external-link";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import Plus from "lucide-solid/icons/plus";
+import Square from "lucide-solid/icons/square";
 import { For, type JSX, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
 import { type ComposerImage } from "../state/global-store";
+import { composerActionState } from "./composer-action";
 import { ImageLightbox } from "./message-rich-text";
 
 export function Composer(props: {
@@ -52,18 +54,53 @@ export function Composer(props: {
       props.submitting || props.submitDisabled || (!props.text.trim() && props.images.length === 0),
   );
   const textEmpty = createMemo(() => !props.text.trim() && props.images.length === 0);
+  const actionState = createMemo(() =>
+    composerActionState({
+      text: props.text,
+      imageCount: props.images.length,
+      running: Boolean(props.running),
+      submitting: props.submitting,
+      submitDisabled: props.submitDisabled,
+      hasStopHandler: Boolean(props.onStop),
+    }),
+  );
   const composerDragActive = createMemo(() => composerDragDepth() > 0);
+
+  function controlActionThrottled(): boolean {
+    const now = Date.now();
+    if (now - lastSubmitAt < 350) {
+      return true;
+    }
+    lastSubmitAt = now;
+    return false;
+  }
 
   function submitFromControl() {
     if (submitBlocked()) {
       return;
     }
-    const now = Date.now();
-    if (now - lastSubmitAt < 350) {
+    if (controlActionThrottled()) {
       return;
     }
-    lastSubmitAt = now;
     void props.onSubmit();
+  }
+
+  function stopFromControl() {
+    if (actionState().disabled || actionState().kind !== "stop") {
+      return;
+    }
+    if (controlActionThrottled()) {
+      return;
+    }
+    void props.onStop?.();
+  }
+
+  function activateControlAction() {
+    if (actionState().kind === "stop") {
+      stopFromControl();
+      return;
+    }
+    submitFromControl();
   }
 
   function submitFromKeyboard(event: KeyboardEvent) {
@@ -84,6 +121,9 @@ export function Composer(props: {
 
   const sendButtonTitle = createMemo(() =>
     t("sendButtonHint", { modifier: shortcutModifierLabel() }),
+  );
+  const actionButtonTitle = createMemo(() =>
+    actionState().kind === "stop" ? t("stop") : sendButtonTitle(),
   );
 
   createEffect(() => {
@@ -410,25 +450,28 @@ export function Composer(props: {
         <button
           class="composer-send"
           type="button"
-          title={sendButtonTitle()}
-          aria-label={sendButtonTitle()}
+          title={actionButtonTitle()}
+          aria-label={actionButtonTitle()}
+          data-action={actionState().kind}
           data-submitting={props.submitting ? "true" : "false"}
           data-submit-disabled={props.submitDisabled ? "true" : "false"}
           data-text-empty={textEmpty() ? "true" : "false"}
-          disabled={submitBlocked()}
+          disabled={actionState().disabled}
           onPointerDown={(event) => {
             if (event.button !== 0) {
               return;
             }
             event.preventDefault();
-            submitFromControl();
+            activateControlAction();
           }}
           onClick={(event) => {
             event.preventDefault();
-            submitFromControl();
+            activateControlAction();
           }}
         >
-          <ArrowUp size={16} strokeWidth={1.8} />
+          <Show when={actionState().kind === "stop"} fallback={<ArrowUp size={16} strokeWidth={1.8} />}>
+            <Square size={14} strokeWidth={2.1} />
+          </Show>
         </button>
       </div>
       <Show when={previewImageId() !== undefined}>

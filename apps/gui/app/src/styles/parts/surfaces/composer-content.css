@@ -200,6 +200,11 @@
   color: var(--accent-ink);
 }
 
+.composer-send[data-action="stop"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
 .composer-attach:hover,
 .composer-attach:focus-visible {
   background: var(--wash);
