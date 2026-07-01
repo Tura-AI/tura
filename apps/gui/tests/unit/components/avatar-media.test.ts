@@ -65,7 +65,13 @@ describe("agent avatar media", () => {
     ).toBe("vigilant:right");
   });
 
-  test("keeps dark foreground pixels visible in dark theme", () => {
-    expect(avatarPixelAfterThreshold(24, 255, 160, true)).toEqual({ value: 255, alpha: 255 });
+  test("keeps light theme foreground pixels black and background transparent", () => {
+    expect(avatarPixelAfterThreshold(24, 255, 160, false)).toEqual({ value: 0, alpha: 255 });
+    expect(avatarPixelAfterThreshold(240, 255, 160, false)).toEqual({ value: 255, alpha: 0 });
+  });
+
+  test("uses white negative space instead of inverting foreground in dark theme", () => {
+    expect(avatarPixelAfterThreshold(24, 255, 160, true)).toEqual({ value: 255, alpha: 0 });
+    expect(avatarPixelAfterThreshold(240, 0, 160, true)).toEqual({ value: 255, alpha: 255 });
   });
 });

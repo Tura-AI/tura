@@ -58,9 +58,14 @@ export function avatarPixelAfterThreshold(
   darkTheme: boolean,
 ): { value: number; alpha: number } {
   const isForeground = gray < threshold;
-  const value = isForeground && darkTheme ? 255 : isForeground ? 0 : 255;
+  if (darkTheme) {
+    return {
+      value: 255,
+      alpha: isForeground && originalAlpha > 8 ? 0 : 255,
+    };
+  }
   return {
-    value,
+    value: isForeground ? 0 : 255,
     alpha: isForeground ? originalAlpha : 0,
   };
 }

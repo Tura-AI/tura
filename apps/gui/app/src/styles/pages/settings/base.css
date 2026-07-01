@@ -396,10 +396,11 @@
   grid-template-columns: minmax(0, 1fr);
   align-items: center;
   padding: 0 var(--space-2);
-  text-align: left;
+  text-align: center;
 }
 
 .theme-choice-label {
+  justify-self: center;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

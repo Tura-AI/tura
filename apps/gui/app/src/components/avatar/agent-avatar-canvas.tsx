@@ -408,7 +408,8 @@ export function AgentAvatarCanvas(props: {
     const data = imageData.data;
     for (let index = 0; index < data.length; index += 4) {
       const originalAlpha = data[index + 3] ?? 0;
-      if (originalAlpha <= 8) {
+      const darkTheme = isDarkTheme();
+      if (!darkTheme && originalAlpha <= 8) {
         data[index + 3] = 0;
         continue;
       }
@@ -420,7 +421,7 @@ export function AgentAvatarCanvas(props: {
         gray,
         originalAlpha,
         settings().threshold,
-        isDarkTheme(),
+        darkTheme,
       );
       data[index] = pixel.value;
       data[index + 1] = pixel.value;
