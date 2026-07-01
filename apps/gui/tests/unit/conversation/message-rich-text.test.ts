@@ -64,6 +64,13 @@ describe("message rich text table cells", () => {
     expect(richTextSource).not.toContain("children: splitInlineTextReferences(cell.trim())");
   });
 
+  test("sizes table cells from text length before the four-line cap clips", () => {
+    expect(richTextSource).toContain("const TABLE_CELL_MAX_CH = 96;");
+    expect(richTextSource).toContain("function tableCellWidthStyle");
+    expect(richTextSource).toContain('class="rich-table-cell-content"');
+    expect(richTextSource).toContain('"--rich-table-cell-width"');
+  });
+
   test("keeps compaction threshold explanation visible around inline HTML and angle brackets", () => {
     const text = [
       "按现在代码逻辑：",

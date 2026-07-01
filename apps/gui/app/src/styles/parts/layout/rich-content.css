@@ -115,8 +115,9 @@
 }
 
 .rich-table-scroll table {
-  min-width: max-content;
-  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
   border-spacing: 0;
   color: var(--ink);
   font-family: inherit;
@@ -137,13 +138,28 @@
 .rich-table-scroll th,
 .rich-table-scroll td {
   min-width: 14.5rem;
-  max-width: 18rem;
-  padding: 3px 10px;
+  width: max(14.5rem, var(--rich-table-cell-width, 26ch));
+  max-width: max(14.5rem, var(--rich-table-cell-width, 26ch));
+  padding: var(--space-2) 10px;
   border: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-align: left;
+  text-overflow: clip;
   vertical-align: top;
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.rich-table-scroll tbody tr:not(:last-child) > th,
+.rich-table-scroll tbody tr:not(:last-child) > td {
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--line) 46%, transparent);
+}
+
+.rich-table-cell-content {
+  display: block;
+  max-height: calc(1.35em * 4);
+  overflow: hidden;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .rich-table-scroll th:first-child,
@@ -152,7 +168,8 @@
   left: 0;
   z-index: 1;
   min-width: 5.5rem;
-  max-width: 7rem;
+  width: max(5.5rem, var(--rich-table-cell-width, 12ch));
+  max-width: max(5.5rem, var(--rich-table-cell-width, 12ch));
   background: var(--paper);
   text-align: right;
 }
@@ -162,7 +179,6 @@
   top: 0;
   z-index: 2;
   background: var(--paper);
-  border-bottom: 1px solid var(--line-strong);
   color: var(--ink);
   font-weight: 700;
 }

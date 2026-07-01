@@ -46,6 +46,9 @@ type RichTableRow = {
 
 type RichGroup = { kind: "node"; node: RichNode } | { kind: "gallery"; paths: string[] };
 
+const TABLE_CELL_MIN_CH = 26;
+const TABLE_CELL_MAX_CH = 96;
+
 type RichTag =
   | "bold"
   | "italic"
@@ -268,13 +271,21 @@ function RichTableView(props: {
                         <Show
                           when={cell.kind === "header"}
                           fallback={
-                            <td colSpan={cell.colSpan} rowSpan={cell.rowSpan}>
-                              {content()}
+                            <td
+                              colSpan={cell.colSpan}
+                              rowSpan={cell.rowSpan}
+                              style={tableCellWidthStyle(cell)}
+                            >
+                              <span class="rich-table-cell-content">{content()}</span>
                             </td>
                           }
                         >
-                          <th colSpan={cell.colSpan} rowSpan={cell.rowSpan}>
-                            {content()}
+                          <th
+                            colSpan={cell.colSpan}
+                            rowSpan={cell.rowSpan}
+                            style={tableCellWidthStyle(cell)}
+                          >
+                            <span class="rich-table-cell-content">{content()}</span>
                           </th>
                         </Show>
                       );
@@ -318,6 +329,15 @@ function RichTableView(props: {
       </Show>
     </figure>
   );
+}
+
+function tableCellWidthStyle(cell: RichTableCell): Record<string, string> {
+  const textLength = plainText(cell.children).trim().length;
+  const widthCh = Math.min(
+    TABLE_CELL_MAX_CH,
+    Math.max(TABLE_CELL_MIN_CH, Math.ceil(textLength / 3)),
+  );
+  return { "--rich-table-cell-width": `${widthCh}ch` };
 }
 
 function RichElement(props: {
