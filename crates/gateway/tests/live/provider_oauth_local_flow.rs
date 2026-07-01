@@ -358,7 +358,11 @@ async fn oauth_business_validate_flow_reports_local_success_and_missing_key_deta
         ),
     ]);
 
-    let Json(valid) = provider_auth_validate(Path("business-local".to_string())).await;
+    let Json(valid) = provider_auth_validate(
+        Path("business-local".to_string()),
+        Json(ProviderAuthValidationRequest::default()),
+    )
+    .await;
 
     assert!(valid.ok, "local validation should pass: {}", valid.message);
     assert_eq!(valid.code, "provider.validation.valid");
@@ -379,7 +383,7 @@ async fn oauth_business_validate_flow_reports_local_success_and_missing_key_deta
         "provider.remote.accepted",
         "OpenAI-compatible /models",
     );
-    assert_detail(&valid.details, "provider.request.no_paid_model");
+    assert_no_detail(&valid.details, "provider.request.no_paid_model");
     let request = model_server.join();
     assert_eq!(request.method, "GET");
     assert_eq!(request.path, "/models");
@@ -393,7 +397,11 @@ async fn oauth_business_validate_flow_reports_local_success_and_missing_key_deta
 
     write_local_provider_config(&provider_config, "https://business.example.invalid/v1");
     std::env::remove_var("BUSINESS_LOCAL_API_KEY");
-    let Json(invalid) = provider_auth_validate(Path("business-local".to_string())).await;
+    let Json(invalid) = provider_auth_validate(
+        Path("business-local".to_string()),
+        Json(ProviderAuthValidationRequest::default()),
+    )
+    .await;
     assert!(!invalid.ok, "missing local key should fail validation");
     assert_eq!(invalid.code, "provider.validation.invalid");
     assert_eq!(invalid.level.as_deref(), Some("invalid"));
@@ -408,7 +416,7 @@ async fn oauth_business_validate_flow_reports_local_success_and_missing_key_deta
         "provider.credential.api_key_missing",
         "OpenAI-compatible",
     );
-    assert_detail(&invalid.details, "provider.request.no_paid_model");
+    assert_no_detail(&invalid.details, "provider.request.no_paid_model");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

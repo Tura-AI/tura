@@ -558,6 +558,7 @@ async fn non_llm_openapi_catalog_provider_does_not_use_llm_models_validator() {
         Some(&provider),
         Some(&provider.base_url),
         Some("fake-token"),
+        true,
     )
     .await;
 

@@ -87,6 +87,8 @@ export function ConversationView(props: {
   session?: Session;
   messages: Message[];
   initialScrollTop?: number;
+  scrollToBottomToken?: number;
+  onScrollToBottomRequestConsumed?: (token: number) => void;
   onTranscriptScroll?: (scrollTop: number) => void;
   onLoadEarlierMessages?: () => Promise<boolean>;
   slashCommands: Command[];
@@ -278,7 +280,7 @@ export function ConversationView(props: {
 
   function scrollTranscriptToBottom(behavior: ScrollBehavior = "smooth") {
     if (!transcriptEl) {
-      return;
+      return false;
     }
     setTranscriptPinned(true);
     let remainingFrames = TRANSCRIPT_BOTTOM_SETTLE_FRAMES;
@@ -294,6 +296,7 @@ export function ConversationView(props: {
       requestAnimationFrame(() => scroll("auto"));
     };
     scroll(behavior);
+    return true;
   }
 
   function handleTranscriptScroll() {
@@ -359,6 +362,18 @@ export function ConversationView(props: {
     lastAutoScrolledLiveSignature = signature;
     if (transcriptPinned()) {
       scrollTranscriptToBottom("auto");
+    }
+  });
+
+  let lastConsumedScrollToBottomToken = 0;
+  createEffect(() => {
+    const token = props.scrollToBottomToken ?? 0;
+    if (token <= 0 || token === lastConsumedScrollToBottomToken) {
+      return;
+    }
+    if (scrollTranscriptToBottom("auto")) {
+      lastConsumedScrollToBottomToken = token;
+      props.onScrollToBottomRequestConsumed?.(token);
     }
   });
 

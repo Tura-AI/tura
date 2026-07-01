@@ -112,6 +112,15 @@ export type ProviderAuthInput = {
   metadata?: Record<string, unknown> | null;
 };
 
+export type ProviderAuthValidationInput = {
+  type?: string | null;
+  kind?: string | null;
+  login?: string | null;
+  token_env?: string | null;
+  key?: string | null;
+  access?: string | null;
+};
+
 export type OAuthAuthorizeResponse = {
   url: string;
   method: "auto" | "code";
@@ -123,4 +132,3 @@ export type OAuthCallbackInput = {
   code?: string | null;
   state?: string | null;
 };
-

@@ -146,7 +146,7 @@ export function ProviderAuthDialog(props: {
   onAuthDraft: (providerId: string, value: string) => void;
   onAuthCode: (providerId: string, value: string) => void;
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
-  onValidate: (providerId: string) => void;
+  onValidate: (providerId: string, method?: ProviderAuthMethod) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
   onCompleteLogin: (providerId: string, code?: string, methodIndex?: number) => void;
   onLogout: (providerId: string) => void;
@@ -225,7 +225,7 @@ function ProviderAuthMethods(props: {
   onAuthDraft: (providerId: string, value: string) => void;
   onAuthCode: (providerId: string, value: string) => void;
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
-  onValidate: (providerId: string) => void;
+  onValidate: (providerId: string, method?: ProviderAuthMethod) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
   onCompleteLogin: (providerId: string, code?: string, methodIndex?: number) => void;
   onLogout?: (providerId: string) => void;
@@ -241,6 +241,13 @@ function ProviderAuthMethods(props: {
                   <span>{method.label}</span>
                   <small>{method.token_env ?? method.login_env ?? method.kind}</small>
                 </div>
+                <button
+                  class="secondary provider-auth-validate"
+                  disabled={props.state.settingsSaving}
+                  onClick={() => props.onValidate(provider().id, method)}
+                >
+                  {t("validate")}
+                </button>
                 <Show when={methodUsesTokenInput(method)}>
                   <div class="login-method-controls">
                     <ProtectedTokenInput

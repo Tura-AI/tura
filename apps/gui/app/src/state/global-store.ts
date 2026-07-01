@@ -105,6 +105,7 @@ export type AppState = {
   messagesBySession: Record<string, Message[]>;
   messagePagingBySession: Record<string, { hasEarlier: boolean; loadingEarlier: boolean }>;
   transcriptScrollBySession: Record<string, number>;
+  transcriptScrollToBottomRequest?: { sessionId: string; token: number };
   todosBySession: Record<string, TodoItem[]>;
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
@@ -172,6 +173,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     messagesBySession: {},
     messagePagingBySession: {},
     transcriptScrollBySession: {},
+    transcriptScrollToBottomRequest: undefined,
     todosBySession: {},
     permissions: [],
     questions: [],

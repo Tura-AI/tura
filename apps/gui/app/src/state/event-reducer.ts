@@ -60,6 +60,10 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       const { [sessionId]: _messages, ...messagesBySession } = next.messagesBySession;
       const { [sessionId]: _paging, ...messagePagingBySession } = next.messagePagingBySession;
       const { [sessionId]: _scroll, ...transcriptScrollBySession } = next.transcriptScrollBySession;
+      const transcriptScrollToBottomRequest =
+        next.transcriptScrollToBottomRequest?.sessionId === sessionId
+          ? undefined
+          : next.transcriptScrollToBottomRequest;
       const { [sessionId]: _todos, ...todosBySession } = next.todosBySession;
       return {
         ...next,
@@ -67,6 +71,7 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
         messagesBySession,
         messagePagingBySession,
         transcriptScrollBySession,
+        transcriptScrollToBottomRequest,
         todosBySession,
         selectedSessionId:
           next.selectedSessionId === sessionId ? sessions[0]?.id : next.selectedSessionId,

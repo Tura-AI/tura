@@ -100,11 +100,23 @@ describe("GatewayClient", () => {
       },
     });
 
-    const result = await client.providerAuthValidate("custom-openai");
+    const result = await client.providerAuthValidate("custom-openai", {
+      type: "api",
+      kind: "api_key",
+      login: "api",
+      token_env: "CUSTOM_OPENAI_API_KEY",
+      key: "sk-test",
+    });
 
     expect(observedUrl).toBe("http://gateway.test/provider/custom-openai/auth/validate");
     expect(observedMethod).toBe("POST");
-    expect(JSON.parse(observedBody)).toEqual({});
+    expect(JSON.parse(observedBody)).toEqual({
+      type: "api",
+      kind: "api_key",
+      login: "api",
+      token_env: "CUSTOM_OPENAI_API_KEY",
+      key: "sk-test",
+    });
     expect(result.ok).toBe(true);
   });
 

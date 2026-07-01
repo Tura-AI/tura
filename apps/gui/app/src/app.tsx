@@ -301,6 +301,10 @@ export function App() {
       const { [sessionId]: _paging, ...messagePagingBySession } = previous.messagePagingBySession;
       const { [sessionId]: _scroll, ...transcriptScrollBySession } =
         previous.transcriptScrollBySession;
+      const transcriptScrollToBottomRequest =
+        previous.transcriptScrollToBottomRequest?.sessionId === sessionId
+          ? undefined
+          : previous.transcriptScrollToBottomRequest;
       const { [sessionId]: _todos, ...todosBySession } = previous.todosBySession;
       return {
         ...previous,
@@ -308,6 +312,7 @@ export function App() {
         messagesBySession,
         messagePagingBySession,
         transcriptScrollBySession,
+        transcriptScrollToBottomRequest,
         todosBySession,
         selectedSessionId:
           previous.selectedSessionId === sessionId ? sessions[0]?.id : previous.selectedSessionId,
@@ -781,6 +786,10 @@ export function App() {
           },
         ],
       },
+      transcriptScrollToBottomRequest: {
+        sessionId: session.id,
+        token: (previous.transcriptScrollToBottomRequest?.token ?? 0) + 1,
+      },
       composerText: "",
       composerImages: [],
       planDraftStartCondition: "user_action",
@@ -802,7 +811,10 @@ export function App() {
         model_acceleration_enabled: state().accelerationEnabled,
       }),
       new Promise<never>((_, reject) =>
-        window.setTimeout(() => reject(new Error(PROMPT_RESPONSE_TIMEOUT_CODE)), PROMPT_RESPONSE_TIMEOUT_MS),
+        window.setTimeout(
+          () => reject(new Error(PROMPT_RESPONSE_TIMEOUT_CODE)),
+          PROMPT_RESPONSE_TIMEOUT_MS,
+        ),
       ),
     ]);
   }

@@ -88,9 +88,10 @@ pub async fn provider_auth_status(
 
 pub async fn provider_auth_validate(
     Path(provider_id): Path<String>,
+    Json(payload): Json<ProviderAuthValidationRequest>,
 ) -> Json<ProviderAuthActionResponse> {
     let status = build_provider_auth_status(&provider_id);
-    let receipt = validate_provider_auth_config(&provider_id, &status).await;
+    let receipt = validate_provider_auth_config(&provider_id, &status, Some(&payload)).await;
     Json(ProviderAuthActionResponse {
         ok: receipt.ok,
         provider_id,

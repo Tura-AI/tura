@@ -75,6 +75,18 @@ export function ConversationPageOutlet(props: {
     });
   }
 
+  function consumeScrollToBottomRequest(sessionId: string, token: number) {
+    props.setState((previous) => {
+      if (
+        previous.transcriptScrollToBottomRequest?.sessionId !== sessionId ||
+        previous.transcriptScrollToBottomRequest.token !== token
+      ) {
+        return previous;
+      }
+      return { ...previous, transcriptScrollToBottomRequest: undefined };
+    });
+  }
+
   function setActiveAgent(selectedAgent: string) {
     props.onRuntimeSetting((previous) => ({
       ...previous,
@@ -129,6 +141,14 @@ export function ConversationPageOutlet(props: {
           session={session()}
           messages={props.selectedMessages()}
           initialScrollTop={props.state().transcriptScrollBySession[session().id]}
+          scrollToBottomToken={
+            props.state().transcriptScrollToBottomRequest?.sessionId === session().id
+              ? props.state().transcriptScrollToBottomRequest?.token
+              : undefined
+          }
+          onScrollToBottomRequestConsumed={(token) =>
+            consumeScrollToBottomRequest(session().id, token)
+          }
           onTranscriptScroll={(scrollTop) => setTranscriptScroll(session().id, scrollTop)}
           onLoadEarlierMessages={() => props.loadEarlierMessages(session().id)}
           slashCommands={props.slashCommands()}
@@ -177,9 +197,9 @@ export function ConversationPageOutlet(props: {
               </>
             ) : selectedSession() ? (
               <>
-              <PlanComposerControls
-                startCondition={props.state().planDraftStartCondition}
-                onStartCondition={(planDraftStartCondition) =>
+                <PlanComposerControls
+                  startCondition={props.state().planDraftStartCondition}
+                  onStartCondition={(planDraftStartCondition) =>
                     props.setState((previous) => ({
                       ...previous,
                       planDraftStartCondition,
