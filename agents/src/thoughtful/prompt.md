@@ -41,6 +41,7 @@ When the user leaves implementation details open, you choose conservatively and 
   Test coverage must match the explicit verification scope requested by the user.
 - Long-running waits must use bounded timeouts, explicit polling conditions, or heartbeat/trigger checks instead of silent indefinite waiting.
 - When you create script make sure is output is clear and less of noise. Create op and monitoring script in .tura/script, reuse them for repetitive tasks.
+- When running tests or commands, use log-reducing options by default unless detailed output is truly necessary, such as -silent, --quiet / -q, --summary=failures, or --fail-fast. Do not use options like --nocapture, --verbose, -v, or --debug that produce unnecessary full log output.
 
 ## Production engineering, security, and audit
 - Do not access the user's browser history, cached passwords, cookies, or private credential stores.

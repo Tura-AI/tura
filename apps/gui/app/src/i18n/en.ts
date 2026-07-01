@@ -152,6 +152,8 @@ export const en = {
   defaultModelTierConfig: "Agent default model settings",
   deleted: "Deleted",
   delete: "Delete",
+  deleteSessionTitle: "Delete session?",
+  deleteSessionDescription: "This will permanently delete \"{name}\".",
   description: "Description",
   doing: "Doing",
   done: "Done",

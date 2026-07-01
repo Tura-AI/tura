@@ -25,7 +25,7 @@ export class MockGatewayClient {
   private sessions: Session[];
   private messagesBySession = new Map<string, Message[]>();
   private sessionConfig: SessionConfig = {
-    active_agent: "balanced",
+    active_agent: "thoughtful",
     active_provider: "codex",
     active_model: "gpt-5.5",
     model: "codex/gpt-5.5",
@@ -290,6 +290,24 @@ export class MockGatewayClient {
 
   async listAgents(): Promise<StoredAgent[]> {
     return [
+      {
+        summary: {
+          id: "thoughtful",
+          name: "Thoughtful",
+          description:
+            "Reflects on each step and stays steady across long-running tasks.",
+          source: "static",
+          path: "mock://agents/thoughtful",
+          aliases: ["planning"],
+          capabilities: ["chat"],
+          hidden: false,
+        },
+        config: {
+          agent_name: "thoughtful",
+          description:
+            "Reflects on each step and stays steady across long-running tasks.",
+        },
+      },
       {
         summary: {
           id: "balanced",

@@ -14,7 +14,7 @@ use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
 
 const DEFAULT_SESSION_DIRECTORY: &str = "sessions";
 pub const CODING_AGENT_NAME: &str = "direct";
-pub const THINKING_AGENT_NAME: &str = "balanced";
+pub const THINKING_AGENT_NAME: &str = "thoughtful";
 pub const CODING_AGENT_FAST_NAME: &str = "direct";
 pub const CODING_AGENT_FAST_TEXT_ONLY_NAME: &str = "direct-text-only";
 
@@ -198,9 +198,8 @@ pub fn normalize_session_type(session_type: Option<String>, agent: Option<&str>)
         Some("coding")
         | Some(CODING_AGENT_NAME)
         | Some("fast")
-        | Some("thoughtful")
-        | Some("thinking-planning")
         | Some(THINKING_AGENT_NAME)
+        | Some("thinking-planning")
         | Some("thinking")
         | None => "coding".to_string(),
         Some(CODING_AGENT_FAST_TEXT_ONLY_NAME) => "coding".to_string(),
@@ -229,9 +228,8 @@ pub fn runtime_provider_for_session(session_type: &str, agent: Option<&str>) -> 
         | (_, Some("fast-text-only"))
         | (_, Some("coding_agent_fast")) => Some("fast".to_string()),
         ("coding", _)
-        | (_, Some("thoughtful"))
-        | (_, Some("thinking-planning"))
         | (_, Some(THINKING_AGENT_NAME))
+        | (_, Some("thinking-planning"))
         | (_, Some("thinking"))
         | (_, Some("coding_agent"))
         | (_, Some("coding_agent_planning"))
@@ -250,9 +248,8 @@ pub fn default_use_last_tool_call_response_for_session(
         ("coding", _)
             | (_, Some(CODING_AGENT_NAME))
             | (_, Some("fast"))
-            | (_, Some("thoughtful"))
-            | (_, Some("thinking-planning"))
             | (_, Some(THINKING_AGENT_NAME))
+            | (_, Some("thinking-planning"))
             | (_, Some("thinking"))
             | (_, Some(CODING_AGENT_FAST_TEXT_ONLY_NAME))
             | (_, Some("fast-text-only"))

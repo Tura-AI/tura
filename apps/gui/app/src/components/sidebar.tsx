@@ -64,6 +64,7 @@ export function WorkspaceTree(props: {
 }) {
   const [workspaceSectionOpen, setWorkspaceSectionOpen] = createSignal(true);
   const [archivedSectionOpen, setArchivedSectionOpen] = createSignal(true);
+  const [confirmDeleteSession, setConfirmDeleteSession] = createSignal<Session>();
   const projects = createMemo(() => sidebarWorkspaceProjects(props.projects, props.directory));
   const activeWorkspaceSessions = (worktree: string) =>
     props.sessions.filter(
@@ -122,6 +123,14 @@ export function WorkspaceTree(props: {
     if (session) {
       props.onStatus(session, "archived");
     }
+  }
+  function deleteConfirmedSession() {
+    const session = confirmDeleteSession();
+    if (!session) {
+      return;
+    }
+    setConfirmDeleteSession(undefined);
+    props.onDeleteSession(session.id);
   }
 
   return (
@@ -199,8 +208,8 @@ export function WorkspaceTree(props: {
                       selectedFile={props.selectedFile}
                       onIssue={props.onIssue}
                       onGroup={props.onGroup}
-                      onStatus={props.onStatus}
                       onSession={openRailSession}
+                      onDeleteSession={setConfirmDeleteSession}
                       onFile={props.onFile}
                       onFileTreeDirectory={props.onFileTreeDirectory}
                       onUp={props.onUp}
@@ -265,7 +274,7 @@ export function WorkspaceTree(props: {
                             title={t("delete")}
                             onClick={(event) => {
                               event.stopPropagation();
-                              props.onDeleteSession(session.id);
+                              setConfirmDeleteSession(session);
                             }}
                           >
                             ×
@@ -280,6 +289,45 @@ export function WorkspaceTree(props: {
           </For>
         </Show>
       </Show>
+      <Show when={confirmDeleteSession()}>
+        {(session) => (
+          <ConfirmSessionDeleteDialog
+            session={session()}
+            onCancel={() => setConfirmDeleteSession(undefined)}
+            onConfirm={deleteConfirmedSession}
+          />
+        )}
+      </Show>
+    </div>
+  );
+}
+
+function ConfirmSessionDeleteDialog(props: {
+  session: Session;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div class="modal-scrim" onMouseDown={props.onCancel}>
+      <div class="name-dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <h2>{t("deleteSessionTitle")}</h2>
+            <p>{t("deleteSessionDescription", { name: sessionTitle(props.session) })}</p>
+          </div>
+          <button type="button" onClick={props.onCancel}>
+            ×
+          </button>
+        </header>
+        <footer>
+          <button type="button" class="secondary" onClick={props.onCancel}>
+            {t("cancel")}
+          </button>
+          <button type="button" class="primary" onClick={props.onConfirm}>
+            {t("delete")}
+          </button>
+        </footer>
+      </div>
     </div>
   );
 }

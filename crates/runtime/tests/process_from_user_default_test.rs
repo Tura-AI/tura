@@ -27,7 +27,7 @@ fn default_agent_registry_loads_coding_agent() {
 
     assert_eq!(session.input, input);
     assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0].agent_name, "balanced");
+    assert_eq!(agents[0].agent_name, "thoughtful");
     assert!(agents[0].report_to_user);
     assert_eq!(
         agents[0].provider.tura_llm_name,
@@ -71,7 +71,7 @@ fn default_directory_session_loads_coding_agent() {
     let agents = activate_agents_by_session_type(&session).expect("agent registry should load");
 
     assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0].agent_name, "balanced");
+    assert_eq!(agents[0].agent_name, "thoughtful");
     assert_eq!(
         agents[0].provider.tura_llm_name,
         coding_agent_provider_name()

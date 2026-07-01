@@ -7,12 +7,12 @@
     "coding_agent",
     "coding"
   ],
-  "icon_emoji": "🧠",
+  "icon_emoji": "🔮",
   "agent_directory": "agents/src\\thoughtful",
   "parent_agent_id": null,
   "report_to_user": true,
   "default_config": true,
-  "reflection": true,
+  "reflection": false,
   "op_manual": true,
   "self_reflection": true,
   "provider": {

@@ -1,4 +1,4 @@
-import { type FileInfo, type PlanStatus, type ProductIssue, type Session } from "@tura/gateway-sdk";
+import { type FileInfo, type ProductIssue, type Session } from "@tura/gateway-sdk";
 import { For, Match, Show, Switch, type Accessor, createMemo, createSignal } from "solid-js";
 import { t } from "../../i18n";
 import { SessionRowMeta } from "../../pages/plan/plan-view";
@@ -28,8 +28,8 @@ export function WorkspaceChildren(props: {
   selectedFile?: FileInfo;
   onIssue: (issue: ProductIssue) => void;
   onGroup: (id: string) => void;
-  onStatus: (session: Session, status: PlanStatus) => void;
   onSession: (session: Session) => void;
+  onDeleteSession: (session: Session) => void;
   onFile: (file: FileInfo) => void;
   onFileTreeDirectory: (file: FileInfo) => void;
   onUp: () => void;
@@ -77,8 +77,7 @@ export function WorkspaceChildren(props: {
                   return session ? props.attentionAcknowledged(session) : false;
                 }}
                 onSession={props.onSession}
-                action="archive"
-                onArchive={(session) => props.onStatus(session, "archived")}
+                onDelete={props.onDeleteSession}
               />
             )}
           </For>
@@ -95,8 +94,7 @@ export function WorkspaceChildren(props: {
                   return session ? props.attentionAcknowledged(session) : false;
                 }}
                 onSession={props.onSession}
-                action="archive"
-                onArchive={(session) => props.onStatus(session, "archived")}
+                onDelete={props.onDeleteSession}
               />
             )}
           </For>
@@ -135,9 +133,7 @@ function SessionButton(props: {
   selected: Accessor<boolean>;
   attentionAcknowledged: Accessor<boolean>;
   onSession: (session: Session) => void;
-  action: "archive" | "delete";
-  onArchive?: (session: Session) => void;
-  onDelete?: (session: Session) => void;
+  onDelete: (session: Session) => void;
 }) {
   return (
     <Show when={props.session()}>
@@ -164,28 +160,16 @@ function SessionButton(props: {
           <button
             type="button"
             class="session-row-action"
-            title={props.action === "delete" ? t("delete") : t("archiveSession")}
+            title={t("delete")}
             onClick={(event) => {
               event.stopPropagation();
-              if (props.action === "delete") {
-                props.onDelete?.(session());
-              } else {
-                props.onArchive?.(session());
-              }
+              props.onDelete(session());
             }}
           >
-            {props.action === "delete" ? (
-              "×"
-            ) : (
-              <ArchiveIcon />
-            )}
+            ×
           </button>
         </div>
       )}
     </Show>
   );
-}
-
-function ArchiveIcon() {
-  return <span class="tiny-icon">▣</span>;
 }

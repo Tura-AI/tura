@@ -148,6 +148,8 @@ export const zhCN = {
   defaultModelTierConfig: "智能体的默认模型设置",
   deleted: "已删除",
   delete: "删除",
+  deleteSessionTitle: "删除会话？",
+  deleteSessionDescription: "这会永久删除“{name}”。",
   description: "描述",
   doing: "进行中",
   done: "完成",
