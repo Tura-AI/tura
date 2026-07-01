@@ -18,6 +18,7 @@ import {
   storedAgentFromUpsert,
 } from "./app-agent-config";
 import {
+  blankSessionState,
   mergeMessagePages,
   mergeSessions,
   providerIssueIdFromError,
@@ -282,20 +283,15 @@ export function App() {
     }
   }
 
-  function openBlankSession() {
+  function openBlankSession(workspace?: Project) {
     const currentSessionId = state().selectedSessionId;
     if (currentSessionId) {
       writeLastSessionOpened(currentSessionId);
     }
-    setState((previous) => ({
-      ...previous,
-      lastSessionOpenedId: previous.selectedSessionId ?? previous.lastSessionOpenedId,
-      activeTab: "conversation",
-      previousMainTab: "conversation",
-      selectedSessionId: undefined,
-      composerText: "",
-      error: undefined,
-    }));
+    setState((previous) => blankSessionState(previous, workspace));
+    if (workspace) {
+      expandWorkspace(workspace.worktree);
+    }
   }
 
   async function deleteSession(sessionId: string) {

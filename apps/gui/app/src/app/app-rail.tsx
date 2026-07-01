@@ -74,8 +74,8 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
               expandedGroup={expandedRailGroup()}
               attentionAcknowledged={sessionAttentionAcknowledged}
               onWorkspace={selectWorkspace}
-              onBlankSession={() => {
-                openBlankSession();
+              onBlankSession={(project) => {
+                openBlankSession(project);
                 props.collapseAfterSelection();
               }}
               onGroup={toggleRailGroup}

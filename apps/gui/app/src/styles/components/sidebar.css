@@ -226,11 +226,16 @@ button.section-title:focus-visible {
   padding-left: calc(var(--space-3) + var(--session-inline-offset));
 }
 
+.workspace-children > .rail-empty {
+  cursor: default;
+}
+
 .session-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: var(--space-2);
   align-items: center;
+  cursor: pointer;
 }
 
 .session-row small,

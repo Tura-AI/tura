@@ -1,9 +1,24 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Project } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import {
   sidebarWorkspaceProjects,
   workspaceExpanded,
 } from "../../../app/src/components/sidebar/workspace-projects";
+
+const sidebarCss = readFileSync(
+  resolve(import.meta.dir, "../../../app/src/styles/components/sidebar.css"),
+  "utf8",
+);
+
+function cssBlock(selector: string): string {
+  const start = sidebarCss.indexOf(`\n${selector} {`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const bodyStart = sidebarCss.indexOf("{", start);
+  const bodyEnd = sidebarCss.indexOf("}", bodyStart);
+  return sidebarCss.slice(start, bodyEnd + 1);
+}
 
 function project(worktree: string, name: string, updated?: number): Project {
   return {
@@ -45,5 +60,12 @@ describe("sidebar workspace projects", () => {
     expect(workspaceExpanded(expanded, "C:/repo/alpha")).toBe(true);
     expect(workspaceExpanded(expanded, "C:/repo/beta")).toBe(true);
     expect(workspaceExpanded(expanded, "C:/repo/gamma")).toBe(false);
+  });
+});
+
+describe("sidebar cursor affordances", () => {
+  test("does not show the text cursor over empty session text or session rows", () => {
+    expect(cssBlock(".workspace-children > .rail-empty")).toContain("cursor: default;");
+    expect(cssBlock(".session-row")).toContain("cursor: pointer;");
   });
 });

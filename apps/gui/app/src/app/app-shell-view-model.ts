@@ -26,7 +26,7 @@ export type AppShellViewModel = {
   selectedMessages: Accessor<Message[]>;
   loadEarlierMessages: (sessionId: string) => Promise<boolean>;
   slashCommands: Accessor<Command[]>;
-  openBlankSession: () => void;
+  openBlankSession: (workspace?: Project) => void;
   openSession: (sessionId: string) => Promise<void>;
   useWorkspaceDirectory: (directory: string) => void | Promise<void>;
   createNamedWorkspace: (name: string) => Promise<void>;

@@ -1,6 +1,7 @@
-import { GatewayError, type Message, type Session } from "@tura/gateway-sdk";
+import { GatewayError, type Message, type Project, type Session } from "@tura/gateway-sdk";
 import { systemThemeMode, type AppState, type ThemeMode } from "./state/global-store";
 import { mergeMessageForCache } from "./state/message-cache";
+import { samePath } from "./utils/app-format";
 import { providerIdFromAuthError, providerIdFromModel } from "./utils/settings";
 
 const LAST_SESSION_OPENED_STORAGE_KEY = "last_session_opened";
@@ -107,6 +108,25 @@ export function shouldFetchSessionMessages(
   forceRefreshMessages = false,
 ): boolean {
   return forceRefreshMessages || existingMessages.length === 0;
+}
+
+export function blankSessionState(state: AppState, workspace?: Project): AppState {
+  const projects = workspace
+    ? state.projects.some((project) => samePath(project.worktree, workspace.worktree))
+      ? state.projects.map((project) => (samePath(project.worktree, workspace.worktree) ? workspace : project))
+      : [workspace, ...state.projects]
+    : state.projects;
+  return {
+    ...state,
+    directory: workspace?.worktree ?? state.directory,
+    projects,
+    lastSessionOpenedId: state.selectedSessionId ?? state.lastSessionOpenedId,
+    activeTab: "conversation",
+    previousMainTab: "conversation",
+    selectedSessionId: undefined,
+    composerText: "",
+    error: undefined,
+  };
 }
 
 function isOptimisticDuplicate(existing: Message, incoming: Message): boolean {

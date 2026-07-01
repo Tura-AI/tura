@@ -51,7 +51,7 @@ export function WorkspaceTree(props: {
   expandedGroup?: string;
   attentionAcknowledged: (session: Session) => boolean;
   onWorkspace: (project: Project) => void;
-  onBlankSession: () => void;
+  onBlankSession: (project: Project) => void;
   onGroup: (id: string) => void;
   onIssue: (issue: ProductIssue) => void;
   onStatus: (session: Session, status: PlanStatus) => void;
@@ -180,14 +180,14 @@ export function WorkspaceTree(props: {
                         title={t("newSession")}
                         onClick={(event) => {
                           event.stopPropagation();
-                          props.onBlankSession();
+                          props.onBlankSession(project);
                         }}
                       >
                         <Plus size={14} strokeWidth={1.8} />
                       </button>
                       <WorkspaceMenu
                         onSettings={props.onSettings}
-                        onNewSession={props.onBlankSession}
+                        onNewSession={() => props.onBlankSession(project)}
                       />
                     </div>
                   </div>

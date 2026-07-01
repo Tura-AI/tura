@@ -35,7 +35,8 @@ const RICH_TABLE_COLUMNS = 48;
 const FIXTURE_AGENTS: Agent[] = [
   {
     name: "balanced",
-    description: "Balances self-reflection with intuitive response, using verification and reflective checks.",
+    description:
+      "Balances self-reflection with intuitive response, using verification and reflective checks.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -77,7 +78,8 @@ const FIXTURE_AGENTS: Agent[] = [
   },
   {
     name: "direct",
-    description: "Responds quickly and directly, follows intuition into action, and keeps verification light.",
+    description:
+      "Responds quickly and directly, follows intuition into action, and keeps verification light.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -98,7 +100,8 @@ const FIXTURE_AGENTS: Agent[] = [
   },
   {
     name: "direct-text-only",
-    description: "Responds quickly and directly, follows intuition into action, and keeps verification light.",
+    description:
+      "Responds quickly and directly, follows intuition into action, and keeps verification light.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -1380,6 +1383,33 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
   }
   const protocolFixture = fixture === "communication-protocol";
   const longUserFixture = fixture === "long-user-message";
+  if (fixture === "empty-sessions") {
+    const directory = "C:\\Users\\liuliu\\Documents\\tura";
+    return {
+      ...base,
+      loading: false,
+      sessionsLoading: false,
+      bootstrapped: true,
+      connection: "connected",
+      activeTab: "conversation",
+      directory,
+      sessions: [],
+      selectedModel: "openai/gpt-5.5",
+      agents: FIXTURE_AGENTS,
+      personas: FIXTURE_PERSONAS,
+      selectedProviderId: "openai",
+      modelVariant: "low",
+      accelerationEnabled: true,
+      ...FIXTURE_PROVIDER_STATE,
+      projects: [
+        {
+          id: "fixture-project",
+          name: "tura",
+          worktree: directory,
+        },
+      ],
+    };
+  }
   const session: Session = {
     id: protocolFixture ? "fixture-protocol" : "fixture-snake",
     name: protocolFixture ? "Communication style protocol" : "Snake game page",
