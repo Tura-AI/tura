@@ -11,17 +11,17 @@ function functionBlock(source: string, name: string): string {
   return source.slice(start, next > start ? next : undefined);
 }
 
-describe("GUI composer queue submission contract", () => {
-  test("submits composer prompts as idle queued tasks instead of runtime prompts", () => {
+describe("GUI composer submission contract", () => {
+  test("submits ordinary composer prompts directly to runtime", () => {
     const submitPrompt = functionBlock(appSource, "submitPrompt");
 
-    expect(submitPrompt).toContain('await submitQueuedPrompt(content, "session_idle")');
-    expect(submitPrompt).not.toContain("directoryClient().promptAsync");
-    expect(submitPrompt).not.toContain("pollSessionMessagesUntilAssistantReply");
-    expect(submitPrompt).not.toContain('status: "busy"');
-    expect(submitPrompt).not.toContain("userNewCommand");
-    expect(submitPrompt).not.toContain("planRunPending");
-    expect(submitPrompt).not.toContain("optimisticSessionId");
-    expect(submitPrompt).not.toContain("optimisticId");
+    expect(submitPrompt).toContain("await submitDirectPrompt(content)");
+    expect(submitPrompt).not.toContain('submitQueuedPrompt(content, "session_idle")');
+  });
+
+  test("keeps idle queue submission behind the explicit queue path", () => {
+    const queuePrompt = functionBlock(appSource, "queuePrompt");
+
+    expect(queuePrompt).toContain('await submitQueuedPrompt(content, "session_idle")');
   });
 });

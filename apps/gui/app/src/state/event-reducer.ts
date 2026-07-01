@@ -7,7 +7,7 @@ import type {
   TodoItem,
 } from "@tura/gateway-sdk";
 import type { AppState } from "./global-store";
-import { messageSessionId, sessionHasDisplayName, sessionUpdatedAt } from "./global-store";
+import { messageSessionId, sessionUpdatedAt } from "./global-store";
 import {
   markStreamedDeltaFields,
   mergeMessageForCache,
@@ -295,18 +295,8 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
 }
 
 export function upsertSession(sessions: Session[], session: Session): Session[] {
-  const existing = sessions.find((item) => item.id === session.id);
-  const nextSession =
-    existing && !sessionHasDisplayName(session) && sessionHasDisplayName(existing)
-      ? {
-          ...session,
-          name: existing.name,
-          session_display_name: existing.session_display_name,
-          plan_summary: existing.plan_summary,
-        }
-      : session;
   const without = sessions.filter((item) => item.id !== session.id);
-  return [...without, nextSession].sort(
+  return [...without, session].sort(
     (left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left),
   );
 }

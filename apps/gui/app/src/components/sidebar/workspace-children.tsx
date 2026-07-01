@@ -1,8 +1,6 @@
 import { type FileInfo, type PlanStatus, type ProductIssue, type Session } from "@tura/gateway-sdk";
-import Edit3 from "lucide-solid/icons/pencil";
 import { For, Match, Show, Switch, type Accessor, createMemo, createSignal } from "solid-js";
 import { t } from "../../i18n";
-import { NameDialog } from "../../pages/new-session";
 import { SessionRowMeta } from "../../pages/plan/plan-view";
 import { classNames } from "../../state/format";
 import { sessionTitle, type MainTab } from "../../state/global-store";
@@ -32,13 +30,11 @@ export function WorkspaceChildren(props: {
   onGroup: (id: string) => void;
   onStatus: (session: Session, status: PlanStatus) => void;
   onSession: (session: Session) => void;
-  onRenameSession: (sessionId: string, title: string) => void;
   onFile: (file: FileInfo) => void;
   onFileTreeDirectory: (file: FileInfo) => void;
   onUp: () => void;
 }) {
   const [expandedSessions, setExpandedSessions] = createSignal(false);
-  const [renaming, setRenaming] = createSignal<Session>();
   const visibleSessions = createMemo(() =>
     visibleSessionTreeRows(props.sessions, props.selectedSessionId, {
       expandedRoots: expandedSessions(),
@@ -81,7 +77,8 @@ export function WorkspaceChildren(props: {
                   return session ? props.attentionAcknowledged(session) : false;
                 }}
                 onSession={props.onSession}
-                onRename={setRenaming}
+                action="archive"
+                onArchive={(session) => props.onStatus(session, "archived")}
               />
             )}
           </For>
@@ -98,7 +95,8 @@ export function WorkspaceChildren(props: {
                   return session ? props.attentionAcknowledged(session) : false;
                 }}
                 onSession={props.onSession}
-                onRename={setRenaming}
+                action="archive"
+                onArchive={(session) => props.onStatus(session, "archived")}
               />
             )}
           </For>
@@ -111,20 +109,6 @@ export function WorkspaceChildren(props: {
             >
               {expandedSessions() ? t("collapse") : t("showMore", { count: hiddenSessionCount() })}
             </button>
-          </Show>
-          <Show when={renaming()}>
-            {(session) => (
-              <NameDialog
-                title={t("renameSession")}
-                description={t("renameSessionHint")}
-                initialValue={sessionTitle(session())}
-                onCancel={() => setRenaming(undefined)}
-                onSave={(value) => {
-                  props.onRenameSession(session().id, value);
-                  setRenaming(undefined);
-                }}
-              />
-            )}
           </Show>
         </Match>
         <Match when={props.activeTab === "files"}>
@@ -151,15 +135,25 @@ function SessionButton(props: {
   selected: Accessor<boolean>;
   attentionAcknowledged: Accessor<boolean>;
   onSession: (session: Session) => void;
-  onRename: (session: Session) => void;
+  action: "archive" | "delete";
+  onArchive?: (session: Session) => void;
+  onDelete?: (session: Session) => void;
 }) {
   return (
     <Show when={props.session()}>
       {(session) => (
-        <button
+        <div
+          role="button"
+          tabindex={0}
           class={classNames("child-row", "session-row", props.selected() && "selected")}
           style={{ "--depth": 1, "--session-depth": props.depth?.() ?? 0 }}
           onClick={() => props.onSession(session())}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              props.onSession(session());
+            }
+          }}
           title={sessionHoverTitle(session())}
         >
           <span>{shortSessionTitle(sessionTitle(session()))}</span>
@@ -167,17 +161,31 @@ function SessionButton(props: {
             session={session()}
             attentionAcknowledged={props.attentionAcknowledged()}
           />
-          <Edit3
-            class="session-rename-icon"
-            size={13}
-            strokeWidth={1.7}
+          <button
+            type="button"
+            class="session-row-action"
+            title={props.action === "delete" ? t("delete") : t("archiveSession")}
             onClick={(event) => {
               event.stopPropagation();
-              props.onRename(session());
+              if (props.action === "delete") {
+                props.onDelete?.(session());
+              } else {
+                props.onArchive?.(session());
+              }
             }}
-          />
-        </button>
+          >
+            {props.action === "delete" ? (
+              "×"
+            ) : (
+              <ArchiveIcon />
+            )}
+          </button>
+        </div>
       )}
     </Show>
   );
+}
+
+function ArchiveIcon() {
+  return <span class="tiny-icon">▣</span>;
 }

@@ -1,10 +1,5 @@
 import { GatewayError, type Message, type Session } from "@tura/gateway-sdk";
-import {
-  sessionHasDisplayName,
-  systemThemeMode,
-  type AppState,
-  type ThemeMode,
-} from "./state/global-store";
+import { systemThemeMode, type AppState, type ThemeMode } from "./state/global-store";
 import { mergeMessageForCache } from "./state/message-cache";
 import { providerIdFromAuthError, providerIdFromModel } from "./utils/settings";
 
@@ -82,16 +77,8 @@ export function mergeSessions(remoteSessions: Session[], localSessions: Session[
     byId.set(session.id, session);
   }
   for (const session of localSessions) {
-    const remote = byId.get(session.id);
-    if (!remote) {
+    if (!byId.has(session.id)) {
       byId.set(session.id, session);
-    } else if (!sessionHasDisplayName(remote) && sessionHasDisplayName(session)) {
-      byId.set(session.id, {
-        ...remote,
-        name: session.name,
-        session_display_name: session.session_display_name,
-        plan_summary: session.plan_summary,
-      });
     }
   }
   return [...byId.values()].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));

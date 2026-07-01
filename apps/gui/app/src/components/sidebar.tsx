@@ -56,7 +56,7 @@ export function WorkspaceTree(props: {
   onIssue: (issue: ProductIssue) => void;
   onStatus: (session: Session, status: PlanStatus) => void;
   onSession: (sessionId: string) => void;
-  onRenameSession: (sessionId: string, title: string) => void;
+  onDeleteSession: (sessionId: string) => void;
   onFile: (file: FileInfo) => void;
   onFileTreeDirectory: (file: FileInfo) => void;
   onUp: () => void;
@@ -201,7 +201,6 @@ export function WorkspaceTree(props: {
                       onGroup={props.onGroup}
                       onStatus={props.onStatus}
                       onSession={openRailSession}
-                      onRenameSession={props.onRenameSession}
                       onFile={props.onFile}
                       onFileTreeDirectory={props.onFileTreeDirectory}
                       onUp={props.onUp}
@@ -244,15 +243,34 @@ export function WorkspaceTree(props: {
                   <div class="workspace-children archived-group">
                     <For each={group.sessions}>
                       {(session) => (
-                        <button
+                        <div
+                          role="button"
+                          tabindex={0}
                           class="child-row session-row"
                           style={{ "--depth": 1 }}
                           onClick={() => openRailSession(session)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              openRailSession(session);
+                            }
+                          }}
                           title={sessionHoverTitle(session)}
                         >
                           <span>{shortSessionTitle(sessionTitle(session))}</span>
                           <small>{relativeSessionTime(session)}</small>
-                        </button>
+                          <button
+                            type="button"
+                            class="session-row-action"
+                            title={t("delete")}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              props.onDeleteSession(session.id);
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
                       )}
                     </For>
                   </div>

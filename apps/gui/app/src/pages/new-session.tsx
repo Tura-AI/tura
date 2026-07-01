@@ -74,8 +74,7 @@ export function ConversationEmptyView(props: {
                 defaultDirectory={defaultWorkspaceDirectory(props.state.paths)}
               />
               <PlanComposerControls
-                startCondition="session_idle"
-                queueOnly
+                startCondition={props.state.planDraftStartCondition}
                 onStartCondition={props.onDraftStartCondition}
               />
               {props.agentMenu}
@@ -86,7 +85,7 @@ export function ConversationEmptyView(props: {
       <Show when={naming()}>
         <NameDialog
           title={t("createWorkspace")}
-          description={t("renameSessionHint")}
+          description={t("nameDialogHint")}
           initialValue="New project"
           onCancel={() => setNaming(false)}
           onSave={(value) => {

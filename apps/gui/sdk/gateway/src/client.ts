@@ -243,6 +243,10 @@ export class GatewayClient {
     return this.patch(`/session/${encodeURIComponent(sessionId)}`, payload);
   }
 
+  deleteSession(sessionId: string): Promise<boolean> {
+    return this.delete(`/session/${encodeURIComponent(sessionId)}`);
+  }
+
   updateSessionTaskManagement(
     sessionId: string,
     task_management: TaskManagement | TaskManagement[],

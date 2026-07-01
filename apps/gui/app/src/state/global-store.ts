@@ -208,42 +208,8 @@ export function systemThemeMode(): Extract<ThemeMode, "light" | "dark"> {
     : "light";
 }
 
-export const SESSION_FALLBACK_NAME_MAX_LENGTH = 48;
-
-export function sessionFallbackNameFromInput(
-  input: string,
-  maxLength = SESSION_FALLBACK_NAME_MAX_LENGTH,
-): string {
-  const normalized = input.replace(/\s+/gu, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-  return Array.from(normalized).slice(0, maxLength).join("");
-}
-
-export function sessionHasDisplayName(session: Session): boolean {
-  return Boolean(
-    session.session_display_name?.trim() || session.plan_summary?.trim() || session.name?.trim(),
-  );
-}
-
-export function withSessionFallbackName(session: Session, input: string): Session {
-  if (sessionHasDisplayName(session)) {
-    return session;
-  }
-  const fallbackName = sessionFallbackNameFromInput(input);
-  if (!fallbackName) {
-    return session;
-  }
-  return {
-    ...session,
-    name: fallbackName,
-    session_display_name: fallbackName,
-  };
-}
-
 export function sessionTitle(session: Session): string {
-  return session.session_display_name || session.plan_summary || session.name || "New Session";
+  return session.session_display_name || session.name || "New Session";
 }
 
 export function sessionUpdatedAt(session: Session): number {

@@ -24,6 +24,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
     slashCommands,
     setState,
     submitPrompt,
+    queuePrompt,
     runPlanTaskNow,
     updatePlanTicketTask,
     updateEditingTaskFromComposer,
@@ -232,7 +233,19 @@ export function AppShell(props: { view: AppShellViewModel }) {
       await updateEditingTaskFromComposer();
       return;
     }
+    if (state().planDraftStartCondition === "session_idle") {
+      await queuePrompt();
+      return;
+    }
     await submitPrompt();
+  }
+
+  async function queueCurrentComposer() {
+    if (state().editingTask) {
+      await updateEditingTaskFromComposer();
+      return;
+    }
+    await queuePrompt();
   }
 
   return (
@@ -307,7 +320,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   }
                   onRunTask={(session, task) => void runEditingTaskNow(session, task)}
                   onSubmit={() => void submitCurrentComposer()}
-                  onQueueSubmit={() => void submitCurrentComposer()}
+                  onQueueSubmit={() => void queueCurrentComposer()}
                   onOpenProviderSettings={openProviderSettings}
                   leftRailOpen={!railCollapsed()}
                   leftRailWidth={railFullscreen() ? 0 : railWidth()}
@@ -333,7 +346,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   leftRailWidth={railFullscreen() ? 0 : railWidth()}
                   view={props.view}
                   onSubmit={() => void submitCurrentComposer()}
-                  onQueueSubmit={() => void submitCurrentComposer()}
+                  onQueueSubmit={() => void queueCurrentComposer()}
                   onInspectorLayout={setConversationInspector}
                   closeInspectorSignal={conversationInspectorCloseToken()}
                   onRequestCollapseLeftRail={collapseRailForMainWidth}

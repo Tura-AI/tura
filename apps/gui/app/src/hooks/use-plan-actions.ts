@@ -23,7 +23,7 @@ import {
 } from "../features/plan/tasks";
 import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
-import { sessionTitle, withSessionFallbackName } from "../state/global-store";
+import { sessionTitle } from "../state/global-store";
 import { providerIdFromAuthError, providerIdFromModel } from "../utils/settings";
 
 const PLAN_RUN_TIMEOUT_MS = 30_000;
@@ -560,7 +560,6 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     const composerText = taskDisplayText(task);
-    const title = summary || composerText.split("\n")[0]?.trim() || t("newTask");
     const patch = {
       ...task,
       task_id: `${session.id}:${Date.now()}`,
@@ -570,9 +569,6 @@ export function usePlanActions(options: PlanActionsOptions) {
       const next: Session = {
         ...session,
         id: `plan-task-session-${Date.now()}`,
-        name: title,
-        plan_summary: title,
-        session_display_name: title,
         task_management: patch,
       };
       setState((previous) => ({
@@ -589,13 +585,10 @@ export function usePlanActions(options: PlanActionsOptions) {
       }));
       return;
     }
-    const created = withSessionFallbackName(
-      await directoryClient().createSession({
-        ...createSessionPayload(),
-        task_management: patch,
-      }),
-      title,
-    );
+    const created = await directoryClient().createSession({
+      ...createSessionPayload(),
+      task_management: patch,
+    });
     setState((previous) => ({
       ...previous,
       sessions: [created, ...previous.sessions],
@@ -689,13 +682,11 @@ export function usePlanActions(options: PlanActionsOptions) {
           }
         : {
             id: `plan-local-${Date.now()}`,
-            name: title,
+            name: "",
             directory: state().directory,
             status: "idle",
             created_at: Date.now(),
             updated_at: Date.now(),
-            plan_summary: title,
-            session_display_name: title,
             task_management: taskState,
           };
       setState((previous) => ({
@@ -720,13 +711,10 @@ export function usePlanActions(options: PlanActionsOptions) {
           tasks: [taskState],
         });
       } else {
-        session = withSessionFallbackName(
-          await directoryClient().createSession({
-            ...createSessionPayload(),
-            task_management: taskState,
-          }),
-          title,
-        );
+        session = await directoryClient().createSession({
+          ...createSessionPayload(),
+          task_management: taskState,
+        });
       }
       setState((previous) => ({
         ...previous,

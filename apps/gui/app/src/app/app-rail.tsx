@@ -26,7 +26,7 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
     loadFiles,
     openFile,
     toggleFileTreeDirectory,
-    renameSession,
+    deleteSession,
     openSettings,
     openIssueConversation,
     toggleWorkspace,
@@ -91,7 +91,7 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
                 void openSession(sessionId);
                 props.collapseAfterSelection();
               }}
-              onRenameSession={renameSession}
+              onDeleteSession={deleteSession}
               onFile={(file) => {
                 void openFile(file);
                 props.collapseAfterSelection();

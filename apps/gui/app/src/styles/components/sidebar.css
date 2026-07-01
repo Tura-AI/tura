@@ -245,9 +245,20 @@ button.section-title:focus-visible {
   font-weight: 430;
 }
 
-.session-rename-icon {
+.session-row-action {
   display: none;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
   color: var(--muted);
+}
+
+.session-row-action:hover {
+  background: var(--wash);
+  color: var(--ink);
 }
 
 .session-row:hover .session-row-time,
@@ -262,8 +273,8 @@ button.section-title:focus-visible {
   place-items: center;
 }
 
-.session-row:hover .session-rename-icon {
-  display: block;
+.session-row:hover .session-row-action {
+  display: grid;
   justify-self: end;
 }
 

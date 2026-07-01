@@ -18,7 +18,6 @@ export function AgentComposerMenu(props: {
   onSettings: (section: SettingsSection) => void;
 }) {
   let root: HTMLElement | undefined;
-  let menu: HTMLDivElement | undefined;
   const [open, setOpen] = createSignal(false);
   const [menuStyle, setMenuStyle] = createSignal<Record<string, string>>({});
   const visibleAgents = createMemo(() => visibleConfigurableAgents(props.agents));
@@ -88,10 +87,7 @@ export function AgentComposerMenu(props: {
       <Show when={open()}>
         <div
           class="plan-session-menu agent-trigger-menu"
-          ref={(element) => {
-            menu = element;
-            window.requestAnimationFrame(updateMenuPosition);
-          }}
+          ref={() => window.requestAnimationFrame(updateMenuPosition)}
           style={menuStyle()}
         >
           <div class="agent-trigger-list">

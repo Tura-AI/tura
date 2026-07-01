@@ -324,7 +324,7 @@ describe("applyGatewayEvent", () => {
     expect(next.sessions[0]).toBe(session);
   });
 
-  test("keeps local fallback name when gateway event has no session name", () => {
+  test("uses runtime session names without preserving local fallback names", () => {
     let state: AppState = {
       ...initialAppState("http://127.0.0.1:4126"),
       sessions: [
@@ -354,7 +354,7 @@ describe("applyGatewayEvent", () => {
       },
     });
 
-    expect(sessionTitle(state.sessions[0]!)).toBe("用户输入生成的临时会话名");
+    expect(sessionTitle(state.sessions[0]!)).toBe("New Session");
     expect(state.sessions[0]?.status).toBe("busy");
   });
 

@@ -45,7 +45,6 @@ import {
   activeSession,
   initialAppState,
   sessionDirectory,
-  withSessionFallbackName,
   type AppState,
 } from "./state/global-store";
 import {
@@ -299,24 +298,37 @@ export function App() {
     }));
   }
 
-  async function renameSession(sessionId: string, title: string) {
-    const cleanTitle = title.trim();
-    if (!cleanTitle) {
+  async function deleteSession(sessionId: string) {
+    setState((previous) => {
+      const sessions = previous.sessions.filter((session) => session.id !== sessionId);
+      const { [sessionId]: _messages, ...messagesBySession } = previous.messagesBySession;
+      const { [sessionId]: _paging, ...messagePagingBySession } = previous.messagePagingBySession;
+      const { [sessionId]: _scroll, ...transcriptScrollBySession } =
+        previous.transcriptScrollBySession;
+      const { [sessionId]: _todos, ...todosBySession } = previous.todosBySession;
+      return {
+        ...previous,
+        sessions,
+        messagesBySession,
+        messagePagingBySession,
+        transcriptScrollBySession,
+        todosBySession,
+        selectedSessionId:
+          previous.selectedSessionId === sessionId ? sessions[0]?.id : previous.selectedSessionId,
+        planPreviewSessionId:
+          previous.planPreviewSessionId === sessionId ? undefined : previous.planPreviewSessionId,
+        error: undefined,
+      };
+    });
+    if (e2eFixture) {
       return;
     }
     try {
-      const session = await directoryClient().updateSession(sessionId, {
-        name: cleanTitle,
-        auto_session_name: false,
-      });
-      setState((previous) => ({
-        ...previous,
-        sessions: previous.sessions.map((item) =>
-          item.id === sessionId ? { ...item, ...session } : item,
-        ),
-      }));
+      await directoryClient().deleteSession(sessionId);
+      await refreshSessions();
     } catch (error) {
       setState((previous) => ({ ...previous, error: errorMessage(error) }));
+      await refreshSessions();
     }
   }
 
@@ -433,10 +445,7 @@ export function App() {
     let sessionId = issue.session_id ?? issue.active_task?.session_id;
     try {
       if (!sessionId) {
-        const session = withSessionFallbackName(
-          await directoryClient().createSession(createSessionPayload()),
-          issue.title,
-        );
+        const session = await directoryClient().createSession(createSessionPayload());
         sessionId = session.id;
         setState((previous) => ({
           ...previous,
@@ -642,7 +651,7 @@ export function App() {
         state().composerImages.length === 0
           ? await expandCommand(raw)
           : materializeComposerContent(raw, state().composerImages);
-      await submitQueuedPrompt(content, "session_idle");
+      await submitDirectPrompt(content);
     } catch (error) {
       const timeout = error instanceof Error && error.message === PROMPT_RESPONSE_TIMEOUT_CODE;
       setState((previous) => ({
@@ -655,6 +664,47 @@ export function App() {
           : {
               message: errorMessage(error),
               code: "GATEWAY_PROMPT_FAILED",
+              providerId: providerIssueIdFromError(error, previous),
+            },
+        error: undefined,
+      }));
+    } finally {
+      setState((previous) => ({ ...previous, submitting: false }));
+    }
+  }
+
+  async function queuePrompt() {
+    if (await updateEditingTaskFromComposer()) {
+      return;
+    }
+    const raw = state().composerText.trim();
+    if ((!raw && state().composerImages.length === 0) || state().submitting) {
+      return;
+    }
+    setState((previous) => ({
+      ...previous,
+      submitting: true,
+      error: undefined,
+      planNotice: undefined,
+    }));
+    try {
+      const content =
+        state().composerImages.length === 0
+          ? await expandCommand(raw)
+          : materializeComposerContent(raw, state().composerImages);
+      await submitQueuedPrompt(content, "session_idle");
+    } catch (error) {
+      const timeout = error instanceof Error && error.message === PROMPT_RESPONSE_TIMEOUT_CODE;
+      setState((previous) => ({
+        ...previous,
+        planNotice: timeout
+          ? {
+              message: "Gateway 30 秒内没有响应请求。",
+              code: PROMPT_RESPONSE_TIMEOUT_CODE,
+            }
+          : {
+              message: errorMessage(error),
+              code: "GATEWAY_QUEUE_FAILED",
               providerId: providerIssueIdFromError(error, previous),
             },
         error: undefined,
@@ -685,6 +735,82 @@ export function App() {
     }
   }
 
+  async function submitDirectPrompt(content: string) {
+    const currentSession = state().selectedSessionId
+      ? state().sessions.find((session) => session.id === state().selectedSessionId)
+      : undefined;
+    const now = Date.now();
+    const session =
+      currentSession ??
+      (e2eFixture
+        ? {
+            id: `direct-local-${now}`,
+            name: "",
+            directory: state().directory,
+            status: "idle" as const,
+            created_at: now,
+            updated_at: now,
+          }
+        : await directoryClient().createSession(createSessionPayload()));
+    const messageId = `prompt:${session.id}:${now}`;
+    setState((previous) => ({
+      ...previous,
+      sessions: [
+        { ...session, status: "busy" },
+        ...previous.sessions.filter((item) => item.id !== session.id),
+      ],
+      selectedSessionId: session.id,
+      messagesBySession: {
+        ...previous.messagesBySession,
+        [session.id]: [
+          ...(previous.messagesBySession[session.id] ?? []).filter(
+            (message) => message.id !== messageId,
+          ),
+          {
+            id: messageId,
+            sessionID: session.id,
+            role: "user",
+            created_at: now,
+            updated_at: now,
+            time: { created: now, updated: now },
+            parts: [
+              {
+                id: `${messageId}:text`,
+                sessionID: session.id,
+                messageID: messageId,
+                type: "text",
+                text: content,
+              },
+            ],
+          },
+        ],
+      },
+      composerText: "",
+      composerImages: [],
+      planDraftStartCondition: "user_action",
+      planDraftStartAt: "",
+      planDraftPollInterval: defaultPollInterval(),
+      planNotice: undefined,
+      error: undefined,
+    }));
+    if (e2eFixture) {
+      return;
+    }
+    await Promise.race([
+      directoryClient().promptAsync(session.id, {
+        messageID: messageId,
+        parts: [{ id: `${messageId}:text`, type: "text", text: content }],
+        model: state().selectedModel,
+        agent: state().selectedAgent,
+        variant: state().modelVariant,
+        model_acceleration_enabled: state().accelerationEnabled,
+      }),
+      new Promise<never>((_, reject) =>
+        window.setTimeout(() => reject(new Error(PROMPT_RESPONSE_TIMEOUT_CODE)), PROMPT_RESPONSE_TIMEOUT_MS),
+      ),
+    ]);
+  }
+
   async function submitQueuedPrompt(content: string, forcedStartCondition?: StartCondition) {
     const startCondition = forcedStartCondition ?? state().planDraftStartCondition;
     const timingPatch =
@@ -713,13 +839,11 @@ export function App() {
         }
       : {
           id: `queued-local-${Date.now()}`,
-          name: title,
+          name: "",
           directory: state().directory,
           status: "idle",
           created_at: Date.now(),
           updated_at: Date.now(),
-          plan_summary: title,
-          session_display_name: title,
           task_management: taskState,
         };
     setState((previous) => ({
@@ -747,12 +871,10 @@ export function App() {
         ? directoryClient().updateSessionTaskManagement(currentSession.id, {
             tasks: [taskState],
           })
-        : directoryClient()
-            .createSession({
-              ...createSessionPayload(),
-              task_management: taskState,
-            })
-            .then((created) => withSessionFallbackName(created, title)),
+        : directoryClient().createSession({
+            ...createSessionPayload(),
+            task_management: taskState,
+          }),
       new Promise<Session>((resolve) =>
         window.setTimeout(() => resolve(optimisticSession), PROMPT_RESPONSE_TIMEOUT_MS),
       ),
@@ -969,7 +1091,8 @@ export function App() {
           loadFiles,
           openFile,
           toggleFileTreeDirectory,
-          renameSession,
+          deleteSession,
+          queuePrompt,
           openSettings,
           openIssueConversation,
           toggleWorkspace,
