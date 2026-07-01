@@ -298,6 +298,23 @@
   gap: var(--space-2);
 }
 
+.settings-toggle-row {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  width: max-content;
+  min-height: 38px;
+  color: var(--ink);
+  font-size: var(--font-ui);
+}
+
+.settings-toggle-row input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
 .settings-fields {
   gap: var(--space-3);
   padding: var(--space-4);

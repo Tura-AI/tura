@@ -25,36 +25,6 @@ describe("message cache merging", () => {
     expect(shouldFetchSessionMessages([])).toBe(true);
   });
 
-describe("blank session workspace state", () => {
-  test("uses the workspace clicked in the rail as the new session workspace", () => {
-    const state = {
-      ...initialAppState("http://127.0.0.1:4126"),
-      activeTab: "plan" as const,
-      previousMainTab: "plan" as const,
-      directory: "C:/repo/alpha",
-      selectedSessionId: "alpha-session",
-      lastSessionOpenedId: "older-session",
-      composerText: "draft that should be cleared",
-      projects: [
-        { id: "alpha", name: "Alpha", worktree: "C:/repo/alpha" },
-        { id: "beta", name: "Beta", worktree: "C:/repo/beta" },
-      ],
-    };
-
-    expect(
-      blankSessionState(state, { id: "beta", name: "Beta", worktree: "C:/repo/beta" }),
-    ).toMatchObject({
-      activeTab: "conversation",
-      previousMainTab: "conversation",
-      directory: "C:/repo/beta",
-      selectedSessionId: undefined,
-      lastSessionOpenedId: "alpha-session",
-      composerText: "",
-      error: undefined,
-    });
-  });
-});
-
   test("keeps existing snapshot order while merging later static session snapshots", () => {
     const intro = { id: "intro", sessionID: "s1", messageID: "m1", type: "text", text: "start" };
     const command = {
@@ -106,5 +76,35 @@ describe("blank session workspace state", () => {
     ]);
 
     expect(merged.map((message) => message.id)).toEqual(["m2", "m1"]);
+  });
+});
+
+describe("blank session workspace state", () => {
+  test("uses the workspace clicked in the rail as the new session workspace", () => {
+    const state = {
+      ...initialAppState("http://127.0.0.1:4126"),
+      activeTab: "plan" as const,
+      previousMainTab: "plan" as const,
+      directory: "C:/repo/alpha",
+      selectedSessionId: "alpha-session",
+      lastSessionOpenedId: "older-session",
+      composerText: "draft that should be cleared",
+      projects: [
+        { id: "alpha", name: "Alpha", worktree: "C:/repo/alpha" },
+        { id: "beta", name: "Beta", worktree: "C:/repo/beta" },
+      ],
+    };
+
+    expect(
+      blankSessionState(state, { id: "beta", name: "Beta", worktree: "C:/repo/beta" }),
+    ).toMatchObject({
+      activeTab: "conversation",
+      previousMainTab: "conversation",
+      directory: "C:/repo/beta",
+      selectedSessionId: undefined,
+      lastSessionOpenedId: "alpha-session",
+      composerText: "",
+      error: undefined,
+    });
   });
 });

@@ -11,6 +11,10 @@ const sidebarCss = readFileSync(
   resolve(import.meta.dir, "../../../app/src/styles/components/sidebar.css"),
   "utf8",
 );
+const sidebarSource = readFileSync(
+  resolve(import.meta.dir, "../../../app/src/components/sidebar.tsx"),
+  "utf8",
+);
 
 function cssBlock(selector: string): string {
   const start = sidebarCss.indexOf(`\n${selector} {`);
@@ -67,5 +71,13 @@ describe("sidebar cursor affordances", () => {
   test("does not show the text cursor over empty session text or session rows", () => {
     expect(cssBlock(".workspace-children > .rail-empty")).toContain("cursor: default;");
     expect(cssBlock(".session-row")).toContain("cursor: pointer;");
+  });
+});
+
+describe("sidebar workspace new session", () => {
+  test("passes the clicked workspace into the new session action", () => {
+    expect(sidebarSource).toContain("onBlankSession: (project: Project) => void;");
+    expect(sidebarSource).toContain("props.onBlankSession(project);");
+    expect(sidebarSource).toContain("onNewSession={() => props.onBlankSession(project)}");
   });
 });
