@@ -329,6 +329,40 @@ async def assert_scrollbar_drag_not_pulled_by_delta(page) -> None:
         raise AssertionError(f"visible row jittered after offscreen delta: before={anchor_before}, after={anchor_after}")
 
 
+async def assert_near_bottom_stream_delta_follows_bottom(page) -> None:
+    await page.goto(f"{GUI_URL}/?e2eFixture=streaming-delta", wait_until="domcontentloaded")
+    await page.evaluate("selector => { window.__streamRootSelector = selector; }", STREAM_ROOT_SELECTOR)
+    await page.wait_for_selector(".transcript-virtual-space[data-virtual-count='82']", state="attached", timeout=20_000)
+    await page.wait_for_selector(STREAM_ROOT_SELECTOR, state="attached", timeout=20_000)
+    geometry_before = await page.locator(".transcript").evaluate(
+        """
+        (el) => {
+          const max = Math.max(0, el.scrollHeight - el.clientHeight);
+          const remaining = Math.max(32, Math.floor(max * 0.02));
+          el.scrollTop = Math.max(0, max - remaining);
+          el.dispatchEvent(new Event('scroll', { bubbles: true }));
+          return {
+            max,
+            remaining: el.scrollHeight - el.scrollTop - el.clientHeight,
+            threshold: max * 0.03,
+          };
+        }
+        """
+    )
+    if not (28 < geometry_before["remaining"] <= geometry_before["threshold"]):
+        raise AssertionError(f"near-bottom setup did not land in the 3% band: {geometry_before}")
+    for index in range(4):
+        await append_stream_delta(page, index, " near-bottom-live-update" * 32)
+        await page.wait_for_timeout(80)
+        geometry_after = await page.locator(".transcript").evaluate(
+            "(el) => ({ scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, remaining: el.scrollHeight - el.scrollTop - el.clientHeight })"
+        )
+        if geometry_after["remaining"] > 2:
+            raise AssertionError(
+                f"near-bottom live delta did not follow to bottom at update {index}: before={geometry_before}, after={geometry_after}"
+            )
+
+
 async def assert_scroll_restored_after_conversation_remount(page) -> None:
     await page.goto(f"{GUI_URL}/?e2eFixture=long-transcript", wait_until="domcontentloaded")
     await page.wait_for_selector(
@@ -475,6 +509,7 @@ async def main() -> None:
             await page.screenshot(path=str(OUT / "long-transcript-bottom.png"), full_page=False)
 
             await assert_stream_append_only(page)
+            await assert_near_bottom_stream_delta_follows_bottom(page)
             await assert_scrollbar_drag_not_pulled_by_delta(page)
             await assert_scroll_restored_after_conversation_remount(page)
             await browser.close()

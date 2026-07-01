@@ -70,11 +70,31 @@ const AGENT_AVATAR_BOTTOM_SETTLE_MS = 0;
 const VIRTUAL_MESSAGE_ESTIMATED_HEIGHT = 64;
 const VIRTUAL_MESSAGE_OVERSCAN = 300;
 const LOAD_EARLIER_SCROLL_TOP = 480;
+const TRANSCRIPT_FOLLOW_BOTTOM_RATIO = 0.03;
+const TRANSCRIPT_FOLLOW_BOTTOM_MIN_PX = 28;
+const TRANSCRIPT_BOTTOM_SETTLE_FRAMES = 6;
 const SCROLL_RESTORE_FRAMES = 8;
 const MAX_TRANSCRIPT_HEIGHT_CACHE_SESSIONS = 20;
 const ASSISTANT_THINKING_TEXT_ICON = "✦";
 const transcriptHeightCacheBySession = new Map<string, Map<string, number>>();
 const transcriptMountedRowsBySession = new Map<string, Set<string>>();
+
+function transcriptBottomDistance(element: HTMLElement) {
+  return Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
+}
+
+function transcriptFollowBottomThreshold(element: HTMLElement) {
+  const scrollableHeight = Math.max(0, element.scrollHeight - element.clientHeight);
+  return Math.max(TRANSCRIPT_FOLLOW_BOTTOM_MIN_PX, scrollableHeight * TRANSCRIPT_FOLLOW_BOTTOM_RATIO);
+}
+
+function transcriptNearBottom(element: HTMLElement) {
+  return transcriptBottomDistance(element) <= transcriptFollowBottomThreshold(element);
+}
+
+function scrollElementToBottom(element: HTMLElement, behavior: ScrollBehavior = "auto") {
+  element.scrollTo({ top: element.scrollHeight, behavior });
+}
 
 export function ConversationView(props: {
   state: AppState;
@@ -128,6 +148,24 @@ export function ConversationView(props: {
   );
   const latestStickerEmoji = createMemo(() => latestSticker(props.messages));
   const latestMessageId = createMemo(() => groupedMessages().at(-1)?.id);
+  const latestMessageLiveSignature = createMemo(() => {
+    const message = groupedMessages().at(-1);
+    if (!message) {
+      return "";
+    }
+    return message.parts
+      .map((part) =>
+        [
+          part.id,
+          part.type,
+          partText(part),
+          toolStatus(asRecord(part.state)),
+          asRecord(part.state).output ?? "",
+          asRecord(part.state).error ?? "",
+        ].join(":"),
+      )
+      .join("|");
+  });
   let transcriptEl: HTMLElement | undefined;
   let conversationMainEl: HTMLDivElement | undefined;
   let scrollFollowFrame: number | undefined;
@@ -249,7 +287,7 @@ export function ConversationView(props: {
     if (!transcriptEl) {
       return true;
     }
-    return transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight < 28;
+    return transcriptNearBottom(transcriptEl);
   }
 
   function scrollTranscriptToBottom(behavior: ScrollBehavior = "smooth") {
@@ -257,14 +295,19 @@ export function ConversationView(props: {
       return;
     }
     setTranscriptPinned(true);
-    const scroll = () => {
-      transcriptEl?.scrollTo({
-        top: transcriptEl?.scrollHeight ?? 0,
-        behavior,
-      });
+    let remainingFrames = TRANSCRIPT_BOTTOM_SETTLE_FRAMES;
+    const scroll = (nextBehavior: ScrollBehavior = "auto") => {
+      if (!transcriptEl) {
+        return;
+      }
+      scrollElementToBottom(transcriptEl, nextBehavior);
+      if (remainingFrames <= 0) {
+        return;
+      }
+      remainingFrames -= 1;
+      requestAnimationFrame(() => scroll("auto"));
     };
-    scroll();
-    requestAnimationFrame(scroll);
+    scroll(behavior);
   }
 
   function handleTranscriptScroll() {
@@ -316,6 +359,18 @@ export function ConversationView(props: {
       return;
     }
     lastAutoScrolledMessageId = messageId;
+    if (transcriptPinned()) {
+      scrollTranscriptToBottom("auto");
+    }
+  });
+
+  let lastAutoScrolledLiveSignature = "";
+  createEffect(() => {
+    const signature = latestMessageLiveSignature();
+    if (!signature || lastAutoScrolledLiveSignature === signature) {
+      return;
+    }
+    lastAutoScrolledLiveSignature = signature;
     if (transcriptPinned()) {
       scrollTranscriptToBottom("auto");
     }
@@ -734,7 +789,7 @@ function Transcript(props: {
     if (!element) {
       return;
     }
-    if (element.scrollHeight - element.scrollTop - element.clientHeight >= 28) {
+    if (!transcriptNearBottom(element)) {
       lastScrolledAwayFromBottomAt = performance.now();
     }
   }
@@ -744,9 +799,7 @@ function Transcript(props: {
     if (pendingMeasuredHeights.size === 0) {
       return;
     }
-    const wasAtBottom = transcriptEl
-      ? transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight < 28
-      : false;
+    const wasAtBottom = transcriptEl ? transcriptNearBottom(transcriptEl) : false;
     const recentlyScrolledAway = performance.now() - lastScrolledAwayFromBottomAt < 500;
     let scrollDelta = 0;
     let changed = false;
@@ -774,7 +827,19 @@ function Transcript(props: {
       return;
     }
     if (wasAtBottom && !recentlyScrolledAway) {
-      requestAnimationFrame(() => transcriptEl?.scrollTo({ top: transcriptEl.scrollHeight }));
+      let remainingFrames = TRANSCRIPT_BOTTOM_SETTLE_FRAMES;
+      const scroll = () => {
+        if (!transcriptEl) {
+          return;
+        }
+        scrollElementToBottom(transcriptEl);
+        if (remainingFrames <= 0) {
+          return;
+        }
+        remainingFrames -= 1;
+        requestAnimationFrame(scroll);
+      };
+      requestAnimationFrame(scroll);
       return;
     }
     if (scrollDelta !== 0) {
