@@ -168,8 +168,9 @@ fn persisted_messages(session: &SessionManagement) -> Vec<Value> {
     let mut runtime_message_indexes = HashMap::new();
 
     for (index, entry) in session.session_log.iter().enumerate() {
+        let absolute_index = session.absolute_session_log_index(index) as usize;
         if let Some((runtime_id, tool_part, created_at, updated_at)) =
-            runtime_tool_part_from_log_entry(index, entry, base_time)
+            runtime_tool_part_from_log_entry(absolute_index, entry, base_time)
         {
             merge_runtime_tool_part(
                 session,
@@ -183,7 +184,7 @@ fn persisted_messages(session: &SessionManagement) -> Vec<Value> {
             continue;
         }
 
-        let message = persisted_message(session, index, entry, base_time);
+        let message = persisted_message(session, absolute_index, entry, base_time);
         if let Some(runtime_id) = assistant_runtime_id(&message) {
             if let Some(existing_index) = runtime_message_indexes.get(&runtime_id).copied() {
                 merge_runtime_message(&mut messages[existing_index], message);

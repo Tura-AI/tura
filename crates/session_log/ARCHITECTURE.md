@@ -156,6 +156,10 @@ session_records
 ```
 
 `management_json` is the runtime `SessionManagement` payload used for resume.
+After runtime compaction, this payload may contain a retained `session_log` tail
+plus `session_log_retention` metadata instead of the full historical log. That
+keeps resume from reading and parsing compacted-away runtime history. The
+separate `session_records` table remains the UI/message-history record source.
 `session_json` is the gateway `SessionInfo` snapshot used for hydration.
 `todos_json` keeps UI todo projections with the session snapshot.
 
@@ -170,6 +174,9 @@ value.
 message id and inserts new records, but it does not delete the whole session's
 record history before writing. This keeps earlier replay records available if a
 later process crash only flushes a partial turn.
+When `management_json.session_log_retention.omitted_entries` is non-zero, the
+upsert is treated as a compacted runtime snapshot and records not present in the
+retained message tail are preserved.
 
 `state` is the only authoritative session lifecycle value. It is the canonical
 `session_log::SessionState` enum serialized in snake_case:
