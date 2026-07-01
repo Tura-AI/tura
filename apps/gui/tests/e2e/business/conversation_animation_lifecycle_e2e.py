@@ -118,7 +118,7 @@ async def main() -> None:
                 else None,
             )
             await page.goto(app_url(), wait_until="domcontentloaded")
-            await expect(page.locator(".conversation-view:not(.compact)")).to_be_visible(timeout=15_000)
+            await expect(page.locator(".transcript")).to_be_visible(timeout=15_000)
             await expect(page.locator(".assistant-thinking-text .rich-text")).to_be_visible(timeout=15_000)
             await page.wait_for_timeout(800)
 
@@ -131,7 +131,8 @@ async def main() -> None:
                     '.assistant-thinking-glyph',
                     '.message-reaction',
                     '.message.plan-run-pending .message-user-shell',
-                    '.agent-avatar-loading'
+                    '.agent-avatar-loading',
+                    '.session-row-status .plan-status-indicator'
                   ].join(', ');
                   const nodeFor = (query) => document.querySelector(query);
                   const refs = {
@@ -139,6 +140,7 @@ async def main() -> None:
                     thinkingText: nodeFor('.assistant-thinking-text .rich-text'),
                     thinkingGlyph: nodeFor('.assistant-thinking-glyph'),
                     floatingAvatar: nodeFor('.floating-agent-avatar'),
+                    sidebarBusyIndicator: nodeFor('.session-row-status .plan-status-indicator.status-doing'),
                     latestRow: nodeFor('.transcript-virtual-row[data-message-id="fixture-stream-assistant"]')
                   };
                   const events = [];
@@ -163,7 +165,8 @@ async def main() -> None:
                         Object.entries({
                           thinkingText: '.assistant-thinking-text .rich-text',
                           thinkingGlyph: '.assistant-thinking-glyph',
-                          avatarLoading: '.agent-avatar-loading'
+                          avatarLoading: '.agent-avatar-loading',
+                          sidebarBusyIndicator: '.session-row-status .plan-status-indicator.status-doing'
                         }).map(([name, query]) => {
                           const element = nodeFor(query);
                           const times = element
@@ -176,6 +179,7 @@ async def main() -> None:
                       sameThinkingText: refs.thinkingText === nodeFor('.assistant-thinking-text .rich-text'),
                       sameThinkingGlyph: refs.thinkingGlyph === nodeFor('.assistant-thinking-glyph'),
                       sameFloatingAvatar: refs.floatingAvatar === nodeFor('.floating-agent-avatar'),
+                      sameSidebarBusyIndicator: refs.sidebarBusyIndicator === nodeFor('.session-row-status .plan-status-indicator.status-doing'),
                       sameLatestRow: refs.latestRow === nodeFor('.transcript-virtual-row[data-message-id="fixture-stream-assistant"]'),
                       composerText: document.querySelector('.composer-raw-textarea')?.value ?? '',
                       assistantText: document.querySelector('.transcript-virtual-row[data-message-id="fixture-stream-assistant"]')?.textContent ?? ''
@@ -216,6 +220,7 @@ async def main() -> None:
                             "sameThinkingBlock",
                             "sameThinkingText",
                             "sameThinkingGlyph",
+                            "sameSidebarBusyIndicator",
                             "sameLatestRow",
                         ]
                     ),
@@ -272,6 +277,7 @@ async def main() -> None:
                             "sameThinkingBlock",
                             "sameThinkingText",
                             "sameThinkingGlyph",
+                            "sameSidebarBusyIndicator",
                             "sameLatestRow",
                         ]
                     ),
@@ -336,6 +342,7 @@ async def main() -> None:
                             "sameThinkingBlock",
                             "sameThinkingText",
                             "sameThinkingGlyph",
+                            "sameSidebarBusyIndicator",
                             "sameLatestRow",
                         ]
                     ),
@@ -387,6 +394,7 @@ async def main() -> None:
                             "sameThinkingBlock",
                             "sameThinkingText",
                             "sameThinkingGlyph",
+                            "sameSidebarBusyIndicator",
                             "sameLatestRow",
                         ]
                     ),
