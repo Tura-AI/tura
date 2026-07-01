@@ -48,7 +48,7 @@
   .conversation-view,
   .files-view,
   .settings-view {
-    height: 100vh;
+    height: 100%;
   }
 
   .layered-page {

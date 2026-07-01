@@ -7,8 +7,8 @@
 
 .new-session-view {
   display: grid;
-  height: 100vh;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
   overflow: auto;
   padding: var(--space-7) var(--space-5);
   place-items: center;

@@ -2,6 +2,7 @@
   position: fixed;
   inset: 0 0 auto;
   z-index: 200;
+  -webkit-app-region: drag;
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
@@ -35,6 +36,11 @@
 .app-window-controls {
   display: inline-flex;
   height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.app-window-control,
+.app-window-control * {
   -webkit-app-region: no-drag;
 }
 

@@ -11,8 +11,8 @@
   position: relative;
   display: grid;
   grid-template-columns: var(--rail) minmax(0, 1fr);
-  width: 100vw;
-  height: calc(100vh - var(--app-titlebar-height));
+  width: 100%;
+  height: calc(100dvh - var(--app-titlebar-height));
   margin-top: var(--app-titlebar-height);
   overflow: hidden;
   background: var(--paper);
@@ -51,8 +51,8 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   align-content: stretch;
-  width: 100vw;
-  height: calc(100vh - var(--app-titlebar-height));
+  width: 100%;
+  height: calc(100dvh - var(--app-titlebar-height));
   max-width: none;
   overflow-x: hidden;
   overflow-y: hidden;

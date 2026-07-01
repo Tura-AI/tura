@@ -71,7 +71,7 @@
   .settings-view {
     --page-shell-padding-inline: var(--space-4);
     --page-shell-padding-bottom: var(--space-4);
-    height: 100vh;
+    height: 100%;
   }
 
   .settings-canvas,
