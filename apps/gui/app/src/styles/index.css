@@ -4,3 +4,29 @@
 @import "./components/agent-icon.css";
 @import "./components/avatar.css";
 @import "./parts/index.css";
+
+.floating-menu-harness {
+  display: grid;
+  gap: 44px;
+  width: min(720px, calc(100vw - 64px));
+  padding: 48px 0 96px 48px;
+}
+
+.floating-menu-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-5);
+  align-items: center;
+  min-height: 48px;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.floating-menu-row > span {
+  color: var(--muted);
+  font-size: var(--font-ui);
+}
+
+.floating-menu-row.top-row {
+  margin-top: 28px;
+}
