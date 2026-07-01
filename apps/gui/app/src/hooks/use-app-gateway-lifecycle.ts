@@ -270,7 +270,7 @@ export function useAppGatewayLifecycle(options: {
           : (configuredVariant ?? previous.modelVariant ?? "medium"),
         accelerationEnabled: previous.bootstrapped
           ? previous.accelerationEnabled
-          : (configuredAcceleration ?? previous.accelerationEnabled ?? true),
+          : (configuredAcceleration ?? previous.accelerationEnabled ?? false),
         loading: false,
         sessionsLoading: false,
         bootstrapped: true,

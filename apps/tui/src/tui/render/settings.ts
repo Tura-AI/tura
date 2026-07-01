@@ -42,7 +42,7 @@ export function settingsEntries(state: AppState): SettingEntry[] {
     {
       detail: "priority",
       label: t("settingPriority"),
-      value: config.model_acceleration_enabled ?? true,
+      value: config.model_acceleration_enabled ?? false,
     },
   ];
 }
@@ -348,7 +348,7 @@ function activeSettingValue(state: AppState): unknown {
   if (state.settingDetail === "language") return config?.language ?? "en";
   if (state.settingDetail === "session") return config?.session_type ?? "coding";
   if (state.settingDetail === "variant") return config?.model_variant ?? "high";
-  if (state.settingDetail === "priority") return config?.model_acceleration_enabled ?? true;
+  if (state.settingDetail === "priority") return config?.model_acceleration_enabled ?? false;
   if (state.settingDetail === "validator") return Boolean(config?.validator_enabled);
   if (state.settingDetail === "stallGuard")
     return config?.command_run_stall_guard_profile ?? "balanced_20s";

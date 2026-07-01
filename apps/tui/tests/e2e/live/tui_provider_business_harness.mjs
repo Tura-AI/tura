@@ -182,7 +182,7 @@ async function writeWorkspaceConfig(ctx) {
       `active_agent=${defaultAgent}`,
       "session_type=coding",
       `model_variant=${defaultVariant}`,
-      "model_acceleration_enabled=true",
+      `model_acceleration_enabled=${process.env.TUI_PROVIDER_BUSINESS_PRIORITY === "1"}`,
       "kill_processes_on_start=false",
       "validator_enabled=false",
       "",

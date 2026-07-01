@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { initialAppState, sessionTitle } from "../../../app/src/state/global-store";
 
 describe("initialAppState", () => {
-  test("defaults GUI runs to medium thinking with priority routing", () => {
+  test("defaults GUI runs to medium thinking with priority routing off", () => {
     const state = initialAppState("http://127.0.0.1:4126");
 
     expect(state.modelVariant).toBe("medium");
-    expect(state.accelerationEnabled).toBe(true);
+    expect(state.accelerationEnabled).toBe(false);
   });
 });
 

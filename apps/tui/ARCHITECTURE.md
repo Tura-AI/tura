@@ -398,7 +398,7 @@ Gateway already extracts:
 
 The same prompt shape should be reused by the later interactive TUI so terminal
 clients behave consistently. Both CLI `run` and the interactive TUI default
-`model_acceleration_enabled` to `true`; explicit saved config or run flags may
+`model_acceleration_enabled` to `false`; explicit saved config or run flags may
 still set it to `false`.
 
 ## Completion Detection

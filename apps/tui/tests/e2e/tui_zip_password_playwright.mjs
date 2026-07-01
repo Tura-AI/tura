@@ -281,7 +281,7 @@ async function createSeedSession(gatewayUrl) {
     model_acceleration_enabled:
       process.env.TUI_ZIP_PASSWORD_PRIORITY === "0"
         ? false
-        : (config.model_acceleration_enabled ?? true),
+        : (config.model_acceleration_enabled ?? false),
   };
   const session = await requestJson(`${gatewayUrl}/session`, {
     method: "POST",

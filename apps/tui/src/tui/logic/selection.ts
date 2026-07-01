@@ -11,7 +11,7 @@ export interface PromptRuntimeSelection {
   modelAccelerationEnabled?: boolean;
 }
 
-const DEFAULT_MODEL_ACCELERATION_ENABLED = true;
+const DEFAULT_MODEL_ACCELERATION_ENABLED = false;
 
 export function selectedModel(state: AppState): string | undefined {
   let row = 0;

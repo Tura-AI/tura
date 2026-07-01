@@ -108,7 +108,7 @@ test("prompt runtime selection does not compose provider with default tier", () 
   assert.equal(promptRuntimeSelection(state).model, "codex/gpt-5.5");
 });
 
-test("prompt runtime selection enables priority by default", () => {
+test("prompt runtime selection keeps priority off by default", () => {
   const state = reducer(initialState("C:/repo"), {
     type: "hydrate",
     session: {
@@ -121,7 +121,7 @@ test("prompt runtime selection enables priority by default", () => {
     permissions: [],
   });
 
-  assert.equal(promptRuntimeSelection(state).modelAccelerationEnabled, true);
+  assert.equal(promptRuntimeSelection(state).modelAccelerationEnabled, false);
 });
 
 test("prompt runtime selection preserves explicit priority off", () => {

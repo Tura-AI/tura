@@ -194,7 +194,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     providerSearch: drafts.providerSearch,
     providerAuthPanel: undefined,
     modelVariant: "medium",
-    accelerationEnabled: true,
+    accelerationEnabled: false,
     authDrafts: drafts.authDrafts,
     authCodeDrafts: drafts.authCodeDrafts,
     settingsSaving: false,

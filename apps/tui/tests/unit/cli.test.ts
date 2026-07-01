@@ -11,12 +11,18 @@ test("run shell flags override the command-run surface", () => {
   assert.throws(() => parseRun(["-c", "command_run_shell=zash", "inspect"], false), /bash/);
 });
 
-test("run defaults to balanced with high priority routing", () => {
+test("run defaults to balanced with priority routing off", () => {
   const parsed = parseRun(["hello"], false);
 
   assert.equal(parsed.agent, "balanced");
   assert.equal(parsed.modelVariant, "high");
-  assert.equal(parsed.modelAccelerationEnabled, true);
+  assert.equal(parsed.modelAccelerationEnabled, false);
+});
+
+test("run keeps explicit priority routing opt-in", () => {
+  assert.equal(parseRun(["--priority", "hello"], false).modelAccelerationEnabled, true);
+  assert.equal(parseRun(["--model-acceleration", "hello"], false).modelAccelerationEnabled, true);
+  assert.equal(parseRun(["--no-model-acceleration", "hello"], false).modelAccelerationEnabled, false);
 });
 
 test("top-level shell commands cover only the documented surfaces", () => {

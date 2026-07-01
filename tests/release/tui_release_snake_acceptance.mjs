@@ -134,7 +134,7 @@ async function writeWorkspaceConfig() {
       `active_agent=${process.env.TURA_BUSINESS_AGENT || "fast"}`,
       "session_type=coding",
       `model_variant=${process.env.TURA_BUSINESS_MODEL_VARIANT || "low"}`,
-      "model_acceleration_enabled=true",
+      `model_acceleration_enabled=${process.env.TURA_BUSINESS_PRIORITY === "1"}`,
       "kill_processes_on_start=false",
       "validator_enabled=false",
       "force_planning=false",

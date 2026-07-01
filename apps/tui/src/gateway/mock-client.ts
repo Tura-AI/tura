@@ -30,7 +30,7 @@ export class MockGatewayClient {
     active_model: "gpt-5.5",
     model: "codex/gpt-5.5",
     model_variant: "high",
-    model_acceleration_enabled: true,
+    model_acceleration_enabled: false,
   };
 
   constructor(options: { directory: string }) {
