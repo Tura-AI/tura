@@ -12,14 +12,7 @@ import { t } from "../i18n";
 import { classNames } from "../state/format";
 import { openExternalUrl } from "../utils/external-url";
 import { RICH_TOKEN_PATTERN } from "./message-rich-protocol";
-import {
-  gatewayBaseUrl,
-  isLocalLinkTarget,
-  localOpenPathQueryValue,
-  localPathQueryValue,
-  mediaSource,
-  parseLocalTextReferences,
-} from "./message-rich-text-paths";
+import { mediaSource } from "./message-rich-text-paths";
 
 export {
   reactionEmojiValues,
@@ -38,7 +31,6 @@ type RichNode =
     }
   | { kind: "media"; path: string }
   | { kind: "emoji"; variant: "sticker" | "react"; value: string }
-  | { kind: "local-path"; path: string; label?: RichNode[] }
   | { kind: "table"; caption: RichNode[]; rows: RichTableRow[] };
 
 type RichTableCell = {
@@ -142,15 +134,6 @@ function RichNodeView(props: { node: RichNode; workspaceDirectory?: string }) {
   }
   if (props.node.kind === "emoji") {
     return <span class={`rich-emoji rich-${props.node.variant}`}>{props.node.value}</span>;
-  }
-  if (props.node.kind === "local-path") {
-    return (
-      <LocalPathLink
-        path={props.node.path}
-        label={props.node.label}
-        workspaceDirectory={props.workspaceDirectory}
-      />
-    );
   }
   if (props.node.kind === "table") {
     return (
@@ -294,49 +277,6 @@ function RichTableView(props: {
   );
 }
 
-function LocalPathLink(props: { path: string; label?: RichNode[]; workspaceDirectory?: string }) {
-  const [opening, setOpening] = createSignal(false);
-  const label = createMemo(() => (props.label ? plainText(props.label) : props.path));
-  async function openPath(event: MouseEvent) {
-    event.preventDefault();
-    if (opening()) {
-      return;
-    }
-    setOpening(true);
-    try {
-      await openLocalFile(props.path, props.workspaceDirectory);
-    } catch (error) {
-      console.error("Failed to open local path", error);
-    } finally {
-      setOpening(false);
-    }
-  }
-  return (
-    <button
-      type="button"
-      class="rich-local-path"
-      title={props.path}
-      disabled={opening()}
-      onClick={openPath}
-    >
-      {label()}
-    </button>
-  );
-}
-
-async function openLocalFile(path: string, workspaceDirectory?: string): Promise<void> {
-  const query = new URLSearchParams({ path: localOpenPathQueryValue(path) });
-  if (workspaceDirectory) {
-    query.set("directory", workspaceDirectory);
-  }
-  const response = await fetch(`${gatewayBaseUrl()}/file/open?${query.toString()}`, {
-    method: "POST",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-}
-
 function RichElement(props: {
   node: Extract<RichNode, { kind: "element" }>;
   workspaceDirectory?: string;
@@ -405,19 +345,14 @@ function MediaNode(props: { path: string; workspaceDirectory?: string }) {
         when={isImage() && !failed()}
         fallback={<FileMediaTile path={props.path} workspaceDirectory={props.workspaceDirectory} />}
       >
-        <button
-          type="button"
-          class="rich-media-thumb"
-          title={props.path}
-          onClick={() => void openLocalFile(props.path, props.workspaceDirectory)}
-        >
+        <div class="rich-media-thumb" title={props.path}>
           <img
             src={mediaSource(props.path, props.workspaceDirectory)}
             alt=""
             loading="lazy"
             onError={() => setFailed(true)}
           />
-        </button>
+        </div>
       </Show>
       <figcaption>{props.path}</figcaption>
     </figure>
@@ -474,31 +409,11 @@ function GalleryMediaItem(props: {
 }
 
 function FileMediaTile(props: { path: string; workspaceDirectory?: string }) {
-  const [opening, setOpening] = createSignal(false);
-  async function openFile() {
-    if (opening()) {
-      return;
-    }
-    setOpening(true);
-    try {
-      await openLocalFile(props.path, props.workspaceDirectory);
-    } catch (error) {
-      console.error("Failed to open media file", error);
-    } finally {
-      setOpening(false);
-    }
-  }
   return (
-    <button
-      type="button"
-      class="rich-file-tile"
-      title={props.path}
-      disabled={opening()}
-      onClick={openFile}
-    >
+    <div class="rich-file-tile" title={props.path}>
       <span class="rich-file-name">{fileName(props.path)}</span>
       <span class="rich-file-ext">{fileExtension(props.path) || t("open")}</span>
-    </button>
+    </div>
   );
 }
 
@@ -626,7 +541,7 @@ function parseHtmlFragment(source: string): RichNode[] {
 function parseInlineRichText(source: string): RichNode[] {
   const normalized = preserveUnknownAngleBrackets(normalizeHtmlBlockBreaks(source));
   if (typeof DOMParser === "undefined") {
-    return splitInlineTextReferences(normalized);
+    return normalized ? [{ kind: "text", text: normalized }] : [];
   }
   const document = new DOMParser().parseFromString(normalized, "text/html");
   return Array.from(document.body.childNodes).flatMap(readDomNode);
@@ -776,7 +691,7 @@ function isMarkdownTableSeparator(value: string): boolean {
 
 function readDomNode(node: Node): RichNode[] {
   if (node.nodeType === Node.TEXT_NODE) {
-    return splitInlineTextReferences(node.textContent ?? "");
+    return [{ kind: "text", text: node.textContent ?? "" }];
   }
   if (node.nodeType !== Node.ELEMENT_NODE) {
     return [];
@@ -800,24 +715,16 @@ function readDomNode(node: Node): RichNode[] {
       return [{ kind: "element", tag: "strike", children }];
     case "a": {
       const href = element.getAttribute("href") ?? "";
-      return isLocalLinkTarget(href)
+      return isSafeUrl(href)
         ? [
             {
-              kind: "local-path",
-              path: localPathQueryValue(href),
-              label: [{ kind: "text", text: element.textContent ?? "" }],
+              kind: "element",
+              tag: "link",
+              href,
+              children: [{ kind: "text", text: element.textContent ?? "" }],
             },
           ]
-        : isSafeUrl(href)
-          ? [
-              {
-                kind: "element",
-                tag: "link",
-                href,
-                children: [{ kind: "text", text: element.textContent ?? "" }],
-              },
-            ]
-          : children;
+        : children;
     }
     case "code":
       return [
@@ -899,27 +806,6 @@ function compactTextNodes(nodes: RichNode[]): RichNode[] {
   return compacted.filter((node) => node.kind !== "text" || node.text.length > 0);
 }
 
-function splitInlineTextReferences(text: string): RichNode[] {
-  return parseLocalTextReferences(text).map((node): RichNode => {
-    if (node.kind === "local-path") {
-      return {
-        kind: "local-path",
-        path: node.path,
-        label: node.label ? [{ kind: "text", text: node.label }] : undefined,
-      };
-    }
-    if (node.kind === "web-link") {
-      return {
-        kind: "element",
-        tag: "link",
-        href: node.href,
-        children: [{ kind: "text", text: node.label }],
-      };
-    }
-    return { kind: "text", text: node.text };
-  });
-}
-
 function plainText(nodes: RichNode[]): string {
   return nodes
     .map((node) => {
@@ -940,7 +826,7 @@ function plainText(nodes: RichNode[]): string {
       if (node.kind === "media") {
         return `[MEDIA:${node.path}:MEDIA]`;
       }
-      return node.kind === "emoji" ? node.value : node.path;
+      return node.value;
     })
     .join("");
 }

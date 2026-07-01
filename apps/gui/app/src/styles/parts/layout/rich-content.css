@@ -191,25 +191,6 @@
   color: transparent;
 }
 
-.rich-local-path {
-  display: inline;
-  max-width: min(100%, 42rem);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  text-decoration: underline;
-  word-break: break-all;
-  cursor: pointer;
-}
-
-.rich-local-path:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
 .rich-media img,
 .rich-gallery img {
   box-sizing: border-box;
@@ -259,7 +240,6 @@
   padding: 0;
   border: 0;
   background: transparent;
-  cursor: pointer;
 }
 
 .rich-media figcaption {
@@ -309,23 +289,11 @@
   border-radius: var(--radius-small);
   background: var(--surface);
   color: var(--ink);
-  cursor: pointer;
 }
 
 .rich-media > .rich-file-tile {
   width: 160px;
   max-width: 100%;
-}
-
-.rich-file-tile:hover,
-.rich-file-tile:focus-visible {
-  border-color: var(--line-strong);
-  background: var(--wash);
-}
-
-.rich-file-tile:disabled {
-  cursor: wait;
-  opacity: 0.72;
 }
 
 .rich-file-name,
