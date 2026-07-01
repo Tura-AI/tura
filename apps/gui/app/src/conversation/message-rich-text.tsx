@@ -158,29 +158,17 @@ function RichTableView(props: {
   const caption = createMemo(() => plainText(props.caption).trim());
   const [scrollWidth, setScrollWidth] = createSignal(0);
   const [clientWidth, setClientWidth] = createSignal(0);
-  const [scrollHeight, setScrollHeight] = createSignal(0);
-  const [clientHeight, setClientHeight] = createSignal(0);
   const [scrollLeft, setScrollLeft] = createSignal(0);
-  const [scrollTop, setScrollTop] = createSignal(0);
   let tableScroll: HTMLDivElement | undefined;
   let xTrack: HTMLDivElement | undefined;
-  let yTrack: HTMLDivElement | undefined;
 
   const hasXOverflow = createMemo(() => scrollWidth() > clientWidth() + 1 && clientWidth() > 0);
-  const hasYOverflow = createMemo(() => scrollHeight() > clientHeight() + 1 && clientHeight() > 0);
   const xThumbPercent = createMemo(() =>
     scrollWidth() > 0 ? Math.max(4, (clientWidth() / scrollWidth()) * 100) : 0,
-  );
-  const yThumbPercent = createMemo(() =>
-    scrollHeight() > 0 ? Math.max(8, (clientHeight() / scrollHeight()) * 100) : 0,
   );
   const xThumbOffset = createMemo(() => {
     const maxScroll = Math.max(1, scrollWidth() - clientWidth());
     return (scrollLeft() / maxScroll) * (100 - xThumbPercent());
-  });
-  const yThumbOffset = createMemo(() => {
-    const maxScroll = Math.max(1, scrollHeight() - clientHeight());
-    return (scrollTop() / maxScroll) * (100 - yThumbPercent());
   });
 
   onMount(() => {
@@ -200,10 +188,7 @@ function RichTableView(props: {
   function updateScrollMetrics() {
     setScrollWidth(tableScroll?.scrollWidth ?? 0);
     setClientWidth(tableScroll?.clientWidth ?? 0);
-    setScrollHeight(tableScroll?.scrollHeight ?? 0);
-    setClientHeight(tableScroll?.clientHeight ?? 0);
     setScrollLeft(tableScroll?.scrollLeft ?? 0);
-    setScrollTop(tableScroll?.scrollTop ?? 0);
   }
 
   function setHorizontalScroll(event: PointerEvent) {
@@ -216,19 +201,6 @@ function RichTableView(props: {
     const offset = Math.min(maxOffset, Math.max(0, event.clientX - rect.left - thumbWidth / 2));
     tableScroll.scrollLeft =
       (offset / maxOffset) * (tableScroll.scrollWidth - tableScroll.clientWidth);
-    updateScrollMetrics();
-  }
-
-  function setVerticalScroll(event: PointerEvent) {
-    if (!tableScroll || !yTrack) {
-      return;
-    }
-    const rect = yTrack.getBoundingClientRect();
-    const thumbHeight = (yThumbPercent() / 100) * rect.height;
-    const maxOffset = Math.max(1, rect.height - thumbHeight);
-    const offset = Math.min(maxOffset, Math.max(0, event.clientY - rect.top - thumbHeight / 2));
-    tableScroll.scrollTop =
-      (offset / maxOffset) * (tableScroll.scrollHeight - tableScroll.clientHeight);
     updateScrollMetrics();
   }
 
@@ -308,21 +280,6 @@ function RichTableView(props: {
             style={{
               width: `${xThumbPercent()}%`,
               left: `${xThumbOffset()}%`,
-            }}
-          />
-        </div>
-      </Show>
-      <Show when={hasYOverflow()}>
-        <div
-          ref={yTrack}
-          class="rich-table-overflow-bar rich-table-overflow-y"
-          aria-hidden="true"
-          onPointerDown={(event) => dragScroll(event, setVerticalScroll)}
-        >
-          <div
-            style={{
-              height: `${yThumbPercent()}%`,
-              top: `${yThumbOffset()}%`,
             }}
           />
         </div>

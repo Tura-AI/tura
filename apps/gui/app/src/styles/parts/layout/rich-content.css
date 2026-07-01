@@ -96,11 +96,11 @@
 
 .rich-table-scroll {
   max-width: 100%;
-  max-height: min(36vh, 320px);
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
   scrollbar-width: none;
   scrollbar-gutter: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
 }
 
 .rich-table-scroll::-webkit-scrollbar {
@@ -164,13 +164,9 @@
 
 .rich-table-scroll th:first-child,
 .rich-table-scroll td:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 1;
   min-width: 5.5rem;
   width: max(5.5rem, var(--rich-table-cell-width, 12ch));
   max-width: max(5.5rem, var(--rich-table-cell-width, 12ch));
-  background: var(--paper);
   text-align: right;
 }
 
@@ -181,10 +177,6 @@
   background: var(--paper);
   color: var(--ink);
   font-weight: 700;
-}
-
-.rich-table-scroll th:first-child {
-  z-index: 3;
 }
 
 .rich-table-overflow-bar {
@@ -206,20 +198,6 @@
 .rich-table-overflow-x > div {
   top: 1px;
   bottom: 1px;
-}
-
-.rich-table-overflow-y {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 8px;
-  height: min(36vh, 320px);
-  cursor: ns-resize;
-}
-
-.rich-table-overflow-y > div {
-  right: 1px;
-  left: 1px;
 }
 
 .rich-spoiler {

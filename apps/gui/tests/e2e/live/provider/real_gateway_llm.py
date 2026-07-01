@@ -187,29 +187,30 @@ async def page_metrics(page):
               })(),
               tableXOverflowBar: document.querySelectorAll('.rich-table-overflow-x').length,
               tableYOverflowBar: document.querySelectorAll('.rich-table-overflow-y').length,
-              tableSticky: (() => {
+              tableScrollBehavior: (() => {
                 const table = document.querySelector('.rich-table-scroll');
                 const header = document.querySelector('.rich-table-scroll th');
                 const index = document.querySelector('.rich-table-scroll tbody tr:nth-child(2) td:first-child');
-                if (!table || !header || !index) return { header: false, index: false };
+                if (!table || !header || !index) return { header: false, indexMoves: false, indexPosition: '' };
                 const before = {
                   headerTop: header.getBoundingClientRect().top,
+                  indexLeft: index.getBoundingClientRect().left,
                 };
-                table.scrollTop = Math.min(280, table.scrollHeight - table.clientHeight);
                 table.scrollLeft = Math.min(560, table.scrollWidth - table.clientWidth);
                 const after = {
                   headerTop: header.getBoundingClientRect().top,
                   indexLeft: index.getBoundingClientRect().left,
+                  indexPosition: getComputedStyle(index).position,
                 };
                 table.scrollLeft = Math.min(1120, table.scrollWidth - table.clientWidth);
                 const afterMore = {
                   indexLeft: index.getBoundingClientRect().left,
                 };
-                table.scrollTop = 0;
                 table.scrollLeft = 0;
                 return {
                   header: Math.abs(before.headerTop - after.headerTop) <= 1,
-                  index: Math.abs(after.indexLeft - afterMore.indexLeft) <= 1,
+                  indexMoves: Math.abs(before.indexLeft - after.indexLeft) > 100 && Math.abs(after.indexLeft - afterMore.indexLeft) > 100,
+                  indexPosition: after.indexPosition,
                 };
               })(),
               rawMarkdownTable: document.body.innerText.includes('| Index |'),
@@ -466,12 +467,13 @@ async def run_display_matrix(browser, results, browser_errors):
             ("rich-table-rows", metrics["rich"]["tableRows"] >= 73),
             ("rich-table-cells", metrics["rich"]["tableCells"] >= 3500),
             ("rich-table-horizontal-scroll", metrics["rich"]["tableScrollX"] > 10000),
-            ("rich-table-vertical-scroll", metrics["rich"]["tableScrollY"] > 900),
-            ("rich-table-internal-scrollbars", metrics["rich"]["tableOverflow"] == "scroll"),
+            ("rich-table-renders-all-rows-without-internal-vertical-scroll", metrics["rich"]["tableScrollY"] <= 1),
+            ("rich-table-overflow-not-forced-to-scroll", metrics["rich"]["tableOverflow"] != "scroll"),
             ("rich-table-horizontal-bar-visible", metrics["rich"]["tableXOverflowBar"] == 1),
-            ("rich-table-vertical-bar-visible", metrics["rich"]["tableYOverflowBar"] == 1),
-            ("rich-table-header-sticky", metrics["rich"]["tableSticky"]["header"]),
-            ("rich-table-index-sticky", metrics["rich"]["tableSticky"]["index"]),
+            ("rich-table-vertical-bar-hidden", metrics["rich"]["tableYOverflowBar"] == 0),
+            ("rich-table-header-sticky", metrics["rich"]["tableScrollBehavior"]["header"]),
+            ("rich-table-first-column-not-sticky", metrics["rich"]["tableScrollBehavior"]["indexPosition"] != "sticky"),
+            ("rich-table-first-column-scrolls", metrics["rich"]["tableScrollBehavior"]["indexMoves"]),
             ("markdown-table-rendered", not metrics["rich"]["rawMarkdownTable"]),
             ("rich-reaction-moved-out-of-body", metrics["rich"]["reaction"] == 0),
             ("message-reaction-rendered", metrics["rich"]["messageReaction"] >= 1),

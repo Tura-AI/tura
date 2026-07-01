@@ -18,14 +18,15 @@ function cssBlock(selector: string): string {
 }
 
 describe("rich content table scrollbars", () => {
-  test("keeps tables scrollable with custom overflow controls", () => {
-    expect(cssBlock(".rich-table-scroll")).toContain("max-height: min(36vh, 320px);");
-    expect(cssBlock(".rich-table-scroll")).toContain("overflow: auto;");
+  test("renders every table row while keeping only horizontal table scrolling", () => {
+    expect(cssBlock(".rich-table-scroll")).not.toContain("max-height");
+    expect(cssBlock(".rich-table-scroll")).toContain("overflow-x: auto;");
+    expect(cssBlock(".rich-table-scroll")).toContain("overflow-y: visible;");
     expect(cssBlock(".rich-table-scroll")).toContain("scrollbar-width: none;");
     expect(cssBlock(".rich-table-scroll")).not.toContain("scrollbar-color");
     expect(cssBlock(".rich-table-scroll::-webkit-scrollbar")).toContain("display: none;");
     expect(richContentCss).toContain(".rich-table-overflow-x");
-    expect(richContentCss).toContain(".rich-table-overflow-y");
+    expect(richContentCss).not.toContain(".rich-table-overflow-y");
   });
 
   test("keeps table rows separated and cells capped to four lines", () => {
@@ -46,12 +47,20 @@ describe("rich content table scrollbars", () => {
     );
     expect(cssBlock(".rich-table-cell-content")).toContain("max-height: calc(1.35em * 4);");
     expect(cssBlock(".rich-table-cell-content")).toContain("overflow: hidden;");
-    expect(cssBlock(".rich-table-scroll tbody tr:not(:last-child) > th,\n.rich-table-scroll tbody tr:not(:last-child) > td")).toContain("var(--line) 46%");
+    expect(
+      cssBlock(
+        ".rich-table-scroll tbody tr:not(:last-child) > th,\n.rich-table-scroll tbody tr:not(:last-child) > td",
+      ),
+    ).toContain("var(--line) 46%");
   });
 
-  test("keeps sticky table affordances stable", () => {
-    expect(cssBlock(".rich-table-scroll th:first-child,\n.rich-table-scroll td:first-child"))
-      .toContain("position: sticky;");
+  test("lets the first column scroll horizontally with the rest of the table", () => {
+    expect(
+      cssBlock(".rich-table-scroll th:first-child,\n.rich-table-scroll td:first-child"),
+    ).not.toContain("position: sticky;");
+    expect(
+      cssBlock(".rich-table-scroll th:first-child,\n.rich-table-scroll td:first-child"),
+    ).not.toContain("left: 0;");
     expect(richContentCss.replaceAll("\r\n", "\n")).toContain(
       ".rich-table-scroll th {\n  position: sticky;",
     );
