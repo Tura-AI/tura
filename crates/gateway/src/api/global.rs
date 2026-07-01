@@ -203,9 +203,6 @@ fn configured_key_options(root: &Value, tier: &str) -> Vec<TuraConfigOption> {
     };
     let mut options = Vec::new();
     for (provider_id, provider) in providers {
-        if !provider_has_configured_key(provider_id, provider) {
-            continue;
-        }
         let provider_name = provider
             .get("display_name")
             .and_then(Value::as_str)
@@ -290,35 +287,6 @@ fn model_id(model: &Value) -> Option<&str> {
         .filter(|value| !value.trim().is_empty())
 }
 
-fn provider_has_configured_key(provider_id: &str, provider: &Value) -> bool {
-    let mut env_names = provider
-        .get("env")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>();
-    if let Some(token_env) = provider.get("token_env").and_then(Value::as_str) {
-        env_names.push(token_env);
-    }
-    if let Some(entry) = tura_llm_rust::provider_auth_registry_entry(provider_id) {
-        if let Some(token_env) = entry.token_env {
-            env_names.push(token_env);
-        }
-        if let Some(refresh_env) = entry.refresh_env {
-            env_names.push(refresh_env);
-        }
-    }
-    env_names.into_iter().any(config_key_exists)
-}
-
-fn config_key_exists(key: &str) -> bool {
-    std::env::var(key)
-        .ok()
-        .or_else(|| tura_llm_rust::TuraConfig::default().get(key))
-        .is_some_and(|value| !value.trim().is_empty())
-}
-
 fn update_tura_config_tier(path: &Path, payload: &TuraConfigUpdate) -> Result<(), String> {
     let content = std::fs::read_to_string(path).map_err(|err| {
         format!(
@@ -334,7 +302,7 @@ fn update_tura_config_tier(path: &Path, payload: &TuraConfigUpdate) -> Result<()
     })?;
     if !option_exists(&root, &payload.tier, &payload.provider, &payload.model) {
         return Err(format!(
-            "{} / {} is not available for tier {} with configured credentials",
+            "{} / {} is not available for tier {}",
             payload.provider, payload.model, payload.tier
         ));
     }
@@ -541,7 +509,7 @@ pub async fn upgrade(Json(_payload): Json<UpgradeRequest>) -> Json<UpgradeRespon
 mod tests {
     use super::{
         event_matches_session_filter, event_visible_to_frontend, read_json_config,
-        update_tura_config_tier, TuraConfigUpdate,
+        tura_config_tiers, update_tura_config_tier, TuraConfigUpdate,
     };
     use crate::contracts::{
         GlobalEvent, Message, MessageRole, MessageUpdatedProperties, SessionStatusProperties,
@@ -589,6 +557,101 @@ mod tests {
         assert!(
             message.contains(&path.to_string_lossy().to_string()),
             "error should include the config path: {message}"
+        );
+    }
+
+    #[test]
+    fn tura_config_tiers_lists_catalog_options_without_credentials() {
+        let root = serde_json::json!({
+            "model_catalog": {
+                "tiers": ["fast"],
+                "providers": {
+                    "openrouter": {
+                        "display_name": "OpenRouter",
+                        "token_env": "MISSING_OPENROUTER_KEY_FOR_TEST",
+                        "models": {
+                            "fast": [
+                                { "id": "qwen/qwen3.7-max", "name": "Qwen Max" },
+                                { "id": "hidden-model", "visible": false },
+                                { "id": "claude-legacy" }
+                            ]
+                        }
+                    }
+                }
+            },
+            "routes": {
+                "fast": {
+                    "providers": [
+                        { "provider": "openrouter", "model": "qwen/qwen3.7-max" }
+                    ]
+                }
+            }
+        });
+
+        let tiers = tura_config_tiers(&root);
+
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].tier, "fast");
+        assert_eq!(tiers[0].options.len(), 1);
+        assert_eq!(tiers[0].options[0].provider, "openrouter");
+        assert_eq!(tiers[0].options[0].model, "qwen/qwen3.7-max");
+        assert_eq!(tiers[0].options[0].model_name, "Qwen Max");
+    }
+
+    #[test]
+    fn update_tura_config_tier_accepts_catalog_option_without_credentials() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("provider.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "model_catalog": {
+                    "tiers": ["thinking"],
+                    "providers": {
+                        "openrouter": {
+                            "display_name": "OpenRouter",
+                            "token_env": "MISSING_OPENROUTER_KEY_FOR_TEST",
+                            "models": {
+                                "thinking": ["qwen/qwen3.7-max"]
+                            }
+                        }
+                    }
+                },
+                "routes": {
+                    "thinking": {
+                        "providers": [
+                            { "provider": "codex", "model": "gpt-5.5" }
+                        ]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write config");
+
+        update_tura_config_tier(
+            &path,
+            &TuraConfigUpdate {
+                tier: "thinking".to_string(),
+                provider: "openrouter".to_string(),
+                model: "qwen/qwen3.7-max".to_string(),
+            },
+        )
+        .expect("catalog option should be configurable before auth is added");
+
+        let root: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&path).expect("read updated config"),
+        )
+        .expect("updated config json");
+        assert_eq!(
+            root.pointer("/routes/thinking/providers/0/provider")
+                .and_then(serde_json::Value::as_str),
+            Some("openrouter")
+        );
+        assert_eq!(
+            root.pointer("/routes/thinking/providers/0/model")
+                .and_then(serde_json::Value::as_str),
+            Some("qwen/qwen3.7-max")
         );
     }
 
