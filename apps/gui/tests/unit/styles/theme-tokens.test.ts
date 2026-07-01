@@ -25,7 +25,11 @@ describe("theme accent tokens", () => {
     expect(tokenValue(themeBlock(), "--accent")).toBe("#3f4652");
     expect(tokenValue(themeBlock("dark"), "--accent")).toBe("#d8d4ca");
     expect(tokenValue(themeBlock("uruk"), "--accent")).toBe("#6d5148");
-    expect(tokenValue(themeBlock("caral"), "--accent")).toBe("#a5b1a9");
+    expect(tokenValue(themeBlock("caral"), "--accent")).toBe("#000000");
     expect(tokenValue(themeBlock("liangzhu"), "--accent")).toBe("#2f7f79");
+  });
+
+  test("uses white accent text on the caral black controls", () => {
+    expect(tokenValue(themeBlock("caral"), "--accent-ink")).toBe("#ffffff");
   });
 });
