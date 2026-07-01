@@ -36,11 +36,8 @@
 
 .error-strip {
   position: fixed;
-  top: calc(var(--app-titlebar-height) + var(--rail-open-button-top));
-  right: var(--space-3);
-  left: calc(
-    var(--rail) + var(--rail-open-button-top) + var(--rail-open-button-size) + var(--space-2)
-  );
+  top: calc(var(--app-titlebar-height) + var(--space-5));
+  right: var(--space-5);
   z-index: 120;
   display: flex;
   gap: var(--space-3);
@@ -59,7 +56,6 @@
 
 .rail-collapsed .error-strip,
 .rail-fullscreen .error-strip {
-  left: calc(var(--rail-open-button-top) + var(--rail-open-button-size) + var(--space-2));
   max-width: min(520px, calc(100vw - 72px));
 }
 
