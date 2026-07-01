@@ -1,8 +1,8 @@
 use chrono::Utc;
-use gateway::{contracts::SessionStatus, SessionStore};
+use gateway::SessionStore;
 
 #[test]
-fn explicit_start_condition_round_trips_and_idle_scheduler_claims_it() {
+fn explicit_start_condition_round_trips_and_waits_for_user_action_when_already_idle() {
     let store = SessionStore::new();
     let now = Utc::now();
     let session = store.create_session(
@@ -37,22 +37,12 @@ fn explicit_start_condition_round_trips_and_idle_scheduler_claims_it() {
         )
         .expect("task management should update");
 
-    assert_eq!(updated.task_management["status"], serde_json::Value::Null);
+    assert_eq!(updated.task_management["status"], "waiting_user");
     assert_eq!(updated.task_management["start_condition"], "session_idle");
 
-    let claimed = store.claim_due_task_runs(now);
-
-    let claimed_run = claimed
-        .iter()
-        .find(|run| run.session_id == session.id)
-        .expect("newly created idle task should be claimed");
-    assert_eq!(claimed_run.task_summary, "Run once the session is idle");
-    assert_eq!(
-        store
-            .get_session(&session.id)
-            .expect("session should exist")
-            .status,
-        SessionStatus::Busy
+    assert!(
+        store.claim_due_task_runs(now).is_empty(),
+        "newly created session_idle task should wait for user action while the session is already idle"
     );
 }
 

@@ -2165,7 +2165,7 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
         .map(|run| run.session_id.as_str())
         .collect::<Vec<_>>();
     claimed_ids.sort_unstable();
-    let mut expected_ids = vec![scheduled.id.as_str(), idle.id.as_str()];
+    let mut expected_ids = vec![scheduled.id.as_str()];
     expected_ids.sort_unstable();
 
     assert_eq!(claimed_ids, expected_ids);
@@ -2188,8 +2188,8 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
         store
             .get_session(&idle.id)
             .expect("idle should exist")
-            .status,
-        ApiSessionStatus::Busy
+            .task_management["status"],
+        "waiting_user"
     );
     assert_eq!(
         store
@@ -2208,6 +2208,93 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
     );
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn new_session_idle_task_added_while_idle_waits_for_user_action() {
+    let store = SessionStore::new();
+    let now = Utc::now();
+    let session = store.create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    store.update_session(
+        &session.id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(serde_json::json!({
+            "task_summary": "idle-added queued task",
+            "status": "todo",
+            "start_condition": "session_idle"
+        })),
+    );
+
+    let updated = store
+        .get_session(&session.id)
+        .expect("session should exist");
+    assert_eq!(updated.task_management["status"], "waiting_user");
+    assert!(
+        store.claim_due_task_runs(now).is_empty(),
+        "session_idle task added while already idle must wait for user action"
+    );
+}
+
+#[test]
+fn new_session_idle_task_added_while_busy_runs_after_idle_edge() {
+    let store = SessionStore::new();
+    let now = Utc::now();
+    let session = store.create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    store.update_session_status(&session.id, SessionStatusMano::Busy);
+    store.update_session(
+        &session.id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(serde_json::json!({
+            "task_summary": "busy-added queued task",
+            "status": "todo",
+            "start_condition": "session_idle"
+        })),
+    );
+
+    assert!(store.claim_due_task_runs(now).is_empty());
+
+    store.update_session_status(&session.id, SessionStatusMano::Idle);
+
+    let claimed = store.claim_due_task_runs(now);
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].session_id, session.id);
+    assert_eq!(claimed[0].task_summary, "busy-added queued task");
 }
 
 #[test]

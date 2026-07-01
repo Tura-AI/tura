@@ -92,6 +92,7 @@ export function PlanView(props: {
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
+  onQueueSubmit?: () => void;
   onStop: (session: Session) => void;
   onAgent: (agentId: string) => void;
   onOpenSettings: (section: SettingsSection) => void;
@@ -295,11 +296,22 @@ export function PlanView(props: {
       props.onCreateTicket();
       return;
     }
+    if (props.previewSession?.status === "busy") {
+      props.onSubmit();
+      return;
+    }
     if (props.previewSession && props.state.composerText.trim()) {
       props.onCreateTicket(props.previewSession.id);
       return;
     }
     props.onSubmit();
+  }
+  function queueSubmitComposer() {
+    if (props.state.editingTask) {
+      props.onSubmit();
+      return;
+    }
+    props.onQueueSubmit?.();
   }
   return (
     <section
@@ -406,6 +418,7 @@ export function PlanView(props: {
             onComposerText={props.onComposerText}
             onComposerImages={props.onComposerImages}
             onSubmit={submitComposer}
+            onQueueSubmit={queueSubmitComposer}
             onStop={() => props.previewSession && props.onStop(props.previewSession)}
             running={Boolean(props.previewSession && props.previewSession.status !== "idle")}
             submitDisabled={

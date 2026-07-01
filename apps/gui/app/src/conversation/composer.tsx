@@ -3,7 +3,6 @@ import ArrowUp from "lucide-solid/icons/arrow-up";
 import ExternalLink from "lucide-solid/icons/external-link";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import Plus from "lucide-solid/icons/plus";
-import Square from "lucide-solid/icons/square";
 import { For, type JSX, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
@@ -50,18 +49,12 @@ export function Composer(props: {
   });
   const submitBlocked = createMemo(
     () =>
-      props.submitting ||
-      (!props.running && props.submitDisabled) ||
-      (!props.text.trim() && props.images.length === 0),
+      props.submitting || props.submitDisabled || (!props.text.trim() && props.images.length === 0),
   );
   const textEmpty = createMemo(() => !props.text.trim() && props.images.length === 0);
   const composerDragActive = createMemo(() => composerDragDepth() > 0);
 
   function submitFromControl() {
-    if (props.running) {
-      void props.onStop?.();
-      return;
-    }
     if (submitBlocked()) {
       return;
     }
@@ -78,9 +71,6 @@ export function Composer(props: {
       return;
     }
     event.preventDefault();
-    if (props.running) {
-      return;
-    }
     if (submitBlocked()) {
       return;
     }
@@ -95,7 +85,7 @@ export function Composer(props: {
   }
 
   const sendButtonTitle = createMemo(() =>
-    props.running ? t("stop") : t("sendButtonHint", { modifier: shortcutModifierLabel() }),
+    t("sendButtonHint", { modifier: shortcutModifierLabel() }),
   );
 
   createEffect(() => {
@@ -426,7 +416,7 @@ export function Composer(props: {
           data-submitting={props.submitting ? "true" : "false"}
           data-submit-disabled={props.submitDisabled ? "true" : "false"}
           data-text-empty={textEmpty() ? "true" : "false"}
-          disabled={props.running ? !props.onStop : submitBlocked()}
+          disabled={submitBlocked()}
           onPointerDown={(event) => {
             if (event.button !== 0) {
               return;
@@ -439,9 +429,7 @@ export function Composer(props: {
             submitFromControl();
           }}
         >
-          <Show when={props.running} fallback={<ArrowUp size={16} strokeWidth={1.8} />}>
-            <Square size={13} strokeWidth={2} fill="currentColor" />
-          </Show>
+          <ArrowUp size={16} strokeWidth={1.8} />
         </button>
       </div>
       <Show when={previewImageId() !== undefined}>

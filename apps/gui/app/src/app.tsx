@@ -669,6 +669,8 @@ export function App() {
       optimisticSessionId = sessionId;
       optimisticId = `prompt:${sessionId}:${Date.now()}`;
       const now = Date.now();
+      const existingSession = state().sessions.find((session) => session.id === sessionId);
+      const busySession = existingSession?.status === "busy";
       const optimisticMessage: Message = {
         id: optimisticId,
         sessionID: sessionId,
@@ -683,7 +685,7 @@ export function App() {
             messageID: optimisticId,
             type: "text",
             text: content,
-            metadata: { planRunPending: true },
+            metadata: busySession ? { userNewCommand: true } : { planRunPending: true },
           },
         ],
       };
@@ -692,12 +694,14 @@ export function App() {
         selectedSessionId: sessionId,
         sessions: createdSession
           ? [
-              { ...createdSession, status: "busy" },
+              { ...createdSession, status: busySession ? createdSession.status : "busy" },
               ...previous.sessions.filter((session) => session.id !== sessionId),
             ]
-          : previous.sessions.map((session) =>
-              session.id === sessionId ? { ...session, status: "busy" } : session,
-            ),
+          : busySession
+            ? previous.sessions
+            : previous.sessions.map((session) =>
+                session.id === sessionId ? { ...session, status: "busy" } : session,
+              ),
         messagesBySession: {
           ...previous.messagesBySession,
           [sessionId]: [
@@ -731,17 +735,10 @@ export function App() {
         previousMainTab: "conversation",
         planNotice: undefined,
       }));
-      setState((previous) => ({
-        ...previous,
-        selectedSessionId: sessionId,
-        composerText: "",
-        composerImages: [],
-        activeTab: "conversation",
-        previousMainTab: "conversation",
-        planNotice: undefined,
-      }));
       await refreshSessions();
-      void pollSessionMessagesUntilAssistantReply(sessionId);
+      if (!busySession) {
+        void pollSessionMessagesUntilAssistantReply(sessionId);
+      }
     } catch (error) {
       const timeout = error instanceof Error && error.message === PROMPT_RESPONSE_TIMEOUT_CODE;
       setState((previous) => ({

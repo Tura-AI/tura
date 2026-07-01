@@ -307,6 +307,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   }
                   onRunTask={(session, task) => void runEditingTaskNow(session, task)}
                   onSubmit={() => void submitCurrentComposer()}
+                  onQueueSubmit={() => void submitCurrentComposer({ queued: true })}
                   onOpenProviderSettings={openProviderSettings}
                   leftRailOpen={!railCollapsed()}
                   leftRailWidth={railFullscreen() ? 0 : railWidth()}

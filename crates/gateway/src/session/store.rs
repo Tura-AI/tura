@@ -670,6 +670,7 @@ impl SessionStore {
             match apply_task_management_patch(&mut patched, task_management) {
                 Ok(()) => {
                     preserve_busy_doing_tasks(info, &mut patched);
+                    mark_new_session_idle_tasks_added_while_idle_waiting_user(info, &mut patched);
                     info.management.session_name = patched.management.session_name;
                     info.management.task_plan = patched.management.task_plan;
                 }
@@ -1271,6 +1272,31 @@ fn preserve_busy_doing_tasks(current: &SessionInfo, patched: &mut SessionInfo) {
         };
         if matches!(patched_task.status, PlanStatus::Todo | PlanStatus::Question) {
             patched_task.status = PlanStatus::Doing;
+        }
+    }
+}
+
+fn mark_new_session_idle_tasks_added_while_idle_waiting_user(
+    current: &SessionInfo,
+    patched: &mut SessionInfo,
+) {
+    let current_ids = current
+        .management
+        .task_plan
+        .detailed_tasks
+        .iter()
+        .map(|task| task.task_id.as_str())
+        .collect::<HashSet<_>>();
+    let session_is_busy = matches!(current.status, SessionStatusMano::Busy);
+    for task in &mut patched.management.task_plan.detailed_tasks {
+        if !matches!(task.start_condition, StartCondition::SessionIdle)
+            || !matches!(task.status, PlanStatus::Todo | PlanStatus::Question)
+            || current_ids.contains(task.task_id.as_str())
+        {
+            continue;
+        }
+        if !session_is_busy {
+            task.status = PlanStatus::WaitingUser;
         }
     }
 }
