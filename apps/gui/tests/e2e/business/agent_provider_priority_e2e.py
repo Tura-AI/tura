@@ -92,6 +92,12 @@ async def select_field_option(page, label_pattern: str, option_name: str) -> Non
     await menu.locator("button").filter(has_text=option_name).click()
 
 
+async def capture_debug(page, name: str) -> None:
+    await page.screenshot(path=OUT / f"{name}.png", full_page=True)
+    body = await page.locator("body").inner_text(timeout=5_000)
+    (OUT / f"{name}.txt").write_text(body, encoding="utf-8")
+
+
 async def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     process = start_server()
@@ -114,7 +120,12 @@ async def main() -> None:
                 f"{GUI_URL}/?tab=settings&e2eFixture=communication-protocol",
                 wait_until="domcontentloaded",
             )
-            await page.locator('[data-section="agents"]').click()
+            await page.wait_for_function("window.__turaGuiE2E && window.__turaGuiE2E.snapshot")
+            try:
+                await page.locator('[data-section="agents"]').click(timeout=15_000)
+            except Exception:
+                await capture_debug(page, "missing-agent-section")
+                raise
             await expect(page.locator(".agent-settings-panel .agent-pick-row").first).to_be_visible()
             await page.locator(".agent-pick-row").filter(has_text="Direct Text Only").click()
 
