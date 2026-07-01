@@ -34,7 +34,7 @@ export function AgentComposerMenu(props: {
   );
 
   function updateMenuPosition() {
-    if (!root || !menu) {
+    if (!root) {
       return;
     }
     setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 260, maxWidth: 380 }));
@@ -45,6 +45,7 @@ export function AgentComposerMenu(props: {
       setMenuStyle({});
       return;
     }
+    updateMenuPosition();
     const frame = window.requestAnimationFrame(updateMenuPosition);
     const closeOutside = (event: PointerEvent) => {
       if (!root?.contains(event.target as Node)) {

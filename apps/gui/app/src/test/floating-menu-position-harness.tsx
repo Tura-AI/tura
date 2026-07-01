@@ -79,12 +79,12 @@ function Harness() {
   const [font, setFont] = createSignal("Inter");
 
   return (
-    <div class="floating-menu-harness">
-      <section data-menu-case="workspace-menu" class="floating-menu-row top-row">
+    <div style={harnessStyle}>
+      <section data-menu-case="workspace-menu" style={{ ...rowStyle, "margin-top": "28px" }}>
         <span>Workspace actions</span>
         <WorkspaceMenu onSettings={() => undefined} onNewSession={() => undefined} />
       </section>
-      <section data-menu-case="new-workspace" class="floating-menu-row">
+      <section data-menu-case="new-workspace" style={rowStyle}>
         <span>New session workspace</span>
         <NewSessionWorkspacePicker
           projects={projects}
@@ -92,12 +92,14 @@ function Harness() {
           query={workspaceQuery()}
           defaultDirectory={projects[0]!.worktree}
           onQuery={setWorkspaceQuery}
-          onWorkspace={(value) => setWorkspace(value)}
+          onWorkspace={(value) => {
+            setWorkspace(value);
+          }}
           onCreateWorkspace={() => undefined}
           onPickDirectory={async () => undefined}
         />
       </section>
-      <section data-menu-case="draft-session" class="floating-menu-row">
+      <section data-menu-case="draft-session" style={rowStyle}>
         <span>Draft session</span>
         <PlanDraftSessionPicker
           sessions={sessions}
@@ -105,11 +107,11 @@ function Harness() {
           onSession={setDraftSessionId}
         />
       </section>
-      <section data-menu-case="start-condition" class="floating-menu-row">
+      <section data-menu-case="start-condition" style={rowStyle}>
         <span>Start condition</span>
         <PlanComposerControls startCondition={startCondition()} onStartCondition={setStartCondition} />
       </section>
-      <section data-menu-case="agent-menu" class="floating-menu-row">
+      <section data-menu-case="agent-menu" style={rowStyle}>
         <span>Agent model</span>
         <AgentComposerMenu
           agents={agents}
@@ -119,7 +121,7 @@ function Harness() {
           onSettings={() => undefined}
         />
       </section>
-      <section data-menu-case="appearance-select" class="floating-menu-row">
+      <section data-menu-case="appearance-select" style={rowStyle}>
         <span>Appearance select</span>
         <AppearanceSelect
           value={font()}
@@ -133,6 +135,23 @@ function Harness() {
     </div>
   );
 }
+
+const harnessStyle = {
+  display: "grid",
+  gap: "44px",
+  width: "min(720px, calc(100vw - 64px))",
+  padding: "48px 0 96px 48px",
+};
+
+const rowStyle = {
+  display: "flex",
+  "justify-content": "space-between",
+  gap: "var(--space-5)",
+  "align-items": "center",
+  "min-height": "48px",
+  padding: "var(--space-3)",
+  "border-bottom": "1px solid var(--line)",
+};
 
 const root = document.getElementById("root");
 

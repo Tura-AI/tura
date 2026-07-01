@@ -130,6 +130,7 @@ export function NewSessionWorkspacePicker(props: {
         setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 260, maxWidth: 340 }));
       }
     };
+    updatePosition();
     const frame = window.requestAnimationFrame(updatePosition);
     const closeOutside = (event: PointerEvent) => {
       if (!root?.contains(event.target as Node)) {

@@ -23,6 +23,7 @@ export function WorkspaceMenu(props: { onSettings: () => void; onNewSession: () 
         setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 188, maxWidth: 240 }));
       }
     };
+    updatePosition();
     const frame = window.requestAnimationFrame(updatePosition);
     const closeOutside = (event: PointerEvent) => {
       if (!root?.contains(event.target as Node)) {
