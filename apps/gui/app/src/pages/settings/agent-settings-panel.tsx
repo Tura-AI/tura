@@ -40,7 +40,6 @@ export function AgentSettingsPanel(props: {
   const [selectedModel, setSelectedModel] = createSignal("");
   const [selectedReasoningEffort, setSelectedReasoningEffort] =
     createSignal<(typeof AGENT_REASONING_EFFORTS)[number]>("high");
-  const [priorityEnabled, setPriorityEnabled] = createSignal(true);
   const [loadingAgent, setLoadingAgent] = createSignal(false);
   const [agentQuery, setAgentQuery] = createSignal("");
   const visibleAgents = createMemo(() => visibleConfigurableAgents(props.agents));
@@ -109,7 +108,6 @@ export function AgentSettingsPanel(props: {
     setSelectedProvider(currentModel?.provider ?? "");
     setSelectedModel(currentModel?.model ?? "");
     setSelectedReasoningEffort(normalizeReasoningEffort(agentReasoningEffort(agent, stored)));
-    setPriorityEnabled(agentPriorityEnabled(agent, stored));
     setLoadingAgent(false);
   }
 
@@ -124,7 +122,6 @@ export function AgentSettingsPanel(props: {
         defaultModelTier: selectedDefaultModelTier(),
         currentModel: selectedModelValue(),
         reasoningEffort: selectedReasoningEffort(),
-        priority: priorityEnabled(),
       }),
       prompt: stored.prompt ?? undefined,
     };
@@ -242,25 +239,6 @@ export function AgentSettingsPanel(props: {
                 setSelectedReasoningEffort(normalizeReasoningEffort(option.value))
               }
             />
-          </div>
-          <div class="field-row">
-            <span>{t("modelPriority")}</span>
-            <div class="segmented two agent-priority-segmented">
-              <button
-                type="button"
-                class={classNames(priorityEnabled() && "selected")}
-                onClick={() => setPriorityEnabled(true)}
-              >
-                {t("enabled")}
-              </button>
-              <button
-                type="button"
-                class={classNames(!priorityEnabled() && "selected")}
-                onClick={() => setPriorityEnabled(false)}
-              >
-                {t("disabled")}
-              </button>
-            </div>
           </div>
           <div class="field-row agent-capabilities-row">
             <span>{t("capabilities")}</span>
@@ -395,19 +373,6 @@ function reasoningEffortLabel(value: string): string {
   return labels[value] ? t(labels[value]) : value;
 }
 
-function agentPriorityEnabled(agent?: Agent, stored?: StoredAgent): boolean {
-  const configured =
-    readProviderBool(stored?.config.provider, "model_acceleration_enabled") ??
-    readProviderBool(agent?.options?.provider, "model_acceleration_enabled");
-  if (configured !== undefined) {
-    return configured;
-  }
-  const serviceTierPriority =
-    readProviderString(stored?.config.provider, ["service_tier"]) === "priority" ||
-    readProviderString(agent?.options?.provider, ["service_tier"]) === "priority";
-  return serviceTierPriority || true;
-}
-
 function readProviderString(value: unknown, keys: string[]): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -422,21 +387,12 @@ function readProviderString(value: unknown, keys: string[]): string | undefined 
   return undefined;
 }
 
-function readProviderBool(value: unknown, key: string): boolean | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const field = (value as Record<string, unknown>)[key];
-  return typeof field === "boolean" ? field : undefined;
-}
-
 function agentConfigWithProviderSettings(
   config: AgentConfig,
   settings: {
     defaultModelTier: (typeof DEFAULT_MODEL_TIERS)[number];
     currentModel: string;
     reasoningEffort: (typeof AGENT_REASONING_EFFORTS)[number];
-    priority: boolean;
   },
 ): AgentConfig {
   const provider =
@@ -451,8 +407,6 @@ function agentConfigWithProviderSettings(
       tura_llm_name: settings.defaultModelTier,
       ...(settings.currentModel ? { current_model: settings.currentModel } : {}),
       model_reasoning_effort: settings.reasoningEffort,
-      model_acceleration_enabled: settings.priority,
-      service_tier: settings.priority ? "priority" : "default",
     },
   };
 }

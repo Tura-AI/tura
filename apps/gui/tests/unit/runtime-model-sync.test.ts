@@ -8,6 +8,25 @@ import { render } from "../../../tui/src/tui/render";
 import { stripAnsi } from "../../../tui/src/tui/render-terminal";
 
 describe("GUI/TUI runtime model config sync", () => {
+  test("tier names resolve to the configured model instead of rendering thinking", () => {
+    const gatewayConfig = { model: "thinking" };
+    const modelConfig = tierModelConfig("thinking", "codex", "gpt-5.5");
+
+    expect(workspaceModelFromConfig(gatewayConfig, modelConfig)).toBe("codex/gpt-5.5");
+    expect(tuiPromptModel(gatewayConfig, modelConfig)).toBe("codex/gpt-5.5");
+    expect(tuiBottomMeta(gatewayConfig, modelConfig)).toContain("codex/gpt-5.5");
+    expect(tuiBottomMeta(gatewayConfig, modelConfig)).not.toContain("thinking");
+  });
+
+  test("bare tier names are not displayed as runtime models when tier config is missing", () => {
+    const gatewayConfig = { model: "thinking", active_provider: "codex" };
+
+    expect(workspaceModelFromConfig(gatewayConfig)).toBeUndefined();
+    expect(tuiPromptModel(gatewayConfig)).toBe("codex/gpt-5.5");
+    expect(tuiBottomMeta(gatewayConfig)).toContain("codex/gpt-5.5");
+    expect(tuiBottomMeta(gatewayConfig)).not.toContain("thinking");
+  });
+
   test("GUI model changes are visible to TUI and use the same prompt model", () => {
     const guiSelectedModel = "openrouter/qwen/qwen3.7-max";
     const gatewayConfig = workspaceModelPatch(guiSelectedModel);
@@ -43,12 +62,18 @@ describe("GUI/TUI runtime model config sync", () => {
   });
 });
 
-function tuiPromptModel(config: Record<string, unknown>): string | undefined {
-  return promptRuntimeSelection(tuiState(config)).model;
+function tuiPromptModel(
+  config: Record<string, unknown>,
+  modelConfig?: Parameters<typeof tuiState>[1],
+): string | undefined {
+  return promptRuntimeSelection(tuiState(config, modelConfig)).model;
 }
 
-function tuiBottomMeta(config: Record<string, unknown>): string {
-  const frame = stripAnsi(render(tuiState(config), plainCapabilities()));
+function tuiBottomMeta(
+  config: Record<string, unknown>,
+  modelConfig?: Parameters<typeof tuiState>[1],
+): string {
+  const frame = stripAnsi(render(tuiState(config, modelConfig), plainCapabilities()));
   return (
     frame
       .split("\n")
@@ -57,7 +82,17 @@ function tuiBottomMeta(config: Record<string, unknown>): string {
   );
 }
 
-function tuiState(config: Record<string, unknown>) {
+function tuiState(
+  config: Record<string, unknown>,
+  modelConfig?: {
+    path: string;
+    tiers: Array<{
+      tier: string;
+      current?: { provider: string; model: string } | null;
+      options: Array<{ provider: string; model: string }>;
+    }>;
+  },
+) {
   return reducer(
     reducer(initialState("C:/repo"), {
       type: "hydrate",
@@ -76,6 +111,20 @@ function tuiState(config: Record<string, unknown>) {
     {
       type: "session-config",
       value: config,
+      modelConfig,
     },
   );
+}
+
+function tierModelConfig(tier: string, provider: string, model: string) {
+  return {
+    path: "C:/repo/.tura/config.conf",
+    tiers: [
+      {
+        tier,
+        current: { provider, model },
+        options: [{ provider, model }],
+      },
+    ],
+  };
 }

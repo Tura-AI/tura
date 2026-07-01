@@ -60,6 +60,34 @@ test("agent setting marker follows session config instead of stale session agent
   assert.equal(state.selectedSettingOptionIndex, 1);
 });
 
+test("settings root renders configured tier as real model, not thinking", () => {
+  setActiveCapabilities(richCapabilities());
+  const state = {
+    ...baseState(),
+    session: { ...session("sess-settings"), model: "thinking" },
+    sessionConfig: {
+      ...baseState().sessionConfig,
+      model: "thinking",
+      active_model: undefined,
+    },
+    modelConfig: {
+      path: "C:/repo/.tura/config.conf",
+      tiers: [
+        {
+          tier: "thinking",
+          current: { provider: "mock", model: "mock-fast" },
+          options: [{ provider: "mock", model: "mock-fast" }],
+        },
+      ],
+    },
+  };
+
+  const rendered = stripAnsi(settingsLines(state, 96, 20).join("\n"));
+
+  assert.match(rendered, /Model\s+mock\/mock-fast/u);
+  assert.doesNotMatch(rendered, /Model\s+thinking/u);
+});
+
 test("persona setting marker follows session config over stale session persona", () => {
   setActiveCapabilities(richCapabilities());
   const state = reducer(

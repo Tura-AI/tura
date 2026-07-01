@@ -21,8 +21,8 @@ export function storedAgentFromRuntimeAgent(agent: Agent): StoredAgent {
       description: agent.description,
       aliases: [],
       provider: {
-        default_model_tier: agentDefaultModelTierFromOptions(agent.options) ?? "thinking",
-        tura_llm_name: agentDefaultModelTierFromOptions(agent.options) ?? "thinking",
+        default_model_tier: agentDefaultModelTierFromOptions(agent.options),
+        tura_llm_name: agentDefaultModelTierFromOptions(agent.options),
       },
       agent_capabilities: capabilities.map((capability) => ({
         capability_name: capability,

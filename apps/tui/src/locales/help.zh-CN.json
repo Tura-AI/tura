@@ -140,7 +140,7 @@
       "tura [OPTIONS] agent create AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent update AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent delete AGENT_ID [--json]",
-      "tura [OPTIONS] agent model AGENT_ID [PROVIDER/MODEL] [--reasoning LEVEL] [--priority|--no-priority]"
+      "tura [OPTIONS] agent model AGENT_ID [PROVIDER/MODEL] [--reasoning LEVEL]"
     ],
     "sections": [
       { "title": "示例", "lines": ["tura run -a AGENT_ID -m PROVIDER/MODEL -p \"prompt\""] }

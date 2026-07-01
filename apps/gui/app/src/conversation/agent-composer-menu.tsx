@@ -159,7 +159,7 @@ function agentModelText(agent: Agent, modelConfig: TuraConfigResponse | undefine
     return directModelId;
   }
   const tier = agentTier(agent);
-  return modelForTier(modelConfig, tier) ?? tier;
+  return modelForTier(modelConfig, tier) ?? "";
 }
 
 function runtimeModelText(model: string, modelConfig: TuraConfigResponse | undefined): string {

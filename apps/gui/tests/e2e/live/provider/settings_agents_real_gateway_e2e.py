@@ -531,15 +531,7 @@ async def main() -> None:
                 "button", name="推理"
             ).click()
             await expect(page.get_by_text("思考强度")).to_be_visible()
-            await expect(page.get_by_text("Priority")).to_be_visible()
             await select_agent_editor_option(page, "思考强度", "高")
-            await page.locator(".agent-priority-segmented").get_by_role(
-                "button", name="开启"
-            ).click()
-            await expect(
-                page.locator(".agent-priority-segmented")
-                .get_by_role("button", name="开启")
-            ).to_have_class("selected")
             save_agent_button = page.locator(".agent-editor .agent-actions-row button.primary")
             await expect(save_agent_button).to_be_enabled()
             async with page.expect_response(
@@ -555,8 +547,6 @@ async def main() -> None:
                 {
                     "tura_llm_name": "thinking",
                     "model_reasoning_effort": "high",
-                    "model_acceleration_enabled": True,
-                    "service_tier": "priority",
                 },
             )
             agent_provider = updated_agent.get("config", {}).get("provider", {})
@@ -569,10 +559,10 @@ async def main() -> None:
             )
             checks.append(
                 {
-                    "name": "agent-settings-persists-reasoning-and-priority",
+                    "name": "agent-settings-persists-reasoning",
                     "ok": agent_provider.get("model_reasoning_effort") == "high"
-                    and agent_provider.get("model_acceleration_enabled") is True
-                    and agent_provider.get("service_tier") == "priority",
+                    and "model_acceleration_enabled" not in agent_provider
+                    and "service_tier" not in agent_provider,
                     "details": {
                         "saved_provider": agent_provider,
                         "patch_payloads": agent_patch_payloads,

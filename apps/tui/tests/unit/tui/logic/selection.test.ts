@@ -44,6 +44,70 @@ test("prompt runtime selection uses saved config before the active session model
   });
 });
 
+test("prompt runtime selection resolves model tier to configured model", () => {
+  const state = reducer(
+    reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session: {
+        id: "sess-runtime-tier",
+        directory: "C:/repo",
+        status: "idle",
+        model: "codex/gpt-5.3-codex-spark",
+        agent: "fast",
+        model_variant: "low",
+        model_acceleration_enabled: false,
+      },
+      messages: [],
+      permissions: [],
+    }),
+    {
+      type: "session-config",
+      value: {
+        model: "thinking",
+        active_agent: "thinking",
+      },
+      modelConfig: {
+        path: "C:/repo/.tura/config.conf",
+        tiers: [
+          {
+            tier: "thinking",
+            current: { provider: "codex", model: "gpt-5.5" },
+            options: [{ provider: "codex", model: "gpt-5.5" }],
+          },
+        ],
+      },
+    },
+  );
+
+  assert.equal(promptRuntimeSelection(state).model, "codex/gpt-5.5");
+});
+
+test("prompt runtime selection does not compose provider with default tier", () => {
+  const state = reducer(
+    reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session: {
+        id: "sess-runtime-tier-missing",
+        directory: "C:/repo",
+        status: "idle",
+        model: "codex/gpt-5.5",
+        agent: "fast",
+      },
+      messages: [],
+      permissions: [],
+    }),
+    {
+      type: "session-config",
+      value: {
+        model: "thinking",
+        active_provider: "codex",
+      },
+    },
+  );
+
+  assert.equal(promptRuntimeSelection(state).model, "codex/gpt-5.5");
+});
+
 test("prompt runtime selection enables priority by default", () => {
   const state = reducer(initialState("C:/repo"), {
     type: "hydrate",

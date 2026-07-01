@@ -199,7 +199,9 @@ export function useAppGatewayLifecycle(options: {
       const selectedSessionId = forceNewSession
         ? undefined
         : (state().selectedSessionId ?? sessions[0]?.id);
-      const configuredModel = workspaceModelFromConfig(workspaceConfig) ?? config.model;
+      const configuredModel =
+        workspaceModelFromConfig(workspaceConfig, modelConfig) ??
+        workspaceModelFromConfig(config, modelConfig);
       const configuredAgent = readConfigString(workspaceConfig, "active_agent") ?? config.agent;
       const configuredVariant = readConfigString(workspaceConfig, "model_variant");
       const configuredLanguage = readConfigString(workspaceConfig, "language") ?? config.language;
@@ -291,7 +293,6 @@ export function useAppGatewayLifecycle(options: {
       }));
     }
   }
-
 }
 
 function mergeWorkspaceProjects(
@@ -334,10 +335,7 @@ function mergeWorkspaceProjects(
   return merged;
 }
 
-async function bootstrapSafe<T>(
-  run: () => Promise<T>,
-  fallback: T,
-): Promise<T> {
+async function bootstrapSafe<T>(run: () => Promise<T>, fallback: T): Promise<T> {
   return safe(() => withTimeout(run(), BOOTSTRAP_REQUEST_TIMEOUT_MS), fallback);
 }
 
