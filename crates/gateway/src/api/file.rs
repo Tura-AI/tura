@@ -107,9 +107,7 @@ fn git_status_snapshot(root: &Path, relative_path: &str) -> GitStatusSnapshot {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     tura_path::process_hardening::hide_child_console_window(&mut git_probe);
-    let is_git_repository = git_probe
-        .status()
-        .is_ok_and(|status| status.success());
+    let is_git_repository = git_probe.status().is_ok_and(|status| status.success());
     if !is_git_repository {
         return GitStatusSnapshot {
             is_git_repository,

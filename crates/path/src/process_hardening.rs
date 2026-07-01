@@ -31,20 +31,6 @@ pub fn hide_child_console_window_and_create_group(command: &mut Command) {
     }
 }
 
-pub fn hide_tokio_child_console_window(command: &mut tokio::process::Command) {
-    #[cfg(windows)]
-    {
-        command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
-    }
-}
-
-pub fn hide_tokio_child_console_window_and_create_group(command: &mut tokio::process::Command) {
-    #[cfg(windows)]
-    {
-        command.creation_flags(WINDOWS_CREATE_NO_WINDOW | WINDOWS_CREATE_NEW_PROCESS_GROUP);
-    }
-}
-
 const EXACT_DANGEROUS_ENV: &[&str] = &[
     "LD_PRELOAD",
     "LD_AUDIT",

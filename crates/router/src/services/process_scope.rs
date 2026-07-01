@@ -148,7 +148,7 @@ impl WorkerProcessScope {
 
 #[cfg(windows)]
 fn configure_platform_spawn(command: &mut Command) {
-    tura_path::process_hardening::hide_tokio_child_console_window(command);
+    command.creation_flags(tura_path::process_hardening::WINDOWS_CREATE_NO_WINDOW);
 }
 
 #[cfg(unix)]

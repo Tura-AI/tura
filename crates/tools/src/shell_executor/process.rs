@@ -296,7 +296,10 @@ fn configure_platform_spawn(_command: &mut Command) {}
 
 #[cfg(windows)]
 fn configure_tokio_platform_spawn(command: &mut tokio::process::Command) {
-    tura_path::process_hardening::hide_tokio_child_console_window_and_create_group(command);
+    command.creation_flags(
+        tura_path::process_hardening::WINDOWS_CREATE_NO_WINDOW
+            | tura_path::process_hardening::WINDOWS_CREATE_NEW_PROCESS_GROUP,
+    );
 }
 
 #[cfg(unix)]

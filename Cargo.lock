@@ -1717,6 +1717,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tura_path",
 ]
 
 [[package]]
@@ -3849,6 +3850,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tura_path",
 ]
 
 [[package]]
@@ -5484,6 +5486,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml 0.8.2",
+ "tura_path",
  "windows-sys 0.59.0",
 ]
 
@@ -6095,6 +6098,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tura_path",
 ]
 
 [[package]]

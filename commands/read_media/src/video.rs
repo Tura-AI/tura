@@ -34,12 +34,10 @@ pub(super) fn process_video(path: &Path, args: &ReadMediaArgs) -> Result<MediaCo
         .arg("-y")
         .arg(&pattern);
     tura_path::process_hardening::hide_child_console_window(&mut command);
-    let status = command
-        .status()
-        .map_err(|err| {
-            let _ = std::fs::remove_dir_all(&temp_dir);
-            format!("failed to run ffmpeg: {err}")
-        })?;
+    let status = command.status().map_err(|err| {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        format!("failed to run ffmpeg: {err}")
+    })?;
     if !status.success() {
         let _ = std::fs::remove_dir_all(&temp_dir);
         return process_video_with_python_cv2(path, args)
@@ -105,12 +103,10 @@ pub(super) fn process_audio(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Val
         .arg("-y")
         .arg(&output_path);
     tura_path::process_hardening::hide_child_console_window(&mut command);
-    let output = command
-        .output()
-        .map_err(|err| {
-            let _ = std::fs::remove_dir_all(&temp_dir);
-            format!("failed to run ffmpeg for audio extraction: {err}")
-        })?;
+    let output = command.output().map_err(|err| {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        format!("failed to run ffmpeg for audio extraction: {err}")
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -191,11 +187,9 @@ print(json.dumps(frames))
         .arg(args.max_visuals.to_string())
         .arg(args.max_side.to_string());
     tura_path::process_hardening::hide_child_console_window(&mut command);
-    let output = command
-        .output()
-        .map_err(|err| {
-            format!("ffmpeg not found and python cv2 fallback failed to start: {err}")
-        })?;
+    let output = command.output().map_err(|err| {
+        format!("ffmpeg not found and python cv2 fallback failed to start: {err}")
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
@@ -245,9 +239,7 @@ fn resolve_imageio_ffmpeg() -> Option<String> {
         .arg("-c")
         .arg("import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())");
     tura_path::process_hardening::hide_child_console_window(&mut command);
-    let output = command
-        .output()
-        .ok()?;
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }

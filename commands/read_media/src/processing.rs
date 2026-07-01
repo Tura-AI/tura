@@ -141,12 +141,10 @@ fn process_video_thumbnail(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Valu
         .arg("-y")
         .arg(&frame);
     tura_path::process_hardening::hide_child_console_window(&mut command);
-    let status = command
-        .status()
-        .map_err(|err| {
-            let _ = std::fs::remove_dir_all(&temp_dir);
-            format!("failed to run ffmpeg for video thumbnail: {err}")
-        })?;
+    let status = command.status().map_err(|err| {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        format!("failed to run ffmpeg for video thumbnail: {err}")
+    })?;
     if !status.success() {
         let _ = std::fs::remove_dir_all(&temp_dir);
         return process_video_with_python_cv2(path, &thumb_args).map_err(|cv_err| {
