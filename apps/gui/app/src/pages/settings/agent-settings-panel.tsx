@@ -403,6 +403,15 @@ function readProviderString(value: unknown, keys: string[]): string | undefined 
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const field = record[key];
+    if (typeof field === "string" && field.trim()) {
+      return field.trim();
+    }
+  }
+  return undefined;
+}
 
 function readProviderBoolean(value: unknown, keys: string[]): boolean | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -424,15 +433,6 @@ function readServiceTierPriority(value: unknown): boolean | undefined {
     return undefined;
   }
   return serviceTier === "priority";
-}
-  const record = value as Record<string, unknown>;
-  for (const key of keys) {
-    const field = record[key];
-    if (typeof field === "string" && field.trim()) {
-      return field.trim();
-    }
-  }
-  return undefined;
 }
 
 function agentConfigWithProviderSettings(
