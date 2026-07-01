@@ -668,10 +668,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     const existingSession = draftSessionId
       ? state().sessions.find((session) => session.id === draftSessionId)
       : undefined;
-    const timingPatch =
-      state().planDraftStartCondition === "session_idle"
-        ? { start_condition: "session_idle" as const }
-        : {};
+    const timingPatch = { start_condition: "session_idle" as const };
     const nonceId = existingSession
       ? `${existingSession.id}:${Date.now()}`
       : `plan-task:${Date.now()}`;

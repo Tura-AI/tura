@@ -74,7 +74,8 @@ export function ConversationEmptyView(props: {
                 defaultDirectory={defaultWorkspaceDirectory(props.state.paths)}
               />
               <PlanComposerControls
-                startCondition={props.state.planDraftStartCondition}
+                startCondition="session_idle"
+                queueOnly
                 onStartCondition={props.onDraftStartCondition}
               />
               {props.agentMenu}

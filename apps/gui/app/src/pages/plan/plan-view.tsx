@@ -433,7 +433,8 @@ export function PlanView(props: {
                     onSession={props.onDraftSession}
                   />
                   <PlanComposerControls
-                    startCondition={props.state.planDraftStartCondition}
+                    startCondition="session_idle"
+                    queueOnly
                     onStartCondition={props.onDraftStartCondition}
                   />
                   {agentMenu()}
@@ -441,7 +442,8 @@ export function PlanView(props: {
               ) : props.previewSession && !props.state.editingTask ? (
                 <>
                   <PlanComposerControls
-                    startCondition={props.state.planDraftStartCondition}
+                    startCondition="session_idle"
+                    queueOnly
                     onStartCondition={props.onDraftStartCondition}
                   />
                   {agentMenu()}

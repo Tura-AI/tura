@@ -4,7 +4,6 @@ import {
   defaultGatewayUrl,
   errorMessage,
   type AgentUpsertRequest,
-  type Message,
   type PlanStatus,
   type ProductIssue,
   type Project,
@@ -27,7 +26,6 @@ import {
 } from "./app-state-utils";
 import { AppShell } from "./app/app-shell";
 import { AppProviders } from "./context/app-providers";
-import { isToolPart } from "./conversation/message-tools";
 import { DEFAULT_AGENT_ID } from "./config/defaults";
 import {
   appendTaskToSession,
@@ -63,8 +61,6 @@ import { safe } from "./utils/safe";
 
 const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
 const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
-const ASSISTANT_REPLY_POLL_TIMEOUT_MS = 120_000;
-const ASSISTANT_REPLY_POLL_INTERVAL_MS = 1_250;
 const MESSAGE_PAGE_SIZE = 200;
 
 declare global {
@@ -627,7 +623,7 @@ export function App() {
     loadFiles,
   });
 
-  async function submitPrompt(options: { queued?: boolean } = {}) {
+  async function submitPrompt() {
     if (await updateEditingTaskFromComposer()) {
       return;
     }
@@ -641,134 +637,16 @@ export function App() {
       error: undefined,
       planNotice: undefined,
     }));
-    let optimisticSessionId: string | undefined;
-    let optimisticId: string | undefined;
     try {
       const content =
         state().composerImages.length === 0
           ? await expandCommand(raw)
           : materializeComposerContent(raw, state().composerImages);
-      if (options.queued) {
-        await submitQueuedPrompt(content, "session_idle");
-        return;
-      }
-      if (state().planDraftStartCondition !== "user_action") {
-        await submitQueuedPrompt(content);
-        return;
-      }
-      let sessionId = state().selectedSessionId;
-      let createdSession: Session | undefined;
-      if (!sessionId) {
-        const session = withSessionFallbackName(
-          await directoryClient().createSession(createSessionPayload()),
-          content,
-        );
-        sessionId = session.id;
-        createdSession = session;
-      }
-      optimisticSessionId = sessionId;
-      optimisticId = `prompt:${sessionId}:${Date.now()}`;
-      const now = Date.now();
-      const existingSession = state().sessions.find((session) => session.id === sessionId);
-      const busySession = existingSession?.status === "busy";
-      const optimisticMessage: Message = {
-        id: optimisticId,
-        sessionID: sessionId,
-        role: "user",
-        created_at: now,
-        updated_at: now,
-        time: { created: now, updated: now },
-        parts: [
-          {
-            id: `${optimisticId}:text`,
-            sessionID: sessionId,
-            messageID: optimisticId,
-            type: "text",
-            text: content,
-            metadata: busySession ? { userNewCommand: true } : { planRunPending: true },
-          },
-        ],
-      };
-      setState((previous) => ({
-        ...previous,
-        selectedSessionId: sessionId,
-        sessions: createdSession
-          ? [
-              { ...createdSession, status: busySession ? createdSession.status : "busy" },
-              ...previous.sessions.filter((session) => session.id !== sessionId),
-            ]
-          : busySession
-            ? previous.sessions
-            : previous.sessions.map((session) =>
-                session.id === sessionId ? { ...session, status: "busy" } : session,
-              ),
-        messagesBySession: {
-          ...previous.messagesBySession,
-          [sessionId]: [
-            ...(previous.messagesBySession[sessionId] ?? []).filter(
-              (message) => message.id !== optimisticId,
-            ),
-            optimisticMessage,
-          ],
-        },
-      }));
-      await Promise.race([
-        directoryClient().promptAsync(sessionId, {
-          messageID: optimisticId,
-          parts: [{ id: `${optimisticId}:text`, type: "text", text: content }],
-          model: state().selectedModel,
-          agent: state().selectedAgent,
-        }),
-        new Promise<never>((_, reject) =>
-          window.setTimeout(
-            () => reject(new Error(PROMPT_RESPONSE_TIMEOUT_CODE)),
-            PROMPT_RESPONSE_TIMEOUT_MS,
-          ),
-        ),
-      ]);
-      setState((previous) => ({
-        ...previous,
-        selectedSessionId: sessionId,
-        composerText: "",
-        composerImages: [],
-        activeTab: "conversation",
-        previousMainTab: "conversation",
-        planNotice: undefined,
-      }));
-      await refreshSessions();
-      if (!busySession) {
-        void pollSessionMessagesUntilAssistantReply(sessionId);
-      }
+      await submitQueuedPrompt(content, "session_idle");
     } catch (error) {
       const timeout = error instanceof Error && error.message === PROMPT_RESPONSE_TIMEOUT_CODE;
       setState((previous) => ({
         ...previous,
-        messagesBySession:
-          optimisticSessionId && optimisticId
-            ? {
-                ...previous.messagesBySession,
-                [optimisticSessionId]: (previous.messagesBySession[optimisticSessionId] ?? []).map(
-                  (message) =>
-                    message.id === optimisticId
-                      ? {
-                          ...message,
-                          updated_at: Date.now(),
-                          time: { ...message.time, updated: Date.now() },
-                          parts: message.parts.map((part) => ({
-                            ...part,
-                            metadata: {
-                              ...(typeof part.metadata === "object" && part.metadata !== null
-                                ? part.metadata
-                                : {}),
-                              planRunPending: false,
-                              planRunError: true,
-                            },
-                          })),
-                        }
-                      : message,
-                ),
-              }
-            : previous.messagesBySession,
         planNotice: timeout
           ? {
               message: "Gateway 30 秒内没有响应请求。",
@@ -783,39 +661,6 @@ export function App() {
       }));
     } finally {
       setState((previous) => ({ ...previous, submitting: false }));
-    }
-  }
-
-  async function pollSessionMessagesUntilAssistantReply(sessionId: string): Promise<void> {
-    if (e2eFixture) {
-      return;
-    }
-    const deadline = Date.now() + ASSISTANT_REPLY_POLL_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await delay(ASSISTANT_REPLY_POLL_INTERVAL_MS);
-      if (state().selectedSessionId !== sessionId) {
-        return;
-      }
-      let messages: Message[];
-      try {
-        messages = await directoryClient().messages(sessionId);
-      } catch {
-        continue;
-      }
-      if (messages.length === 0) {
-        continue;
-      }
-      setState((previous) => ({
-        ...previous,
-        messagesBySession: {
-          ...previous.messagesBySession,
-          [sessionId]: mergeMessagePages(previous.messagesBySession[sessionId] ?? [], messages),
-        },
-      }));
-      if (hasVisibleAssistantReply(messages)) {
-        await refreshSessions();
-        return;
-      }
     }
   }
 
@@ -1144,33 +989,5 @@ export function App() {
         }}
       />
     </AppProviders>
-  );
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function hasVisibleAssistantReply(messages: Message[]): boolean {
-  return messages.some((message) => {
-    if (message.role !== "assistant") {
-      return false;
-    }
-    return message.parts.some((part) => {
-      if (isToolPart(part)) {
-        return false;
-      }
-      const text = (part.text || part.content || "").trim();
-      return text.length > 0 && !isTransientAssistantText(text);
-    });
-  });
-}
-
-function isTransientAssistantText(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  return (
-    normalized === "正在思考" ||
-    normalized === "thinking" ||
-    (normalized.includes("正在思考") && normalized.startsWith("已运行"))
   );
 }

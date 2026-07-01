@@ -413,6 +413,7 @@ export function Composer(props: {
           class="composer-send"
           type="button"
           title={sendButtonTitle()}
+          aria-label={sendButtonTitle()}
           data-submitting={props.submitting ? "true" : "false"}
           data-submit-disabled={props.submitDisabled ? "true" : "false"}
           data-text-empty={textEmpty() ? "true" : "false"}

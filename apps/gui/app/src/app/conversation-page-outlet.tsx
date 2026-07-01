@@ -178,7 +178,8 @@ export function ConversationPageOutlet(props: {
             ) : selectedSession() ? (
               <>
                 <PlanComposerControls
-                  startCondition={props.state().planDraftStartCondition}
+                  startCondition="session_idle"
+                  queueOnly
                   onStartCondition={(planDraftStartCondition) =>
                     props.setState((previous) => ({
                       ...previous,

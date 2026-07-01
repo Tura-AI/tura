@@ -285,7 +285,7 @@ export const en = {
   secureTokenPlaceholder: "Protected with secure masking",
   selectStep: "Select a step",
   send: "Send",
-  sendButtonHint: "Enter to send\nShift+Enter for a new line\n{modifier}+Enter to queue",
+  sendButtonHint: "Enter to queue input\nShift+Enter for a new line\n{modifier}+Enter also queues",
   sidebar: "Sidebar",
   session: "Session",
   sessionHistory: "Session",

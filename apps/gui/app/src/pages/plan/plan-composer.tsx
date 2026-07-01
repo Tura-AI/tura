@@ -241,22 +241,27 @@ export function PlanDraftSessionPicker(props: {
 export function PlanComposerControls(props: {
   startCondition: StartCondition;
   onStartCondition: (value: StartCondition) => void;
+  queueOnly?: boolean;
 }) {
   let root: HTMLElement | undefined;
   const [open, setOpen] = createSignal(false);
   const [menuStyle, setMenuStyle] = createSignal<FloatingMenuStyle>({});
-  const startConditions: Array<{
+  const startConditions = createMemo<Array<{
     id: StartCondition;
     label: string;
     icon: (props: { size?: number; strokeWidth?: number }) => JSX.Element;
-  }> = [
-    { id: "user_action", label: t("runNow"), icon: Play },
-    { id: "session_idle", label: t("sessionIdle"), icon: Timer },
-  ];
+  }>>(() =>
+    props.queueOnly
+      ? [{ id: "session_idle", label: t("sessionIdle"), icon: Timer }]
+      : [
+          { id: "user_action", label: t("runNow"), icon: Play },
+          { id: "session_idle", label: t("sessionIdle"), icon: Timer },
+        ],
+  );
   const selectedCondition = createMemo(
     () =>
-      startConditions.find((condition) => condition.id === props.startCondition) ??
-      startConditions[0]!,
+      startConditions().find((condition) => condition.id === props.startCondition) ??
+      startConditions()[0]!,
   );
   const selectedLabel = createMemo(() => {
     return selectedCondition().label;
@@ -302,7 +307,7 @@ export function PlanComposerControls(props: {
       </button>
       <Show when={open()}>
         <div class="plan-session-menu plan-trigger-menu" style={menuStyle()}>
-          <For each={startConditions}>
+          <For each={startConditions()}>
             {(condition) => (
               <button
                 type="button"

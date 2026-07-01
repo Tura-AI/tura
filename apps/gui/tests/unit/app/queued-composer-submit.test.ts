@@ -21,5 +21,7 @@ describe("GUI composer queue submission contract", () => {
     expect(submitPrompt).not.toContain('status: "busy"');
     expect(submitPrompt).not.toContain("userNewCommand");
     expect(submitPrompt).not.toContain("planRunPending");
+    expect(submitPrompt).not.toContain("optimisticSessionId");
+    expect(submitPrompt).not.toContain("optimisticId");
   });
 });
