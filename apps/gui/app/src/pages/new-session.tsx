@@ -10,6 +10,7 @@ import { classNames } from "../state/format";
 import { type AppState, type ComposerImage } from "../state/global-store";
 
 import { defaultWorkspaceDirectory, samePath, shortWorkspaceLabel } from "../utils/app-format";
+import { rightTopFloatingMenuStyle, type FloatingMenuStyle } from "../utils/floating-menu";
 import { PlanComposerControls } from "./plan/plan-composer";
 export function ConversationEmptyView(props: {
   state: AppState;
@@ -109,6 +110,7 @@ export function NewSessionWorkspacePicker(props: {
 }) {
   let root: HTMLElement | undefined;
   const [open, setOpen] = createSignal(false);
+  const [menuStyle, setMenuStyle] = createSignal<FloatingMenuStyle>({});
   const selectedProject = createMemo(() =>
     props.projects.find((project) => samePath(project.worktree, props.directory)),
   );
@@ -120,15 +122,29 @@ export function NewSessionWorkspacePicker(props: {
 
   createEffect(() => {
     if (!open()) {
+      setMenuStyle({});
       return;
     }
+    const updatePosition = () => {
+      if (root) {
+        setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 260, maxWidth: 340 }));
+      }
+    };
+    const frame = window.requestAnimationFrame(updatePosition);
     const closeOutside = (event: PointerEvent) => {
       if (!root?.contains(event.target as Node)) {
         setOpen(false);
       }
     };
     document.addEventListener("pointerdown", closeOutside);
-    onCleanup(() => document.removeEventListener("pointerdown", closeOutside));
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    onCleanup(() => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    });
   });
 
   return (
@@ -147,7 +163,7 @@ export function NewSessionWorkspacePicker(props: {
         <ChevronDown size={13} strokeWidth={1.8} />
       </button>
       <Show when={open()}>
-        <div class="plan-session-menu">
+        <div class="plan-session-menu" style={menuStyle()}>
           <label class="workspace-search-row">
             <Search size={14} strokeWidth={1.7} />
             <input

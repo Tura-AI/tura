@@ -175,18 +175,23 @@
 }
 
 .plan-session-menu {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
+  position: fixed;
+  top: 0;
+  right: var(--space-4);
+  bottom: auto;
+  left: auto;
   z-index: 82;
   display: grid;
   gap: var(--space-1);
   width: min(340px, calc(100vw - 48px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
   padding: var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--paper);
   box-shadow: 0 18px 44px rgb(28 28 24 / 14%);
+  overscroll-behavior: contain;
 }
 
 .plan-session-list {

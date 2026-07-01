@@ -4,13 +4,44 @@ import Pin from "lucide-solid/icons/pin";
 import Plus from "lucide-solid/icons/plus";
 import Settings from "lucide-solid/icons/settings";
 import Trash2 from "lucide-solid/icons/trash-2";
-import { Show, createSignal } from "solid-js";
+import { Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { t } from "../../i18n";
+import { rightTopFloatingMenuStyle, type FloatingMenuStyle } from "../../utils/floating-menu";
 
 export function WorkspaceMenu(props: { onSettings: () => void; onNewSession: () => void }) {
+  let root: HTMLDivElement | undefined;
   const [open, setOpen] = createSignal(false);
+  const [menuStyle, setMenuStyle] = createSignal<FloatingMenuStyle>({});
+
+  createEffect(() => {
+    if (!open()) {
+      setMenuStyle({});
+      return;
+    }
+    const updatePosition = () => {
+      if (root) {
+        setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 188, maxWidth: 240 }));
+      }
+    };
+    const frame = window.requestAnimationFrame(updatePosition);
+    const closeOutside = (event: PointerEvent) => {
+      if (!root?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    onCleanup(() => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    });
+  });
+
   return (
-    <div class="workspace-menu">
+    <div class="workspace-menu" ref={root}>
       <button
         type="button"
         title={t("settings")}
@@ -22,7 +53,7 @@ export function WorkspaceMenu(props: { onSettings: () => void; onNewSession: () 
         <MoreHorizontal size={15} strokeWidth={1.8} />
       </button>
       <Show when={open()}>
-        <div class="rail-menu" onClick={(event) => event.stopPropagation()}>
+        <div class="rail-menu" style={menuStyle()} onClick={(event) => event.stopPropagation()}>
           <button type="button">
             <Pin size={14} strokeWidth={1.7} />
             <span>{t("pinWorkspace")}</span>

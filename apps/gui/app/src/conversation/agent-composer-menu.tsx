@@ -7,6 +7,7 @@ import { t } from "../i18n";
 import { classNames } from "../state/format";
 import type { SettingsSection } from "../state/global-store";
 import { agentDisplayName, visibleConfigurableAgents } from "../utils/agent-display";
+import { rightTopFloatingMenuStyle } from "../utils/floating-menu";
 
 export function AgentComposerMenu(props: {
   agents: Agent[];
@@ -36,16 +37,7 @@ export function AgentComposerMenu(props: {
     if (!root || !menu) {
       return;
     }
-    const edge = 12;
-    const rootRect = root.getBoundingClientRect();
-    const menuWidth = Math.min(380, Math.max(0, window.innerWidth - edge * 2));
-    const preferredLeft = rootRect.left;
-    const maxLeft = Math.max(edge, window.innerWidth - menuWidth - edge);
-    const viewportLeft = Math.min(Math.max(preferredLeft, edge), maxLeft);
-    setMenuStyle({
-      left: `${viewportLeft - rootRect.left}px`,
-      width: `${menuWidth}px`,
-    });
+    setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 260, maxWidth: 380 }));
   }
 
   createEffect(() => {

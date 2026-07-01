@@ -4,6 +4,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import { Portal } from "solid-js/web";
 import { t } from "../../i18n";
 import { classNames } from "../../state/format";
+import { rightTopFloatingMenuStyle, type FloatingMenuStyle } from "../../utils/floating-menu";
 
 export type AppearanceOption = {
   id: string;
@@ -29,12 +30,7 @@ export function AppearanceSelect(props: {
   onSelect: (option: AppearanceOption) => void;
 }) {
   const [open, setOpen] = createSignal(false);
-  const [menuPosition, setMenuPosition] = createSignal({
-    left: 0,
-    top: 0,
-    width: 340,
-    maxHeight: 320,
-  });
+  const [menuStyle, setMenuStyle] = createSignal<FloatingMenuStyle>({});
   let root: HTMLElement | undefined;
   let menu: HTMLDivElement | undefined;
   const selected = createMemo(
@@ -60,25 +56,7 @@ export function AppearanceSelect(props: {
     if (!root) {
       return;
     }
-    const rect = root.getBoundingClientRect();
-    const gap = 6;
-    const viewportPadding = 16;
-    const preferredWidth = Math.max(260, rect.width);
-    const width = Math.min(preferredWidth, window.innerWidth - viewportPadding * 2);
-    const left = Math.min(
-      Math.max(viewportPadding, rect.left),
-      Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
-    );
-    const top = Math.min(
-      rect.bottom + gap,
-      Math.max(viewportPadding, window.innerHeight - viewportPadding - 120),
-    );
-    setMenuPosition({
-      left,
-      top,
-      width,
-      maxHeight: Math.max(120, window.innerHeight - top - viewportPadding),
-    });
+    setMenuStyle(rightTopFloatingMenuStyle(root, { edge: 16, minWidth: 260 }));
   }
 
   onMount(() => {
@@ -138,12 +116,7 @@ export function AppearanceSelect(props: {
           <div
             ref={menu}
             class="plan-session-menu appearance-select-menu"
-            style={{
-              left: `${menuPosition().left}px`,
-              top: `${menuPosition().top}px`,
-              width: `${menuPosition().width}px`,
-              "max-height": `${menuPosition().maxHeight}px`,
-            }}
+            style={menuStyle()}
             onPointerDown={(event) => event.stopPropagation()}
           >
             <For each={visibleOptions()}>
