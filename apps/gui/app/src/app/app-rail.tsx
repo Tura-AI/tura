@@ -27,6 +27,7 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
     openFile,
     toggleFileTreeDirectory,
     deleteSession,
+    deleteWorkspace,
     openSettings,
     openIssueConversation,
     toggleWorkspace,
@@ -92,13 +93,13 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
                 props.collapseAfterSelection();
               }}
               onDeleteSession={deleteSession}
+              onDeleteWorkspace={deleteWorkspace}
               onFile={(file) => {
                 void openFile(file);
                 props.collapseAfterSelection();
               }}
               onFileTreeDirectory={toggleFileTreeDirectory}
               onUp={() => loadFiles(parentPath(state().filePath))}
-              onSettings={openAppearanceSettings}
             />
             <button class="settings-entry" type="button" onClick={openAppearanceSettings}>
               {t("settings")}

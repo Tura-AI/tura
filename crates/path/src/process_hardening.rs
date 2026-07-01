@@ -1,6 +1,49 @@
 #![allow(unsafe_code)]
 
 use std::ffi::{OsStr, OsString};
+use std::process::Command;
+
+pub const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub const WINDOWS_DETACHED_PROCESS: u32 = 0x0000_0008;
+pub const WINDOWS_CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+pub fn hide_child_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+    }
+}
+
+pub fn hide_child_console_window_and_detach(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(WINDOWS_CREATE_NO_WINDOW | WINDOWS_DETACHED_PROCESS);
+    }
+}
+
+pub fn hide_child_console_window_and_create_group(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(WINDOWS_CREATE_NO_WINDOW | WINDOWS_CREATE_NEW_PROCESS_GROUP);
+    }
+}
+
+pub fn hide_tokio_child_console_window(command: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+    }
+}
+
+pub fn hide_tokio_child_console_window_and_create_group(command: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(WINDOWS_CREATE_NO_WINDOW | WINDOWS_CREATE_NEW_PROCESS_GROUP);
+    }
+}
 
 const EXACT_DANGEROUS_ENV: &[&str] = &[
     "LD_PRELOAD",
@@ -196,7 +239,8 @@ fn apply_platform_attach_guard(_report: &mut OsHardeningReport) {}
 mod tests {
     use super::{
         current_process_hardening_strategy, dangerous_env_key, remove_dangerous_env_vars,
-        ProcessHardeningStrategy,
+        ProcessHardeningStrategy, WINDOWS_CREATE_NEW_PROCESS_GROUP, WINDOWS_CREATE_NO_WINDOW,
+        WINDOWS_DETACHED_PROCESS,
     };
     use std::ffi::{OsStr, OsString};
 
@@ -291,6 +335,13 @@ mod tests {
         assert!(strategies.contains(&ProcessHardeningStrategy::MacosPtraceAndRlimit));
         assert!(strategies.contains(&ProcessHardeningStrategy::UnixRlimitOnly));
         assert!(strategies.contains(&ProcessHardeningStrategy::EnvOnly));
+    }
+
+    #[test]
+    fn windows_child_console_flags_match_win32_contract() {
+        assert_eq!(WINDOWS_CREATE_NO_WINDOW, 0x0800_0000);
+        assert_eq!(WINDOWS_DETACHED_PROCESS, 0x0000_0008);
+        assert_eq!(WINDOWS_CREATE_NEW_PROCESS_GROUP, 0x0000_0200);
     }
 
     fn restore_env(key: &str, previous: Option<OsString>) {

@@ -82,7 +82,7 @@ function Harness() {
     <div style={harnessStyle}>
       <section data-menu-case="workspace-menu" style={{ ...rowStyle, "margin-top": "28px" }}>
         <span>Workspace actions</span>
-        <WorkspaceMenu onSettings={() => undefined} onNewSession={() => undefined} />
+        <WorkspaceMenu onDeleteWorkspace={() => undefined} />
       </section>
       <section data-menu-case="new-workspace" style={rowStyle}>
         <span>New session workspace</span>

@@ -16,16 +16,17 @@ pub(crate) fn select_directory(title: Option<&str>) -> anyhow::Result<Option<Str
              if ($d.ShowDialog($f) -eq [System.Windows.Forms.DialogResult]::OK) {{ $d.SelectedPath }}; \
              $f.Dispose()",
         );
-        let output = ProcessCommand::new("powershell")
-            .args([
-                "-NoProfile",
-                "-STA",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &script,
-            ])
-            .output()?;
+        let mut command = ProcessCommand::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-STA",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ]);
+        tura_path::process_hardening::hide_child_console_window(&mut command);
+        let output = command.output()?;
         if !output.status.success() {
             return Ok(None);
         }

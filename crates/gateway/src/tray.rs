@@ -651,12 +651,7 @@ fn spawn_detached(mut command: Command) -> Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
+    tura_path::process_hardening::hide_child_console_window(&mut command);
     command.spawn().map(|_| ()).map_err(Into::into)
 }
 

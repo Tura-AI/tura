@@ -60,6 +60,7 @@ export type AppShellViewModel = {
   openFile: (file: FileInfo) => Promise<void>;
   toggleFileTreeDirectory: (file: FileInfo) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
+  deleteWorkspace: (project: Project) => void;
   queuePrompt: () => Promise<void>;
   openSettings: (section?: SettingsSection) => void;
   openIssueConversation: (issue: ProductIssue) => Promise<void>;

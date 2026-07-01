@@ -761,7 +761,8 @@ sys.stdout.buffer.write(json.dumps({"results": results}, ensure_ascii=False).enc
     let python = command_local_python("TURA_WEB_DISCOVER_PYTHON")
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "python".to_string());
-    let output = Command::new(&python)
+    let mut command = Command::new(&python);
+    command
         .arg("-c")
         .arg(script)
         .arg(query)
@@ -779,7 +780,9 @@ sys.stdout.buffer.write(json.dumps({"results": results}, ensure_ascii=False).enc
                 .unwrap_or(30)
                 .clamp(1, 120)
                 .to_string(),
-        )
+        );
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let output = command
         .output()
         .map_err(|err| format!("failed to run DuckDuckGo image library: {err}"))?;
     if !output.status.success() {
@@ -843,12 +846,15 @@ pub(super) fn search_ytdlp_links(
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
     let command_parts = resolve_ytdlp_command();
-    let output = Command::new(&command_parts.0)
+    let mut command = Command::new(&command_parts.0);
+    command
         .args(&command_parts.1)
         .args(["--dump-json", "--skip-download", "--flat-playlist"])
         .arg(format!("ytsearch{}:{query}", limit.clamp(1, 20)))
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let output = command
         .output()
         .map_err(|err| format!("failed to run yt-dlp search: {err}"))?;
     if !output.status.success() && output.stdout.is_empty() {

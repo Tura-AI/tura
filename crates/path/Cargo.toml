@@ -9,5 +9,8 @@ license.workspace = true
 name = "tura_path"
 path = "src/lib.rs"
 
+[dependencies]
+tokio.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

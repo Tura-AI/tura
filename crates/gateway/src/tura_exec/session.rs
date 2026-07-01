@@ -41,14 +41,8 @@ pub(crate) fn ensure_session_db_owner() {
         command.stdout(Stdio::null());
     } else {
         command.stdout(Stdio::null()).stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            const DETACHED_PROCESS: u32 = 0x0000_0008;
-            command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
-        }
     }
+    tura_path::process_hardening::hide_child_console_window_and_detach(&mut command);
     // Spawn detached: do not retain the child handle, so the owner keeps running
     // after this CLI exits and can be reused by the next front.
     match command.spawn() {

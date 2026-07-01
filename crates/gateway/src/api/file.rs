@@ -97,14 +97,17 @@ struct GitStatusSnapshot {
 }
 
 fn git_status_snapshot(root: &Path, relative_path: &str) -> GitStatusSnapshot {
-    let is_git_repository = Command::new("git")
+    let mut git_probe = Command::new("git");
+    git_probe
         .arg("-C")
         .arg(root)
         .arg("rev-parse")
         .arg("--is-inside-work-tree")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    tura_path::process_hardening::hide_child_console_window(&mut git_probe);
+    let is_git_repository = git_probe
         .status()
         .is_ok_and(|status| status.success());
     if !is_git_repository {
@@ -124,6 +127,7 @@ fn git_status_snapshot(root: &Path, relative_path: &str) -> GitStatusSnapshot {
     if !relative_path.trim().is_empty() {
         command.arg("--").arg(relative_path);
     }
+    tura_path::process_hardening::hide_child_console_window(&mut command);
 
     let Ok(output) = command.output() else {
         return GitStatusSnapshot {
@@ -655,6 +659,7 @@ where
     if let Some(path) = path {
         process.arg(path);
     }
+    tura_path::process_hardening::hide_child_console_window(&mut process);
     process.spawn()?;
     Ok(())
 }

@@ -365,6 +365,7 @@ export const en = {
   serviceNoProcesses: "No background processes",
   serviceProcesses: "{count} background processes",
   defaultWorkspace: "Use default workspace",
+  deleteWorkspace: "Delete workspace",
   existingDirectory: "Use existing directory",
   localDirectory: "Choose local directory",
   newSessionQuestion: "Where should we start?",

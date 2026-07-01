@@ -57,10 +57,10 @@ export function WorkspaceTree(props: {
   onStatus: (session: Session, status: PlanStatus) => void;
   onSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  onDeleteWorkspace: (project: Project) => void;
   onFile: (file: FileInfo) => void;
   onFileTreeDirectory: (file: FileInfo) => void;
   onUp: () => void;
-  onSettings: () => void;
 }) {
   const [workspaceSectionOpen, setWorkspaceSectionOpen] = createSignal(true);
   const [archivedSectionOpen, setArchivedSectionOpen] = createSignal(true);
@@ -186,8 +186,7 @@ export function WorkspaceTree(props: {
                         <Plus size={14} strokeWidth={1.8} />
                       </button>
                       <WorkspaceMenu
-                        onSettings={props.onSettings}
-                        onNewSession={() => props.onBlankSession(project)}
+                        onDeleteWorkspace={() => props.onDeleteWorkspace(project)}
                       />
                     </div>
                   </div>

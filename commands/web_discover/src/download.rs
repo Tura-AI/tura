@@ -126,6 +126,7 @@ pub(super) fn download_ytdlp_media(
                     .arg("-o")
                     .arg(&output_template)
                     .arg(&result.url);
+                tura_path::process_hardening::hide_child_console_window(&mut command);
                 let output = command.output().map_err(|err| {
                     let _ = std::fs::remove_dir_all(&temp_dir);
                     format!("failed to run yt-dlp download: {err}")

@@ -333,6 +333,44 @@ export function App() {
     }
   }
 
+  function deleteWorkspace(project: Project) {
+    setWorkspaceTreeTouched(true);
+    setExpandedWorkspaces((previous) => {
+      const next = new Set(previous);
+      next.delete(normalizePath(project.worktree));
+      return next;
+    });
+    setState((previous) => {
+      const projects = previous.projects.filter((item) => !samePath(item.worktree, project.worktree));
+      const sessions = previous.sessions.filter(
+        (session) => !samePath(sessionDirectory(session), project.worktree),
+      );
+      const selectedSession = previous.selectedSessionId
+        ? previous.sessions.find((session) => session.id === previous.selectedSessionId)
+        : undefined;
+      const selectedSessionDeleted = selectedSession
+        ? samePath(sessionDirectory(selectedSession), project.worktree)
+        : false;
+      const deletingCurrentWorkspace = samePath(previous.directory, project.worktree);
+      const nextDirectory = deletingCurrentWorkspace ? projects[0]?.worktree : previous.directory;
+      return {
+        ...previous,
+        directory: nextDirectory,
+        projects,
+        sessions,
+        selectedSessionId: selectedSessionDeleted ? undefined : previous.selectedSessionId,
+        planPreviewSessionId: previous.planPreviewSessionId
+          ? sessions.some((session) => session.id === previous.planPreviewSessionId)
+            ? previous.planPreviewSessionId
+            : undefined
+          : undefined,
+        filePath: deletingCurrentWorkspace ? "" : previous.filePath,
+        selectedFile: deletingCurrentWorkspace ? undefined : previous.selectedFile,
+        error: undefined,
+      };
+    });
+  }
+
   async function useWorkspaceDirectory(directory: string) {
     const workspaceDirectory = directory.trim();
     if (!workspaceDirectory) {
@@ -1100,6 +1138,7 @@ export function App() {
           openFile,
           toggleFileTreeDirectory,
           deleteSession,
+          deleteWorkspace,
           queuePrompt,
           openSettings,
           openIssueConversation,

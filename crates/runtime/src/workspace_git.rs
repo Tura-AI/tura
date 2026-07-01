@@ -132,10 +132,10 @@ fn ensure_tura_git_exclude(workspace: &Path) -> Result<(), String> {
 }
 
 fn run_git(workspace: &Path, args: &[&str]) -> Result<Output, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(workspace)
-        .args(args)
+    let mut command = Command::new("git");
+    command.arg("-C").arg(workspace).args(args);
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("failed to run git in {}: {error}", workspace.display()))?;
     if output.status.success() {

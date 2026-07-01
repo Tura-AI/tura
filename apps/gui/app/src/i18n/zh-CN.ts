@@ -359,6 +359,7 @@ export const zhCN = {
   serviceNoProcesses: "无后台进程",
   serviceProcesses: "{count} 个后台进程",
   defaultWorkspace: "使用默认工作区",
+  deleteWorkspace: "删除工作区",
   existingDirectory: "使用已有目录",
   localDirectory: "选择本地目录",
   newSessionQuestion: "我们从哪开始工作？",

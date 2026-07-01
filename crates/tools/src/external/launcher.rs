@@ -137,10 +137,7 @@ async fn run_command_with_timeout(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    #[cfg(windows)]
-    {
-        command.creation_flags(0x08000000);
-    }
+    tura_path::process_hardening::hide_tokio_child_console_window(&mut command);
 
     let mut child = command
         .spawn()

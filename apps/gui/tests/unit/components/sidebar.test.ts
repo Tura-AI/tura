@@ -15,6 +15,10 @@ const sidebarSource = readFileSync(
   resolve(import.meta.dir, "../../../app/src/components/sidebar.tsx"),
   "utf8",
 );
+const workspaceMenuSource = readFileSync(
+  resolve(import.meta.dir, "../../../app/src/components/sidebar/workspace-menu.tsx"),
+  "utf8",
+);
 
 function cssBlock(selector: string): string {
   const start = sidebarCss.indexOf(`\n${selector} {`);
@@ -78,6 +82,18 @@ describe("sidebar workspace new session", () => {
   test("passes the clicked workspace into the new session action", () => {
     expect(sidebarSource).toContain("onBlankSession: (project: Project) => void;");
     expect(sidebarSource).toContain("props.onBlankSession(project);");
-    expect(sidebarSource).toContain("onNewSession={() => props.onBlankSession(project)}");
+  });
+});
+
+describe("sidebar workspace action menu", () => {
+  test("keeps only the delete workspace action in the three-dot menu", () => {
+    expect(workspaceMenuSource).toContain("onDeleteWorkspace");
+    expect(workspaceMenuSource).toContain('t("deleteWorkspace")');
+    expect(workspaceMenuSource).not.toContain('t("pinWorkspace")');
+    expect(workspaceMenuSource).not.toContain('t("openInExplorer")');
+    expect(workspaceMenuSource).not.toContain('t("newSession")');
+    expect(workspaceMenuSource).not.toContain('t("workspaceSettings")');
+    expect(workspaceMenuSource).not.toContain('t("archiveSession")');
+    expect(workspaceMenuSource).not.toContain('t("remove")');
   });
 });

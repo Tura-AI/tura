@@ -122,7 +122,7 @@ pub fn dispatch_child_agent(req: &ChildAgentRequest) -> Result<ChildAgentSummary
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_child_window(&mut command);
+    tura_path::process_hardening::hide_child_console_window(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("failed to spawn router CLI {router_bin:?}: {error}"))?;
@@ -160,16 +160,6 @@ pub fn dispatch_child_agent(req: &ChildAgentRequest) -> Result<ChildAgentSummary
 
 fn child_router_cli_allowed(value: Option<&str>) -> bool {
     value == Some("1")
-}
-
-fn hide_child_window(_command: &mut Command) {
-    #[cfg(windows)]
-    {
-        #[allow(unused_imports)]
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        _command.creation_flags(CREATE_NO_WINDOW);
-    }
 }
 
 /// Dispatch N child agents concurrently (each its own router CLI subprocess); returns once all summaries are collected.

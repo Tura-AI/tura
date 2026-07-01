@@ -148,8 +148,7 @@ impl WorkerProcessScope {
 
 #[cfg(windows)]
 fn configure_platform_spawn(command: &mut Command) {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
+    tura_path::process_hardening::hide_tokio_child_console_window(command);
 }
 
 #[cfg(unix)]

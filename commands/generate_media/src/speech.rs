@@ -173,7 +173,7 @@ fn call_azure_edge_cli(args: &GenerateMediaArgs) -> Result<SpeechBytes, String> 
     } else {
         Command::new(command)
     };
-    let output = command_line
+    command_line
         .arg("--text")
         .arg(&args.prompt)
         .arg("--voice")
@@ -184,7 +184,9 @@ fn call_azure_edge_cli(args: &GenerateMediaArgs) -> Result<SpeechBytes, String> 
         .arg(format!("--rate={rate}"))
         .arg(format!("--volume={volume}"))
         .arg("--write-media")
-        .arg(&output_path)
+        .arg(&output_path);
+    tura_path::process_hardening::hide_child_console_window(&mut command_line);
+    let output = command_line
         .output()
         .map_err(|err| format!("failed to start edge-tts: {err}"))?;
     if !output.status.success() {

@@ -320,15 +320,7 @@ fn ensure_router_daemon() -> Result<String, String> {
     command.env_remove("TURA_CLI_LIVE_JSONL");
     command.env_remove("TURA_CLI_PROGRESS");
     configure_router_stderr(&mut command);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // DETACHED_PROCESS so the daemon outlives this CLI and the spawning shell
-        // does not wait on it; CREATE_NO_WINDOW so no console flashes.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
-    }
+    tura_path::process_hardening::hide_child_console_window_and_detach(&mut command);
     command
         .spawn()
         .map_err(|err| format!("failed to start router daemon: {err}"))?;
