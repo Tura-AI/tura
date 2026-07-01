@@ -196,6 +196,7 @@ export const en = {
   loginPending: "Login pending",
   loading: "Loading",
   logout: "Log out",
+  maximize: "Maximize",
   minimize: "Minimize",
   model: "Model",
   modelPriority: "Priority",

@@ -177,6 +177,12 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Allow the tura_gui shell to read native dropped files and clipboard images for composer attachments.",
+          "type": "string",
+          "const": "allow-native-input-files",
+          "markdownDescription": "Allow the tura_gui shell to read native dropped files and clipboard images for composer attachments."
+        },
+        {
           "description": "Allow the tura_gui shell to open web URLs in the system default browser.",
           "type": "string",
           "const": "allow-open-external-url",

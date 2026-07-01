@@ -191,6 +191,7 @@ export const zhCN = {
   loginPending: "等待登录",
   loading: "加载中",
   logout: "退出",
+  maximize: "最大化",
   minimize: "最小化",
   model: "模型",
   modelPriority: "Priority",

@@ -1,4 +1,5 @@
 @import "./base/reset.css";
+@import "./base/titlebar.css";
 @import "./base/workbench-rail.css";
 @import "./base/navigation.css";
 @import "./base/loading.css";

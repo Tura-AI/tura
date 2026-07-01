@@ -13,7 +13,7 @@ import { AppLoadingPlaceholder, GatewayConnectionLoadingOverlay } from "./loadin
 import { PlanPageOutlet } from "./plan-page-outlet";
 import { ProviderAuthPortal } from "./provider-auth-portal";
 import { SettingsPageOutlet } from "./settings-page-outlet";
-import { ErrorStrip, RailToggleButton } from "./shell-chrome";
+import { AppTitleBar, ErrorStrip, RailToggleButton } from "./shell-chrome";
 import { useIdleScrollbars } from "./use-idle-scrollbars";
 import { useRailLayout } from "./use-rail-layout";
 
@@ -237,6 +237,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
 
   return (
     <>
+      <AppTitleBar />
       <main
         class={classNames(
           "workbench",

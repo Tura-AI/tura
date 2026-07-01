@@ -41,6 +41,7 @@
     1.9vw,
     calc(var(--base-font-size) * 2.154)
   );
+  --app-titlebar-height: 38px;
   --rail-open-button-top: 12px;
   --rail-open-button-size: 32px;
   --rail-open-title-gap: 14px;

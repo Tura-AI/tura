@@ -12,7 +12,8 @@
   display: grid;
   grid-template-columns: var(--rail) minmax(0, 1fr);
   width: 100vw;
-  height: 100vh;
+  height: calc(100vh - var(--app-titlebar-height));
+  margin-top: var(--app-titlebar-height);
   overflow: hidden;
   background: var(--paper);
   font-family: var(--app-font-family);
@@ -45,13 +46,13 @@
 
 .workbench.rail-fullscreen .rail {
   position: fixed;
-  inset: 0;
+  inset: var(--app-titlebar-height) 0 0 0;
   z-index: 80;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   align-content: stretch;
   width: 100vw;
-  height: 100vh;
+  height: calc(100vh - var(--app-titlebar-height));
   max-width: none;
   overflow-x: hidden;
   overflow-y: hidden;
