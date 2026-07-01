@@ -1,11 +1,12 @@
-import type { Message } from "@tura/gateway-sdk";
+import type { Message, Session } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import {
   blankSessionState,
+  mergeSessions,
   mergeMessagePages,
   shouldFetchSessionMessages,
 } from "../../app/src/app-state-utils";
-import { initialAppState } from "../../app/src/state/global-store";
+import { initialAppState, sessionTitle } from "../../app/src/state/global-store";
 
 function assistantMessage(id: string, parts: Message["parts"]): Message {
   return {
@@ -76,6 +77,52 @@ describe("message cache merging", () => {
     ]);
 
     expect(merged.map((message) => message.id)).toEqual(["m2", "m1"]);
+  });
+});
+
+describe("session cache merging", () => {
+  test("does not let stale list refresh snapshots overwrite live display names", () => {
+    const local: Session = {
+      id: "s1",
+      name: "实现 session 标题稳定",
+      session_display_name: "实现 session 标题稳定",
+      status: "busy",
+      updated_at: 20,
+    };
+    const staleRemote: Session = {
+      id: "s1",
+      name: "用户输入生成的临时会话名",
+      session_display_name: "用户输入生成的临时会话名",
+      status: "busy",
+      updated_at: 10,
+    };
+
+    const merged = mergeSessions([staleRemote], [local]);
+
+    expect(sessionTitle(merged[0]!)).toBe("实现 session 标题稳定");
+    expect(merged[0]?.updated_at).toBe(20);
+  });
+
+  test("accepts newer list refresh snapshots for the same session", () => {
+    const local: Session = {
+      id: "s1",
+      name: "旧任务名",
+      session_display_name: "旧任务名",
+      status: "busy",
+      updated_at: 20,
+    };
+    const remote: Session = {
+      id: "s1",
+      name: "新任务名",
+      session_display_name: "新任务名",
+      status: "idle",
+      updated_at: 30,
+    };
+
+    const merged = mergeSessions([remote], [local]);
+
+    expect(sessionTitle(merged[0]!)).toBe("新任务名");
+    expect(merged[0]?.status).toBe("idle");
   });
 });
 

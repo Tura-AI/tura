@@ -739,6 +739,68 @@ fn login_value_for_auth_prefers_metadata_and_registry_defaults() {
 }
 
 #[tokio::test]
+async fn provider_auth_save_preserves_config_token_env_for_validation() {
+    let _guard = ENV_LOCK.lock().await;
+    let temp_dir = std::env::temp_dir().join(format!(
+        "tura-provider-token-env-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).expect("temp dir");
+    let env_path = temp_dir.join(".env");
+    let config_path = temp_dir.join("provider_config.json");
+    std::fs::write(
+        &config_path,
+        r#"{
+          "provider_base_url": {},
+          "routes": {},
+          "model_catalog": { "providers": {} },
+          "provider_auth": {}
+        }"#,
+    )
+    .expect("config");
+    set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
+    set_env(
+        "TURA_PROVIDER_CONFIG",
+        config_path.to_string_lossy().as_ref(),
+    );
+    std::env::remove_var("CUSTOM_PROVIDER_KEY");
+    std::env::remove_var("CUSTOM-OPENAI_API_KEY");
+
+    let auth = ProviderAuth {
+        auth_type: "api".to_string(),
+        key: Some("sk-config-token-env".to_string()),
+        access: Some("sk-config-token-env".to_string()),
+        refresh: None,
+        expires: None,
+        account_id: None,
+        metadata: Some(HashMap::from([
+            (
+                "login".to_string(),
+                serde_json::Value::String("api".to_string()),
+            ),
+            (
+                "token_env".to_string(),
+                serde_json::Value::String("CUSTOM_PROVIDER_KEY".to_string()),
+            ),
+        ])),
+    };
+
+    persist_provider_auth("custom-openai", &auth).expect("persist auth");
+    let status = build_provider_auth_status("custom-openai");
+
+    assert_eq!(status.token_env.as_deref(), Some("CUSTOM_PROVIDER_KEY"));
+    assert!(status.configured);
+    assert!(status.authenticated);
+
+    std::env::remove_var("CUSTOM_PROVIDER_KEY");
+    std::env::remove_var("CUSTOM-OPENAI_API_KEY");
+    std::env::remove_var("TURA_ENV_PATH");
+    std::env::remove_var("TURA_PROVIDER_CONFIG");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
 async fn provider_auth_refresh_updates_expired_openai_oauth_env_and_config() {
     let _guard = ENV_LOCK.lock().await;
     let temp_dir = std::env::temp_dir().join(format!(

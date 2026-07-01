@@ -639,10 +639,9 @@ mod tests {
         )
         .expect("catalog option should be configurable before auth is added");
 
-        let root: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&path).expect("read updated config"),
-        )
-        .expect("updated config json");
+        let root: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read updated config"))
+                .expect("updated config json");
         assert_eq!(
             root.pointer("/routes/thinking/providers/0/provider")
                 .and_then(serde_json::Value::as_str),

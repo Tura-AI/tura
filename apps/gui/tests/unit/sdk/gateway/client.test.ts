@@ -80,6 +80,34 @@ describe("GatewayClient", () => {
     });
   });
 
+  test("validates provider auth through the provider auth endpoint", async () => {
+    let observedUrl = "";
+    let observedMethod = "";
+    let observedBody = "";
+    const client = new GatewayClient({
+      baseUrl: "http://gateway.test",
+      fetch: async (input, init) => {
+        observedUrl = String(input);
+        observedMethod = init?.method ?? "";
+        observedBody = String(init?.body ?? "");
+        return jsonResponse({
+          ok: true,
+          provider_id: "custom-openai",
+          code: "provider.validation.passed",
+          message: "credential validation passed",
+          level: "valid",
+        });
+      },
+    });
+
+    const result = await client.providerAuthValidate("custom-openai");
+
+    expect(observedUrl).toBe("http://gateway.test/provider/custom-openai/auth/validate");
+    expect(observedMethod).toBe("POST");
+    expect(JSON.parse(observedBody)).toEqual({});
+    expect(result.ok).toBe(true);
+  });
+
   test("falls back to live session list when session log is empty", async () => {
     const observed: string[] = [];
     const client = new GatewayClient({

@@ -1,5 +1,10 @@
 import { GatewayError, type Message, type Project, type Session } from "@tura/gateway-sdk";
-import { systemThemeMode, type AppState, type ThemeMode } from "./state/global-store";
+import {
+  sessionUpdatedAt,
+  systemThemeMode,
+  type AppState,
+  type ThemeMode,
+} from "./state/global-store";
 import { mergeMessageForCache } from "./state/message-cache";
 import { samePath } from "./utils/app-format";
 import { providerIdFromAuthError, providerIdFromModel } from "./utils/settings";
@@ -78,11 +83,26 @@ export function mergeSessions(remoteSessions: Session[], localSessions: Session[
     byId.set(session.id, session);
   }
   for (const session of localSessions) {
-    if (!byId.has(session.id)) {
+    const remote = byId.get(session.id);
+    if (remote) {
+      byId.set(session.id, mergeSessionSnapshot(session, remote));
+    } else {
       byId.set(session.id, session);
     }
   }
   return [...byId.values()].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+}
+
+export function mergeSessionSnapshot(existing: Session | undefined, incoming: Session): Session {
+  if (!existing) {
+    return incoming;
+  }
+  const existingUpdatedAt = sessionUpdatedAt(existing);
+  const incomingUpdatedAt = sessionUpdatedAt(incoming);
+  if (existingUpdatedAt > 0 && incomingUpdatedAt > 0 && incomingUpdatedAt < existingUpdatedAt) {
+    return existing;
+  }
+  return incoming;
 }
 
 export function mergeMessagePages(prefix: Message[], suffix: Message[]): Message[] {

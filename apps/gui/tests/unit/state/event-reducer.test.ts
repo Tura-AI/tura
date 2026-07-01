@@ -358,6 +358,74 @@ describe("applyGatewayEvent", () => {
     expect(state.sessions[0]?.status).toBe("busy");
   });
 
+  test("ignores stale session snapshots after runtime display names update", () => {
+    let state: AppState = {
+      ...initialAppState("http://127.0.0.1:4126"),
+      sessions: [
+        {
+          id: "s1",
+          name: "实现 session 标题稳定",
+          session_display_name: "实现 session 标题稳定",
+          status: "busy",
+          updated_at: 20,
+        },
+      ],
+    };
+
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "session.updated",
+        properties: {
+          sessionID: "s1",
+          info: {
+            id: "s1",
+            name: "用户输入生成的临时会话名",
+            session_display_name: "用户输入生成的临时会话名",
+            status: "busy",
+            updated_at: 10,
+          },
+        },
+      },
+    });
+
+    expect(sessionTitle(state.sessions[0]!)).toBe("实现 session 标题稳定");
+    expect(state.sessions[0]?.updated_at).toBe(20);
+  });
+
+  test("accepts newer session snapshots after runtime display names update", () => {
+    let state: AppState = {
+      ...initialAppState("http://127.0.0.1:4126"),
+      sessions: [
+        {
+          id: "s1",
+          name: "旧任务名",
+          session_display_name: "旧任务名",
+          status: "busy",
+          updated_at: 20,
+        },
+      ],
+    };
+
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "session.updated",
+        properties: {
+          sessionID: "s1",
+          info: {
+            id: "s1",
+            name: "新任务名",
+            session_display_name: "新任务名",
+            status: "idle",
+            updated_at: 30,
+          },
+        },
+      },
+    });
+
+    expect(sessionTitle(state.sessions[0]!)).toBe("新任务名");
+    expect(state.sessions[0]?.status).toBe("idle");
+  });
+
   test("adds updated parts that arrive before message hydration", () => {
     let state: AppState = initialAppState("http://127.0.0.1:4126");
 

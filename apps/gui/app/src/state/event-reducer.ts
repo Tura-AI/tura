@@ -14,6 +14,7 @@ import {
   mergeMessagePartForCache,
   streamedDeltaFields,
 } from "./message-cache";
+import { mergeSessionSnapshot } from "../app-state-utils";
 
 export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelope): AppState {
   const event = envelope.payload;
@@ -295,8 +296,10 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
 }
 
 export function upsertSession(sessions: Session[], session: Session): Session[] {
+  const existing = sessions.find((item) => item.id === session.id);
+  const nextSession = mergeSessionSnapshot(existing, session);
   const without = sessions.filter((item) => item.id !== session.id);
-  return [...without, session].sort(
+  return [...without, nextSession].sort(
     (left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left),
   );
 }
