@@ -10,10 +10,7 @@ const dictionaries: Record<Language, Dictionary> = {
   en,
 };
 
-const defaultLanguage: Language =
-  parseLanguage(
-    typeof navigator !== "undefined" ? (navigator.language ?? navigator.languages?.[0]) : undefined,
-  ) ?? "en";
+const defaultLanguage: Language = "en";
 
 const [language, setLanguageSignal] = createSignal<Language>(defaultLanguage);
 

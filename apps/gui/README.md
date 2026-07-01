@@ -114,6 +114,9 @@ Runtime choices such as selected model, selected agent, provider auth status,
 workspace directory, and session config are read and updated through gateway
 HTTP APIs.
 
+When no workspace or global language is configured, the GUI defaults to English;
+an explicit saved language still takes precedence.
+
 ## Checks
 
 ```text
