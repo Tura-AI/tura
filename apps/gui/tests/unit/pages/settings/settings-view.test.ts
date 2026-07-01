@@ -1,5 +1,6 @@
 import type { SdkProvider } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
+import { mainTabEntries } from "../../../../app/src/pages/settings/main-tabs";
 import { providerDomains } from "../../../../app/src/pages/settings/provider-domain";
 import { configDraftToPatch } from "../../../../app/src/utils/settings";
 
@@ -61,6 +62,15 @@ describe("providerDomains", () => {
         }),
       ),
     ).toEqual(["other"]);
+  });
+});
+
+describe("MainTabs", () => {
+  test("shows the session entry instead of the plan entry", () => {
+    const entries = mainTabEntries("Session");
+
+    expect(entries).toEqual([{ id: "conversation", label: "Session" }]);
+    expect(entries.some((entry) => entry.id === "plan")).toBe(false);
   });
 });
 

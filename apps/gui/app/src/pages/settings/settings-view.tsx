@@ -8,18 +8,8 @@ import {
   type TuraConfigModelPair,
 } from "@tura/gateway-sdk";
 import ArrowLeft from "lucide-solid/icons/arrow-left";
-import LayoutList from "lucide-solid/icons/layout-list";
 import Search from "lucide-solid/icons/search";
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  Match,
-  Show,
-  Switch,
-  type JSX,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { t } from "../../i18n";
 import {
   AgentAvatarCanvas,
@@ -46,6 +36,7 @@ import { AppearanceSelect, CONFIGURE_PROVIDER_OPTION } from "./appearance-select
 import { providerDomains } from "./provider-domain";
 import { ProviderConfigGroup } from "./provider-settings";
 import { AgentSettingsPanel } from "./agent-settings-panel";
+import { mainTabEntries } from "./main-tabs";
 import { settingsRoutes, settingsRouteTitle } from "./settings-router";
 import {
   DEFAULT_PROVIDER_DOMAIN,
@@ -67,22 +58,15 @@ export function MainTabs(props: {
   conversationLabel?: string;
   onChange: (tab: Exclude<MainTab, "settings">) => void;
 }) {
-  const tabs: Array<{
-    id: Exclude<MainTab, "settings">;
-    label: string;
-    icon?: JSX.Element;
-  }> = [
-    { id: "plan", label: t("plan"), icon: <LayoutList size={15} /> },
-  ];
+  const tabs = () => mainTabEntries(props.conversationLabel);
   return (
     <nav class="main-tabs">
-      <For each={tabs}>
+      <For each={tabs()}>
         {(item) => (
           <button
             class={classNames(props.active === item.id && "selected")}
             onClick={() => props.onChange(item.id)}
           >
-            <Show when={item.icon}>{(icon) => icon()}</Show>
             <span>{item.label}</span>
           </button>
         )}
