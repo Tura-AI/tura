@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use session_log::{SessionSummary, WorkspaceSummary};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder};
@@ -124,6 +124,7 @@ impl GatewayTrayApp {
             tray_icon,
             snapshot,
             session_actions,
+            launched_clients: Vec::new(),
         };
         let proxy = event_loop.create_proxy();
         std::thread::spawn(move || loop {
@@ -155,19 +156,19 @@ struct GatewayTrayState {
     tray_icon: TrayIcon,
     snapshot: TraySnapshot,
     session_actions: HashMap<String, ActiveSessionItem>,
+    launched_clients: Vec<Child>,
 }
 
 impl GatewayTrayState {
-    fn handle_tray_event(&self, event: TrayIconEvent) {
+    fn handle_tray_event(&mut self, event: TrayIconEvent) {
         if !is_left_click_release(&event) {
             return;
         }
-        if let Err(error) = open_gui(self.port, self.snapshot.last_workspace.as_deref(), None) {
-            tracing::warn!(error = %error, "failed to open Tura GUI from tray icon");
-        }
+        self.launch_gui(self.snapshot.last_workspace.clone(), None);
     }
 
     fn refresh(&mut self) {
+        self.reap_finished_clients();
         let snapshot = read_snapshot();
         if snapshots_equal(&self.snapshot, &snapshot) {
             return;
@@ -182,37 +183,54 @@ impl GatewayTrayState {
         }
     }
 
-    fn handle_menu_event(&self, event: MenuEvent) -> bool {
+    fn handle_menu_event(&mut self, event: MenuEvent) -> bool {
         let id = event.id.as_ref();
         if id == OPEN_GUI_ID {
-            if let Err(error) = open_gui(self.port, self.snapshot.last_workspace.as_deref(), None) {
-                tracing::warn!(error = %error, "failed to open Tura GUI from tray");
-            }
+            self.launch_gui(self.snapshot.last_workspace.clone(), None);
             return false;
         }
         if id == OPEN_TUI_ID {
-            if let Err(error) = open_tui(self.port, self.snapshot.last_workspace.as_deref(), None) {
-                tracing::warn!(error = %error, "failed to open Tura TUI from tray");
-            }
+            self.launch_tui(self.snapshot.last_workspace.clone(), None);
             return false;
         }
         if id == QUIT_ID {
+            self.shutdown_clients();
             return true;
         }
         if let Some(session) = self.session_actions.get(id) {
-            if let Err(error) = open_gui(
-                self.port,
-                Some(&session.workspace),
-                Some(&session.session_id),
-            ) {
-                tracing::warn!(
-                    error = %error,
-                    session_id = %session.session_id,
-                    "failed to open session in Tura GUI from tray"
-                );
-            }
+            self.launch_gui(
+                Some(session.workspace.clone()),
+                Some(session.session_id.clone()),
+            );
         }
         false
+    }
+
+    fn launch_gui(&mut self, workspace: Option<String>, session_id: Option<String>) {
+        self.reap_finished_clients();
+        match open_gui(self.port, workspace.as_deref(), session_id.as_deref()) {
+            Ok(child) => self.launched_clients.push(child),
+            Err(error) => tracing::warn!(error = %error, "failed to open Tura GUI from tray"),
+        }
+    }
+
+    fn launch_tui(&mut self, workspace: Option<String>, session_id: Option<String>) {
+        self.reap_finished_clients();
+        match open_tui(self.port, workspace.as_deref(), session_id.as_deref()) {
+            Ok(child) => self.launched_clients.push(child),
+            Err(error) => tracing::warn!(error = %error, "failed to open Tura TUI from tray"),
+        }
+    }
+
+    fn reap_finished_clients(&mut self) {
+        self.launched_clients
+            .retain_mut(|child| !matches!(child.try_wait(), Ok(Some(_))));
+    }
+
+    fn shutdown_clients(&mut self) {
+        let gateway_url = format!("http://127.0.0.1:{}", self.port);
+        terminate_tracked_clients(&mut self.launched_clients);
+        terminate_gateway_clients_by_command_line(&gateway_url);
     }
 }
 
@@ -453,7 +471,7 @@ fn load_tura_icon() -> Result<Icon> {
     Icon::from_rgba(image.into_raw(), width, height).map_err(|error| anyhow!(error))
 }
 
-fn open_gui(port: u16, workspace: Option<&str>, session_id: Option<&str>) -> Result<()> {
+fn open_gui(port: u16, workspace: Option<&str>, session_id: Option<&str>) -> Result<Child> {
     spawn_detached(gui_command(port, workspace, session_id)?)
 }
 
@@ -516,7 +534,7 @@ fn resolve_gui_binary() -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.exists())
 }
 
-fn open_tui(port: u16, workspace: Option<&str>, session_id: Option<&str>) -> Result<()> {
+fn open_tui(port: u16, workspace: Option<&str>, session_id: Option<&str>) -> Result<Child> {
     let workspace = workspace
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
@@ -565,7 +583,7 @@ fn resolve_tui_command() -> Vec<String> {
     vec!["tura".to_string()]
 }
 
-fn open_terminal(workspace: &Path, gateway_url: &str, command: &str) -> Result<()> {
+fn open_terminal(workspace: &Path, gateway_url: &str, command: &str) -> Result<Child> {
     #[cfg(windows)]
     {
         let script = format!(
@@ -646,13 +664,73 @@ fn shell_command_line(command: &[String], args: &[String]) -> String {
         .join(" ")
 }
 
-fn spawn_detached(mut command: Command) -> Result<()> {
+fn spawn_detached(mut command: Command) -> Result<Child> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     tura_path::process_hardening::hide_child_console_window(&mut command);
-    command.spawn().map(|_| ()).map_err(Into::into)
+    command.spawn().map_err(Into::into)
+}
+
+fn terminate_tracked_clients(children: &mut Vec<Child>) {
+    for mut child in children.drain(..) {
+        match child.try_wait() {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to inspect launched gateway client")
+            }
+        }
+    }
+}
+
+fn terminate_gateway_clients_by_command_line(gateway_url: &str) {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes();
+    let current_pid = std::process::id();
+    let gateway_url = gateway_url.trim_end_matches('/');
+    for process in system.processes().values() {
+        if process.pid().as_u32() == current_pid {
+            continue;
+        }
+        if !is_gateway_client_process(process, gateway_url) {
+            continue;
+        }
+        if !process.kill() {
+            tracing::warn!(
+                pid = process.pid().as_u32(),
+                "failed to terminate gateway client"
+            );
+        }
+    }
+}
+
+fn is_gateway_client_process(process: &sysinfo::Process, gateway_url: &str) -> bool {
+    let fields = process
+        .cmd()
+        .iter()
+        .chain(process.environ().iter())
+        .map(ToString::to_string)
+        .collect::<Vec<String>>();
+    let has_gateway_url = fields.iter().any(|value| {
+        value.trim_end_matches('/').contains(gateway_url)
+            || value.contains(&format!("TURA_GATEWAY_URL={gateway_url}"))
+    });
+    if !has_gateway_url {
+        return false;
+    }
+    fields.iter().any(|value| {
+        let value = value.to_ascii_lowercase();
+        value.contains("tura_gui")
+            || value.contains("apps/tui")
+            || value.contains("apps\\tui")
+            || value.ends_with("tura")
+            || value.ends_with("tura.cmd")
+    })
 }
 
 fn sh_quote(value: &str) -> String {
