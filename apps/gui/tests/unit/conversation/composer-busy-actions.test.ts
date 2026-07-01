@@ -53,4 +53,17 @@ describe("composer busy action contract", () => {
       }),
     ).toEqual({ kind: "send", disabled: true });
   });
+
+  test("does not show stop unless the caller reports a busy session", () => {
+    expect(
+      composerActionState({
+        text: "",
+        imageCount: 0,
+        running: false,
+        submitting: false,
+        submitDisabled: false,
+        hasStopHandler: true,
+      }),
+    ).toEqual({ kind: "send", disabled: true });
+  });
 });

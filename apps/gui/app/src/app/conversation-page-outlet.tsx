@@ -137,7 +137,7 @@ export function ConversationPageOutlet(props: {
           onSubmit={props.onSubmit}
           onStop={() => abortSession(session().id)}
           onQueueSubmit={props.onQueueSubmit}
-          running={session().status !== "idle"}
+          running={session().status === "busy"}
           leftRailOpen={props.leftRailOpen}
           leftRailWidth={props.leftRailWidth}
           onRequestCollapseLeftRail={props.onRequestCollapseLeftRail}

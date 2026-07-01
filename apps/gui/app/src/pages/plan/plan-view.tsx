@@ -420,7 +420,7 @@ export function PlanView(props: {
             onSubmit={submitComposer}
             onQueueSubmit={queueSubmitComposer}
             onStop={() => props.previewSession && props.onStop(props.previewSession)}
-            running={Boolean(props.previewSession && props.previewSession.status !== "idle")}
+            running={props.previewSession?.status === "busy"}
             submitDisabled={
               Boolean(props.state.planDraftLane) && props.state.composerText.trim().length === 0
             }
