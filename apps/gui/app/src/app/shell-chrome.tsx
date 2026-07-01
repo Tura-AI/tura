@@ -19,7 +19,13 @@ export function AppTitleBar() {
   return (
     <header class="app-titlebar" data-tauri-drag-region>
       <div class="app-titlebar-brand" data-tauri-drag-region>
-        <span class="app-titlebar-mark" aria-hidden="true" />
+        <img
+          class="app-titlebar-mark"
+          src="/assets/brand/tura-icon.svg"
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+        />
         <span data-tauri-drag-region>Tura</span>
       </div>
       <div class="app-window-controls">

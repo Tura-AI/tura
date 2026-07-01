@@ -3,5 +3,13 @@
   "identifier": "default",
   "description": "Default permissions for the tura_gui shell.",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-start-gateway", "allow-open-external-url"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+    "allow-start-gateway",
+    "allow-open-external-url"
+  ]
 }

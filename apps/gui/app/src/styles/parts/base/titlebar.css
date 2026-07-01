@@ -26,11 +26,12 @@
 }
 
 .app-titlebar-mark {
-  width: 10px;
-  height: 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 50%;
-  background: var(--surface);
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  object-fit: contain;
+  pointer-events: none;
 }
 
 .app-window-controls {
