@@ -34,7 +34,7 @@ import { formatHelp } from "./output/help.js";
 import { parseLanguage, setLanguage, t, type Language } from "./i18n.js";
 import { helpPage, type HelpTopic } from "./i18n-help.js";
 
-const DEFAULT_AGENT = "thoughtful";
+const DEFAULT_AGENT = "balanced";
 const DEFAULT_MODEL_VARIANT = "high";
 const DEFAULT_MODEL_ACCELERATION_ENABLED = true;
 

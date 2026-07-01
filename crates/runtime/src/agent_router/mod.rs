@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tura_agents::coding_agent::{CodingAgent, CodingAgentProviderConfig, CodingAgentToolChoice};
 
 const PROJECT_ROOT_ENV: &str = "TURA_PROJECT_ROOT";
-const DEFAULT_CODING_AGENT_NAME: &str = "thoughtful";
+const DEFAULT_CODING_AGENT_NAME: &str = "balanced";
 
 fn default_op_manual() -> bool {
     true
