@@ -108,6 +108,12 @@ async def rect(page, selector: str) -> dict:
     return value
 
 
+async def titlebar_bottom(page) -> float:
+    return await page.locator(".app-titlebar").evaluate(
+        "element => element.getBoundingClientRect().bottom"
+    )
+
+
 async def goto_app(page, url: str, expected_selector: str) -> None:
     last_error = None
     for _ in range(3):
@@ -193,8 +199,9 @@ async def main() -> None:
                 mobile_workbench_class or ""
             ), mobile_workbench_class
             rail_button = await rect(mobile, ".rail-open-button")
+            titlebar_y = await titlebar_bottom(mobile)
             assert rail_button["display"] != "none", rail_button
-            assert rail_button["x"] < 56 and rail_button["y"] < 56, rail_button
+            assert rail_button["x"] < 56 and rail_button["y"] >= titlebar_y + 4, rail_button
             await mobile.screenshot(path=OUT / "mobile-plan-panel-overlay.png")
 
             await browser.close()

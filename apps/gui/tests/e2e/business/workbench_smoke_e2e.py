@@ -141,6 +141,37 @@ async def assert_root_viewport_locked(page, checks: list[dict], name: str) -> No
     checks.append({"name": f"{name}-root-has-no-page-scrollbars", "ok": ok, "metrics": metrics})
 
 
+async def assert_rail_toggle_clear_of_titlebar(page, checks: list[dict], name: str) -> None:
+    metrics = await page.evaluate(
+        """
+        () => {
+          const titlebar = document.querySelector('.app-titlebar');
+          const button = document.querySelector('.rail-open-button');
+          if (!titlebar || !button) return { found: false };
+          const titlebarRect = titlebar.getBoundingClientRect();
+          const buttonRect = button.getBoundingClientRect();
+          const x = buttonRect.left + buttonRect.width / 2;
+          const y = buttonRect.top + buttonRect.height / 2;
+          const hit = document.elementFromPoint(x, y);
+          return {
+            found: true,
+            titlebarBottom: titlebarRect.bottom,
+            buttonTop: buttonRect.top,
+            buttonBottom: buttonRect.bottom,
+            hitClassName: hit?.className,
+            hitIsRailToggle: Boolean(hit?.closest?.('.rail-open-button')),
+          };
+        }
+        """,
+    )
+    ok = (
+        metrics.get("found")
+        and metrics["buttonTop"] >= metrics["titlebarBottom"] + 4
+        and metrics["hitIsRailToggle"]
+    )
+    checks.append({"name": f"{name}-rail-toggle-clear-of-titlebar", "ok": ok, "metrics": metrics})
+
+
 async def click_center_and_expect_visible(page, selector: str, expected_selector: str) -> dict:
     hit = await page.evaluate(
         """
@@ -193,6 +224,7 @@ async def main() -> None:
             await page.wait_for_load_state("networkidle")
             await expect(page.locator(".new-session-view")).to_be_visible(timeout=15000)
             await assert_root_viewport_locked(page, checks, "new-session")
+            await assert_rail_toggle_clear_of_titlebar(page, checks, "new-session")
             hit = await click_center_and_expect_visible(
                 page,
                 ".plan-session-button",

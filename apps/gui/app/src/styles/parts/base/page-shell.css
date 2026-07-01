@@ -9,7 +9,7 @@
 
 .rail-open-button {
   position: fixed;
-  top: var(--rail-open-button-top);
+  top: calc(var(--app-titlebar-height) + var(--rail-open-button-top));
   left: calc(var(--rail) + var(--rail-open-button-top));
   z-index: 120;
   display: grid;

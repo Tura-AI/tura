@@ -10,6 +10,14 @@ const titlebarCss = readFileSync(
   resolve(import.meta.dir, "../../app/src/styles/parts/base/titlebar.css"),
   "utf8",
 );
+const pageShellCss = readFileSync(
+  resolve(import.meta.dir, "../../app/src/styles/parts/base/page-shell.css"),
+  "utf8",
+);
+const desktopTabletCss = readFileSync(
+  resolve(import.meta.dir, "../../app/src/styles/parts/responsive/desktop-tablet.css"),
+  "utf8",
+);
 const tauriCapability = JSON.parse(
   readFileSync(
     resolve(import.meta.dir, "../../../tauri/src-tauri/capabilities/default.json"),
@@ -36,6 +44,16 @@ describe("custom Tauri titlebar", () => {
         "core:window:allow-start-dragging",
         "core:window:allow-toggle-maximize",
       ]),
+    );
+  });
+
+  test("anchors fixed rail chrome below the Tauri titlebar", () => {
+    expect(pageShellCss).toContain(
+      "top: calc(var(--app-titlebar-height) + var(--rail-open-button-top));",
+    );
+    expect(desktopTabletCss).toContain("inset: var(--app-titlebar-height) 0 0 0;");
+    expect(desktopTabletCss).toContain(
+      "height: calc(100dvh - var(--app-titlebar-height));",
     );
   });
 });
