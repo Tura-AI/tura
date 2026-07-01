@@ -51,9 +51,11 @@ describe("custom Tauri titlebar", () => {
     expect(pageShellCss).toContain(
       "top: calc(var(--app-titlebar-height) + var(--rail-open-button-top));",
     );
-    expect(desktopTabletCss).toContain("inset: var(--app-titlebar-height) 0 0 0;");
-    expect(desktopTabletCss).toContain(
-      "height: calc(100dvh - var(--app-titlebar-height));",
+    expect(pageShellCss).toContain(".error-strip");
+    expect(pageShellCss).toContain(
+      "left: calc(\n    var(--rail) + var(--rail-open-button-top) + var(--rail-open-button-size) + var(--space-2)\n  );",
     );
+    expect(desktopTabletCss).toContain("inset: var(--app-titlebar-height) 0 0 0;");
+    expect(desktopTabletCss).toContain("height: calc(100dvh - var(--app-titlebar-height));");
   });
 });

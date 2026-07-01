@@ -34,6 +34,45 @@
   color: var(--ink);
 }
 
+.error-strip {
+  position: fixed;
+  top: calc(var(--app-titlebar-height) + var(--rail-open-button-top));
+  right: var(--space-3);
+  left: calc(
+    var(--rail) + var(--rail-open-button-top) + var(--rail-open-button-size) + var(--space-2)
+  );
+  z-index: 120;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  width: max-content;
+  max-width: min(520px, calc(100vw - var(--rail) - 72px));
+  min-height: var(--rail-open-button-size);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  box-shadow: var(--shadow-control);
+}
+
+.rail-collapsed .error-strip,
+.rail-fullscreen .error-strip {
+  left: calc(var(--rail-open-button-top) + var(--rail-open-button-size) + var(--space-2));
+  max-width: min(520px, calc(100vw - 72px));
+}
+
+.error-strip.success {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+
+.error-strip button {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
 .rail-collapsed .product-workbench,
 .rail-collapsed .plan-detail,
 .rail-collapsed .conversation-view,

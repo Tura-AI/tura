@@ -429,30 +429,3 @@
   height: 8px;
   margin: 0 auto;
 }
-
-.error-strip {
-  position: absolute;
-  inset: var(--space-3) var(--space-3) auto auto;
-  z-index: 3;
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  max-width: min(520px, calc(100vw - 280px));
-  padding: 10px var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--paper);
-  color: var(--ink);
-  font-size: var(--font-ui);
-  box-shadow: var(--shadow-panel);
-}
-
-.error-strip.success {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
-}
-
-.error-strip button {
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-}
