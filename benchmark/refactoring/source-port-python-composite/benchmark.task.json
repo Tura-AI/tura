@@ -1,10 +1,10 @@
 {
   "schema": "tura.benchmark.task-declaration.v1",
-  "id": "source-port-python-composite-xsv",
+  "id": "source-port-python-composite",
   "type": "refactoring",
-  "title": "xsv Python source-port composite workflow",
-  "directory": "benchmark/refactoring/source-port-python-composite-xsv",
-  "summary": "Ports xsv from Rust to Python with the composite source-port workflow.",
+  "title": "Python source-port composite workflow",
+  "directory": "benchmark/refactoring/source-port-python-composite",
+  "summary": "Ports the source-port task suite from Rust to Python with the composite source-port workflow.",
   "contract": {
     "cliMetadata": "tura.benchmark.cli-metadata.v1",
     "round": "tura.benchmark.agent-round.v1",
@@ -14,7 +14,7 @@
   "variants": [
     {
       "id": "default",
-      "label": "xsv composite workflow",
+      "label": "source-port composite workflow",
       "runner": "runner.mjs",
       "default": true
     }

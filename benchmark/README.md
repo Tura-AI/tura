@@ -115,15 +115,11 @@ run directory's `contracts/` folder.
 - `benchmark/refactoring/prompt-gallery-tanstack-frontend-rebuild/`
 - `benchmark/refactoring/prompt-gallery-tanstack-fullstack-rebuild/`
 - `benchmark/refactoring/react-ops-board-programbench-rebuild/`
-- `benchmark/refactoring/source-port-python-composite-eza/`
-- `benchmark/refactoring/source-port-python-composite-nushell/`
-- `benchmark/refactoring/source-port-python-composite-xsv/`
-- `benchmark/refactoring/source-port-python-composite-zip-password-finder/`
+- `benchmark/refactoring/source-port-python-composite/`
 - `benchmark/refactoring/source-port-python-default-eza/`
 - `benchmark/refactoring/source-port-python-default-nushell/`
 - `benchmark/refactoring/source-port-python-default-xsv/`
 - `benchmark/refactoring/source-port-python-default-zip-password-finder/`
-- `benchmark/refactoring/source-port-python-defined-workflow-eza/`
 - `benchmark/refactoring/source-port-python-defined-workflow-nushell/`
 - `benchmark/refactoring/source-port-python-defined-workflow-xsv/`
 - `benchmark/refactoring/source-port-python-defined-workflow-zip-password-finder/`

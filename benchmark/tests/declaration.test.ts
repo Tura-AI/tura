@@ -12,8 +12,8 @@ const repoRoot = path.resolve(benchmarkRoot, "..");
 test("discovers one declaration per benchmark task directory", async () => {
   const declarations = await discoverTaskDeclarations(benchmarkRoot);
 
-  assert.equal(declarations.length, 23);
-  assert.deepEqual(countByType(declarations), { build: 4, debug: 3, refactoring: 16 });
+  assert.equal(declarations.length, 19);
+  assert.deepEqual(countByType(declarations), { build: 4, debug: 3, refactoring: 12 });
   assert.deepEqual(
     declarations.map((declaration) => declaration.id),
     [
@@ -26,15 +26,11 @@ test("discovers one declaration per benchmark task directory", async () => {
       "react-ops-board-playwright-repair",
       "react-ops-board-programbench-rebuild",
       "retail-ops-defect-repair",
-      "source-port-python-composite-eza",
-      "source-port-python-composite-nushell",
-      "source-port-python-composite-xsv",
-      "source-port-python-composite-zip-password-finder",
+      "source-port-python-composite",
       "source-port-python-default-eza",
       "source-port-python-default-nushell",
       "source-port-python-default-xsv",
       "source-port-python-default-zip-password-finder",
-      "source-port-python-defined-workflow-eza",
       "source-port-python-defined-workflow-nushell",
       "source-port-python-defined-workflow-xsv",
       "source-port-python-defined-workflow-zip-password-finder",
