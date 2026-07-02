@@ -183,8 +183,9 @@ function collectRounds(summary, roundsDirectory) {
       for (const callback of stdoutRecords) rounds.push(normalizeRound(enrichRoundRecord(callback, summary, result), rounds.length))
       continue
     }
-    const aggregate = aggregateResultRound(result, summary, stdoutText, stdoutRecords)
-    if (aggregate) rounds.push(normalizeRound(aggregate, rounds.length))
+    for (const aggregate of aggregateResultRounds(result, summary, stdoutText, stdoutRecords)) {
+      rounds.push(normalizeRound(aggregate, rounds.length))
+    }
   }
   if (rounds.length === 0) return []
   fs.mkdirSync(roundsDirectory, { recursive: true })
@@ -208,11 +209,13 @@ function normalizeRound(callback, index) {
     roundIndex: index,
     startedAt,
     endedAt,
-    input: { fullContext: fullContext(record) },
-    output: { fullOutput: fullOutput(record), assistantMessage: assistantMessage(record) },
+    input: { fullContext: fullContext(record), messages: inputMessages(record) },
+    output: { fullOutput: fullOutput(record), assistantMessage: assistantMessage(record), messages: outputMessages(record) },
+    messages: messagesFromRecord(record),
     usage,
     providerDurationMs: firstNumber(record.providerDurationMs, record.provider_duration_ms, record.duration_ms, record.metrics?.durationMs, record.runtime_usage?.latency_ms, 0),
     toolCalls: toolCallsFromRecord(record),
+    sources: roundSources(record),
     metadata: roundMetadata(record, roundId),
   }
 }
@@ -233,21 +236,26 @@ function enrichRoundRecord(callback, summary, result = {}) {
   }
 }
 
-function aggregateResultRound(result, summary, stdoutText, stdoutRecords) {
-  if (!result || typeof result !== "object") return null
+function aggregateResultRounds(result, summary, stdoutText, stdoutRecords) {
+  if (!result || typeof result !== "object") return []
   const agentId = firstTextOrNull(result.agent, result.agent_id, result.provider)
-  if (!agentId && stdoutRecords.length === 0) return null
+  if (!agentId && stdoutRecords.length === 0) return []
   const providerRecords = providerRoundRecords(result)
+  const groups = lifecycleTurnGroups(stdoutRecords)
+  return groups.map((group, index) => aggregateResultRound(result, summary, stdoutText, group.records, providerRecordsForTurn(providerRecords, groups, index), group, index))
+}
+
+function aggregateResultRound(result, summary, stdoutText, stdoutRecords, providerRecords, turnGroup, turnIndex) {
+  const agentId = firstTextOrNull(result.agent, result.agent_id, result.provider)
   const usage = usageFromAggregateResult(result, providerRecords, stdoutRecords)
-  const assistantMessages = assistantMessagesFromEvents(stdoutRecords)
-  const providerMessages = providerRecords.map((record) => firstTextOrNull(record.response?.output_text, record.output_text)).filter(Boolean)
-  const allMessages = [...assistantMessages, ...providerMessages]
-  const startedAt = firstTextOrNull(result.started_at, result.startedAt, providerRecords[0]?.started_at) || new Date().toISOString()
-  const endedAt = firstTextOrNull(result.ended_at, result.endedAt, providerRecords.at(-1)?.finished_at) || startedAt
+  const messages = mergeMessages(messagesFromEvents(stdoutRecords), providerRecords.flatMap((record) => messagesFromProviderRecord(record)))
+  const allMessages = messages.filter((message) => message.role === "assistant").map((message) => message.text).filter(Boolean)
+  const startedAt = firstTextOrNull(turnGroup?.startedAt, result.started_at, result.startedAt, providerRecords[0]?.started_at) || new Date().toISOString()
+  const endedAt = firstTextOrNull(turnGroup?.endedAt, result.ended_at, result.endedAt, providerRecords.at(-1)?.finished_at) || startedAt
   const toolCalls = mergeToolCalls(providerToolCalls(providerRecords), commandExecutionToolCalls(stdoutRecords))
   return {
     type: "benchmark.agent.round.completed",
-    roundId: firstTextOrNull(result.round_id, result.roundId, result.turn_id, result.session_id) || `${firstText(result.task, "task")}-${firstText(agentId, "agent")}-round-1`,
+    roundId: firstTextOrNull(turnGroup?.turnId, result.round_id, result.roundId, result.turn_id, result.session_id) || `${firstText(result.task, "task")}-${firstText(agentId, "agent")}-round-${turnIndex + 1}`,
     started_at: startedAt,
     ended_at: endedAt,
     agent_id: agentId,
@@ -262,6 +270,7 @@ function aggregateResultRound(result, summary, stdoutText, stdoutRecords) {
     full_context: firstTextOrNull(readOptionalText(result.prep?.prompt_path), readOptionalText(result.context_archive?.input_prompt_path)),
     full_output: allMessages.join("\n\n"),
     assistant_message: allMessages.at(-1) || "",
+    messages,
     usage,
     provider_duration_ms: firstNumber(result.elapsed_ms, ...providerRecords.map((record) => record.duration_ms), 0),
     toolCalls,
@@ -286,6 +295,69 @@ function roundMetadata(record, roundId) {
     eventType: firstTextOrNull(record.type, record.event, record.event_type, record.eventType) || "unknown",
     sessionOrTurnId: firstTextOrNull(record.sessionOrTurnId, record.session_or_turn_id, record.turnId, record.turn_id, record.session_id, record.sessionId, record.id) || roundId,
   }
+}
+
+function roundSources(record) {
+  return {
+    stdoutPath: firstTextOrNull(record.source_stdout_path, record.stdout_path, record.stdoutPath),
+    providerCallsPath: firstTextOrNull(record.source_provider_calls_path, record.provider_calls_path, record.providerCallsPath),
+    providerLogPath: firstTextOrNull(record.provider_log_path, record.providerLogPath),
+    summaryPath: firstTextOrNull(record.source_summary_path, record.summary_path, record.summaryPath),
+  }
+}
+
+function lifecycleTurnGroups(records) {
+  if (!Array.isArray(records) || records.length === 0) return [{ records: [] }]
+  const groups = []
+  let current = null
+  let pending = []
+  for (const record of records) {
+    if (record?.type === "turn.started") {
+      if (current) groups.push(current)
+      pending = []
+      current = {
+        turnId: firstTextOrNull(record.turn_id, record.turnId, record.id),
+        startedAt: firstTextOrNull(record.started_at, record.startedAt, record.timestamp, record.time),
+        records: [...pending, record],
+      }
+      continue
+    }
+    if (current) {
+      current.records.push(record)
+      if (record?.type === "turn.completed") {
+        current.endedAt = firstTextOrNull(record.ended_at, record.endedAt, record.timestamp, record.time)
+        groups.push(current)
+        current = null
+      }
+    } else {
+      pending.push(record)
+    }
+  }
+  if (current) groups.push(current)
+  else if (hasRoundContent(pending)) groups.push({ records: pending })
+  const materialGroups = groups.filter((group) => hasRoundContent(group.records))
+  return materialGroups.length > 0 ? materialGroups : [{ records }]
+}
+
+function hasRoundContent(records) {
+  return Array.isArray(records) && records.some((record) => {
+    const itemType = firstTextOrNull(record?.item?.type)
+    return Boolean(
+      itemType === "agent_message"
+        || itemType === "assistant_message"
+        || itemType === "user_message"
+        || itemType === "system_message"
+        || itemType === "command_execution"
+        || record?.type === "turn.completed" && record.usage,
+    )
+  })
+}
+
+function providerRecordsForTurn(providerRecords, groups, index) {
+  if (!Array.isArray(providerRecords) || providerRecords.length === 0) return []
+  if (groups.length === 1) return providerRecords
+  if (providerRecords.length === groups.length) return [providerRecords[index]].filter(Boolean)
+  return []
 }
 
 function inferAgentId(record) {
@@ -448,6 +520,122 @@ function assistantMessage(record) {
   return textFromOutput(record.response?.output ?? record.body?.output ?? record.output)
 }
 
+function messagesFromRecord(record) {
+  return mergeMessages(
+    inputMessages(record),
+    outputMessages(record),
+    messagesFromProviderRecord(record),
+  )
+}
+
+function inputMessages(record) {
+  const messages = []
+  pushNormalizedMessages(messages, record.messages, "messages")
+  pushNormalizedMessages(messages, record.input?.messages, "input.messages")
+  pushNormalizedMessages(messages, record.request?.messages, "request.messages")
+  pushNormalizedMessages(messages, record.body?.messages, "body.messages")
+  pushNormalizedMessages(messages, record.request?.input, "request.input")
+  pushNormalizedMessages(messages, record.body?.input, "body.input")
+  if (messages.length === 0) {
+    const context = firstTextOrNull(record.fullContext, record.full_context, record.inputContext, record.input_context, record.context)
+    if (context) messages.push(normalizedMessage({ role: "user", content: context }, "full_context", messages.length))
+  }
+  return messages.filter((message) => message.role !== "assistant")
+}
+
+function outputMessages(record) {
+  const explicitAssistantMessages = normalizedMessageArray(record.messages, "messages").filter((message) => message.role === "assistant")
+  if (explicitAssistantMessages.length > 0) return explicitAssistantMessages
+  return mergeMessages(
+    normalizedMessageArray(record.message, "message", "assistant"),
+    normalizedMessageArray(record.assistantMessage, "assistantMessage", "assistant"),
+    normalizedMessageArray(record.assistant_message, "assistant_message", "assistant"),
+    normalizedMessageArray(record.output?.message, "output.message", "assistant"),
+    normalizedMessageArray(record.response?.output_text, "response.output_text", "assistant"),
+    normalizedMessageArray(record.body?.output_text, "body.output_text", "assistant"),
+    messagesFromOpenAiOutput(record.response?.output ?? record.body?.output ?? record.output),
+  )
+}
+
+function messagesFromProviderRecord(record) {
+  return mergeMessages(
+    normalizedMessageArray(record?.response?.output_text, "provider.response.output_text", "assistant"),
+    messagesFromOpenAiOutput(record?.response?.output),
+    normalizedMessageArray(record?.output_text, "provider.output_text", "assistant"),
+  )
+}
+
+function messagesFromEvents(records) {
+  const messages = []
+  for (const [index, record] of records.entries()) {
+    const item = record?.item
+    if (!item || typeof item !== "object") continue
+    if (["agent_message", "assistant_message", "user_message", "system_message"].includes(item.type)) {
+      messages.push(normalizedMessage({
+        id: item.id,
+        role: item.type === "user_message" ? "user" : item.type === "system_message" ? "system" : "assistant",
+        type: item.type,
+        content: item.text ?? item.message ?? item.content,
+        usage: item.usage,
+        raw: item,
+      }, `stdout.${record.type || "event"}`, index))
+    }
+  }
+  return messages
+}
+
+function pushNormalizedMessages(target, value, source) {
+  for (const message of normalizedMessageArray(value, source)) target.push(message)
+}
+
+function normalizedMessageArray(value, source, fallbackRole = "unknown") {
+  if (value === undefined || value === null) return []
+  const values = Array.isArray(value) ? value : [value]
+  return values
+    .map((item, index) => normalizedMessage(item, source, index, fallbackRole))
+    .filter((message) => message.text || message.content !== null)
+}
+
+function normalizedMessage(value, source, index = 0, fallbackRole = "unknown") {
+  const object = value && typeof value === "object" && !Array.isArray(value) ? value : { content: value }
+  const content = object.content ?? object.text ?? object.message ?? object.output_text ?? object.value ?? value
+  const text = typeof content === "string" ? content : textFromContent(content) || textFromOutput(content) || (content === undefined || content === null ? "" : stringifyFirst(content))
+  return {
+    id: firstTextOrNull(object.id, object.message_id, object.messageId, object.item_id) || `${safeFileName(source)}-${index + 1}`,
+    role: firstTextOrNull(object.role) || fallbackRole,
+    type: firstTextOrNull(object.type) || "message",
+    text,
+    content: jsonValue(content) ?? null,
+    usage: usageFromRecord(object),
+    source,
+    raw: jsonValue(object) ?? {},
+  }
+}
+
+function messagesFromOpenAiOutput(value) {
+  const messages = []
+  for (const [index, item] of (Array.isArray(value) ? value : []).entries()) {
+    if (!item || typeof item !== "object" || isToolCall(item)) continue
+    const text = firstTextOrNull(item.text, item.output_text) || textFromContent(item.content)
+    if (text) messages.push(normalizedMessage({ ...item, role: item.role || "assistant", content: text }, "response.output", index, "assistant"))
+  }
+  return messages
+}
+
+function mergeMessages(...groups) {
+  const merged = []
+  const seen = new Set()
+  for (const group of groups) {
+    for (const message of Array.isArray(group) ? group : []) {
+      const key = `${message.role}\u0000${message.type}\u0000${message.text}\u0000${message.source}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(message)
+    }
+  }
+  return merged
+}
+
 function textFromOutput(value) {
   const pieces = []
   for (const item of Array.isArray(value) ? value : []) {
@@ -477,6 +665,8 @@ function providerRoundRecords(result) {
 }
 
 function usageFromAggregateResult(result, providerRecords, stdoutRecords) {
+  const stdoutUsage = sumRecordUsage(stdoutRecords)
+  if (stdoutUsage.inputTokens > 0 || stdoutUsage.outputTokens > 0 || stdoutUsage.totalTokens > 0) return stdoutUsage
   const resultUsage = objectOrEmpty(result?.usage)
   const usage = {
     inputTokens: firstNumber(resultUsage.inputTokens, resultUsage.input_tokens, resultUsage.prompt_tokens, 0),
@@ -491,6 +681,13 @@ function usageFromAggregateResult(result, providerRecords, stdoutRecords) {
   if (usage.inputTokens === 0 && usage.outputTokens === 0) {
     for (const record of stdoutRecords) addUsageInto(usage, usageFromRecord(record))
   }
+  if (usage.totalTokens === 0) usage.totalTokens = usage.inputTokens + usage.cacheInputTokens + usage.outputTokens + usage.reasoningTokens
+  return usage
+}
+
+function sumRecordUsage(records) {
+  const usage = { inputTokens: 0, cacheInputTokens: 0, outputTokens: 0, reasoningTokens: 0, totalTokens: 0 }
+  for (const record of Array.isArray(records) ? records : []) addUsageInto(usage, usageFromRecord(record))
   if (usage.totalTokens === 0) usage.totalTokens = usage.inputTokens + usage.cacheInputTokens + usage.outputTokens + usage.reasoningTokens
   return usage
 }

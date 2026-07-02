@@ -98,6 +98,15 @@ test("legacy benchmark summary bridge writes unified per-round contracts", () =>
   assert.equal(taskReport.rounds.length, 5)
   assert.deepEqual(taskReport.rounds.map((round) => round.roundId), ["pi-turn-1", "codex-turn-1", "claude-turn-1", "opencode-turn-1", "tura-turn-1"])
   assert.deepEqual(taskReport.rounds.map((round) => round.output.assistantMessage), ["Pi patched it.", "Codex patched it.", "Claude patched it.", "OpenCode patched it.", "Tura patched it."])
+  assert.deepEqual(taskReport.rounds.map((round) => round.messages.map((message) => [message.role, message.text]).at(-1)), [
+    ["assistant", "Pi patched it."],
+    ["assistant", "Codex patched it."],
+    ["assistant", "Claude patched it."],
+    ["assistant", "OpenCode patched it."],
+    ["assistant", "Tura patched it."],
+  ])
+  assert.deepEqual(taskReport.rounds[0].input.messages.map((message) => [message.role, message.text]), [["user", "Fix Pi case"]])
+  assert.deepEqual(taskReport.rounds[0].output.messages.map((message) => [message.role, message.text]), [["assistant", "Pi patched it."]])
   assert.deepEqual(taskReport.rounds.map((round) => [round.metadata.agentId, round.metadata.agentKind, round.metadata.agentMode, round.metadata.model, round.metadata.priorityEnabled]), [
     ["pi", "pi", "direct", "gpt-5.5", false],
     ["codex", "codex", "cli", "gpt-5.5", false],
@@ -165,6 +174,17 @@ test("source-port result bridge aggregates lifecycle events into per-agent round
     { type: "item.completed", item: { id: "item_1", type: "command_execution", command: "python -m py_compile executable", status: "completed", exit_code: 0, aggregated_output: "" } },
     { type: "turn.completed", usage: { input_tokens: 200, cached_input_tokens: 50, output_tokens: 40, reasoning_output_tokens: 10 } },
   ].map((event) => JSON.stringify(event)).join("\n")
+  const codexTwoTurnStdout = [
+    { type: "thread.started", thread_id: "thread-codex-2" },
+    { type: "turn.started", turn_id: "codex-turn-a" },
+    { type: "item.completed", item: { id: "msg_a", type: "agent_message", text: "Codex first turn." } },
+    { type: "item.completed", item: { id: "tool_a", type: "command_execution", command: "python first.py", status: "completed", exit_code: 0 } },
+    { type: "turn.completed", usage: { input_tokens: 10, output_tokens: 2 } },
+    { type: "turn.started", turn_id: "codex-turn-b" },
+    { type: "item.completed", item: { id: "msg_b", type: "agent_message", text: "Codex second turn." } },
+    { type: "item.completed", item: { id: "tool_b", type: "command_execution", command: "python second.py", status: "completed", exit_code: 0 } },
+    { type: "turn.completed", usage: { input_tokens: 11, output_tokens: 3 } },
+  ].map((event) => JSON.stringify(event)).join("\n")
 
   const summary = normalizeBusinessSummary({
     ok: true,
@@ -191,28 +211,40 @@ test("source-port result bridge aggregates lifecycle events into per-agent round
         usage: { input_tokens: 200, cached_input_tokens: 50, output_tokens: 40, reasoning_tokens: 10, total_tokens: 300 },
         eval: { ran: true, exit_code: 0, stdout_path: path.join(codexDir, "eval.stdout.log"), stderr_path: path.join(codexDir, "eval.stderr.log"), report: { reports: [{ passed: 15, failed: 0 }] } },
       },
+      {
+        agent: "codex-documents",
+        task: "zip-password-finder-extra",
+        stdout: codexTwoTurnStdout,
+        stdout_path: path.join(codexDir, "stdout-two-turns.jsonl"),
+        usage: { input_tokens: 21, output_tokens: 5, total_tokens: 26 },
+        eval: { ran: true, exit_code: 0, stdout_path: path.join(codexDir, "eval-2.stdout.log"), stderr_path: path.join(codexDir, "eval-2.stderr.log"), report: { reports: [{ passed: 1, failed: 0 }] } },
+      },
     ],
   }, paths)
 
   const taskReport = JSON.parse(fs.readFileSync(summary.benchmark_contracts.task_report_path, "utf8"))
   const harnessReport = JSON.parse(fs.readFileSync(summary.benchmark_contracts.harness_report_path, "utf8"))
   assert.equal(summary.ok, false)
-  assert.equal(taskReport.rounds.length, 2)
-  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentId), ["tura-direct", "codex-documents"])
-  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentKind), ["tura", "codex"])
-  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentMode), ["direct", "documents"])
-  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.model), ["openai/gpt-5.5", "gpt-5.5"])
+  assert.equal(taskReport.rounds.length, 4)
+  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentId), ["tura-direct", "codex-documents", "codex-documents", "codex-documents"])
+  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentKind), ["tura", "codex", "codex", "codex"])
+  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentMode), ["direct", "documents", "documents", "documents"])
+  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.model), ["openai/gpt-5.5", "gpt-5.5", "gpt-5.5", "gpt-5.5"])
   assert(!taskReport.rounds.some((round) => ["item", "thread", "turn"].includes(round.metadata.agentId)))
-  assert.deepEqual(taskReport.rounds.map((round) => round.output.assistantMessage), ["Tura patched it.", "Codex patched it."])
-  assert.deepEqual(taskReport.rounds.map((round) => round.usage.totalTokens), [135, 300])
+  assert.deepEqual(taskReport.rounds.map((round) => round.output.assistantMessage), ["Tura patched it.", "Codex patched it.", "Codex first turn.", "Codex second turn."])
+  assert.deepEqual(taskReport.rounds.map((round) => round.usage.totalTokens), [135, 300, 12, 14])
+  assert.deepEqual(taskReport.rounds.map((round) => round.messages.map((message) => message.text)), [["Implemented the Python port.", "Tura patched it."], ["Codex patched it."], ["Codex first turn."], ["Codex second turn."]])
   assert.deepEqual(taskReport.rounds[0].toolCalls.map((tool) => [tool.kind, tool.name, tool.commandLine, tool.parentToolName]), [
     ["command", "shell_command", "python -m py_compile executable", "command_run"],
     ["command", "apply_patch", "PATCH", "command_run"],
   ])
   assert.deepEqual(taskReport.rounds[1].toolCalls.map((tool) => [tool.kind, tool.commandLine]), [["command", "python -m py_compile executable"]])
+  assert.deepEqual(taskReport.rounds[2].toolCalls.map((tool) => [tool.kind, tool.commandLine]), [["command", "python first.py"]])
+  assert.deepEqual(taskReport.rounds[3].toolCalls.map((tool) => [tool.kind, tool.commandLine]), [["command", "python second.py"]])
   assert.deepEqual(harnessReport.scores.map((score) => [score.details.agent, score.details.passed, score.details.failed, score.passed]), [
     ["tura-direct", 12, 3, false],
     ["codex-documents", 15, 0, true],
+    ["codex-documents", 1, 0, true],
   ])
-  assert.equal(harnessReport.finalScore, (12 / 15 + 1) / 2)
+  assert.equal(harnessReport.finalScore, (12 / 15 + 1 + 1) / 3)
 })

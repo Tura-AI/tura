@@ -1,7 +1,0 @@
-read_only = false
-network = true
-
-[configurable]
-first_route = { default = "brave", enum = ["brave", "exa", "duckduckgo"] }
-second_route = { default = "exa", enum = ["brave", "exa", "duckduckgo"] }
-third_route = { default = "duckduckgo", enum = ["brave", "exa", "duckduckgo"] }
