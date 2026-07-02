@@ -1,8 +1,8 @@
-//! Gateway client for the per-home detached router daemon.
+//! Gateway-owned router process client.
 //!
-//! Gateway is a front door, not the backend owner. It probes the endpoint
-//! published by `tura_router serve-socket`, starts that daemon detached when no
-//! compatible daemon is reachable, and sends one request per socket connection.
+//! Gateway owns the backend process tree. It starts `tura_router serve-socket`
+//! as a direct child; router then owns session_db, runtime workers, and
+//! command-run children below that tree.
 
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::OnceCell;
@@ -53,6 +53,7 @@ struct RouterEndpoint {
 pub struct RouterProcess {
     router_bin: Option<PathBuf>,
     addr: ParkingMutex<Option<String>>,
+    child: ParkingMutex<Option<std::process::Child>>,
     request_seq: AtomicU64,
     restart_count: AtomicU64,
     last_error: ParkingMutex<Option<String>>,
@@ -96,6 +97,7 @@ impl RouterProcess {
         Ok(Self {
             router_bin,
             addr: ParkingMutex::new(None),
+            child: ParkingMutex::new(None),
             request_seq: AtomicU64::new(1),
             restart_count: AtomicU64::new(0),
             last_error: ParkingMutex::new(None),
@@ -103,28 +105,31 @@ impl RouterProcess {
     }
 
     pub fn ensure_started(&self) -> Result<()> {
-        if let Some((endpoint, _health)) = healthy_router_endpoint()? {
+        if let Some((endpoint, _health)) = self.healthy_owned_router_endpoint()? {
             *self.addr.lock() = Some(endpoint.addr);
             *self.last_error.lock() = None;
             return Ok(());
         }
 
         for attempt in 0..2 {
-            let mut child = self.spawn_router_daemon()?;
+            self.kill_managed_router_child();
+            let _ = terminate_router_from_lock()?;
+            remove_router_endpoint_files();
+            let child = self.spawn_router_process()?;
             self.restart_count.fetch_add(1, Ordering::SeqCst);
+            *self.child.lock() = Some(child);
 
-            if let Some(endpoint) = wait_for_healthy_router(ROUTER_HEALTH_TIMEOUT)? {
+            if let Some(endpoint) = self.wait_for_healthy_owned_router(ROUTER_HEALTH_TIMEOUT)? {
                 *self.addr.lock() = Some(endpoint.addr);
                 *self.last_error.lock() = None;
                 return Ok(());
             }
 
-            let killed_by_lock = terminate_router_from_lock()?;
-            let killed_spawned_child = kill_spawned_router_child(&mut child);
-            let _ = std::fs::remove_file(router_addr_path());
+            let killed_spawned_child = self.kill_managed_router_child();
+            remove_router_endpoint_files();
             *self.addr.lock() = None;
 
-            if !killed_by_lock && !killed_spawned_child {
+            if !killed_spawned_child {
                 let error =
                     "router daemon did not become healthy within 20 seconds and could not be killed"
                         .to_string();
@@ -144,12 +149,13 @@ impl RouterProcess {
 
     pub fn restart(&self) -> Result<()> {
         let _ = self.shutdown();
+        self.kill_managed_router_child();
         *self.addr.lock() = None;
         self.ensure_started()
     }
 
     pub fn status(&self) -> RouterProcessStatus {
-        match healthy_router_endpoint() {
+        match self.healthy_owned_router_endpoint() {
             Ok(Some((endpoint, _health))) => {
                 *self.addr.lock() = Some(endpoint.addr);
                 RouterProcessStatus {
@@ -161,7 +167,7 @@ impl RouterProcess {
                 }
             }
             Ok(None) => match self.ensure_started() {
-                Ok(()) => match healthy_router_endpoint() {
+                Ok(()) => match self.healthy_owned_router_endpoint() {
                     Ok(Some((endpoint, _health))) => {
                         *self.addr.lock() = Some(endpoint.addr);
                         RouterProcessStatus {
@@ -206,7 +212,8 @@ impl RouterProcess {
     }
 
     pub fn shutdown(&self) -> Result<serde_json::Value> {
-        let Some(endpoint) = reachable_router_endpoint()? else {
+        let Some(endpoint) = self.reachable_owned_router_endpoint()? else {
+            self.kill_managed_router_child();
             *self.addr.lock() = None;
             return Ok(json!({
                 "status": "stopped",
@@ -261,7 +268,8 @@ impl RouterProcess {
         let stopped = if forced {
             wait_for_router_addr_unreachable(&endpoint.addr, Duration::from_secs(10))
         } else {
-            false
+            self.kill_managed_router_child()
+                && wait_for_router_addr_unreachable(&endpoint.addr, Duration::from_secs(10))
         };
         if stopped {
             *self.addr.lock() = None;
@@ -325,7 +333,8 @@ impl RouterProcess {
         payload: serde_json::Value,
         timeout: Duration,
     ) -> Result<serde_json::Value> {
-        let endpoint = reachable_router_endpoint()?
+        let endpoint = self
+            .reachable_owned_router_endpoint()?
             .ok_or_else(|| anyhow!("router daemon is not reachable"))?;
         *self.addr.lock() = Some(endpoint.addr);
         let response = self.call_once_with_timeout(method, payload, timeout)?;
@@ -383,7 +392,7 @@ impl RouterProcess {
         call_router_addr(&addr, &request, timeout)
     }
 
-    fn spawn_router_daemon(&self) -> Result<std::process::Child> {
+    fn spawn_router_process(&self) -> Result<std::process::Child> {
         let router_bin = self
             .router_bin
             .as_ref()
@@ -399,13 +408,88 @@ impl RouterProcess {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        hide_child_window_and_detach(&mut command);
+        hide_child_window(&mut command);
         command.spawn().with_context(|| {
             format!(
-                "failed to spawn detached router daemon {}",
+                "failed to spawn gateway-owned router process {}",
                 router_bin.display()
             )
         })
+    }
+
+    fn reachable_owned_router_endpoint(&self) -> Result<Option<RouterEndpoint>> {
+        let endpoint = reachable_router_endpoint()?;
+        if endpoint
+            .as_ref()
+            .is_some_and(|endpoint| !self.owns_router_endpoint(endpoint))
+        {
+            return Ok(None);
+        }
+        Ok(endpoint)
+    }
+
+    fn healthy_owned_router_endpoint(&self) -> Result<Option<(RouterEndpoint, serde_json::Value)>> {
+        let endpoint = healthy_router_endpoint()?;
+        if endpoint
+            .as_ref()
+            .is_some_and(|(endpoint, _)| !self.owns_router_endpoint(endpoint))
+        {
+            return Ok(None);
+        }
+        Ok(endpoint)
+    }
+
+    fn wait_for_healthy_owned_router(&self, timeout: Duration) -> Result<Option<RouterEndpoint>> {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            if let Some((endpoint, _health)) = self.healthy_owned_router_endpoint()? {
+                return Ok(Some(endpoint));
+            }
+            if !self.managed_router_child_alive() {
+                return Ok(None);
+            }
+            std::thread::sleep(ROUTER_STARTUP_POLL_INTERVAL);
+        }
+        Ok(None)
+    }
+
+    fn owns_router_endpoint(&self, endpoint: &RouterEndpoint) -> bool {
+        let Some(pid) = endpoint.pid else {
+            return false;
+        };
+        let mut guard = self.child.lock();
+        match guard.as_mut() {
+            Some(child) if child.id() == pid => match child.try_wait() {
+                Ok(None) => true,
+                Ok(Some(_)) | Err(_) => {
+                    *guard = None;
+                    false
+                }
+            },
+            _ => false,
+        }
+    }
+
+    fn managed_router_child_alive(&self) -> bool {
+        let mut guard = self.child.lock();
+        match guard.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(None) => true,
+                Ok(Some(_)) | Err(_) => {
+                    *guard = None;
+                    false
+                }
+            },
+            None => false,
+        }
+    }
+
+    fn kill_managed_router_child(&self) -> bool {
+        let child = self.child.lock().take();
+        let Some(mut child) = child else {
+            return false;
+        };
+        kill_spawned_router_child(&mut child)
     }
 }
 
@@ -538,6 +622,10 @@ fn router_addr_path() -> PathBuf {
     session_log::path::default_db_dir().join("router.addr")
 }
 
+fn remove_router_endpoint_files() {
+    let _ = std::fs::remove_file(router_addr_path());
+}
+
 #[cfg(test)]
 fn reachable_router_addr() -> Result<Option<String>> {
     Ok(reachable_router_endpoint()?.map(|endpoint| endpoint.addr))
@@ -624,17 +712,6 @@ fn healthy_router_endpoint() -> Result<Option<(RouterEndpoint, serde_json::Value
         endpoint.process_start_time = Some(start_time);
     }
     Ok(Some((endpoint, response)))
-}
-
-fn wait_for_healthy_router(timeout: Duration) -> Result<Option<RouterEndpoint>> {
-    let started = Instant::now();
-    while started.elapsed() < timeout {
-        if let Some((endpoint, _health)) = healthy_router_endpoint()? {
-            return Ok(Some(endpoint));
-        }
-        std::thread::sleep(ROUTER_STARTUP_POLL_INTERVAL);
-    }
-    Ok(None)
 }
 
 fn parse_router_endpoint(raw: &str) -> Result<Option<RouterEndpoint>> {
@@ -897,8 +974,8 @@ fn router_executable_candidates(root: &Path) -> Vec<PathBuf> {
     candidates
 }
 
-fn hide_child_window_and_detach(command: &mut Command) {
-    tura_path::process_hardening::hide_child_console_window_and_detach(command);
+fn hide_child_window(command: &mut Command) {
+    tura_path::process_hardening::hide_child_console_window(command);
 }
 
 #[cfg(test)]
