@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
+use super::cli::CliConfig;
+use super::env::normalize_model;
+
 pub(crate) fn write_last_message(path: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -16,12 +19,11 @@ pub(crate) fn write_last_message(path: &Path, text: &str) -> Result<(), String> 
 pub(crate) fn write_jsonl(
     session_log: &[String],
     session_id: &str,
-    cwd: &Path,
+    config: &CliConfig,
     emit_thread_start: bool,
 ) -> Result<(), String> {
     if emit_thread_start {
-        emit_jsonl(&json!({"type": "thread.started", "thread_id": session_id}))?;
-        emit_jsonl(&json!({"type": "turn.started"}))?;
+        emit_cli_start_events(config, session_id)?;
     }
 
     let mut item_index = 0usize;
@@ -73,20 +75,99 @@ pub(crate) fn write_jsonl(
                     item_index += 1;
                 }
                 if !cli_live_jsonl_enabled() {
-                    emit_command_run_events(&value, &mut item_index, cwd)?;
+                    emit_command_run_events(&value, &mut item_index, &config.cwd)?;
                 }
             }
         }
     }
 
     let usage = aggregate_runtime_usage(session_log);
-    emit_jsonl(&json!({
-        "type": "turn.completed",
-        "usage": usage
-    }))?;
+    emit_jsonl(&turn_completed_event(
+        config,
+        session_id,
+        usage,
+        "completed",
+        None,
+    ))?;
     io::stdout()
         .flush()
         .map_err(|err| format!("failed to flush stdout: {err}"))
+}
+
+pub(crate) fn emit_cli_start_events(config: &CliConfig, session_id: &str) -> Result<(), String> {
+    emit_jsonl(&thread_started_event(config, session_id))?;
+    emit_jsonl(&turn_started_event(config, session_id))
+}
+
+pub(crate) fn thread_started_event(config: &CliConfig, session_id: &str) -> Value {
+    let mut event = cli_run_event(config, session_id, "thread.started");
+    if let Some(object) = event.as_object_mut() {
+        object.insert("thread_id".to_string(), json!(session_id));
+    }
+    event
+}
+
+pub(crate) fn turn_started_event(config: &CliConfig, session_id: &str) -> Value {
+    cli_run_event(config, session_id, "turn.started")
+}
+
+pub(crate) fn turn_completed_event(
+    config: &CliConfig,
+    session_id: &str,
+    usage: Value,
+    status: &str,
+    error: Option<&str>,
+) -> Value {
+    let mut event = cli_run_event(config, session_id, "turn.completed");
+    if let Some(object) = event.as_object_mut() {
+        object.insert("status".to_string(), json!(status));
+        object.insert("usage".to_string(), usage);
+        if let Some(error) = error {
+            object.insert("error".to_string(), json!(error));
+        }
+    }
+    event
+}
+
+fn cli_run_event(config: &CliConfig, session_id: &str, event_type: &str) -> Value {
+    let metadata = cli_run_metadata(config, session_id);
+    let mut object = metadata
+        .as_object()
+        .cloned()
+        .unwrap_or_else(serde_json::Map::new);
+    object.insert("type".to_string(), json!(event_type));
+    object.insert("metadata".to_string(), metadata);
+    Value::Object(object)
+}
+
+fn cli_run_metadata(config: &CliConfig, session_id: &str) -> Value {
+    let model = config
+        .model
+        .as_deref()
+        .map(normalize_model)
+        .or_else(|| env_nonempty("TURA_SESSION_MODEL_OVERRIDE"));
+    let reasoning_effort = config
+        .reasoning_effort
+        .clone()
+        .or_else(|| env_nonempty("TURA_SESSION_REASONING_EFFORT"));
+    json!({
+        "session_id": session_id,
+        "cwd": config.cwd.to_string_lossy().to_string(),
+        "agent": config.agent,
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+        "service_tier": if config.priority { "priority" } else { "default" },
+        "priority": config.priority,
+        "acceleration_enabled": config.priority,
+        "max_tokens": config.max_tokens,
+    })
+}
+
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub(crate) fn write_turn_log_stderr(
@@ -114,7 +195,7 @@ fn cli_live_jsonl_enabled() -> bool {
         })
 }
 
-fn aggregate_runtime_usage(session_log: &[String]) -> Value {
+pub(crate) fn aggregate_runtime_usage(session_log: &[String]) -> Value {
     let mut input_tokens = 0u64;
     let mut cached_input_tokens = 0u64;
     let mut cache_write_tokens = 0u64;
@@ -561,8 +642,9 @@ mod tests {
     use super::{
         aggregate_runtime_usage, clean_agent_message, command_output, display_command,
         file_changes, final_message_text, flatten_command_results, shell_display_output,
-        turn_log_summary,
+        thread_started_event, turn_completed_event, turn_log_summary,
     };
+    use crate::tura_exec::cli::CliConfig;
     use serde_json::{json, Value};
     use std::path::PathBuf;
 
@@ -612,6 +694,46 @@ mod tests {
         })
         .to_string()]);
         assert_eq!(derived["total_tokens"], 9);
+    }
+
+    #[test]
+    fn cli_run_events_include_benchmark_metadata() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--cwd".to_string(),
+            "C:/workspace".to_string(),
+            "--agent-id".to_string(),
+            "tura-direct".to_string(),
+            "--model".to_string(),
+            "gpt-5.5".to_string(),
+            "--model-reasoning-effort".to_string(),
+            "medium".to_string(),
+            "--priority".to_string(),
+            "hi".to_string(),
+        ])
+        .expect("parse cli");
+
+        let started = thread_started_event(&config, "session-1");
+        let completed = turn_completed_event(
+            &config,
+            "session-1",
+            json!({"total_tokens": 42}),
+            "completed",
+            None,
+        );
+
+        assert_eq!(started["type"], "thread.started");
+        assert_eq!(started["thread_id"], "session-1");
+        assert_eq!(started["session_id"], "session-1");
+        assert_eq!(started["agent"], "tura-direct");
+        assert_eq!(started["model"], "openai/gpt-5.5");
+        assert_eq!(started["reasoning_effort"], "medium");
+        assert_eq!(started["service_tier"], "priority");
+        assert_eq!(started["metadata"]["agent"], "tura-direct");
+        assert_eq!(completed["type"], "turn.completed");
+        assert_eq!(completed["status"], "completed");
+        assert_eq!(completed["usage"]["total_tokens"], 42);
+        assert_eq!(completed["metadata"]["model"], "openai/gpt-5.5");
     }
 
     #[test]

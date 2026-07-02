@@ -10,7 +10,10 @@ use serde_json::{json, Value};
 
 use super::cli::CliConfig;
 use super::env::normalize_model;
-use super::output::{emit_jsonl, write_last_message, write_turn_log_stderr};
+use super::output::{
+    aggregate_runtime_usage, emit_jsonl, turn_completed_event, write_last_message,
+    write_turn_log_stderr,
+};
 use super::session::final_text_from_session_db;
 
 const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
@@ -35,7 +38,7 @@ pub(crate) fn run_via_router(
         "directory": config.cwd.to_string_lossy(),
         "prompt": prompt,
     });
-    if config.log {
+    if config.log || config.json {
         payload["return_log"] = json!(true);
     }
     if let Some(agent) = config.agent.as_deref() {
@@ -85,8 +88,9 @@ pub(crate) fn run_via_router(
     if let Some(path) = config.last_message_path.as_ref() {
         write_last_message(path, &text)?;
     }
+    let session_log = router_session_log(&response);
     if config.log {
-        if let Some(session_log) = router_session_log(&response) {
+        if let Some(session_log) = session_log.as_ref() {
             write_turn_log_stderr(&session_log, router_turn_started_at_ms(&response))?;
         }
     }
@@ -94,7 +98,18 @@ pub(crate) fn run_via_router(
         emit_jsonl(
             &json!({"type": "item.completed", "item": {"type": "assistant_message", "text": text}}),
         )?;
-        emit_jsonl(&json!({"type": "turn.completed"}))?;
+        let usage = session_log
+            .as_deref()
+            .map(aggregate_runtime_usage)
+            .or_else(|| router_usage(&response))
+            .unwrap_or_else(|| aggregate_runtime_usage(&[]));
+        emit_jsonl(&turn_completed_event(
+            config,
+            session_id,
+            usage,
+            "completed",
+            None,
+        ))?;
     } else {
         println!("{text}");
     }
@@ -184,21 +199,17 @@ fn router_callback_direct_item_event(
     if !emitted_cli_items.insert(key) {
         return None;
     }
-    Some(minimal_cli_item_event(
-        event_type,
-        id.to_string(),
-        item_type,
-        event
-            .pointer("/item/status")
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| {
-                if event_type == "item.started" {
-                    "in_progress"
-                } else {
-                    "completed"
-                }
-            }),
-    ))
+    let mut event = event.clone();
+    if let Some(item) = event.get_mut("item").and_then(Value::as_object_mut) {
+        item.entry("status".to_string()).or_insert_with(|| {
+            json!(if event_type == "item.started" {
+                "in_progress"
+            } else {
+                "completed"
+            })
+        });
+    }
+    Some(event)
 }
 
 fn command_update_cli_events(body: &Value, emitted_cli_items: &mut HashSet<String>) -> Vec<Value> {
@@ -240,6 +251,29 @@ fn command_update_cli_event(
     item.insert("id".to_string(), Value::String(item_id));
     item.insert("type".to_string(), Value::String(item_type.to_string()));
     item.insert("status".to_string(), Value::String(item_status.to_string()));
+    if let Some(command_type) = command_type.as_deref() {
+        item.insert(
+            "command".to_string(),
+            Value::String(command_type.to_string()),
+        );
+        item.insert(
+            "command_type".to_string(),
+            Value::String(command_type.to_string()),
+        );
+    }
+    if let Some(command_line) = command_update_command_line(update) {
+        item.insert(
+            "command_line".to_string(),
+            Value::String(command_line.clone()),
+        );
+        item.insert("display_command".to_string(), Value::String(command_line));
+    }
+    if let Some(step) = update
+        .pointer("/command/step")
+        .or_else(|| update.pointer("/result/step"))
+    {
+        item.insert("step".to_string(), step.clone());
+    }
     if let Some(provider_tool_call_id) = update.get("providerToolCallID").or_else(|| {
         update
             .get("provider_tool_call_id")
@@ -256,22 +290,25 @@ fn command_update_cli_event(
     {
         item.insert("command_index".to_string(), command_index.clone());
     }
+    if event_type == "item.completed" {
+        item.insert(
+            "aggregated_output".to_string(),
+            Value::String(command_update_aggregated_output(update)),
+        );
+        if let Some(exit_code) = update.pointer("/result/exit_code") {
+            item.insert("exit_code".to_string(), exit_code.clone());
+        }
+        if item_type == "file_change" {
+            if let Some(changes) = command_update_changes(update) {
+                item.insert("changes".to_string(), changes);
+            }
+        }
+    }
 
     Some(serde_json::json!({
         "type": event_type,
         "item": Value::Object(item),
     }))
-}
-
-fn minimal_cli_item_event(event_type: &str, id: String, item_type: &str, status: &str) -> Value {
-    serde_json::json!({
-        "type": event_type,
-        "item": {
-            "id": id,
-            "type": item_type,
-            "status": status,
-        }
-    })
 }
 
 fn command_update_id(update: &Value) -> String {
@@ -308,6 +345,43 @@ fn command_update_command_type(update: &Value) -> Option<String> {
     .into_iter()
     .flatten()
     .find_map(|value| value.as_str().map(str::to_string))
+}
+
+fn command_update_command_line(update: &Value) -> Option<String> {
+    [
+        update.pointer("/command/command_line"),
+        update.pointer("/result/command_line"),
+        update.pointer("/result/command/command_line"),
+        update.pointer("/command_line"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| value.as_str().map(str::to_string))
+}
+
+fn command_update_aggregated_output(update: &Value) -> String {
+    [
+        update.pointer("/result/stdout"),
+        update.pointer("/result/output"),
+        update.pointer("/result/error"),
+        update.pointer("/output"),
+        update.pointer("/error"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| match value {
+        Value::String(text) => Some(text.to_string()),
+        Value::Null => None,
+        other => serde_json::to_string(other).ok(),
+    })
+    .unwrap_or_default()
+}
+
+fn command_update_changes(update: &Value) -> Option<Value> {
+    update
+        .pointer("/result/changes")
+        .or_else(|| update.pointer("/result/output/changes"))
+        .cloned()
 }
 
 /// Probe the per-home router daemon; start it detached if none is reachable.
@@ -374,6 +448,19 @@ fn router_turn_started_at_ms(response: &Value) -> Option<i64> {
         .or_else(|| response.pointer("/payload/result/turn_started_at_ms"))
         .or_else(|| response.pointer("/payload/turn_started_at_ms"))
         .and_then(Value::as_i64)
+}
+
+fn router_usage(response: &Value) -> Option<Value> {
+    [
+        response.pointer("/payload/result/result/usage"),
+        response.pointer("/payload/result/usage"),
+        response.pointer("/payload/usage"),
+        response.pointer("/usage"),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|value| value.is_object())
+    .cloned()
 }
 
 fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
@@ -533,7 +620,7 @@ fn resolve_router_binary() -> Option<PathBuf> {
 mod tests {
     use super::{
         read_router_response, router_callback_cli_events, router_final_text, router_health_ok,
-        router_session_log, router_stderr_log_path, router_turn_started_at_ms,
+        router_session_log, router_stderr_log_path, router_turn_started_at_ms, router_usage,
         worker_env_from_current_process,
     };
     use serde_json::json;
@@ -596,7 +683,8 @@ mod tests {
                 "result": {
                     "result": {
                         "session_log": ["{\"role\":\"user\",\"content\":\"hi\"}"],
-                        "turn_started_at_ms": 1234
+                        "turn_started_at_ms": 1234,
+                        "usage": {"total_tokens": 7}
                     }
                 }
             }
@@ -606,6 +694,7 @@ mod tests {
         let log = router_session_log(&response).expect("session log");
         assert_eq!(log.len(), 1);
         assert_eq!(router_turn_started_at_ms(&response), Some(1234));
+        assert_eq!(router_usage(&response), Some(json!({"total_tokens": 7})));
     }
 
     #[test]
@@ -734,10 +823,13 @@ mod tests {
                         {
                             "commandID": "cmd-1",
                             "commandRunID": "run-1",
+                            "providerToolCallID": "call-1",
+                            "commandIndex": 0,
                             "status": "ready",
                             "command": {
                                 "command_type": "shell_command",
-                                "command_line": "Get-Content -Raw src/app.txt"
+                                "command_line": "Get-Content -Raw src/app.txt",
+                                "step": 1
                             },
                             "createdAt": 1,
                             "updatedAt": 1
@@ -745,10 +837,13 @@ mod tests {
                         {
                             "commandID": "cmd-1",
                             "commandRunID": "run-1",
+                            "providerToolCallID": "call-1",
+                            "commandIndex": 0,
                             "status": "completed",
                             "command": {
                                 "command_type": "shell_command",
-                                "command_line": "Get-Content -Raw src/app.txt"
+                                "command_line": "Get-Content -Raw src/app.txt",
+                                "step": 1
                             },
                             "result": {
                                 "command_type": "shell_command",
@@ -770,12 +865,26 @@ mod tests {
         assert_eq!(events[0]["type"], "item.started");
         assert_eq!(events[0]["item"]["type"], "command_execution");
         assert_eq!(events[0]["item"]["status"], "in_progress");
+        assert_eq!(events[0]["item"]["command"], "shell_command");
+        assert_eq!(events[0]["item"]["command_type"], "shell_command");
+        assert_eq!(
+            events[0]["item"]["command_line"],
+            "Get-Content -Raw src/app.txt"
+        );
+        assert_eq!(events[0]["item"]["provider_tool_call_id"], "call-1");
+        assert_eq!(events[0]["item"]["command_index"], 0);
+        assert_eq!(events[0]["item"]["step"], 1);
         assert_eq!(events[1]["type"], "item.completed");
         assert_eq!(events[1]["item"]["type"], "command_execution");
         assert_eq!(events[1]["item"]["status"], "completed");
-        assert!(events[1]["item"].get("command").is_none());
-        assert!(events[1]["item"].get("command_line").is_none());
-        assert!(events[1]["item"].get("aggregated_output").is_none());
+        assert_eq!(events[1]["item"]["command"], "shell_command");
+        assert_eq!(events[1]["item"]["command_type"], "shell_command");
+        assert_eq!(
+            events[1]["item"]["command_line"],
+            "Get-Content -Raw src/app.txt"
+        );
+        assert_eq!(events[1]["item"]["aggregated_output"], "broken-by-agent\n");
+        assert_eq!(events[1]["item"]["exit_code"], 0);
 
         let duplicate = router_callback_cli_events(&notification, &mut emitted);
         assert!(duplicate.is_empty());
@@ -811,7 +920,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["type"], "item.completed");
         assert_eq!(events[0]["item"]["type"], "file_change");
-        assert!(events[0]["item"].get("command").is_none());
-        assert!(events[0]["item"].get("changes").is_none());
+        assert_eq!(events[0]["item"]["command"], "apply_patch");
+        assert_eq!(events[0]["item"]["command_line"], "*** Begin Patch");
+        assert_eq!(events[0]["item"]["changes"][0]["path"], "src/app.txt");
     }
 }

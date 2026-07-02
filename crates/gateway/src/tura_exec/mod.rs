@@ -6,16 +6,15 @@ mod session;
 
 use std::io::{self, Write};
 
-use runtime::state_machine::session_management::SessionInput;
-use serde_json::json;
-
 use self::cli::{print_help, wants_help, CliConfig};
 use self::env::configure_runtime_env;
 use self::output::{
-    emit_jsonl, final_message_text, write_jsonl, write_last_message, write_turn_log_stderr,
+    aggregate_runtime_usage, emit_cli_start_events, emit_jsonl, final_message_text,
+    turn_completed_event, write_jsonl, write_last_message, write_turn_log_stderr,
 };
 use self::router::run_via_router;
 use self::session::{ensure_session_db_owner, reject_busy_session};
+use runtime::state_machine::session_management::SessionInput;
 
 pub fn main() {
     match run() {
@@ -42,8 +41,7 @@ fn run() -> Result<i32, String> {
         .clone()
         .unwrap_or_else(|| format!("cli-{}", uuid::Uuid::new_v4()));
     if config.json {
-        emit_jsonl(&json!({"type": "thread.started", "thread_id": session_id}))?;
-        emit_jsonl(&json!({"type": "turn.started"}))?;
+        emit_cli_start_events(&config, &session_id)?;
         io::stdout()
             .flush()
             .map_err(|err| format!("failed to flush stdout: {err}"))?;
@@ -53,7 +51,19 @@ fn run() -> Result<i32, String> {
     // daemon (which owns session_db + spawns the runtime worker), then render
     // from the persisted session. The CLI links no runtime/DB executor.
     if !config.embedded {
-        return run_via_router(&config, &session_id, &prompt);
+        let result = run_via_router(&config, &session_id, &prompt);
+        if let Err(error) = result.as_ref() {
+            if config.json {
+                emit_jsonl(&turn_completed_event(
+                    &config,
+                    &session_id,
+                    aggregate_runtime_usage(&[]),
+                    "failed",
+                    Some(error),
+                ))?;
+            }
+        }
+        return result;
     }
 
     // `--embedded`: in-process runtime (codex-style), still connected to the
@@ -88,7 +98,7 @@ fn run() -> Result<i32, String> {
     }
 
     if config.json {
-        write_jsonl(&result.session.session_log, &session_id, &config.cwd, false)?;
+        write_jsonl(&result.session.session_log, &session_id, &config, false)?;
     } else {
         println!("{}", final_message_text(&result.session.session_log));
     }
