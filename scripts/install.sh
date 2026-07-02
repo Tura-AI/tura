@@ -36,8 +36,8 @@ under commands/*, and installs JavaScript workspaces in their own directories.
 Options:
   --skip-commands  skip commands/*/install.* scripts
   --skip-apps      skip JavaScript installs for apps/tui, apps/gui, and apps/tauri
-  --skip-uv        do not install or verify uv
-  --skip-bun       do not install or verify bun
+  --skip-uv        do not install or verify uv; requires --skip-commands
+  --skip-bun       do not install or verify bun; requires --skip-apps for Bun workspaces
   --check-only     verify expected tools/environments without installing
   --offline        pass offline/cache-only flags where supported
   -h, --help       show this help
@@ -125,7 +125,7 @@ ensure_windows_shell_tools() {
   missing_packages=""
   find_bash >/dev/null 2>&1 || missing_packages="$missing_packages bash"
   find_zsh >/dev/null 2>&1 || missing_packages="$missing_packages zsh"
-  [ -n "$missing_packages" ] || return
+  [ -n "$missing_packages" ] || return 0
   if [ "$OFFLINE" -eq 1 ]; then
     echo "Shell tools are missing ($missing_packages) and --offline was supplied. Install MSYS2 bash/zsh manually, then rerun." >&2
     exit 1
@@ -163,7 +163,7 @@ ensure_unix_shell_tools() {
   missing_packages=""
   find_bash >/dev/null 2>&1 || missing_packages="$missing_packages bash"
   find_zsh >/dev/null 2>&1 || missing_packages="$missing_packages zsh"
-  [ -n "$missing_packages" ] || return
+  [ -n "$missing_packages" ] || return 0
   if [ "$OFFLINE" -eq 1 ]; then
     echo "Shell tools are missing ($missing_packages) and --offline was supplied. Install them manually, then rerun." >&2
     exit 1
@@ -433,8 +433,8 @@ ensure_command_python() {
     return
   fi
   if [ "$SKIP_UV" -eq 1 ]; then
-    echo "Skipping command Python setup because uv setup was skipped."
-    return
+    echo "--skip-uv was supplied, but command installers require uv. Remove --skip-uv or also pass --skip-commands." >&2
+    exit 1
   fi
   if uv_python_available; then
     print_version python uv python find "$COMMAND_PYTHON_VERSION" --show-version
@@ -470,6 +470,20 @@ ensure_bun() {
   install_from_script bun "https://bun.sh/install" "https://bun.sh/install.ps1"
   have bun || { echo "bun was installed but is still not on PATH. Add $HOME/.bun/bin to PATH." >&2; exit 1; }
   print_version bun bun --version
+}
+
+ensure_bun_for_workspace() {
+  workspace_dir=$1
+  if [ "$SKIP_BUN" -eq 1 ]; then
+    echo "--skip-bun was supplied, but JavaScript workspace install requires bun for $workspace_dir. Remove --skip-bun or pass --skip-apps." >&2
+    exit 1
+  fi
+  add_user_tool_paths
+  if have bun; then
+    print_version bun bun --version
+    return
+  fi
+  ensure_bun
 }
 
 run_command_installers() {
@@ -516,7 +530,7 @@ install_js_workspace() {
 
   step "Installing JavaScript workspace: $workspace_dir"
   if [ -f "$workspace_dir/bun.lock" ]; then
-    ensure_bun
+    ensure_bun_for_workspace "$workspace_dir"
     bun_args="install --frozen-lockfile"
     [ "$OFFLINE" -eq 1 ] && bun_args="$bun_args --offline"
     # shellcheck disable=SC2086
@@ -528,7 +542,7 @@ install_js_workspace() {
     # shellcheck disable=SC2086
     (cd "$workspace_dir" && npm $npm_args)
   else
-    ensure_bun
+    ensure_bun_for_workspace "$workspace_dir"
     bun_args="install"
     [ "$OFFLINE" -eq 1 ] && bun_args="$bun_args --offline"
     # shellcheck disable=SC2086

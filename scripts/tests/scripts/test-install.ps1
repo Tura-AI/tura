@@ -189,6 +189,24 @@ exit 0
   }
 }
 
+function Test-InstallOptionConflictsFailClearly {
+  Write-Step "Checking install option conflict diagnostics"
+
+  Push-Location $RepoRoot
+  try {
+    try {
+      & .\scripts\install.ps1 -SkipUv -SkipApps -SkipBun
+      throw "install unexpectedly succeeded"
+    } catch {
+      if ($_.Exception.Message -notlike "*command installers require uv*") {
+        throw
+      }
+    }
+  } finally {
+    Pop-Location
+  }
+}
+
 function Get-CommandPython {
   param([string]$CommandId)
   $commandDir = Join-Path $RepoRoot "commands\$CommandId"
@@ -202,6 +220,7 @@ Set-Location $RepoRoot
 Test-PowerShellSyntax
 Test-WindowsInstallFindsCurrentPowerShellWithoutPath
 Test-CommandInstallerInstallsPythonBeforeVenv
+Test-InstallOptionConflictsFailClearly
 Test-ShellSyntax
 
 Write-Step "Running root dependency installer"

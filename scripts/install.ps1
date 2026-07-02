@@ -29,8 +29,8 @@ under commands/*, and installs JavaScript workspaces in their own directories.
 Options:
   -SkipCommands  skip commands/*/install.* scripts
   -SkipApps      skip JavaScript installs for apps/tui, apps/gui, and apps/tauri
-  -SkipUv        do not install or verify uv
-  -SkipBun       do not install or verify bun
+  -SkipUv        do not install or verify uv; requires -SkipCommands
+  -SkipBun       do not install or verify bun; requires -SkipApps for Bun workspaces
   -CheckOnly     verify expected tools/environments without installing
   -Offline       pass offline/cache-only flags where supported
   -Help          show this help
@@ -52,16 +52,33 @@ function Test-IsMacOS {
   return ($IsMacOS -eq $true)
 }
 
+function Get-PathEnvironmentName {
+  if (Test-IsWindows) {
+    return "Path"
+  }
+  return "PATH"
+}
+
+function Get-ProcessPathValue {
+  return [Environment]::GetEnvironmentVariable((Get-PathEnvironmentName), "Process")
+}
+
+function Set-ProcessPathValue {
+  param([string]$Value)
+  [Environment]::SetEnvironmentVariable((Get-PathEnvironmentName), $Value, "Process")
+}
+
 function Add-PathEntry {
   param([string]$PathEntry)
   if (-not $PathEntry -or -not (Test-Path -LiteralPath $PathEntry)) {
     return
   }
-  $entries = @($env:Path -split [IO.Path]::PathSeparator | Where-Object { $_ -and $_.Trim() })
+  $currentPath = Get-ProcessPathValue
+  $entries = @($currentPath -split [IO.Path]::PathSeparator | Where-Object { $_ -and $_.Trim() })
   $trimChars = [char[]]@('\', '/')
   $present = $entries | Where-Object { $_.TrimEnd($trimChars) -ieq $PathEntry.TrimEnd($trimChars) }
   if (-not $present) {
-    $env:Path = "$PathEntry$([IO.Path]::PathSeparator)$env:Path"
+    Set-ProcessPathValue "$PathEntry$([IO.Path]::PathSeparator)$currentPath"
   }
   if ($env:GITHUB_PATH) {
     $trimChars = [char[]]@('\', '/')
@@ -78,9 +95,9 @@ function Add-PathEntry {
 }
 
 function Add-UserToolPaths {
-  Add-PathEntry (Join-Path $HOME ".local\bin")
-  Add-PathEntry (Join-Path $HOME ".cargo\bin")
-  Add-PathEntry (Join-Path $HOME ".bun\bin")
+  Add-PathEntry (Join-Path (Join-Path $HOME ".local") "bin")
+  Add-PathEntry (Join-Path (Join-Path $HOME ".cargo") "bin")
+  Add-PathEntry (Join-Path (Join-Path $HOME ".bun") "bin")
 }
 
 function Add-ShellToolPaths {
@@ -552,8 +569,7 @@ function Ensure-CommandPython {
     return
   }
   if ($SkipUv) {
-    Write-Host "Skipping command Python setup because uv setup was skipped."
-    return
+    throw "-SkipUv was supplied, but command installers require uv. Remove -SkipUv or also pass -SkipCommands."
   }
   if (Test-UvPythonAvailable) {
     Write-DetectedVersion "python" (Get-CommandOutputLine "uv" @("python", "find", $CommandPythonVersion, "--show-version"))
@@ -593,6 +609,19 @@ function Ensure-Bun {
     throw "bun was installed but is still not on PATH. Add $HOME\.bun\bin to PATH and rerun."
   }
   Write-DetectedVersion "bun" (Get-CommandOutputLine "bun" @("--version"))
+}
+
+function Ensure-BunForWorkspace {
+  param([string]$Directory)
+  if ($SkipBun) {
+    throw "-SkipBun was supplied, but JavaScript workspace install requires bun for $Directory. Remove -SkipBun or pass -SkipApps."
+  }
+  Add-UserToolPaths
+  if (Test-CommandAvailable "bun") {
+    Write-DetectedVersion "bun" (Get-CommandOutputLine "bun" @("--version"))
+    return
+  }
+  Ensure-Bun
 }
 
 function Invoke-CommandInstallers {
@@ -643,7 +672,7 @@ function Invoke-JsWorkspaceInstall {
   Push-Location $Directory
   try {
     if (Test-Path -LiteralPath "bun.lock") {
-      Ensure-Bun
+      Ensure-BunForWorkspace $Directory
       $bunArgs = @("install", "--frozen-lockfile")
       if ($Offline) {
         $bunArgs += "--offline"
@@ -660,7 +689,7 @@ function Invoke-JsWorkspaceInstall {
       }
       & $npm.Source @npmArgs
     } else {
-      Ensure-Bun
+      Ensure-BunForWorkspace $Directory
       $bunArgs = @("install")
       if ($Offline) {
         $bunArgs += "--offline"
