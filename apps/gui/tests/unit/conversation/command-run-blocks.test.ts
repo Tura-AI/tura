@@ -5,7 +5,11 @@ import {
   assistantToolBlockForPart,
 } from "../../../app/src/conversation/assistant-blocks";
 import { groupConversationTurns } from "../../../app/src/conversation/conversation-turns";
-import { formatCommandTiming, toolRecords } from "../../../app/src/conversation/message-tools";
+import {
+  commandRunGroupDurationMs,
+  formatCommandTiming,
+  toolRecords,
+} from "../../../app/src/conversation/message-tools";
 
 function commandRunPart(runtimeId: string, createdAt: number, command: string): MessagePart {
   return {
@@ -331,5 +335,98 @@ describe("assistant command run blocks", () => {
     expect(records[0]?.timeoutMs).toBe(300_000);
     expect(formatCommandTiming(212_000, records[0]?.timeoutMs)).toBe("3m32s/5m");
     expect(formatCommandTiming(212_000, undefined)).toBe("3m32s");
+  });
+
+  test("summarizes elapsed time from the whole command_run group instead of the last command", () => {
+    const part: MessagePart = {
+      id: "runtime-group.tool.command_run",
+      sessionID: "s1",
+      messageID: "runtime-group.message",
+      type: "tool",
+      tool: "command_run",
+      state: {
+        status: "completed",
+        created_at: 100_000,
+        updated_at: 180_000,
+        time: { start: 100_000, end: 180_000 },
+        input: {
+          commands: [
+            {
+              command_id: "runtime-group.tool.command_run:call_1:0",
+              command_type: "shell_command",
+              command_line: "prepare",
+              started_at: 100_000,
+              completed_at: 170_000,
+            },
+            {
+              command_id: "runtime-group.tool.command_run:call_1:1",
+              command_type: "shell_command",
+              command_line: "verify",
+              started_at: 175_000,
+              completed_at: 180_000,
+            },
+          ],
+        },
+        streamed_command_run_result: {
+          results: [
+            {
+              command_id: "runtime-group.tool.command_run:call_1:0",
+              command_type: "shell_command",
+              command_line: "prepare",
+              success: true,
+              started_at: 100_000,
+              completed_at: 170_000,
+            },
+            {
+              command_id: "runtime-group.tool.command_run:call_1:1",
+              command_type: "shell_command",
+              command_line: "verify",
+              success: true,
+              started_at: 175_000,
+              completed_at: 180_000,
+            },
+          ],
+        },
+      },
+    };
+
+    const records = toolRecords([part]);
+
+    expect(records.map((record) => record.durationMs)).toEqual([70_000, 5_000]);
+    expect(commandRunGroupDurationMs([part])).toBe(80_000);
+  });
+
+  test("keeps running command_run group elapsed time live from the group start", () => {
+    const originalNow = Date.now;
+    Date.now = () => 190_000;
+    try {
+      const part: MessagePart = {
+        id: "runtime-running-group.tool.command_run",
+        sessionID: "s1",
+        messageID: "runtime-running-group.message",
+        type: "tool",
+        tool: "command_run",
+        state: {
+          status: "running",
+          created_at: 100_000,
+          updated_at: 180_000,
+          time: { start: 100_000, updated: 180_000 },
+          input: {
+            commands: [
+              {
+                command_id: "runtime-running-group.tool.command_run:call_1:0",
+                command_type: "shell_command",
+                command_line: "verify",
+                started_at: 175_000,
+              },
+            ],
+          },
+        },
+      };
+
+      expect(commandRunGroupDurationMs([part])).toBe(90_000);
+    } finally {
+      Date.now = originalNow;
+    }
   });
 });

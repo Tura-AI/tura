@@ -91,6 +91,47 @@ export function toolDurationMs(part: MessagePart): number | undefined {
   return undefined;
 }
 
+export function commandRunGroupDurationMs(parts: MessagePart[]): number | undefined {
+  const partDurations = parts
+    .map((part) => commandRunPartDurationMs(part))
+    .filter((value): value is number => value !== undefined);
+  if (partDurations.length) {
+    return partDurations.reduce((total, value) => total + value, 0);
+  }
+  const recordDurations = toolRecords(parts)
+    .map((record) => record.durationMs)
+    .filter((value): value is number => value !== undefined);
+  return recordDurations.length
+    ? recordDurations.reduce((total, value) => total + value, 0)
+    : undefined;
+}
+
+function commandRunPartDurationMs(part: MessagePart): number | undefined {
+  const state = asRecord(part.state);
+  const status = toolStatus(state);
+  const time = asRecord(state.time);
+  const started =
+    numberField(time, "start") ??
+    numberField(time, "started") ??
+    numberField(state, "started_at") ??
+    numberField(state, "created_at") ??
+    numberField(state, "createdAt");
+  const ended =
+    numberField(time, "end") ??
+    numberField(time, "ended") ??
+    numberField(time, "updated") ??
+    numberField(state, "completed_at") ??
+    numberField(state, "updated_at") ??
+    numberField(state, "updatedAt");
+  if (started !== undefined && isRunningStatus(status)) {
+    return Math.max(0, Date.now() - normalizeEpochMs(started));
+  }
+  if (started !== undefined && ended !== undefined) {
+    return Math.max(0, normalizeEpochMs(ended) - normalizeEpochMs(started));
+  }
+  return undefined;
+}
+
 export function messageDurationMs(message: Message): number | undefined {
   const start = message.time?.created ?? message.created_at;
   const end = message.time?.updated ?? message.updated_at;

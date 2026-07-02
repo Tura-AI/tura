@@ -53,7 +53,7 @@ export function parseAgentRound(callback: unknown, roundIndex = 0): BenchmarkAge
 
   return {
     schema: ROUND_SCHEMA,
-    roundId: readString(record, ["roundId", "id", "turnId", "turn_id"]) ?? `round-${roundIndex + 1}`,
+    roundId: readString(record, ["roundId", "id", "turnId", "turn_id", "session_id", "sessionId"]) ?? `round-${roundIndex + 1}`,
     roundIndex,
     startedAt,
     endedAt,
@@ -101,14 +101,21 @@ function collectToolCallCandidates(value: unknown): UnknownRecord[] {
   const result: UnknownRecord[] = [];
   pushArrayRecords(result, root.toolCalls);
   pushArrayRecords(result, root.tool_calls);
+  pushRecord(result, root.tool);
+  pushRecord(result, root.tool_call);
+  pushRecord(result, root.tool_result);
   pushArrayRecords(result, asRecord(root.message)?.tool_calls);
   pushArrayRecords(result, asRecord(root.assistantMessage)?.tool_calls);
   pushArrayRecords(result, asRecord(root.assistant_message)?.tool_calls);
+  pushContentToolUses(result, asRecord(root.message)?.content);
+  pushContentToolUses(result, asRecord(root.assistantMessage)?.content);
+  pushContentToolUses(result, asRecord(root.assistant_message)?.content);
 
   const body = asRecord(root.body) ?? asRecord(root.response) ?? asRecord(root.provider) ?? root;
   pushOpenAiOutput(result, body.output);
   const firstChoice = asRecord(asArray(body.choices)[0]);
   pushArrayRecords(result, asRecord(firstChoice?.message)?.tool_calls);
+  pushContentToolUses(result, asRecord(firstChoice?.message)?.content);
 
   if (isFunctionCall(root)) result.push(root);
   return result;
@@ -159,6 +166,8 @@ function normalizeOneToolCall(call: UnknownRecord, index: number): BenchmarkTool
 function readUsage(record: UnknownRecord): TokenUsage {
   const candidates = [
     record.usage,
+    record.metrics,
+    record.runtime_usage,
     asRecord(record.message)?.usage,
     asRecord(record.result)?.usage,
     asRecord(record.assistantMessageEvent)?.usage,
@@ -189,25 +198,29 @@ function readUsage(record: UnknownRecord): TokenUsage {
 
 function extractFullContext(record: UnknownRecord): string {
   return readString(record, ["fullContext", "full_context", "inputContext", "input_context", "context"]) ??
-    stringifyFirst(record.messages, asRecord(record.request)?.input, asRecord(record.body)?.input);
+    stringifyFirst(record.messages, asRecord(record.input)?.messages, asRecord(record.request)?.input, asRecord(record.body)?.input);
 }
 
 function extractFullOutput(record: UnknownRecord): string {
   return readString(record, ["fullOutput", "full_output", "output", "content", "text"]) ??
-    stringifyFirst(asRecord(record.response)?.output, asRecord(record.body)?.output, record.message);
+    stringifyFirst(asRecord(record.output)?.message, asRecord(record.response)?.output, asRecord(record.body)?.output, record.message);
 }
 
 function extractAssistantMessage(record: UnknownRecord): string {
+  const outputMessage = asRecord(asRecord(record.output)?.message);
   const candidates = [
     record.assistantMessage,
     record.assistantmessage,
     record.assistant_message,
     asRecord(record.message)?.content,
+    outputMessage?.content,
     asRecord(record.response)?.output_text,
     asRecord(record.body)?.output_text,
   ];
   for (const candidate of candidates) {
     if (typeof candidate === "string") return candidate;
+    const contentText = extractTextFromContent(candidate);
+    if (contentText) return contentText;
   }
   return extractTextFromOutput(asRecord(record.response)?.output ?? asRecord(record.body)?.output ?? record.output);
 }
@@ -222,6 +235,17 @@ function extractTextFromOutput(value: unknown): string {
       const contentRecord = asRecord(content);
       if (typeof contentRecord?.text === "string") pieces.push(contentRecord.text);
     }
+  }
+  return pieces.join("\n");
+}
+
+function extractTextFromContent(value: unknown): string {
+  const pieces: string[] = [];
+  for (const item of asArray(value)) {
+    const record = asRecord(item);
+    if (!record) continue;
+    if (record.type === "text" && typeof record.text === "string") pieces.push(record.text);
+    if (typeof record.content === "string") pieces.push(record.content);
   }
   return pieces.join("\n");
 }
@@ -258,7 +282,7 @@ function toolName(call: UnknownRecord): string | undefined {
 }
 
 function isFunctionCall(value: UnknownRecord): boolean {
-  return value.type === "function_call" || Boolean(value.function) || Boolean(value.arguments && toolName(value));
+  return value.type === "function_call" || value.type === "tool_use" || Boolean(value.function) || Boolean((value.arguments || value.input) && toolName(value));
 }
 
 function pushOpenAiOutput(result: UnknownRecord[], output: unknown): void {
@@ -272,6 +296,18 @@ function pushArrayRecords(result: UnknownRecord[], value: unknown): void {
   for (const item of asArray(value)) {
     const record = asRecord(item);
     if (record) result.push(record);
+  }
+}
+
+function pushRecord(result: UnknownRecord[], value: unknown): void {
+  const record = asRecord(value);
+  if (record) result.push(record);
+}
+
+function pushContentToolUses(result: UnknownRecord[], value: unknown): void {
+  for (const item of asArray(value)) {
+    const record = asRecord(item);
+    if (record && isFunctionCall(record)) result.push(record);
   }
 }
 
