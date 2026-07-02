@@ -1,0 +1,38 @@
+{
+  "schema": "tura.benchmark.task-declaration.v1",
+  "id": "source-port-python",
+  "type": "refactoring",
+  "title": "Rust CLI to Python source-port suite",
+  "directory": "benchmark/refactoring/source-port-python",
+  "summary": "Ports selected Rust CLI projects to Python and evaluates compatibility against original command behavior.",
+  "contract": {
+    "cliMetadata": "tura.benchmark.cli-metadata.v1",
+    "round": "tura.benchmark.agent-round.v1",
+    "taskReport": "tura.benchmark.task-report.v1",
+    "harnessReport": "tura.benchmark.harness-report.v1"
+  },
+  "variants": [
+    {
+      "id": "default",
+      "label": "Default source-port workflow",
+      "runner": "runner.mjs",
+      "default": true
+    },
+    {
+      "id": "defined-workflow",
+      "label": "Defined workflow source-port",
+      "runner": "defined-workflow.runner.mjs"
+    },
+    {
+      "id": "composite",
+      "label": "Composite source-port workflow",
+      "runner": "composite.runner.mjs"
+    }
+  ],
+  "legacyScripts": [
+    "tests/benchmark/project-rebuild-refactor/rust_cli_python_port_suite.mjs",
+    "tests/benchmark/project-rebuild-refactor/rust_cli_python_port_suite_defined_workflow.mjs",
+    "tests/benchmark/project-rebuild-refactor/rust_cli_python_port_composite_suite.mjs"
+  ],
+  "duplicatePolicy": "merged-variant"
+}

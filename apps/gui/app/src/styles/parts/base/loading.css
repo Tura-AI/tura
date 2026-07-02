@@ -30,7 +30,7 @@
   width: min(100%, 420px);
   height: 12px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--wash);
 }
 
@@ -78,7 +78,7 @@
   left: 0;
   width: 100%;
   height: 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--wash);
   content: "";
 }
@@ -87,7 +87,7 @@
   inset: auto 0 auto 0;
   top: calc((100% - 12px) / 2);
   height: 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .loading-title {
@@ -195,7 +195,7 @@
   max-width: min(420px, calc(100vw - 32px));
   padding: 7px 10px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-small);
   background: var(--paper);
   color: var(--muted);
   font-size: var(--font-small);

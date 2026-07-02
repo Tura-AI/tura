@@ -70,7 +70,7 @@ needs taste, verification, and maintenance judgement.
 | CLI starts from nothing, desktop piles up too many fresh sessions | Dynamic context and workspace session management reuse the useful history, task state, and handoffs across fronts | [Operational overview](docs/overview.md), [Long Task Loop](docs/long-task-loop.md) |
 | "AI slop" code that only satisfies the visible prompt | Repo rules, business tests, typed runners, command safety, and verification pressure | [Rules](docs/rules.md), [Tests](tests/README.md) |
 | Agents that cannot inspect media, web pages, or reusable assets without bloating context | `read_media`, `web_discover`, and `generate_media` return compact artifacts, summaries, and downloaded asset folders | [Tools Crate](crates/tools/ARCHITECTURE.md) |
-| Benchmarks nobody can reproduce | Benchmark harnesses collect usage, command counts, wall time, provider time, and artifacts | [Benchmarks](tests/benchmark/README.md) |
+| Benchmarks nobody can reproduce | Benchmark harnesses collect usage, command counts, wall time, provider time, and artifacts | [Benchmarks](benchmark/README.md) |
 
 ## Command Run Is The Bet
 
@@ -138,7 +138,7 @@ instead of spending the next hour slowly degrading. See
 
 The repo has ordinary tests, business flows, OS/process tests, release-entry
 tests, live provider checks, performance pressure tests, and benchmark harnesses.
-The benchmark scripts under [tests/benchmark](tests/benchmark/README.md) measure
+The benchmark scripts under [benchmark](benchmark/README.md) measure
 the things that matter for agent work: token usage, command executions, wall
 time, provider time, artifacts, browser checks, and task score.
 
@@ -146,9 +146,9 @@ Useful entry points:
 
 - [Command-run pressure test](crates/tools/tests/performance/command_run_pressure_test.rs)
 - [Command-run business flow](crates/tools/tests/business/command_run_current_flow.rs)
-- [Source-port benchmark harness](tests/benchmark/project-rebuild-refactor/rust_cli_python_port_suite.mjs)
-- [Defined-workflow source-port harness](tests/benchmark/project-rebuild-refactor/rust_cli_python_port_suite_defined_workflow.mjs)
-- [PDF cost comparison benchmark](tests/benchmark/media-presentation/ogas_pdf_cost_comparison.mjs)
+- [Source-port benchmark harness](benchmark/refactoring/source-port-python/runner.mjs)
+- [Defined-workflow source-port harness](benchmark/refactoring/source-port-python/defined-workflow.runner.mjs)
+- [PDF cost comparison benchmark](benchmark/build/ogas-pdf-cost/runner.mjs)
 
 ## Project Map
 
@@ -159,7 +159,7 @@ Useful entry points:
 - [Runtime Prompts vs Skills](docs/runtime-prompts-vs-skills.md)
 - [Long Task Loop](docs/long-task-loop.md)
 - [Tools crate](crates/tools/ARCHITECTURE.md)
-- [Benchmark guide](tests/benchmark/README.md)
+- [Benchmark guide](benchmark/README.md)
 - [Test guide](tests/README.md)
 - [Business test guide](tests/business/README.md)
 - [TUI guide](apps/tui/README.md)

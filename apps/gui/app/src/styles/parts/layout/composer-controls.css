@@ -163,7 +163,7 @@
   height: 38px;
   place-items: center;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: var(--surface);
   color: var(--ink);
   box-shadow: var(--shadow-control);

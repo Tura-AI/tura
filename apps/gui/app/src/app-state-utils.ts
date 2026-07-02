@@ -3,6 +3,7 @@ import {
   sessionUpdatedAt,
   systemThemeMode,
   type AppState,
+  type CornerRadiusMode,
   type ThemeMode,
 } from "./state/global-store";
 import { mergeMessageForCache } from "./state/message-cache";
@@ -174,6 +175,26 @@ export function normalizeThemeMode(value: string | null | undefined): ThemeMode 
     value === "liangzhu"
     ? value
     : systemThemeMode();
+}
+
+export function normalizeCornerRadiusMode(value: string | null | undefined): CornerRadiusMode {
+  return value === "0px" || value === "2px" || value === "8px" || value === "9.6px"
+    ? value
+    : "8px";
+}
+
+export function cornerRadiusScale(value: CornerRadiusMode): number {
+  switch (value) {
+    case "0px":
+      return 0;
+    case "2px":
+      return 0.25;
+    case "9.6px":
+      return 1.2;
+    case "8px":
+    default:
+      return 1;
+  }
 }
 
 export function clampNumber(

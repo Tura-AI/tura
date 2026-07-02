@@ -316,7 +316,7 @@ body.resizing-inspector * {
   height: 56px;
   object-fit: cover;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--radius-large);
   background: var(--surface);
   box-shadow: var(--shadow-control);
 }
@@ -347,7 +347,7 @@ body.resizing-inspector * {
   .conversation-view.inspector-open .agent-avatar {
     width: 56px;
     height: 56px;
-    border-radius: 14px;
+    border-radius: var(--radius-large);
   }
 
   .conversation-view.inspector-open .assistant-meta {

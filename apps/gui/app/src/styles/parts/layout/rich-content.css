@@ -186,7 +186,7 @@
 
 .rich-table-overflow-bar > div {
   position: absolute;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--line-strong);
 }
 
@@ -202,7 +202,7 @@
 }
 
 .rich-spoiler {
-  border-radius: 3px;
+  border-radius: var(--radius-tiny);
   background: var(--accent);
   color: transparent;
 }
@@ -234,7 +234,7 @@
   place-items: center;
   margin-left: var(--space-1);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--muted);
   font-size: var(--font-small);
 }

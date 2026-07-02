@@ -100,7 +100,7 @@
   gap: var(--space-4);
   width: min(420px, calc(100vw - 32px));
   padding: var(--space-5);
-  border-radius: 18px;
+  border-radius: var(--radius-xl);
   background: var(--surface);
   box-shadow: var(--shadow-control);
 }

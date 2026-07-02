@@ -26,6 +26,7 @@ import { classNames } from "../../state/format";
 import {
   systemThemeMode,
   type AppState,
+  type CornerRadiusMode,
   type MainTab,
   type SettingsSection,
   type ThemeMode,
@@ -39,6 +40,7 @@ import { AgentSettingsPanel } from "./agent-settings-panel";
 import { mainTabEntries } from "./main-tabs";
 import { settingsRoutes, settingsRouteTitle } from "./settings-router";
 import {
+  CORNER_RADIUS_OPTIONS,
   DEFAULT_PROVIDER_DOMAIN,
   LANGUAGE_OPTIONS,
   DEFAULT_MODEL_TIER_CONFIG_TIERS,
@@ -120,6 +122,7 @@ export function SettingsView(props: {
   onModelTier: (tier: string, option: TuraConfigModelPair) => void;
   onConfigureProviders: () => void;
   onTheme: (theme: ThemeMode) => void;
+  onCornerRadius: (cornerRadius: CornerRadiusMode) => void;
   onMainFont: (font: string) => void;
   onCodeFont: (font: string) => void;
   onMainFontSize: (size: number) => void;
@@ -237,6 +240,14 @@ export function SettingsView(props: {
                         )}
                       </For>
                     </div>
+                  </div>
+                  <div class="field-row">
+                    <span>{t("radius")}</span>
+                    <AppearanceSelect
+                      value={props.state.cornerRadius}
+                      options={CORNER_RADIUS_OPTIONS}
+                      onSelect={(option) => props.onCornerRadius(option.value as CornerRadiusMode)}
+                    />
                   </div>
                   <div class="field-row">
                     <span>{t("mainFont")}</span>

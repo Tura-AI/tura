@@ -1,7 +1,7 @@
 import type { TuraConfigModelPair, TuraConfigResponse } from "@tura/gateway-sdk";
 import { currentLanguage, LANGUAGE_OPTIONS, t, type TextKey } from "../../i18n";
 import { DEFAULT_CODE_FONT } from "../../config/defaults";
-import type { ThemeMode } from "../../state/global-store";
+import type { CornerRadiusMode, ThemeMode } from "../../state/global-store";
 import type { AppearanceOption } from "./appearance-select";
 
 export const THEME_OPTIONS: Array<{
@@ -32,6 +32,18 @@ export const THEME_OPTIONS: Array<{
     id: "liangzhu",
     label: "Liangzhu",
   },
+];
+
+export const CORNER_RADIUS_OPTIONS: Array<{
+  id: CornerRadiusMode;
+  label: string;
+  value: CornerRadiusMode;
+  preview: string;
+}> = [
+  { id: "0px", label: "0px", value: "0px", preview: "inherit" },
+  { id: "2px", label: "2px", value: "2px", preview: "inherit" },
+  { id: "8px", label: "8px", value: "8px", preview: "inherit" },
+  { id: "9.6px", label: "9.6px", value: "9.6px", preview: "inherit" },
 ];
 export const DEFAULT_PROVIDER_DOMAIN = "llm";
 const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {

@@ -33,3 +33,16 @@ describe("theme accent tokens", () => {
     expect(tokenValue(themeBlock("caral"), "--accent-ink")).toBe("#ffffff");
   });
 });
+
+describe("corner radius tokens", () => {
+  test("derives all nonzero radii from one global scale", () => {
+    const root = themeBlock();
+
+    expect(root).toContain("--corner-radius-scale: 1;");
+    expect(root).toContain("--radius: calc(8px * var(--corner-radius-scale));");
+    expect(root).toContain("--radius-small: calc(6px * var(--corner-radius-scale));");
+    expect(root).toContain("--radius-large: calc(14px * var(--corner-radius-scale));");
+    expect(root).toContain("--radius-xl: calc(18px * var(--corner-radius-scale));");
+    expect(root).toContain("--radius-pill: calc(16px * var(--corner-radius-scale));");
+  });
+});

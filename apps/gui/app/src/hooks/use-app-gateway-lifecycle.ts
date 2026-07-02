@@ -13,7 +13,12 @@ import {
   tryStartGateway,
   waitForGatewayHealth,
 } from "../app-gateway-startup";
-import { clampNumber, mergeSessions, normalizeThemeMode } from "../app-state-utils";
+import {
+  clampNumber,
+  mergeSessions,
+  normalizeCornerRadiusMode,
+  normalizeThemeMode,
+} from "../app-state-utils";
 import { DEFAULT_AGENT_ID, DEFAULT_MODEL_ID } from "../config/defaults";
 import { setLanguage, t } from "../i18n";
 import { applyGatewayEvent } from "../state/event-reducer";
@@ -279,6 +284,9 @@ export function useAppGatewayLifecycle(options: {
           providers?.connected[0] ??
           providers?.all[0]?.id,
         themeMode: previous.bootstrapped ? previous.themeMode : normalizeThemeMode(config.theme),
+        cornerRadius: previous.bootstrapped
+          ? previous.cornerRadius
+          : normalizeCornerRadiusMode(config.corner_radius),
         mainFont: previous.bootstrapped
           ? previous.mainFont
           : (config.main_font ?? previous.mainFont),

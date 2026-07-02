@@ -5,11 +5,11 @@ public network access, model quota, live gateway calls, or third-party services.
 Keep files directly under `tests/live`; do not create child directories.
 
 `tests/live`, `tests/business`, `tests/os_testing`, `tests/performance`,
-`tests/benchmark`, and `tests/release` are peer test types. Local deterministic
+`benchmark`, and `tests/release` are peer test types. Local deterministic
 tests belong in `tests/business`; process/OS-sensitive deterministic tests
 belong in `tests/os_testing`; all release-binary validation belongs in
 `tests/release`, including TUI/GUI release flows that drive real provider
-execution. Scoring and comparison suites belong in `tests/benchmark`;
+execution. Scoring and comparison suites belong in `benchmark`;
 performance, load, soak, and stress tests belong in `tests/performance`.
 
 The kept entry points cover each required live surface without duplicate wrapper

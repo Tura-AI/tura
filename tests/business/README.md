@@ -13,7 +13,7 @@ App-owned scripts belong under their app package, such as
 through those app scripts explicitly.
 
 The workspace test types are peers: `tests/business`, `tests/os_testing`,
-`tests/performance`, `tests/live`, and `tests/benchmark`. Crate-owned Rust
+`tests/performance`, `tests/live`, and `benchmark`. Crate-owned Rust
 tests follow the same peer layout under each package's `tests/` directory.
 Business tests may use local HTTP fixtures, files, and in-process stores, but
 process, daemon, service-owner, shutdown, and cross-OS policy coverage belongs
@@ -58,7 +58,7 @@ Manual backend business script outputs default to:
 Override the artifact root with `TURA_BUSINESS_TARGET_ROOT` or
 `COMMAND_RUN_BUSINESS_TARGET_ROOT`.
 
-Long-running comparison and scoring suites belong under `tests/benchmark/`, not
+Long-running comparison and scoring suites belong under `benchmark/`, not
 this directory.
 
 Root process tests have moved to `tests/os_testing/` so business coverage can

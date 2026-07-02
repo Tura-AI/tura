@@ -43,6 +43,7 @@ export type SettingsSection =
   | "agents"
   | "personalization";
 export type ThemeMode = "light" | "dark" | "caral" | "uruk" | "liangzhu";
+export type CornerRadiusMode = "0px" | "2px" | "8px" | "9.6px";
 export type PlanMode = "todo" | "gantt";
 export type ProviderAuthPanel = {
   providerId: string;
@@ -85,6 +86,7 @@ export type AppState = {
   previousMainTab: Exclude<MainTab, "settings">;
   settingsSection: SettingsSection;
   themeMode: ThemeMode;
+  cornerRadius: CornerRadiusMode;
   mainFont: string;
   codeFont: string;
   mainFontSize: number;
@@ -166,6 +168,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     settingsSection: drafts.settingsSection,
     lastSessionOpenedId: undefined,
     themeMode: systemThemeMode(),
+    cornerRadius: "8px",
     mainFont: "",
     codeFont: "",
     mainFontSize: 12,

@@ -15,8 +15,14 @@
   --shadow-control: 0 12px 36px rgba(32, 42, 62, 0.1);
   --diff-add: rgba(67, 146, 91, 0.12);
   --diff-del: rgba(191, 72, 72, 0.1);
-  --radius: 8px;
-  --radius-small: 6px;
+  --corner-radius-scale: 1;
+  --radius: calc(8px * var(--corner-radius-scale));
+  --radius-small: calc(6px * var(--corner-radius-scale));
+  --radius-tiny: calc(3px * var(--corner-radius-scale));
+  --radius-micro: calc(4px * var(--corner-radius-scale));
+  --radius-large: calc(14px * var(--corner-radius-scale));
+  --radius-xl: calc(18px * var(--corner-radius-scale));
+  --radius-pill: calc(16px * var(--corner-radius-scale));
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;

@@ -152,23 +152,91 @@ async def main() -> None:
             await page.screenshot(path=OUT / "01-themes.png", full_page=True)
 
             selects = page.locator(".appearance-select-button")
-            await expect(selects).to_have_count(4)
+            await expect(selects).to_have_count(5)
             await selects.nth(0).click()
+            await expect(page.locator(".appearance-select-menu")).to_be_visible()
+            await page.get_by_role("button", name="0px").click()
+            await expect(page.locator(".appearance-select-menu")).to_have_count(0)
+            zero_radius = await page.locator(".settings-panel").evaluate(
+                """
+                (panel) => {
+                  const root = getComputedStyle(document.querySelector('.workbench'));
+                  const thumb = getComputedStyle(document.documentElement, '::-webkit-scrollbar-thumb');
+                  return {
+                    panelRadius: getComputedStyle(panel).borderRadius,
+                    tokenRadius: root.getPropertyValue('--radius').trim(),
+                    tokenSmall: root.getPropertyValue('--radius-small').trim(),
+                    tokenScale: root.getPropertyValue('--corner-radius-scale').trim(),
+                    scrollbarRadius: thumb.borderRadius,
+                  };
+                }
+                """
+            )
+            if zero_radius["panelRadius"] != "0px" or zero_radius["tokenScale"] != "0":
+                checks.append({"name": "zero-radius-applies", "ok": False, "metrics": zero_radius})
+            else:
+                checks.append({"name": "zero-radius-applies", "ok": True, "metrics": zero_radius})
+
+            await selects.nth(0).click()
+            await expect(page.locator(".appearance-select-menu")).to_be_visible()
+            await page.get_by_role("button", name="8px").click()
+            await expect(page.locator(".appearance-select-menu")).to_have_count(0)
+            default_radius = await page.locator(".settings-panel").evaluate(
+                """
+                (panel) => {
+                  const root = getComputedStyle(document.querySelector('.workbench'));
+                  return {
+                    panelRadius: getComputedStyle(panel).borderRadius,
+                    tokenRadius: root.getPropertyValue('--radius').trim(),
+                    tokenSmall: root.getPropertyValue('--radius-small').trim(),
+                    tokenScale: root.getPropertyValue('--corner-radius-scale').trim(),
+                  };
+                }
+                """
+            )
+            if default_radius["panelRadius"] != "8px" or default_radius["tokenScale"] != "1":
+                checks.append({"name": "default-radius-matches-current", "ok": False, "metrics": default_radius})
+            else:
+                checks.append({"name": "default-radius-matches-current", "ok": True, "metrics": default_radius})
+
+            await selects.nth(0).click()
+            await expect(page.locator(".appearance-select-menu")).to_be_visible()
+            await page.get_by_role("button", name="9.6px").click()
+            await expect(page.locator(".appearance-select-menu")).to_have_count(0)
+            large_radius = await page.locator(".settings-panel").evaluate(
+                """
+                (panel) => {
+                  const root = getComputedStyle(document.querySelector('.workbench'));
+                  return {
+                    panelRadius: getComputedStyle(panel).borderRadius,
+                    tokenRadius: root.getPropertyValue('--radius').trim(),
+                    tokenSmall: root.getPropertyValue('--radius-small').trim(),
+                    tokenScale: root.getPropertyValue('--corner-radius-scale').trim(),
+                  };
+                }
+                """
+            )
+            if large_radius["panelRadius"] != "9.6px" or large_radius["tokenScale"] != "1.2":
+                checks.append({"name": "large-radius-applies", "ok": False, "metrics": large_radius})
+            else:
+                checks.append({"name": "large-radius-applies", "ok": True, "metrics": large_radius})
+
+            await selects.nth(1).click()
             await expect(page.locator(".appearance-select-menu")).to_be_visible()
             await page.get_by_role("button", name="Arial").click()
             await expect(page.locator(".appearance-select-menu")).to_have_count(0)
 
-            await selects.nth(1).click()
+            await selects.nth(2).click()
             await expect(page.locator(".appearance-select-menu")).to_be_visible()
             await page.get_by_role("button", name="Consolas").click()
             await expect(page.locator(".appearance-select-menu")).to_have_count(0)
 
-            await selects.nth(2).click()
+            await selects.nth(3).click()
             await expect(page.locator(".appearance-select-menu")).to_be_visible()
             await page.get_by_role("button", name="13").click()
             await expect(page.locator(".appearance-select-menu")).to_have_count(0)
 
-            await selects.nth(3).click()
+            await selects.nth(4).click()
             await expect(page.locator(".appearance-select-menu")).to_be_visible()
             await page.locator(".appearance-select-menu").get_by_role(
                 "button", name="12"

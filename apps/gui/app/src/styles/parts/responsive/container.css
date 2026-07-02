@@ -158,7 +158,7 @@
   .agent-avatar {
     width: 56px;
     height: 56px;
-    border-radius: 14px;
+    border-radius: var(--radius-large);
   }
 
   .tool-inspector {

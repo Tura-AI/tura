@@ -91,7 +91,11 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
         model_variant: state().modelVariant,
         model_acceleration_enabled: state().accelerationEnabled,
       };
-      const configPayload = configDraftToPatch(state().configDraft, state().themeMode);
+      const configPayload = configDraftToPatch(
+        state().configDraft,
+        state().themeMode,
+        state().cornerRadius,
+      );
       const [workspaceConfig, config] = await Promise.all([
         directoryClient().patchWorkspaceConfig(payload),
         rootClient().patchConfig(configPayload),

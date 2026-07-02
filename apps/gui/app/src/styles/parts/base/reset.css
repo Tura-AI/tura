@@ -15,7 +15,7 @@
 
 *::-webkit-scrollbar-thumb {
   border: 3px solid var(--paper);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--faint);
 }
 

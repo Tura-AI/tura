@@ -1,5 +1,6 @@
 import type { Session, TaskManagement } from "@tura/gateway-sdk";
 import { Match, Show, Switch, createSignal } from "solid-js";
+import { cornerRadiusScale } from "../app-state-utils";
 import { DEFAULT_CODE_FONT, DEFAULT_MAIN_FONT } from "../config/defaults";
 import { sessionTasks, taskDisplayText, taskNonceId } from "../features/plan/tasks";
 import { t } from "../i18n";
@@ -271,6 +272,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
           "--code-font-family": state().codeFont || DEFAULT_CODE_FONT,
           "--base-font-size": `${state().mainFontSize || 12}px`,
           "--code-font-size": `${state().codeFontSize || 12}px`,
+          "--corner-radius-scale": String(cornerRadiusScale(state().cornerRadius)),
         }}
       >
         <AppRail view={props.view} collapseAfterSelection={collapseRailAfterCompactSelection} />

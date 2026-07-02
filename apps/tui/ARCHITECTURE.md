@@ -685,7 +685,7 @@ the compiled debug/release binaries are read from `target/<profile>`.
 Release-entry acceptance tests that validate the registered release
 command surface belong in root `tests/release/tui_release_*.mjs` for the TUI
 surface. Root `tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
-`tests/benchmark/` owns comparison and scoring benchmarks.
+`benchmark/` owns comparison and scoring benchmarks.
 
 ## Implementation Phases
 

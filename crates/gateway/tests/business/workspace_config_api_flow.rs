@@ -72,6 +72,11 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
     let Json(updated_config) = patch_config(Json(ConfigPatch {
         language: Some("zh-CN".to_string()),
         theme: Some("contrast".to_string()),
+        corner_radius: Some("2px".to_string()),
+        main_font: Some("Arial".to_string()),
+        code_font: Some("Consolas".to_string()),
+        main_font_size: Some(13),
+        code_font_size: Some(11),
         model: Some("openai/gpt-5.5".to_string()),
         agent: Some("coding".to_string()),
         skill_folders: Some(vec![selected.to_string_lossy().to_string()]),
@@ -79,6 +84,11 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
     .await;
     assert_eq!(updated_config.language.as_deref(), Some("zh-CN"));
     assert_eq!(updated_config.theme.as_deref(), Some("contrast"));
+    assert_eq!(updated_config.corner_radius.as_deref(), Some("2px"));
+    assert_eq!(updated_config.main_font.as_deref(), Some("Arial"));
+    assert_eq!(updated_config.code_font.as_deref(), Some("Consolas"));
+    assert_eq!(updated_config.main_font_size, Some(13));
+    assert_eq!(updated_config.code_font_size, Some(11));
     assert_eq!(updated_config.model.as_deref(), Some("openai/gpt-5.5"));
     assert_eq!(updated_config.agent.as_deref(), Some("coding"));
     assert_eq!(

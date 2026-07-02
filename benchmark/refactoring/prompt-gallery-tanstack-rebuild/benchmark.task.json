@@ -1,0 +1,38 @@
+{
+  "schema": "tura.benchmark.task-declaration.v1",
+  "id": "prompt-gallery-tanstack-rebuild",
+  "type": "refactoring",
+  "title": "Prompt gallery TanStack rebuild",
+  "directory": "benchmark/refactoring/prompt-gallery-tanstack-rebuild",
+  "summary": "Rebuilds a prompt gallery from an HTML source into TanStack frontend or full-stack variants.",
+  "contract": {
+    "cliMetadata": "tura.benchmark.cli-metadata.v1",
+    "round": "tura.benchmark.agent-round.v1",
+    "taskReport": "tura.benchmark.task-report.v1",
+    "harnessReport": "tura.benchmark.harness-report.v1"
+  },
+  "variants": [
+    {
+      "id": "fullstack",
+      "label": "Full-stack TanStack rebuild",
+      "runner": "runner.mjs",
+      "default": true,
+      "env": {
+        "COMMAND_RUN_MAKEUP_TANSTACK_VERSION": "fullstack"
+      }
+    },
+    {
+      "id": "frontend",
+      "label": "Frontend TanStack rebuild",
+      "runner": "runner.mjs",
+      "env": {
+        "COMMAND_RUN_MAKEUP_TANSTACK_VERSION": "frontend"
+      }
+    }
+  ],
+  "legacyScripts": [
+    "tests/benchmark/project-rebuild-refactor/prompt_gallery_tanstack_rebuild.mjs",
+    "tests/benchmark/project-rebuild-refactor/prompt_gallery_tanstack_frontend_rebuild.mjs"
+  ],
+  "duplicatePolicy": "merged-variant"
+}
