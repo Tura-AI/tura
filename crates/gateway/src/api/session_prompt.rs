@@ -452,6 +452,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                 })
             })
         })
+        .or(agent_runtime_settings.acceleration_enabled)
         .or_else(|| {
             session
                 .as_ref()
@@ -743,6 +744,7 @@ fn non_empty_string(value: Option<String>) -> Option<String> {
 #[derive(Default)]
 struct AgentRuntimeSettings {
     reasoning_effort: Option<String>,
+    acceleration_enabled: Option<bool>,
 }
 
 fn agent_runtime_settings(agent_id: &str, directory: Option<&str>) -> Option<AgentRuntimeSettings> {
@@ -767,6 +769,10 @@ fn agent_runtime_settings(agent_id: &str, directory: Option<&str>) -> Option<Age
                 "model_variant",
             ],
         ),
+        acceleration_enabled: provider_bool(
+            provider,
+            &["model_acceleration_enabled", "accelerated"],
+        ),
     })
 }
 
@@ -781,6 +787,21 @@ fn provider_string(
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("default"))
         .map(ToString::to_string)
         .next()
+}
+
+fn provider_bool(
+    provider: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<bool> {
+    keys.iter().find_map(|key| match provider.get(*key)? {
+        serde_json::Value::Bool(value) => Some(*value),
+        serde_json::Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    })
 }
 
 fn prompt_agent_override(payload: &serde_json::Value) -> Option<String> {
@@ -1076,6 +1097,7 @@ mod tests {
             .expect("agent runtime settings");
 
         assert_eq!(settings.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(settings.acceleration_enabled, Some(true));
     }
 
     #[test]

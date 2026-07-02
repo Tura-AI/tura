@@ -490,6 +490,11 @@ User messages appended through gateway message APIs are also appended to the
 session-management log so runtime context and hydration can keep follow-up
 constraints.
 
+If `POST /session/{sessionID}/prompt_async` starts as a normal prompt but the
+router reports `session_active_turn` for that session, gateway must treat the
+prompt as a follow-up command and forward it through `session.append_user_command`
+instead of surfacing a MANO failure.
+
 Pending follow-up controls are currently projected from `task_management` and
 `/session/{sessionID}/todo`. The current source of truth is the enriched
 session response plus todo projection.
