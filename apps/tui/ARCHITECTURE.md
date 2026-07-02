@@ -188,8 +188,8 @@ query:  ?directory=<workspace path>
 header: x-opencode-directory: <percent-encoded workspace path>
 ```
 
-The CLI/TUI app may start or health-check the gateway only through an approved
-launcher path. It must not replace the gateway with direct crate calls.
+The CLI/TUI app may only health-check and connect to gateway. Gateway is owned
+by the gateway process tree, not by TUI launchers or direct crate calls.
 
 Core endpoint map:
 

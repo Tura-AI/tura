@@ -29,52 +29,44 @@ export async function tryStartGateway(
   baseUrl: string,
   setState: Setter<AppState>,
 ): Promise<boolean> {
+  setState((previous) => ({
+    ...previous,
+    loading: true,
+    connection: "connecting",
+    error: undefined,
+    settingsNotice: t("gatewayWaiting"),
+    gatewayStartupNotice: t("gatewayWaiting"),
+  }));
   if (isTauriRuntime()) {
-    return (
-      (await tryStartGatewayFromTauri(baseUrl, setState)) ||
-      (await tryStartGatewayFromDevServer(baseUrl, setState))
-    );
+    return tryConnectGatewayFromTauri(baseUrl, setState);
   }
-  return (
-    (await tryStartGatewayFromDevServer(baseUrl, setState)) ||
-    (await tryStartGatewayFromTauri(baseUrl, setState))
-  );
+  return tryConnectGatewayByHealth(baseUrl, setState);
 }
 
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-async function tryStartGatewayFromDevServer(
+async function tryConnectGatewayByHealth(
   baseUrl: string,
   setState: Setter<AppState>,
 ): Promise<boolean> {
-  setState((previous) => ({
-    ...previous,
-    loading: true,
-    connection: "connecting",
-    error: undefined,
-    settingsNotice: t("gatewayStarting"),
-    gatewayStartupNotice: t("gatewayStarting"),
-  }));
   try {
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), GATEWAY_HEALTH_TIMEOUT_MS);
-    const response = await fetch("/__tura/start-gateway", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ gatewayUrl: baseUrl }),
+    const timer = window.setTimeout(() => controller.abort(), GATEWAY_CONNECT_TIMEOUT_MS);
+    const response = await fetch(`${baseUrl.replace(/\/+$/u, "")}/global/health`, {
       signal: controller.signal,
     }).finally(() => window.clearTimeout(timer));
     if (!response.ok) return false;
-    const payload = (await response.json().catch(() => undefined)) as
-      | { status?: string; message?: string }
-      | undefined;
-    const notice = payload?.status === "building" ? t("gatewayBuilding") : t("gatewayWaiting");
+    const body = (await response
+      .clone()
+      .json()
+      .catch(() => undefined)) as { healthy?: unknown } | undefined;
+    if (body?.healthy !== true) return false;
     setState((previous) => ({
       ...previous,
-      settingsNotice: notice,
-      gatewayStartupNotice: notice,
+      settingsNotice: t("gatewayWaiting"),
+      gatewayStartupNotice: t("gatewayWaiting"),
     }));
     return true;
   } catch {
@@ -82,15 +74,14 @@ async function tryStartGatewayFromDevServer(
   }
 }
 
-async function tryStartGatewayFromTauri(
+async function tryConnectGatewayFromTauri(
   baseUrl: string,
   setState: Setter<AppState>,
 ): Promise<boolean> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const payload = (await invoke("start_gateway", { gatewayUrl: baseUrl })) as
-      | { status?: string; gatewayUrl?: string; gateway_url?: string }
-      | undefined;
+      { status?: string; gatewayUrl?: string; gateway_url?: string } | undefined;
     const nextGatewayUrl = payload?.gatewayUrl ?? payload?.gateway_url;
     const notice = payload?.status === "connected" ? t("gatewayWaiting") : t("gatewayWaiting");
     setState((previous) => ({
@@ -127,7 +118,11 @@ export async function waitForGatewayHealth(
         const body = (await response
           .clone()
           .json()
-          .catch(() => undefined)) as { dev_log_path?: string } | undefined;
+          .catch(() => undefined)) as { dev_log_path?: string; healthy?: unknown } | undefined;
+        if (body?.healthy !== true) {
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+          continue;
+        }
         const devPath = body?.dev_log_path;
         if (devPath) {
           setState((previous) => ({
@@ -145,7 +140,7 @@ export async function waitForGatewayHealth(
         return;
       }
     } catch {
-      // Keep the loading overlay alive while the dev server starts Gateway.
+      // Keep the loading overlay alive while waiting for Gateway to appear.
     }
     await new Promise((resolve) => window.setTimeout(resolve, 500));
   }

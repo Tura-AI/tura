@@ -59,8 +59,8 @@ bun run --cwd apps/gui typecheck
 
 ## Running Locally
 
-Start the GUI dev server — it starts (and attaches to) its own `tura_gateway` on
-port 4126 automatically:
+Start `tura_gateway` first, then launch the GUI dev server. The GUI only
+connects to an existing gateway and reports an error when none is reachable:
 
 ```powershell
 .\scripts\start.ps1 -Gui

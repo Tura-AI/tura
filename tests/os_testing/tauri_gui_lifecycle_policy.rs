@@ -47,12 +47,16 @@ fn tauri_gui_owns_single_instance_and_restore_contract() {
         "cold-start restore must reject transient blank URLs before applying tray launch arguments"
     );
     assert!(
-        main_rs.contains("DETACHED_PROCESS") && main_rs.contains("process_group(0)"),
-        "GUI-started gateway must be detached so closing tura_gui leaves the gateway in the OS tray"
+        !main_rs.contains("hide_child_console_window_and_detach")
+            && !main_rs.contains("process_group(0)")
+            && !main_rs.contains("spawn_gateway_child")
+            && !main_rs.contains("OWNED_GATEWAY"),
+        "standalone GUI must only connect to gateway; it must not spawn or own a gateway process"
     );
     assert!(
-        !main_rs.contains(".on_window_event") && !main_rs.contains("RunEvent::ExitRequested"),
-        "GUI exit must not install an owned-gateway shutdown hook; only gateway startup failure cleanup may kill a child"
+        main_rs.contains("gateway is not running at")
+            && main_rs.contains("start tura_gateway before launching tura_gui"),
+        "standalone GUI must fail clearly when no gateway is reachable"
     );
 }
 

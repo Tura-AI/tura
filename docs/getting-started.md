@@ -102,8 +102,8 @@ tura exec --zsh "Run through the Rust CLI front with zsh command tools"
 
 ## Start Clients
 
-Start the TUI, GUI, or desktop shell. Each auto-starts or attaches to its own
-`tura_gateway` on port 4126.
+Start `tura_gateway` first, then launch the TUI, GUI, or desktop shell. Clients
+only connect to an existing gateway; they fail if gateway is not already running.
 
 ```powershell
 .\scripts\start.ps1 -Tui --help

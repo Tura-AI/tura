@@ -41,27 +41,25 @@ fn lifecycle_policy_matrix_covers_all_supported_os_and_process_roles() {
 }
 
 #[test]
-fn router_and_session_db_are_reusable_owners_not_parent_death_children() {
+fn gateway_is_the_reusable_owner_and_backends_are_gateway_tree_children() {
     for row in lifecycle_matrix().into_iter().filter(|row| {
         matches!(
             row.role,
             ProcessRole::GatewayFront | ProcessRole::RouterDaemon | ProcessRole::SessionDbOwner
         )
     }) {
-        assert!(
+        assert_eq!(
             row.can_be_adopted_by_next_owner,
-            "{:?}/{:?} must be adoptable after its previous launcher dies",
-            row.os, row.role
+            row.role == ProcessRole::GatewayFront
         );
         assert!(
             row.explicit_shutdown_required,
             "{:?}/{:?} should not rely on launcher-death cleanup",
             row.os, row.role
         );
-        assert!(
+        assert_eq!(
             row.parent_crash_outlives_parent,
-            "{:?}/{:?} intentionally outlives the front/router that started it",
-            row.os, row.role
+            row.role == ProcessRole::GatewayFront
         );
     }
 }
@@ -193,6 +191,7 @@ impl ProcessRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScopePrimitive {
     DetachedLeaseOwner,
+    GatewayProcessTreeChild,
     WindowsJobObject,
     UnixProcessGroup,
     DirectChildOnly,
@@ -238,30 +237,41 @@ fn front_policy(os: SimulatedOs) -> LifecyclePolicy {
 }
 
 fn router_policy(os: SimulatedOs) -> LifecyclePolicy {
+    let scope = backend_child_primitive(os);
     LifecyclePolicy {
         os,
         role: ProcessRole::RouterDaemon,
-        scope: ScopePrimitive::DetachedLeaseOwner,
+        scope,
         process_tree_cleanup: true,
         parent_death_signal: false,
-        parent_crash_outlives_parent: true,
-        can_be_adopted_by_next_owner: true,
+        parent_crash_outlives_parent: false,
+        can_be_adopted_by_next_owner: false,
         explicit_shutdown_required: true,
         direct_child_only: false,
     }
 }
 
 fn session_db_policy(os: SimulatedOs) -> LifecyclePolicy {
+    let scope = backend_child_primitive(os);
     LifecyclePolicy {
         os,
         role: ProcessRole::SessionDbOwner,
-        scope: ScopePrimitive::DetachedLeaseOwner,
-        process_tree_cleanup: false,
+        scope,
+        process_tree_cleanup: true,
         parent_death_signal: false,
-        parent_crash_outlives_parent: true,
-        can_be_adopted_by_next_owner: true,
+        parent_crash_outlives_parent: false,
+        can_be_adopted_by_next_owner: false,
         explicit_shutdown_required: true,
-        direct_child_only: false,
+        direct_child_only: matches!(scope, ScopePrimitive::DirectChildOnly),
+    }
+}
+
+fn backend_child_primitive(os: SimulatedOs) -> ScopePrimitive {
+    match os {
+        SimulatedOs::Windows | SimulatedOs::Linux | SimulatedOs::MacOs => {
+            ScopePrimitive::GatewayProcessTreeChild
+        }
+        SimulatedOs::Other => ScopePrimitive::DirectChildOnly,
     }
 }
 
@@ -320,7 +330,7 @@ fn process_scope_strategy_for(scope: ScopePrimitive) -> ProcessScopeStrategy {
         ScopePrimitive::WindowsJobObject => ProcessScopeStrategy::WindowsJobObject,
         ScopePrimitive::UnixProcessGroup => ProcessScopeStrategy::UnixProcessGroup,
         ScopePrimitive::DirectChildOnly => ProcessScopeStrategy::DirectChildOnly,
-        ScopePrimitive::DetachedLeaseOwner => {
+        ScopePrimitive::DetachedLeaseOwner | ScopePrimitive::GatewayProcessTreeChild => {
             panic!("front/router/session_db scopes are not worker process strategies")
         }
     }
@@ -331,7 +341,7 @@ fn shell_scope_strategy_for(scope: ScopePrimitive) -> ShellProcessScopeStrategy 
         ScopePrimitive::WindowsJobObject => ShellProcessScopeStrategy::WindowsJobObject,
         ScopePrimitive::UnixProcessGroup => ShellProcessScopeStrategy::UnixProcessGroup,
         ScopePrimitive::DirectChildOnly => ShellProcessScopeStrategy::DirectChildOnly,
-        ScopePrimitive::DetachedLeaseOwner => {
+        ScopePrimitive::DetachedLeaseOwner | ScopePrimitive::GatewayProcessTreeChild => {
             panic!("front/router/session_db scopes are not command_run strategies")
         }
     }

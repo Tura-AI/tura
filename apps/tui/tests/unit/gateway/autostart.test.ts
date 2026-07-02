@@ -1,107 +1,63 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createServer, type AddressInfo } from "node:net";
-import {
-  _canBindGatewayUrlForTest,
-  _releaseOwnedGatewayForTest,
-  _setOwnedGatewayForTest,
-} from "../../../src/gateway/autostart.js";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { ensureGatewayAvailable, _gatewayProbeForTest } from "../../../src/gateway/autostart.js";
+import { plainCapabilities } from "../../../src/tui/capabilities.js";
 
-function spawnSleeper() {
-  return spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
-    stdio: "ignore",
+test("gateway probe accepts an existing healthy gateway", async () => {
+  const server = createServer((req, res) => {
+    assert.equal(req.url, "/global/health");
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ healthy: true, root: process.cwd(), version: "test" }));
   });
-}
-
-function waitForSpawn(child: ReturnType<typeof spawn>): Promise<void> {
-  return new Promise((resolve, reject) => {
-    child.on("spawn", resolve);
-    child.on("error", reject);
-  });
-}
-
-function waitForExit(child: ReturnType<typeof spawn>): Promise<number | null> {
-  return new Promise((resolve) => child.on("exit", (code) => resolve(code)));
-}
-
-function isAlive(pid: number | undefined): boolean {
-  if (!pid) return false;
+  await listen(server);
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-test("releasing an owned gateway reference does not kill the process", async () => {
-  const child = spawnSleeper();
-  await waitForSpawn(child);
-  const pid = child.pid;
-  try {
-    _setOwnedGatewayForTest(child);
-    _releaseOwnedGatewayForTest();
-
-    assert.equal(isAlive(pid), true, "persistent gateway must survive front cleanup");
+    const address = server.address() as AddressInfo;
+    assert.equal(await _gatewayProbeForTest(`http://127.0.0.1:${address.port}`), true);
   } finally {
-    child.kill();
-    await waitForExit(child).catch(() => {});
+    await close(server);
   }
 });
 
-test("persistent gateway spawn is detached from the TUI process group", async () => {
-  const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
+test("ensureGatewayAvailable returns a reachable explicit gateway without spawning", async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ healthy: true, root: process.cwd() }));
   });
+  await listen(server);
   try {
-    await waitForSpawn(child);
-    assert.ok(child.pid, "spawned child has a pid");
+    const address = server.address() as AddressInfo;
+    const url = `http://127.0.0.1:${address.port}`;
 
-    if (process.platform !== "win32") {
-      const childPgid = parseInt(
-        (
-          await new Promise<string>((res, rej) => {
-            const pg = spawn("ps", ["-o", "pgid=", "-p", String(child.pid)], {
-              stdio: ["ignore", "pipe", "ignore"],
-            });
-            let out = "";
-            pg.stdout.on("data", (d: Buffer) => (out += d.toString()));
-            pg.on("exit", () => res(out.trim()));
-            pg.on("error", rej);
-          })
-        ).trim(),
-        10,
-      );
-      const parentPgid = (process as unknown as { getpgid?: (pid: number) => number }).getpgid?.(0);
-      assert.notEqual(
-        childPgid,
-        parentPgid ?? process.pid,
-        "gateway must not share TUI process group",
-      );
-    }
-    // On Windows, detached=true maps to a detached child process; successful
-    // spawn plus unreferenced cleanup is the portable unit-level contract.
+    await assert.doesNotReject(
+      ensureGatewayAvailable(url, plainCapabilities(), false, true),
+      "standalone TUI should connect to an existing gateway",
+    );
   } finally {
-    child.kill();
-    await waitForExit(child).catch(() => {});
+    await close(server);
   }
 });
 
-test("a non-gateway process occupying the default port is treated as a collision", async () => {
+test("ensureGatewayAvailable fails when explicit gateway is absent", async () => {
   const server = createServer();
-  await new Promise<void>((resolve, reject) => {
+  await listen(server);
+  const address = server.address() as AddressInfo;
+  await close(server);
+
+  await assert.rejects(
+    ensureGatewayAvailable(`http://127.0.0.1:${address.port}`, plainCapabilities(), false, true),
+    /TUI only connects to an existing gateway/u,
+  );
+});
+
+function listen(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
   });
-  try {
-    const address = server.address() as AddressInfo | null;
-    assert.ok(address);
+}
 
-    assert.equal(await _canBindGatewayUrlForTest(`http://127.0.0.1:${address.port}`), false);
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
-});
+function close(server: Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
+}

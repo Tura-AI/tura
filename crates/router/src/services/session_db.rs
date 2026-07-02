@@ -32,6 +32,7 @@ impl SessionDbService {
             return Ok(self.status_payload("running"));
         }
         self.kill_managed_child();
+        stop_unmanaged_session_db_service();
         let service_bin = session_db_binary()
             .ok_or_else(|| anyhow!("session_db service executable tura_session_db not found"))?;
         // tura_session_db owns the SQLite session-log write path. It serves a
@@ -87,17 +88,17 @@ impl SessionDbService {
 
     fn is_ready(&self) -> bool {
         let Ok(mut guard) = self.child.lock() else {
-            return session_log::ipc::service_is_running();
+            return false;
         };
         match guard.as_mut() {
             Some(child) => match child.try_wait() {
                 Ok(None) => session_log::ipc::service_is_running(),
                 Ok(Some(_)) | Err(_) => {
                     *guard = None;
-                    session_log::ipc::service_is_running()
+                    false
                 }
             },
-            None => session_log::ipc::service_is_running(),
+            None => false,
         }
     }
 
@@ -157,6 +158,21 @@ fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
         std::thread::sleep(Duration::from_millis(100));
     }
     false
+}
+
+fn stop_unmanaged_session_db_service() {
+    if !session_log::ipc::service_is_running() {
+        return;
+    }
+    let _ = session_log::ipc::call_service(&session_log::SessionLogCommand::Shutdown);
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(10) {
+        if !session_log::ipc::service_is_running() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = std::fs::remove_file(session_log::ipc::service_addr_path());
 }
 
 fn session_db_binary() -> Option<PathBuf> {

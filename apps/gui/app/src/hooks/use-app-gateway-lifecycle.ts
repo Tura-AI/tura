@@ -122,10 +122,11 @@ export function useAppGatewayLifecycle(options: {
       gatewayStartupNotice: previous.gatewayStartupNotice,
     }));
     if (!disableGatewayAutostart) {
-      const started = await tryStartGateway(gatewayUrl(), setState);
-      if (started) {
-        await waitForGatewayHealth(gatewayUrl(), GATEWAY_HEALTH_TIMEOUT_MS, setState);
+      const connected = await tryStartGateway(gatewayUrl(), setState);
+      if (!connected) {
+        throw new DOMException("Gateway is not running.", "TimeoutError");
       }
+      await waitForGatewayHealth(gatewayUrl(), GATEWAY_HEALTH_TIMEOUT_MS, setState);
     }
     const client = rootClient();
     try {
