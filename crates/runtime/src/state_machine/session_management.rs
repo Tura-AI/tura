@@ -96,6 +96,31 @@ pub type TaskStatus = PlanStatus;
 
 pub const DEFAULT_CONTEXT_TOKEN_LIMIT: u64 = 255_000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SessionLogCompactionPoint {
+    /// Absolute session_log index of the compact record.
+    #[serde(default)]
+    pub compact_entry_index: u64,
+    /// Number of entries omitted before the retained session_log slice.
+    #[serde(default)]
+    pub retained_before: u64,
+    /// Absolute index that became the start of the retained slice.
+    #[serde(default)]
+    pub retained_from_index: u64,
+    /// Compact timestamp.
+    pub compacted_at: UtcDateTimeMs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SessionLogRetention {
+    /// Number of historical session_log entries omitted from this in-memory state.
+    #[serde(default)]
+    pub omitted_entries: u64,
+    /// Boundary recorded when the latest context compaction trimmed history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_compaction: Option<SessionLogCompactionPoint>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextTokenStats {
     #[serde(default)]
@@ -228,6 +253,9 @@ pub struct SessionManagement {
     pub session_current_turn: u64,
     /// Historical execution log entries.
     pub session_log: Vec<SessionLogEntry>,
+    /// Retention state for compacted session_log history.
+    #[serde(default)]
+    pub session_log_retention: SessionLogRetention,
     /// Session creation timestamp in UTC.
     pub session_created_at: UtcDateTimeMs,
     /// Last activation time in UTC.
@@ -337,6 +365,7 @@ impl SessionManagement {
             session_capabilities: Vec::new(),
             session_current_turn: 0,
             session_log: Vec::new(),
+            session_log_retention: SessionLogRetention::default(),
             session_created_at: now,
             session_last_update_at: now,
             session_last_user_message_at: now,
@@ -475,6 +504,39 @@ impl SessionManagement {
     pub fn push_log(&mut self, entry: impl Into<String>, now: UtcDateTimeMs) {
         self.session_log.push(entry.into());
         self.session_last_update_at = now;
+    }
+
+    /// Records a compact boundary and drops log entries before the retained slice.
+    pub fn record_context_compaction_point(
+        &mut self,
+        retained_from_index: usize,
+        compact_entry_index: usize,
+        now: UtcDateTimeMs,
+    ) {
+        let retained_from_index = retained_from_index.min(self.session_log.len());
+        let compact_entry_index = compact_entry_index.min(self.session_log.len().saturating_sub(1));
+        let previous_omitted = self.session_log_retention.omitted_entries;
+        let retained_from_absolute = previous_omitted.saturating_add(retained_from_index as u64);
+        let compact_entry_absolute = previous_omitted.saturating_add(compact_entry_index as u64);
+
+        if retained_from_index > 0 {
+            self.session_log.drain(0..retained_from_index);
+            self.session_log_retention.omitted_entries = retained_from_absolute;
+        }
+
+        self.session_log_retention.last_compaction = Some(SessionLogCompactionPoint {
+            compact_entry_index: compact_entry_absolute,
+            retained_before: self.session_log_retention.omitted_entries,
+            retained_from_index: retained_from_absolute,
+            compacted_at: now,
+        });
+        self.session_last_update_at = now;
+    }
+
+    pub fn absolute_session_log_index(&self, local_index: usize) -> u64 {
+        self.session_log_retention
+            .omitted_entries
+            .saturating_add(local_index as u64)
     }
 
     /// Records the timestamp of a user-authored message without coupling it to

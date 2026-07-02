@@ -18,7 +18,8 @@ pub(super) fn process_video(path: &Path, args: &ReadMediaArgs) -> Result<MediaCo
         .map_err(|err| format!("failed to create temp frame dir: {err}"))?;
     let pattern = temp_dir.join("frame_%03d.jpg");
     let fps_filter = format!("fps=1,scale='min({0},iw)':-2", args.max_side);
-    let status = std::process::Command::new(ffmpeg)
+    let mut command = std::process::Command::new(ffmpeg);
+    command
         .arg("-hide_banner")
         .arg("-loglevel")
         .arg("error")
@@ -31,12 +32,12 @@ pub(super) fn process_video(path: &Path, args: &ReadMediaArgs) -> Result<MediaCo
         .arg("-q:v")
         .arg("4")
         .arg("-y")
-        .arg(&pattern)
-        .status()
-        .map_err(|err| {
-            let _ = std::fs::remove_dir_all(&temp_dir);
-            format!("failed to run ffmpeg: {err}")
-        })?;
+        .arg(&pattern);
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let status = command.status().map_err(|err| {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        format!("failed to run ffmpeg: {err}")
+    })?;
     if !status.success() {
         let _ = std::fs::remove_dir_all(&temp_dir);
         return process_video_with_python_cv2(path, args)
@@ -81,7 +82,8 @@ pub(super) fn process_audio(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Val
     std::fs::create_dir_all(&temp_dir)
         .map_err(|err| format!("failed to create temp audio dir: {err}"))?;
     let output_path = temp_dir.join("preview.mp3");
-    let output = std::process::Command::new(ffmpeg)
+    let mut command = std::process::Command::new(ffmpeg);
+    command
         .arg("-hide_banner")
         .arg("-loglevel")
         .arg("error")
@@ -99,12 +101,12 @@ pub(super) fn process_audio(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Val
         .arg("-f")
         .arg("mp3")
         .arg("-y")
-        .arg(&output_path)
-        .output()
-        .map_err(|err| {
-            let _ = std::fs::remove_dir_all(&temp_dir);
-            format!("failed to run ffmpeg for audio extraction: {err}")
-        })?;
+        .arg(&output_path);
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let output = command.output().map_err(|err| {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        format!("failed to run ffmpeg for audio extraction: {err}")
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -177,16 +179,17 @@ print(json.dumps(frames))
     let python = command_local_python("TURA_READ_MEDIA_PYTHON")
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "python".to_string());
-    let output = std::process::Command::new(&python)
+    let mut command = std::process::Command::new(&python);
+    command
         .arg("-c")
         .arg(script)
         .arg(path)
         .arg(args.max_visuals.to_string())
-        .arg(args.max_side.to_string())
-        .output()
-        .map_err(|err| {
-            format!("ffmpeg not found and python cv2 fallback failed to start: {err}")
-        })?;
+        .arg(args.max_side.to_string());
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let output = command.output().map_err(|err| {
+        format!("ffmpeg not found and python cv2 fallback failed to start: {err}")
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
@@ -231,11 +234,12 @@ pub(super) fn resolve_ffmpeg() -> Option<String> {
 fn resolve_imageio_ffmpeg() -> Option<String> {
     let python = command_configured_python("TURA_READ_MEDIA_PYTHON")
         .map(|path| path.display().to_string())?;
-    let output = std::process::Command::new(python)
+    let mut command = std::process::Command::new(python);
+    command
         .arg("-c")
-        .arg("import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())")
-        .output()
-        .ok()?;
+        .arg("import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())");
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }

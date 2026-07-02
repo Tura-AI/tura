@@ -72,6 +72,14 @@ fn prompt_payload_treats_default_model_variant_as_unset() {
 }
 
 #[test]
+fn session_config_defaults_priority_routing_off() {
+    assert_eq!(
+        TuraSessionConfig::default().model_acceleration_enabled,
+        Some(false)
+    );
+}
+
+#[test]
 fn session_config_model_override_keeps_tier_names_out_of_specific_model_display() {
     let config = TuraSessionConfig {
         model: Some("thinking".to_string()),

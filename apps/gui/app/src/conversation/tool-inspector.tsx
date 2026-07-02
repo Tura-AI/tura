@@ -3,6 +3,7 @@ import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup } f
 import { t } from "../i18n";
 import { classNames } from "../state/format";
 import {
+  commandRunGroupDurationMs,
   diffLines,
   formatCommandTiming,
   formatDuration,
@@ -37,9 +38,10 @@ export function ToolInspector(props: {
   });
   const [expandedId, setExpandedId] = createSignal<string>();
   let autoExpandedPartId: string | undefined;
-  const totalDuration = createMemo(() =>
-    formatDuration(records().reduce((duration, record) => duration + (record.durationMs ?? 0), 0)),
-  );
+  const totalDuration = createMemo(() => {
+    refreshTick();
+    return formatDuration(commandRunGroupDurationMs(props.parts));
+  });
   let dragStart = 0;
   let widthStart = 0;
   let resizing = false;
@@ -230,10 +232,16 @@ export function ToolInspector(props: {
                           setExpandedId(expanded() ? undefined : record().id);
                         }}
                       >
+                        <span class="inspector-record-step">
+                          {record().step === undefined ? "" : `#${record().step}`}
+                        </span>
                         <span>{record().title}</span>
                         <small>
-                          {toolStatusLabel(record().status)} ·{" "}
-                          {formatCommandTiming(record().durationMs, record().timeoutMs)}
+                          {toolStatusLabel(record().status)}
+                          <Show when={!record().hasResult}>
+                            {" · "}
+                            {formatCommandTiming(record().durationMs, record().timeoutMs)}
+                          </Show>
                         </small>
                       </button>
                       <Show when={expanded()}>

@@ -1,19 +1,16 @@
 import MoreHorizontal from "lucide-solid/icons/ellipsis";
-import FolderOpen from "lucide-solid/icons/folder-open";
-import Pin from "lucide-solid/icons/pin";
-import Plus from "lucide-solid/icons/plus";
-import Settings from "lucide-solid/icons/settings";
 import Trash2 from "lucide-solid/icons/trash-2";
 import { Show, createSignal } from "solid-js";
 import { t } from "../../i18n";
 
-export function WorkspaceMenu(props: { onSettings: () => void; onNewSession: () => void }) {
+export function WorkspaceMenu(props: { onDeleteWorkspace: () => void }) {
   const [open, setOpen] = createSignal(false);
+
   return (
     <div class="workspace-menu">
       <button
         type="button"
-        title={t("settings")}
+        title={t("deleteWorkspace")}
         onClick={(event) => {
           event.stopPropagation();
           setOpen((value) => !value);
@@ -23,36 +20,19 @@ export function WorkspaceMenu(props: { onSettings: () => void; onNewSession: () 
       </button>
       <Show when={open()}>
         <div class="rail-menu" onClick={(event) => event.stopPropagation()}>
-          <button type="button">
-            <Pin size={14} strokeWidth={1.7} />
-            <span>{t("pinWorkspace")}</span>
-          </button>
-          <button type="button">
-            <FolderOpen size={14} strokeWidth={1.7} />
-            <span>{t("openInExplorer")}</span>
-          </button>
-          <button type="button" onClick={props.onNewSession}>
-            <Plus size={14} strokeWidth={1.7} />
-            <span>{t("newSession")}</span>
-          </button>
-          <button type="button" onClick={props.onSettings}>
-            <Settings size={14} strokeWidth={1.7} />
-            <span>{t("workspaceSettings")}</span>
-          </button>
-          <button type="button">
-            <ArchiveIcon />
-            <span>{t("archiveSession")}</span>
-          </button>
-          <button type="button">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpen(false);
+              props.onDeleteWorkspace();
+            }}
+          >
             <Trash2 size={14} strokeWidth={1.7} />
-            <span>{t("remove")}</span>
+            <span>{t("deleteWorkspace")}</span>
           </button>
         </div>
       </Show>
     </div>
   );
-}
-
-function ArchiveIcon() {
-  return <span class="tiny-icon">▣</span>;
 }

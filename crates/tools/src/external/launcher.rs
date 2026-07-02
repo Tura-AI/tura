@@ -138,9 +138,7 @@ async fn run_command_with_timeout(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     #[cfg(windows)]
-    {
-        command.creation_flags(0x08000000);
-    }
+    command.creation_flags(tura_path::process_hardening::WINDOWS_CREATE_NO_WINDOW);
 
     let mut child = command
         .spawn()

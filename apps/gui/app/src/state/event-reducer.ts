@@ -7,13 +7,14 @@ import type {
   TodoItem,
 } from "@tura/gateway-sdk";
 import type { AppState } from "./global-store";
-import { messageSessionId, sessionHasDisplayName, sessionUpdatedAt } from "./global-store";
+import { messageSessionId, sessionUpdatedAt } from "./global-store";
 import {
   markStreamedDeltaFields,
   mergeMessageForCache,
   mergeMessagePartForCache,
   streamedDeltaFields,
 } from "./message-cache";
+import { mergeSessionSnapshot } from "../app-state-utils";
 
 export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelope): AppState {
   const event = envelope.payload;
@@ -59,6 +60,10 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       const { [sessionId]: _messages, ...messagesBySession } = next.messagesBySession;
       const { [sessionId]: _paging, ...messagePagingBySession } = next.messagePagingBySession;
       const { [sessionId]: _scroll, ...transcriptScrollBySession } = next.transcriptScrollBySession;
+      const transcriptScrollToBottomRequest =
+        next.transcriptScrollToBottomRequest?.sessionId === sessionId
+          ? undefined
+          : next.transcriptScrollToBottomRequest;
       const { [sessionId]: _todos, ...todosBySession } = next.todosBySession;
       return {
         ...next,
@@ -66,6 +71,7 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
         messagesBySession,
         messagePagingBySession,
         transcriptScrollBySession,
+        transcriptScrollToBottomRequest,
         todosBySession,
         selectedSessionId:
           next.selectedSessionId === sessionId ? sessions[0]?.id : next.selectedSessionId,
@@ -296,15 +302,7 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
 
 export function upsertSession(sessions: Session[], session: Session): Session[] {
   const existing = sessions.find((item) => item.id === session.id);
-  const nextSession =
-    existing && !sessionHasDisplayName(session) && sessionHasDisplayName(existing)
-      ? {
-          ...session,
-          name: existing.name,
-          session_display_name: existing.session_display_name,
-          plan_summary: existing.plan_summary,
-        }
-      : session;
+  const nextSession = mergeSessionSnapshot(existing, session);
   const without = sessions.filter((item) => item.id !== session.id);
   return [...without, nextSession].sort(
     (left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left),

@@ -4,7 +4,6 @@ import type {
   AgentUpsertRequest,
   Message,
   PlanStatus,
-  PollInterval,
   ProductIssue,
   Project,
   ProviderAuthMethod,
@@ -27,12 +26,12 @@ export type AppShellViewModel = {
   selectedMessages: Accessor<Message[]>;
   loadEarlierMessages: (sessionId: string) => Promise<boolean>;
   slashCommands: Accessor<Command[]>;
-  openBlankSession: () => void;
+  openBlankSession: (workspace?: Project) => void;
   openSession: (sessionId: string) => Promise<void>;
   useWorkspaceDirectory: (directory: string) => void | Promise<void>;
   createNamedWorkspace: (name: string) => Promise<void>;
   pickExistingWorkspaceDirectory: () => Promise<void>;
-  submitPrompt: (options?: { queued?: boolean }) => Promise<void>;
+  submitPrompt: () => Promise<void>;
   abortSession: (sessionId: string) => Promise<void>;
   updatePlanTicketStatus: (session: Session, status: PlanStatus) => Promise<void>;
   sessionAttentionAcknowledged: (session: Session) => boolean;
@@ -47,8 +46,6 @@ export type AppShellViewModel = {
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ) => Promise<void>;
@@ -62,7 +59,9 @@ export type AppShellViewModel = {
   loadFiles: (path?: string) => Promise<void>;
   openFile: (file: FileInfo) => Promise<void>;
   toggleFileTreeDirectory: (file: FileInfo) => Promise<void>;
-  renameSession: (sessionId: string, title: string) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<void>;
+  deleteWorkspace: (project: Project) => void;
+  queuePrompt: () => Promise<void>;
   openSettings: (section?: SettingsSection) => void;
   openIssueConversation: (issue: ProductIssue) => Promise<void>;
   toggleWorkspace: (project: Project) => Promise<void>;
@@ -75,7 +74,7 @@ export type AppShellViewModel = {
   saveAgent: (agentId: string | undefined, payload: AgentUpsertRequest) => Promise<void>;
   deleteAgent: (agentId: string) => Promise<void>;
   saveProviderKey: (providerId: string, method: ProviderAuthMethod) => Promise<void>;
-  validateProvider: (providerId: string) => Promise<void>;
+  validateProvider: (providerId: string, method?: ProviderAuthMethod) => Promise<void>;
   startProviderLogin: (providerId: string, methodIndex: number) => Promise<void>;
   completeProviderLogin: (providerId: string, code?: string, methodIndex?: number) => Promise<void>;
   logoutProvider: (providerId: string) => Promise<void>;

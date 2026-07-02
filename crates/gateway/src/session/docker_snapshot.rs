@@ -38,10 +38,10 @@ struct DockerPsLine {
 }
 
 pub fn collect_docker_snapshot() -> DockerSnapshot {
-    let output = match Command::new("docker")
-        .args(["ps", "--format", "{{json .}}"])
-        .output()
-    {
+    let mut command = Command::new("docker");
+    command.args(["ps", "--format", "{{json .}}"]);
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let output = match command.output() {
         Ok(output) => output,
         Err(error) => {
             return DockerSnapshot {

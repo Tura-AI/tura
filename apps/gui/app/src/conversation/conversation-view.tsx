@@ -59,6 +59,7 @@ import {
   toolStatus,
 } from "./message-tools";
 import { assistantFooterMetaText } from "./assistant-footer-meta";
+import { transcriptNearBottom } from "./transcript-scroll";
 
 const INSPECTOR_MIN_WIDTH = 320;
 const INSPECTOR_MAX_WIDTH = 680;
@@ -70,17 +71,24 @@ const AGENT_AVATAR_BOTTOM_SETTLE_MS = 0;
 const VIRTUAL_MESSAGE_ESTIMATED_HEIGHT = 64;
 const VIRTUAL_MESSAGE_OVERSCAN = 300;
 const LOAD_EARLIER_SCROLL_TOP = 480;
+const TRANSCRIPT_BOTTOM_SETTLE_FRAMES = 6;
 const SCROLL_RESTORE_FRAMES = 8;
 const MAX_TRANSCRIPT_HEIGHT_CACHE_SESSIONS = 20;
 const ASSISTANT_THINKING_TEXT_ICON = "✦";
 const transcriptHeightCacheBySession = new Map<string, Map<string, number>>();
 const transcriptMountedRowsBySession = new Map<string, Set<string>>();
 
+function scrollElementToBottom(element: HTMLElement, behavior: ScrollBehavior = "auto") {
+  element.scrollTo({ top: element.scrollHeight, behavior });
+}
+
 export function ConversationView(props: {
   state: AppState;
   session?: Session;
   messages: Message[];
   initialScrollTop?: number;
+  scrollToBottomToken?: number;
+  onScrollToBottomRequestConsumed?: (token: number) => void;
   onTranscriptScroll?: (scrollTop: number) => void;
   onLoadEarlierMessages?: () => Promise<boolean>;
   slashCommands: Command[];
@@ -128,6 +136,24 @@ export function ConversationView(props: {
   );
   const latestStickerEmoji = createMemo(() => latestSticker(props.messages));
   const latestMessageId = createMemo(() => groupedMessages().at(-1)?.id);
+  const latestMessageLiveSignature = createMemo(() => {
+    const message = groupedMessages().at(-1);
+    if (!message) {
+      return "";
+    }
+    return message.parts
+      .map((part) =>
+        [
+          part.id,
+          part.type,
+          partText(part),
+          toolStatus(asRecord(part.state)),
+          asRecord(part.state).output ?? "",
+          asRecord(part.state).error ?? "",
+        ].join(":"),
+      )
+      .join("|");
+  });
   let transcriptEl: HTMLElement | undefined;
   let conversationMainEl: HTMLDivElement | undefined;
   let scrollFollowFrame: number | undefined;
@@ -249,22 +275,28 @@ export function ConversationView(props: {
     if (!transcriptEl) {
       return true;
     }
-    return transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight < 28;
+    return transcriptNearBottom(transcriptEl);
   }
 
   function scrollTranscriptToBottom(behavior: ScrollBehavior = "smooth") {
     if (!transcriptEl) {
-      return;
+      return false;
     }
     setTranscriptPinned(true);
-    const scroll = () => {
-      transcriptEl?.scrollTo({
-        top: transcriptEl?.scrollHeight ?? 0,
-        behavior,
-      });
+    let remainingFrames = TRANSCRIPT_BOTTOM_SETTLE_FRAMES;
+    const scroll = (nextBehavior: ScrollBehavior = "auto") => {
+      if (!transcriptEl) {
+        return;
+      }
+      scrollElementToBottom(transcriptEl, nextBehavior);
+      if (remainingFrames <= 0) {
+        return;
+      }
+      remainingFrames -= 1;
+      requestAnimationFrame(() => scroll("auto"));
     };
-    scroll();
-    requestAnimationFrame(scroll);
+    scroll(behavior);
+    return true;
   }
 
   function handleTranscriptScroll() {
@@ -318,6 +350,30 @@ export function ConversationView(props: {
     lastAutoScrolledMessageId = messageId;
     if (transcriptPinned()) {
       scrollTranscriptToBottom("auto");
+    }
+  });
+
+  let lastAutoScrolledLiveSignature = "";
+  createEffect(() => {
+    const signature = latestMessageLiveSignature();
+    if (!signature || lastAutoScrolledLiveSignature === signature) {
+      return;
+    }
+    lastAutoScrolledLiveSignature = signature;
+    if (transcriptPinned()) {
+      scrollTranscriptToBottom("auto");
+    }
+  });
+
+  let lastConsumedScrollToBottomToken = 0;
+  createEffect(() => {
+    const token = props.scrollToBottomToken ?? 0;
+    if (token <= 0 || token === lastConsumedScrollToBottomToken) {
+      return;
+    }
+    if (scrollTranscriptToBottom("auto")) {
+      lastConsumedScrollToBottomToken = token;
+      props.onScrollToBottomRequestConsumed?.(token);
     }
   });
 
@@ -535,14 +591,18 @@ function Transcript(props: {
     const end = scrollTop() + clientHeight() + VIRTUAL_MESSAGE_OVERSCAN;
     syncMountedTranscriptRows(mountedMessageIds, items);
     const visibleEntries = items.map((item, index) => ({
-        item,
-        index,
-        top: layout.offsets[index] ?? 0,
-        height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
-      }));
+      item,
+      index,
+      top: layout.offsets[index] ?? 0,
+      height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
+    }));
     let mountedChanged = false;
     for (const entry of visibleEntries) {
-      if (entry.top + entry.height >= start && entry.top <= end && !mountedMessageIds.has(entry.item.message.id)) {
+      if (
+        entry.top + entry.height >= start &&
+        entry.top <= end &&
+        !mountedMessageIds.has(entry.item.message.id)
+      ) {
         mountedMessageIds.add(entry.item.message.id);
         mountedChanged = true;
       }
@@ -734,7 +794,7 @@ function Transcript(props: {
     if (!element) {
       return;
     }
-    if (element.scrollHeight - element.scrollTop - element.clientHeight >= 28) {
+    if (!transcriptNearBottom(element)) {
       lastScrolledAwayFromBottomAt = performance.now();
     }
   }
@@ -744,9 +804,7 @@ function Transcript(props: {
     if (pendingMeasuredHeights.size === 0) {
       return;
     }
-    const wasAtBottom = transcriptEl
-      ? transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight < 28
-      : false;
+    const wasAtBottom = transcriptEl ? transcriptNearBottom(transcriptEl) : false;
     const recentlyScrolledAway = performance.now() - lastScrolledAwayFromBottomAt < 500;
     let scrollDelta = 0;
     let changed = false;
@@ -774,7 +832,19 @@ function Transcript(props: {
       return;
     }
     if (wasAtBottom && !recentlyScrolledAway) {
-      requestAnimationFrame(() => transcriptEl?.scrollTo({ top: transcriptEl.scrollHeight }));
+      let remainingFrames = TRANSCRIPT_BOTTOM_SETTLE_FRAMES;
+      const scroll = () => {
+        if (!transcriptEl) {
+          return;
+        }
+        scrollElementToBottom(transcriptEl);
+        if (remainingFrames <= 0) {
+          return;
+        }
+        remainingFrames -= 1;
+        requestAnimationFrame(scroll);
+      };
+      requestAnimationFrame(scroll);
       return;
     }
     if (scrollDelta !== 0) {
@@ -1068,10 +1138,7 @@ function cachedMountedMessageIdsForSession(sessionId: string | undefined): Set<s
   return mounted;
 }
 
-function syncMountedTranscriptRows(
-  mountedIds: Set<string>,
-  items: ConversationReactionItem[],
-) {
+function syncMountedTranscriptRows(mountedIds: Set<string>, items: ConversationReactionItem[]) {
   const currentIds = new Set(items.map((item) => item.message.id));
   for (const id of mountedIds) {
     if (!currentIds.has(id)) {

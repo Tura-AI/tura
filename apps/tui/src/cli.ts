@@ -34,9 +34,9 @@ import { formatHelp } from "./output/help.js";
 import { parseLanguage, setLanguage, t, type Language } from "./i18n.js";
 import { helpPage, type HelpTopic } from "./i18n-help.js";
 
-const DEFAULT_AGENT = "thinking";
+const DEFAULT_AGENT = "balanced";
 const DEFAULT_MODEL_VARIANT = "high";
-const DEFAULT_MODEL_ACCELERATION_ENABLED = true;
+const DEFAULT_MODEL_ACCELERATION_ENABLED = false;
 
 export async function main(argv: string[]): Promise<void> {
   if (argv[0] === "exec") {

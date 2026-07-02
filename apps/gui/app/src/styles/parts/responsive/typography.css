@@ -27,9 +27,8 @@
 .run-summary,
 .tool-inspector header span,
 .plan-panel-title strong,
-.plan-calendar-title strong,
 .plan-timeline-scale strong,
-.plan-calendar-week-day strong {
+.plan-pipeline-title strong {
   font-size: var(--font-ui);
 }
 
@@ -61,11 +60,6 @@
 .plan-timeline-session strong,
 .plan-timeline-session small,
 .plan-timeline-bar,
-.plan-calendar-event,
-.plan-calendar-cell header,
-.plan-calendar-weekdays span,
-.plan-calendar-week-day small,
-.plan-calendar-hour-label,
 .run-summary-time,
 .settings-provider-row small,
 .model-list small,

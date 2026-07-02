@@ -1,6 +1,6 @@
 import { GatewayError } from "@tura/gateway-sdk";
 import { t } from "../i18n";
-import { type AppState, type ThemeMode } from "../state/global-store";
+import { type AppState, type CornerRadiusMode, type ThemeMode } from "../state/global-store";
 export { copyText } from "./app-format";
 
 export type ProviderAuthDisplayLevel = "ok" | "warn" | "fail" | "neutral";
@@ -33,6 +33,7 @@ export function configToDraft(config: AppState["config"]): Record<string, string
   }
   return {
     theme: config.theme ?? "",
+    corner_radius: config.corner_radius ?? "",
     main_font: config.main_font ?? "",
     code_font: config.code_font ?? "",
     main_font_size: config.main_font_size ? String(config.main_font_size) : "",
@@ -44,9 +45,11 @@ export function configToDraft(config: AppState["config"]): Record<string, string
 export function configDraftToPatch(
   draft: Record<string, string>,
   themeMode: ThemeMode,
+  cornerRadius: CornerRadiusMode,
 ): Partial<NonNullable<AppState["config"]>> {
   return {
     theme: themeMode,
+    corner_radius: cornerRadius,
     main_font: draft.main_font || null,
     code_font: draft.code_font || null,
     main_font_size: draft.main_font_size ? Number(draft.main_font_size) : null,

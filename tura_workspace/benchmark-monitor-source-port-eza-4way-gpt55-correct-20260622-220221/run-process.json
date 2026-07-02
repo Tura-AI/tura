@@ -1,9 +1,0 @@
-{
-  "run_id": "source-port-eza-4way-gpt55-correct-20260622-220221",
-  "pid": 23184,
-  "monitor": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-4way-gpt55-correct-20260622-220221",
-  "stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-4way-gpt55-correct-20260622-220221\\suite.stdout.log",
-  "stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-4way-gpt55-correct-20260622-220221\\suite.stderr.log",
-  "script": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-4way-gpt55-correct-20260622-220221\\run-suite.ps1",
-  "started": "2026-06-22T22:02:21.6311620+02:00"
-}

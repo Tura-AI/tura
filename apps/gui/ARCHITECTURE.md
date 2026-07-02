@@ -1157,7 +1157,7 @@ session plus issue/task flow.
 Release-entry acceptance tests that validate the registered release
 command surface belong in `apps/gui/tests/e2e/live/business/` for the GUI surface. Root
 `tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
-`tests/benchmark/` owns comparison and scoring benchmarks.
+`benchmark/` owns comparison and scoring benchmarks.
 
 ## Implementation Phases
 

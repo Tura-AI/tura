@@ -1,8 +1,0 @@
-{
-  "run_id": "source-port-nushell-thinking-opmanual-userrole-high-nopriority-60m-20260624-1540",
-  "pid": 23924,
-  "started_at": "2026-06-24T15:36:55.5169262+02:00",
-  "script": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-nushell-thinking-opmanual-userrole-high-nopriority-60m-20260624-1540\\run-benchmark.ps1",
-  "stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-nushell-thinking-opmanual-userrole-high-nopriority-60m-20260624-1540\\runner.stdout.log",
-  "stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-nushell-thinking-opmanual-userrole-high-nopriority-60m-20260624-1540\\runner.stderr.log"
-}

@@ -342,6 +342,14 @@ from the compaction summary, workspace snapshot, environment context, and active
 planning objective. Runtime owns this prompt state; gateway should not assemble
 runtime prompts.
 
+After a compact checkpoint, `SessionManagement.session_log_retention` records the
+absolute compact boundary and the number of omitted `session_log` entries.
+Runtime trims the in-memory `session_log` before the retained boundary so the
+persisted `management_json` used for resume contains only entries still needed to
+rebuild provider context. The retained slice starts at the immediately preceding
+tail of `tool_result` entries, if any, because compact rebuild still replays that
+tool context.
+
 The active compact threshold is capped at 255,000 tokens. Runtime still asks the
 agent to provide a `task_status.compact_context` handoff when provider-reported
 input reaches the active threshold, but it also applies an automatic checkpoint

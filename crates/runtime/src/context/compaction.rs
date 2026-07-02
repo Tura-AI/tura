@@ -120,6 +120,8 @@ fn compact_session_context_with_options(
         content.trim(),
         compact_context_byte_budget(max_estimated_tokens),
     );
+    let retained_from_index = compact_retained_log_start(&session.session_log);
+    let compact_entry_index = session.session_log.len();
     let workspace_snapshot = WorkspaceSnapshot::from_cwd(&session.session_directory)
         .map(|snapshot| snapshot.render())
         .unwrap_or_else(|| "<WORKSPACE_SNAPSHOT>\n\n</WORKSPACE_SNAPSHOT>".to_string());
@@ -142,8 +144,26 @@ fn compact_session_context_with_options(
         now,
     );
     session.push_log(compact_record.to_string(), now);
+    session.record_context_compaction_point(retained_from_index, compact_entry_index, now);
     runtime_prompt_manual::append_runtime_prompt_manuals_after_compact(session)?;
     Ok(())
+}
+
+fn compact_retained_log_start(session_log: &[String]) -> usize {
+    let mut index = session_log.len();
+    while index > 0 {
+        let Some(value) = session_log
+            .get(index - 1)
+            .and_then(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+        else {
+            break;
+        };
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("tool_result") {
+            break;
+        }
+        index -= 1;
+    }
+    index
 }
 
 const GOAL_MODE_CONTINUE_PROMPT_STYLE: &str = "[goal_mode_prompt_style]\nContinue working on the previous goal-mode task. The session is still in goal mode, and no explicit compact handoff or recorded goal command was available in the session state. Recover the prior task from the timestamped context above, continue the same objective, and do not treat the task as complete until task_status marks it done or question.";

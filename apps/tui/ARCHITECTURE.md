@@ -398,7 +398,7 @@ Gateway already extracts:
 
 The same prompt shape should be reused by the later interactive TUI so terminal
 clients behave consistently. Both CLI `run` and the interactive TUI default
-`model_acceleration_enabled` to `true`; explicit saved config or run flags may
+`model_acceleration_enabled` to `false`; explicit saved config or run flags may
 still set it to `false`.
 
 ## Completion Detection
@@ -685,7 +685,7 @@ the compiled debug/release binaries are read from `target/<profile>`.
 Release-entry acceptance tests that validate the registered release
 command surface belong in root `tests/release/tui_release_*.mjs` for the TUI
 surface. Root `tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
-`tests/benchmark/` owns comparison and scoring benchmarks.
+`benchmark/` owns comparison and scoring benchmarks.
 
 ## Implementation Phases
 

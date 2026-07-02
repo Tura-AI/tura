@@ -1,4 +1,0 @@
-imageio-ffmpeg
-opencv-python-headless
-Pillow
-PyMuPDF

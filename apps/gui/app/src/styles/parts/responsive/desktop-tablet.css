@@ -73,13 +73,13 @@
 
   .workbench:not(.rail-collapsed) .rail {
     position: fixed;
-    inset: 0;
+    inset: var(--app-titlebar-height) 0 0 0;
     z-index: 80;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
     align-content: stretch;
-    width: 100vw;
-    height: 100vh;
+    width: 100%;
+    height: calc(100dvh - var(--app-titlebar-height));
     max-width: none;
     overflow-x: hidden;
     overflow-y: hidden;

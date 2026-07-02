@@ -76,7 +76,11 @@ test("persistent gateway spawn is detached from the TUI process group", async ()
         10,
       );
       const parentPgid = (process as unknown as { getpgid?: (pid: number) => number }).getpgid?.(0);
-      assert.notEqual(childPgid, parentPgid ?? process.pid, "gateway must not share TUI process group");
+      assert.notEqual(
+        childPgid,
+        parentPgid ?? process.pid,
+        "gateway must not share TUI process group",
+      );
     }
     // On Windows, detached=true maps to a detached child process; successful
     // spawn plus unreferenced cleanup is the portable unit-level contract.

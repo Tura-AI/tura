@@ -53,6 +53,7 @@ export function AgentComposerMenu(props: {
       setMenuStyle({});
       return;
     }
+    updateMenuPosition();
     const frame = window.requestAnimationFrame(updateMenuPosition);
     const closeOutside = (event: PointerEvent) => {
       if (!root?.contains(event.target as Node)) {
@@ -159,7 +160,7 @@ function agentModelText(agent: Agent, modelConfig: TuraConfigResponse | undefine
     return directModelId;
   }
   const tier = agentTier(agent);
-  return modelForTier(modelConfig, tier) ?? tier;
+  return modelForTier(modelConfig, tier) ?? "";
 }
 
 function runtimeModelText(model: string, modelConfig: TuraConfigResponse | undefined): string {

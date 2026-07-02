@@ -426,7 +426,7 @@ function bottomMetaModel(state: AppState): string | undefined {
   if (configuredModel) return configuredModel;
   const sessionModel = stringOrUndefined(state.session?.model);
   if (sessionModel?.includes("/")) return sessionModel;
-  return sessionModel;
+  return undefined;
 }
 
 function bottomMetaVariant(state: AppState): string | undefined {

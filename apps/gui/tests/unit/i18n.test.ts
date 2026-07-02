@@ -30,11 +30,28 @@ describe("i18n", () => {
     expect(parseLanguage("fr")).toBeUndefined();
   });
 
+  test("uses English as the GUI default even in a Chinese browser locale", async () => {
+    const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    try {
+      Object.defineProperty(globalThis, "navigator", {
+        value: { language: "zh-CN", languages: ["zh-CN"] },
+        configurable: true,
+      });
+      const module = await import(`../../app/src/i18n.ts?default-locale=${Date.now()}`);
+      expect(module.currentLanguage()).toBe("en");
+      expect(module.t("settings")).toBe("Settings");
+    } finally {
+      if (navigatorDescriptor) {
+        Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
+      } else {
+        delete (globalThis as { navigator?: unknown }).navigator;
+      }
+    }
+  });
+
   test("resets to the GUI default when language is unset", () => {
     setLanguage("zh-CN");
     setLanguage(undefined);
-    const browserLanguage =
-      typeof navigator !== "undefined" ? parseLanguage(navigator.language) : undefined;
-    expect(currentLanguage()).toBe(browserLanguage ?? "en");
+    expect(currentLanguage()).toBe("en");
   });
 });

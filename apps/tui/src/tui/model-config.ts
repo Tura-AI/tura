@@ -16,8 +16,10 @@ export function runtimeModelFromConfig(
   }
 
   if (model?.includes("/")) return model;
-  if (provider && model) return `${provider}/${stripProviderPrefix(provider, model)}`;
-  return model ?? activeModel;
+  if (provider && model && !isDefaultTierName(model)) {
+    return `${provider}/${stripProviderPrefix(provider, model)}`;
+  }
+  return activeModel?.includes("/") ? activeModel : undefined;
 }
 
 export function modelForTier(
@@ -35,4 +37,8 @@ function stripProviderPrefix(provider: string, model: string): string {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isDefaultTierName(value: string): boolean {
+  return ["thinking", "fast"].includes(value.trim().toLowerCase());
 }

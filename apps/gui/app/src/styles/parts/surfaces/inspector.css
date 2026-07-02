@@ -1,6 +1,6 @@
 .tool-inspector {
   position: fixed;
-  top: 0;
+  top: var(--app-titlebar-height);
   right: 0;
   z-index: 10;
   display: grid;
@@ -9,7 +9,7 @@
     var(--inspector-max-width, 680px),
     max(var(--inspector-min-width, 320px), var(--inspector-width, 430px))
   );
-  height: 100vh;
+  height: calc(100dvh - var(--app-titlebar-height));
   min-width: var(--inspector-min-width, 320px);
   max-width: calc(100vw - 96px);
   min-height: 0;
@@ -142,8 +142,8 @@ body.resizing-inspector * {
 .inspector-steps button,
 .inspector-record-toggle {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-3);
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: var(--space-2);
   align-items: center;
   min-height: 32px;
   padding: 0 var(--space-2);
@@ -165,6 +165,11 @@ body.resizing-inspector * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.inspector-record-step {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .inspector-steps small {
@@ -311,7 +316,7 @@ body.resizing-inspector * {
   height: 56px;
   object-fit: cover;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--radius-large);
   background: var(--surface);
   box-shadow: var(--shadow-control);
 }
@@ -342,7 +347,7 @@ body.resizing-inspector * {
   .conversation-view.inspector-open .agent-avatar {
     width: 56px;
     height: 56px;
-    border-radius: 14px;
+    border-radius: var(--radius-large);
   }
 
   .conversation-view.inspector-open .assistant-meta {

@@ -4,7 +4,6 @@ import {
   defaultGatewayUrl,
   errorMessage,
   type AgentUpsertRequest,
-  type Message,
   type PlanStatus,
   type ProductIssue,
   type Project,
@@ -19,6 +18,7 @@ import {
   storedAgentFromUpsert,
 } from "./app-agent-config";
 import {
+  blankSessionState,
   mergeMessagePages,
   mergeSessions,
   providerIssueIdFromError,
@@ -27,16 +27,12 @@ import {
 } from "./app-state-utils";
 import { AppShell } from "./app/app-shell";
 import { AppProviders } from "./context/app-providers";
-import { isToolPart } from "./conversation/message-tools";
 import { DEFAULT_AGENT_ID } from "./config/defaults";
 import {
   appendTaskToSession,
-  defaultLocalStartAt,
   defaultPollInterval,
-  localDateTimeToUtcIso,
   materializeComposerContent,
   sessionTasks,
-  timedTaskPatch,
 } from "./features/plan/tasks";
 import { useAppGatewayLifecycle } from "./hooks/use-app-gateway-lifecycle";
 import { useFileBrowserActions } from "./hooks/use-file-browser-actions";
@@ -50,7 +46,6 @@ import {
   activeSession,
   initialAppState,
   sessionDirectory,
-  withSessionFallbackName,
   type AppState,
 } from "./state/global-store";
 import {
@@ -66,8 +61,6 @@ import { safe } from "./utils/safe";
 
 const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
 const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
-const ASSISTANT_REPLY_POLL_TIMEOUT_MS = 120_000;
-const ASSISTANT_REPLY_POLL_INTERVAL_MS = 1_250;
 const MESSAGE_PAGE_SIZE = 200;
 
 declare global {
@@ -290,41 +283,92 @@ export function App() {
     }
   }
 
-  function openBlankSession() {
+  function openBlankSession(workspace?: Project) {
     const currentSessionId = state().selectedSessionId;
     if (currentSessionId) {
       writeLastSessionOpened(currentSessionId);
     }
-    setState((previous) => ({
-      ...previous,
-      lastSessionOpenedId: previous.selectedSessionId ?? previous.lastSessionOpenedId,
-      activeTab: "conversation",
-      previousMainTab: "conversation",
-      selectedSessionId: undefined,
-      composerText: "",
-      error: undefined,
-    }));
+    setState((previous) => blankSessionState(previous, workspace));
+    if (workspace) {
+      expandWorkspace(workspace.worktree);
+    }
   }
 
-  async function renameSession(sessionId: string, title: string) {
-    const cleanTitle = title.trim();
-    if (!cleanTitle) {
+  async function deleteSession(sessionId: string) {
+    setState((previous) => {
+      const sessions = previous.sessions.filter((session) => session.id !== sessionId);
+      const { [sessionId]: _messages, ...messagesBySession } = previous.messagesBySession;
+      const { [sessionId]: _paging, ...messagePagingBySession } = previous.messagePagingBySession;
+      const { [sessionId]: _scroll, ...transcriptScrollBySession } =
+        previous.transcriptScrollBySession;
+      const transcriptScrollToBottomRequest =
+        previous.transcriptScrollToBottomRequest?.sessionId === sessionId
+          ? undefined
+          : previous.transcriptScrollToBottomRequest;
+      const { [sessionId]: _todos, ...todosBySession } = previous.todosBySession;
+      return {
+        ...previous,
+        sessions,
+        messagesBySession,
+        messagePagingBySession,
+        transcriptScrollBySession,
+        transcriptScrollToBottomRequest,
+        todosBySession,
+        selectedSessionId:
+          previous.selectedSessionId === sessionId ? sessions[0]?.id : previous.selectedSessionId,
+        planPreviewSessionId:
+          previous.planPreviewSessionId === sessionId ? undefined : previous.planPreviewSessionId,
+        error: undefined,
+      };
+    });
+    if (e2eFixture) {
       return;
     }
     try {
-      const session = await directoryClient().updateSession(sessionId, {
-        name: cleanTitle,
-        auto_session_name: false,
-      });
-      setState((previous) => ({
-        ...previous,
-        sessions: previous.sessions.map((item) =>
-          item.id === sessionId ? { ...item, ...session } : item,
-        ),
-      }));
+      await directoryClient().deleteSession(sessionId);
+      await refreshSessions();
     } catch (error) {
       setState((previous) => ({ ...previous, error: errorMessage(error) }));
+      await refreshSessions();
     }
+  }
+
+  function deleteWorkspace(project: Project) {
+    setWorkspaceTreeTouched(true);
+    setExpandedWorkspaces((previous) => {
+      const next = new Set(previous);
+      next.delete(normalizePath(project.worktree));
+      return next;
+    });
+    setState((previous) => {
+      const projects = previous.projects.filter((item) => !samePath(item.worktree, project.worktree));
+      const sessions = previous.sessions.filter(
+        (session) => !samePath(sessionDirectory(session), project.worktree),
+      );
+      const selectedSession = previous.selectedSessionId
+        ? previous.sessions.find((session) => session.id === previous.selectedSessionId)
+        : undefined;
+      const selectedSessionDeleted = selectedSession
+        ? samePath(sessionDirectory(selectedSession), project.worktree)
+        : false;
+      const deletingCurrentWorkspace = samePath(previous.directory, project.worktree);
+      const nextDirectory = deletingCurrentWorkspace ? projects[0]?.worktree : previous.directory;
+      return {
+        ...previous,
+        directory: nextDirectory,
+        projects,
+        sessions,
+        selectedSessionId: selectedSessionDeleted ? undefined : previous.selectedSessionId,
+        planPreviewSessionId: previous.planPreviewSessionId
+          ? sessions.some((session) => session.id === previous.planPreviewSessionId)
+            ? previous.planPreviewSessionId
+            : undefined
+          : undefined,
+        filePath: deletingCurrentWorkspace ? "" : previous.filePath,
+        selectedFile: deletingCurrentWorkspace ? undefined : previous.selectedFile,
+        error: undefined,
+      };
+    });
   }
 
   async function useWorkspaceDirectory(directory: string) {
@@ -440,10 +484,7 @@ export function App() {
     let sessionId = issue.session_id ?? issue.active_task?.session_id;
     try {
       if (!sessionId) {
-        const session = withSessionFallbackName(
-          await directoryClient().createSession(createSessionPayload()),
-          issue.title,
-        );
+        const session = await directoryClient().createSession(createSessionPayload());
         sessionId = session.id;
         setState((previous) => ({
           ...previous,
@@ -630,7 +671,7 @@ export function App() {
     loadFiles,
   });
 
-  async function submitPrompt(options: { queued?: boolean } = {}) {
+  async function submitPrompt() {
     if (await updateEditingTaskFromComposer()) {
       return;
     }
@@ -644,137 +685,16 @@ export function App() {
       error: undefined,
       planNotice: undefined,
     }));
-    let optimisticSessionId: string | undefined;
-    let optimisticId: string | undefined;
     try {
       const content =
         state().composerImages.length === 0
           ? await expandCommand(raw)
           : materializeComposerContent(raw, state().composerImages);
-      if (options.queued) {
-        await submitQueuedPrompt(content, "session_idle");
-        return;
-      }
-      if (state().planDraftStartCondition !== "user_action") {
-        await submitQueuedPrompt(content);
-        return;
-      }
-      let sessionId = state().selectedSessionId;
-      let createdSession: Session | undefined;
-      if (!sessionId) {
-        const session = withSessionFallbackName(
-          await directoryClient().createSession(createSessionPayload()),
-          content,
-        );
-        sessionId = session.id;
-        createdSession = session;
-      }
-      optimisticSessionId = sessionId;
-      optimisticId = `prompt:${sessionId}:${Date.now()}`;
-      const now = Date.now();
-      const optimisticMessage: Message = {
-        id: optimisticId,
-        sessionID: sessionId,
-        role: "user",
-        created_at: now,
-        updated_at: now,
-        time: { created: now, updated: now },
-        parts: [
-          {
-            id: `${optimisticId}:text`,
-            sessionID: sessionId,
-            messageID: optimisticId,
-            type: "text",
-            text: content,
-            metadata: { planRunPending: true },
-          },
-        ],
-      };
-      setState((previous) => ({
-        ...previous,
-        selectedSessionId: sessionId,
-        sessions: createdSession
-          ? [
-              { ...createdSession, status: "busy" },
-              ...previous.sessions.filter((session) => session.id !== sessionId),
-            ]
-          : previous.sessions.map((session) =>
-              session.id === sessionId ? { ...session, status: "busy" } : session,
-            ),
-        messagesBySession: {
-          ...previous.messagesBySession,
-          [sessionId]: [
-            ...(previous.messagesBySession[sessionId] ?? []).filter(
-              (message) => message.id !== optimisticId,
-            ),
-            optimisticMessage,
-          ],
-        },
-      }));
-      await Promise.race([
-        directoryClient().promptAsync(sessionId, {
-          messageID: optimisticId,
-          parts: [{ id: `${optimisticId}:text`, type: "text", text: content }],
-          model: state().selectedModel,
-          agent: state().selectedAgent,
-        }),
-        new Promise<never>((_, reject) =>
-          window.setTimeout(
-            () => reject(new Error(PROMPT_RESPONSE_TIMEOUT_CODE)),
-            PROMPT_RESPONSE_TIMEOUT_MS,
-          ),
-        ),
-      ]);
-      setState((previous) => ({
-        ...previous,
-        selectedSessionId: sessionId,
-        composerText: "",
-        composerImages: [],
-        activeTab: "conversation",
-        previousMainTab: "conversation",
-        planNotice: undefined,
-      }));
-      setState((previous) => ({
-        ...previous,
-        selectedSessionId: sessionId,
-        composerText: "",
-        composerImages: [],
-        activeTab: "conversation",
-        previousMainTab: "conversation",
-        planNotice: undefined,
-      }));
-      await refreshSessions();
-      void pollSessionMessagesUntilAssistantReply(sessionId);
+      await submitDirectPrompt(content);
     } catch (error) {
       const timeout = error instanceof Error && error.message === PROMPT_RESPONSE_TIMEOUT_CODE;
       setState((previous) => ({
         ...previous,
-        messagesBySession:
-          optimisticSessionId && optimisticId
-            ? {
-                ...previous.messagesBySession,
-                [optimisticSessionId]: (previous.messagesBySession[optimisticSessionId] ?? []).map(
-                  (message) =>
-                    message.id === optimisticId
-                      ? {
-                          ...message,
-                          updated_at: Date.now(),
-                          time: { ...message.time, updated: Date.now() },
-                          parts: message.parts.map((part) => ({
-                            ...part,
-                            metadata: {
-                              ...(typeof part.metadata === "object" && part.metadata !== null
-                                ? part.metadata
-                                : {}),
-                              planRunPending: false,
-                              planRunError: true,
-                            },
-                          })),
-                        }
-                      : message,
-                ),
-              }
-            : previous.messagesBySession,
         planNotice: timeout
           ? {
               message: "Gateway 30 秒内没有响应请求。",
@@ -792,36 +712,44 @@ export function App() {
     }
   }
 
-  async function pollSessionMessagesUntilAssistantReply(sessionId: string): Promise<void> {
-    if (e2eFixture) {
+  async function queuePrompt() {
+    if (await updateEditingTaskFromComposer()) {
       return;
     }
-    const deadline = Date.now() + ASSISTANT_REPLY_POLL_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await delay(ASSISTANT_REPLY_POLL_INTERVAL_MS);
-      if (state().selectedSessionId !== sessionId) {
-        return;
-      }
-      let messages: Message[];
-      try {
-        messages = await directoryClient().messages(sessionId);
-      } catch {
-        continue;
-      }
-      if (messages.length === 0) {
-        continue;
-      }
+    const raw = state().composerText.trim();
+    if ((!raw && state().composerImages.length === 0) || state().submitting) {
+      return;
+    }
+    setState((previous) => ({
+      ...previous,
+      submitting: true,
+      error: undefined,
+      planNotice: undefined,
+    }));
+    try {
+      const content =
+        state().composerImages.length === 0
+          ? await expandCommand(raw)
+          : materializeComposerContent(raw, state().composerImages);
+      await submitQueuedPrompt(content, "session_idle");
+    } catch (error) {
+      const timeout = error instanceof Error && error.message === PROMPT_RESPONSE_TIMEOUT_CODE;
       setState((previous) => ({
         ...previous,
-        messagesBySession: {
-          ...previous.messagesBySession,
-          [sessionId]: mergeMessagePages(previous.messagesBySession[sessionId] ?? [], messages),
-        },
+        planNotice: timeout
+          ? {
+              message: "Gateway 30 秒内没有响应请求。",
+              code: PROMPT_RESPONSE_TIMEOUT_CODE,
+            }
+          : {
+              message: errorMessage(error),
+              code: "GATEWAY_QUEUE_FAILED",
+              providerId: providerIssueIdFromError(error, previous),
+            },
+        error: undefined,
       }));
-      if (hasVisibleAssistantReply(messages)) {
-        await refreshSessions();
-        return;
-      }
+    } finally {
+      setState((previous) => ({ ...previous, submitting: false }));
     }
   }
 
@@ -846,16 +774,95 @@ export function App() {
     }
   }
 
+  async function submitDirectPrompt(content: string) {
+    const currentSession = state().selectedSessionId
+      ? state().sessions.find((session) => session.id === state().selectedSessionId)
+      : undefined;
+    const now = Date.now();
+    const session =
+      currentSession ??
+      (e2eFixture
+        ? {
+            id: `direct-local-${now}`,
+            name: "",
+            directory: state().directory,
+            status: "idle" as const,
+            created_at: now,
+            updated_at: now,
+          }
+        : await directoryClient().createSession(createSessionPayload()));
+    const messageId = `prompt:${session.id}:${now}`;
+    setState((previous) => ({
+      ...previous,
+      sessions: [
+        { ...session, status: "busy" },
+        ...previous.sessions.filter((item) => item.id !== session.id),
+      ],
+      selectedSessionId: session.id,
+      messagesBySession: {
+        ...previous.messagesBySession,
+        [session.id]: [
+          ...(previous.messagesBySession[session.id] ?? []).filter(
+            (message) => message.id !== messageId,
+          ),
+          {
+            id: messageId,
+            sessionID: session.id,
+            role: "user",
+            created_at: now,
+            updated_at: now,
+            time: { created: now, updated: now },
+            parts: [
+              {
+                id: `${messageId}:text`,
+                sessionID: session.id,
+                messageID: messageId,
+                type: "text",
+                text: content,
+              },
+            ],
+          },
+        ],
+      },
+      transcriptScrollToBottomRequest: {
+        sessionId: session.id,
+        token: (previous.transcriptScrollToBottomRequest?.token ?? 0) + 1,
+      },
+      composerText: "",
+      composerImages: [],
+      planDraftStartCondition: "user_action",
+      planDraftStartAt: "",
+      planDraftPollInterval: defaultPollInterval(),
+      planNotice: undefined,
+      error: undefined,
+    }));
+    if (e2eFixture) {
+      return;
+    }
+    await Promise.race([
+      directoryClient().promptAsync(session.id, {
+        messageID: messageId,
+        parts: [{ id: `${messageId}:text`, type: "text", text: content }],
+        model: state().selectedModel,
+        agent: state().selectedAgent,
+        variant: state().modelVariant,
+        model_acceleration_enabled: state().accelerationEnabled,
+      }),
+      new Promise<never>((_, reject) =>
+        window.setTimeout(
+          () => reject(new Error(PROMPT_RESPONSE_TIMEOUT_CODE)),
+          PROMPT_RESPONSE_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+  }
+
   async function submitQueuedPrompt(content: string, forcedStartCondition?: StartCondition) {
     const startCondition = forcedStartCondition ?? state().planDraftStartCondition;
-    const startAt =
-      startCondition === "scheduled_task" || startCondition === "polling_task"
-        ? (localDateTimeToUtcIso(state().planDraftStartAt || defaultLocalStartAt()) ??
-          localDateTimeToUtcIso(defaultLocalStartAt()))
-        : undefined;
+    const timingPatch =
+      startCondition === "session_idle" ? { start_condition: "session_idle" as const } : {};
     const [summaryLine = "", ...deliverableLines] = content.split(/\r?\n/u);
     const title = summaryLine.trim() || t("newTask");
-    const timingPatch = timedTaskPatch(startCondition, startAt, state().planDraftPollInterval);
     const currentSession = state().selectedSessionId
       ? state().sessions.find((session) => session.id === state().selectedSessionId)
       : undefined;
@@ -878,13 +885,11 @@ export function App() {
         }
       : {
           id: `queued-local-${Date.now()}`,
-          name: title,
+          name: "",
           directory: state().directory,
           status: "idle",
           created_at: Date.now(),
           updated_at: Date.now(),
-          plan_summary: title,
-          session_display_name: title,
           task_management: taskState,
         };
     setState((previous) => ({
@@ -912,12 +917,10 @@ export function App() {
         ? directoryClient().updateSessionTaskManagement(currentSession.id, {
             tasks: [taskState],
           })
-        : directoryClient()
-            .createSession({
-              ...createSessionPayload(),
-              task_management: taskState,
-            })
-            .then((created) => withSessionFallbackName(created, title)),
+        : directoryClient().createSession({
+            ...createSessionPayload(),
+            task_management: taskState,
+          }),
       new Promise<Session>((resolve) =>
         window.setTimeout(() => resolve(optimisticSession), PROMPT_RESPONSE_TIMEOUT_MS),
       ),
@@ -960,7 +963,6 @@ export function App() {
   }
 
   function createSessionPayload() {
-    const startAt = localDateTimeToUtcIso(state().planDraftStartAt);
     return {
       directory: state().directory,
       model: state().selectedModel,
@@ -969,11 +971,10 @@ export function App() {
       model_acceleration_enabled: state().accelerationEnabled,
       disable_permission_restrictions: disablePermissionRestrictions,
       auto_session_name: true,
-      task_management: timedTaskPatch(
-        state().planDraftStartCondition,
-        startAt,
-        state().planDraftPollInterval,
-      ),
+      task_management:
+        state().planDraftStartCondition === "session_idle"
+          ? { start_condition: "session_idle" as const }
+          : {},
     };
   }
 
@@ -1136,7 +1137,9 @@ export function App() {
           loadFiles,
           openFile,
           toggleFileTreeDirectory,
-          renameSession,
+          deleteSession,
+          deleteWorkspace,
+          queuePrompt,
           openSettings,
           openIssueConversation,
           toggleWorkspace,
@@ -1156,33 +1159,5 @@ export function App() {
         }}
       />
     </AppProviders>
-  );
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function hasVisibleAssistantReply(messages: Message[]): boolean {
-  return messages.some((message) => {
-    if (message.role !== "assistant") {
-      return false;
-    }
-    return message.parts.some((part) => {
-      if (isToolPart(part)) {
-        return false;
-      }
-      const text = (part.text || part.content || "").trim();
-      return text.length > 0 && !isTransientAssistantText(text);
-    });
-  });
-}
-
-function isTransientAssistantText(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  return (
-    normalized === "正在思考" ||
-    normalized === "thinking" ||
-    (normalized.includes("正在思考") && normalized.startsWith("已运行"))
   );
 }

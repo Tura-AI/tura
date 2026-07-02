@@ -44,7 +44,71 @@ test("prompt runtime selection uses saved config before the active session model
   });
 });
 
-test("prompt runtime selection enables priority by default", () => {
+test("prompt runtime selection resolves model tier to configured model", () => {
+  const state = reducer(
+    reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session: {
+        id: "sess-runtime-tier",
+        directory: "C:/repo",
+        status: "idle",
+        model: "codex/gpt-5.3-codex-spark",
+        agent: "fast",
+        model_variant: "low",
+        model_acceleration_enabled: false,
+      },
+      messages: [],
+      permissions: [],
+    }),
+    {
+      type: "session-config",
+      value: {
+        model: "thinking",
+        active_agent: "thinking",
+      },
+      modelConfig: {
+        path: "C:/repo/.tura/config.conf",
+        tiers: [
+          {
+            tier: "thinking",
+            current: { provider: "codex", model: "gpt-5.5" },
+            options: [{ provider: "codex", model: "gpt-5.5" }],
+          },
+        ],
+      },
+    },
+  );
+
+  assert.equal(promptRuntimeSelection(state).model, "codex/gpt-5.5");
+});
+
+test("prompt runtime selection does not compose provider with default tier", () => {
+  const state = reducer(
+    reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session: {
+        id: "sess-runtime-tier-missing",
+        directory: "C:/repo",
+        status: "idle",
+        model: "codex/gpt-5.5",
+        agent: "fast",
+      },
+      messages: [],
+      permissions: [],
+    }),
+    {
+      type: "session-config",
+      value: {
+        model: "thinking",
+        active_provider: "codex",
+      },
+    },
+  );
+
+  assert.equal(promptRuntimeSelection(state).model, "codex/gpt-5.5");
+});
+
+test("prompt runtime selection keeps priority off by default", () => {
   const state = reducer(initialState("C:/repo"), {
     type: "hydrate",
     session: {
@@ -57,7 +121,7 @@ test("prompt runtime selection enables priority by default", () => {
     permissions: [],
   });
 
-  assert.equal(promptRuntimeSelection(state).modelAccelerationEnabled, true);
+  assert.equal(promptRuntimeSelection(state).modelAccelerationEnabled, false);
 });
 
 test("prompt runtime selection preserves explicit priority off", () => {
@@ -93,7 +157,7 @@ test("settings selection follows the rendered settings order", () => {
     },
   });
 
-  const details = Array.from({ length: 8 }, (_item, index) =>
+  const details = Array.from({ length: 7 }, (_item, index) =>
     selectedSettingDetail({ ...state, selectedSettingsIndex: index }),
   );
 
@@ -105,13 +169,11 @@ test("settings selection follows the rendered settings order", () => {
     "language",
     "variant",
     "priority",
-    "commands",
   ]);
 });
 
 test("settings patches cover language, session type, validator, and stall guard", () => {
   assert.deepEqual(settingPatch("language", "zh-CN"), { language: "zh-CN" });
-  assert.deepEqual(settingPatch("commands", false), { show_command_instructions: false });
   assert.deepEqual(settingPatch("session", "business"), { session_type: "business" });
   assert.deepEqual(settingPatch("validator", true), { validator_enabled: true });
   assert.deepEqual(settingPatch("stallGuard", "long_io_60s"), {

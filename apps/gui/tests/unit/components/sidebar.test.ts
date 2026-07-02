@@ -1,9 +1,32 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Project } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import {
   sidebarWorkspaceProjects,
   workspaceExpanded,
 } from "../../../app/src/components/sidebar/workspace-projects";
+
+const sidebarCss = readFileSync(
+  resolve(import.meta.dir, "../../../app/src/styles/components/sidebar.css"),
+  "utf8",
+);
+const sidebarSource = readFileSync(
+  resolve(import.meta.dir, "../../../app/src/components/sidebar.tsx"),
+  "utf8",
+);
+const workspaceMenuSource = readFileSync(
+  resolve(import.meta.dir, "../../../app/src/components/sidebar/workspace-menu.tsx"),
+  "utf8",
+);
+
+function cssBlock(selector: string): string {
+  const start = sidebarCss.indexOf(`\n${selector} {`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const bodyStart = sidebarCss.indexOf("{", start);
+  const bodyEnd = sidebarCss.indexOf("}", bodyStart);
+  return sidebarCss.slice(start, bodyEnd + 1);
+}
 
 function project(worktree: string, name: string, updated?: number): Project {
   return {
@@ -45,5 +68,32 @@ describe("sidebar workspace projects", () => {
     expect(workspaceExpanded(expanded, "C:/repo/alpha")).toBe(true);
     expect(workspaceExpanded(expanded, "C:/repo/beta")).toBe(true);
     expect(workspaceExpanded(expanded, "C:/repo/gamma")).toBe(false);
+  });
+});
+
+describe("sidebar cursor affordances", () => {
+  test("does not show the text cursor over empty session text or session rows", () => {
+    expect(cssBlock(".workspace-children > .rail-empty")).toContain("cursor: default;");
+    expect(cssBlock(".session-row")).toContain("cursor: pointer;");
+  });
+});
+
+describe("sidebar workspace new session", () => {
+  test("passes the clicked workspace into the new session action", () => {
+    expect(sidebarSource).toContain("onBlankSession: (project: Project) => void;");
+    expect(sidebarSource).toContain("props.onBlankSession(project);");
+  });
+});
+
+describe("sidebar workspace action menu", () => {
+  test("keeps only the delete workspace action in the three-dot menu", () => {
+    expect(workspaceMenuSource).toContain("onDeleteWorkspace");
+    expect(workspaceMenuSource).toContain('t("deleteWorkspace")');
+    expect(workspaceMenuSource).not.toContain('t("pinWorkspace")');
+    expect(workspaceMenuSource).not.toContain('t("openInExplorer")');
+    expect(workspaceMenuSource).not.toContain('t("newSession")');
+    expect(workspaceMenuSource).not.toContain('t("workspaceSettings")');
+    expect(workspaceMenuSource).not.toContain('t("archiveSession")');
+    expect(workspaceMenuSource).not.toContain('t("remove")');
   });
 });

@@ -1,4 +1,5 @@
 @import "./base/reset.css";
+@import "./base/titlebar.css";
 @import "./base/workbench-rail.css";
 @import "./base/navigation.css";
 @import "./base/loading.css";
@@ -16,7 +17,6 @@
 @import "./conversation/animations-schedule.css";
 @import "./conversation/plan-panel.css";
 @import "./conversation/timeline.css";
-@import "./conversation/calendar.css";
 @import "./conversation/files-media.css";
 @import "../pages/settings/base.css";
 @import "../pages/settings/appearance.css";

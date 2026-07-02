@@ -608,6 +608,116 @@ fn upsert_session_records_replace_absent_records_from_full_snapshot() {
 }
 
 #[test]
+fn compacted_management_upsert_preserves_unlisted_session_records() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let session_id = format!("compact-tail-{nonce}");
+    let workspace = db.workspace(&format!("repo-compact-tail-{nonce}"));
+    let session = |updated_at, management: serde_json::Value| {
+        serde_json::json!({
+            "id": session_id,
+            "name": "Compact Tail",
+            "directory": workspace,
+            "created_at": 1,
+            "updated_at": updated_at,
+            "management": management
+        })
+    };
+
+    store
+        .upsert_session(UpsertSessionRequest {
+            session: session(
+                10,
+                serde_json::json!({
+                    "session_id": session_id,
+                    "session_name": "Compact Tail",
+                    "state": "running",
+                    "session_log": ["old", "tail"]
+                }),
+            ),
+            parent_id: None,
+            messages: vec![
+                serde_json::json!({"id": "m1", "role": "user", "created_at": 1, "updated_at": 1}),
+                serde_json::json!({"id": "m2", "role": "assistant", "created_at": 2, "updated_at": 2}),
+            ],
+            todos: vec![],
+        })
+        .expect("initial upsert");
+
+    store
+        .upsert_session(UpsertSessionRequest {
+            session: session(
+                20,
+                serde_json::json!({
+                    "session_id": session_id,
+                    "session_name": "Compact Tail",
+                    "state": "running",
+                    "session_log": ["tail"],
+                    "session_log_retention": {
+                        "omitted_entries": 1,
+                        "last_compaction": {
+                            "compact_entry_index": 1,
+                            "retained_before": 1,
+                            "retained_from_index": 1,
+                            "compacted_at": "2026-06-11T00:00:01Z"
+                        }
+                    }
+                }),
+            ),
+            parent_id: None,
+            messages: vec![serde_json::json!({
+                "id": "m2",
+                "role": "assistant",
+                "created_at": 2,
+                "updated_at": 22
+            })],
+            todos: vec![],
+        })
+        .expect("compacted upsert");
+
+    let loaded = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
+        .expect("get session")
+        .expect("session should exist");
+    assert_eq!(
+        loaded.management["session_log"]
+            .as_array()
+            .expect("log")
+            .len(),
+        1
+    );
+    assert_eq!(
+        loaded.management["session_log_retention"]["omitted_entries"],
+        1
+    );
+
+    let (page, records) = store
+        .list_session_records(ListSessionRecordsRequest {
+            session_id,
+            page: 0,
+            page_size: 10,
+        })
+        .expect("records");
+
+    assert_eq!(page.total, 2);
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.message_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["m1", "m2"]
+    );
+    let updated_m2 = records
+        .iter()
+        .find(|record| record.message_id == "m2")
+        .expect("m2 should exist");
+    assert_eq!(updated_m2.updated_at, 22);
+}
+
+#[test]
 fn pending_checkpoint_queue_items_replay_and_ack_idempotently() {
     let db = DirectDbGuard::new();
     let store = SessionLogStore::open_default().expect("store");

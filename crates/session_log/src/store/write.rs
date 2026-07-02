@@ -55,6 +55,14 @@ fn profile_log(label: &str, elapsed: Option<Duration>, fields: serde_json::Value
     eprintln!("TURA_PROFILE_TIMING {}", serde_json::Value::Object(payload));
 }
 
+fn session_log_omitted_entries(management: &serde_json::Value) -> u64 {
+    management
+        .get("session_log_retention")
+        .and_then(|value| value.get("omitted_entries"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default()
+}
+
 impl SessionLogStore {
     pub fn mark_session_interrupted(&self, request: MarkSessionInterruptedRequest) -> Result<bool> {
         self.mark_session_interrupted_by_id(&request.session_id)
@@ -300,7 +308,11 @@ impl SessionLogStore {
                 }
                 drop(stmt);
                 let cleanup_start = Instant::now();
-                if message_ids.is_empty() {
+                let preserve_unlisted_records = session_log_omitted_entries(&management) > 0;
+                if preserve_unlisted_records {
+                    // Compacted runtime snapshots only send the retained session_log tail.
+                    // Keep older session_records so UI/history reads do not collapse to the tail.
+                } else if message_ids.is_empty() {
                     tx.execute(
                         "DELETE FROM session_records WHERE session_id = ?1",
                         params![session_id],

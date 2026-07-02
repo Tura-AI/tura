@@ -5,6 +5,8 @@
 .cargo/*
 !.cargo/config.toml
 .tura/
+/tura_workspace/
+/workspace/
 
 # Rust build output
 target/
@@ -53,7 +55,12 @@ tests/command-run-codex-two-way/records/summaries/
 priority-param-probe-results.json
 *.bun-build
 *.log
+*.pid
+*.sqlite
+*.sqlite3
+*.sqlite3-*
 *.tmp
+*.init.lock
 
 # Editors and OS metadata
 .idea/

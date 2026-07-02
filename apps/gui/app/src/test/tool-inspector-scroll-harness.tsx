@@ -16,6 +16,11 @@ declare global {
         inspectorScrollTop: number;
         consoleScrollTop: number;
         consoleText: string;
+        titlebarBottom: number;
+        inspectorTop: number;
+        inspectorBottom: number;
+        headerTop: number;
+        viewportHeight: number;
       };
     };
   }
@@ -43,7 +48,13 @@ function Harness() {
         commands: Array.from({ length: 40 }, (_, index) => ({
           command_id: index === 0 ? commandId : `${partId}:call_1:${index}`,
           command_type: "shell_command",
-          command_line: index === 0 ? "run long command" : `queued command ${index}`,
+          command_line:
+            index === 1
+              ? '{"command":"queued command 1","timeout_ms":300000}'
+              : index === 0
+                ? "run long command"
+                : `queued command ${index}`,
+          step: index + 1,
         })),
       },
       streamed_command_run_result: {
@@ -52,6 +63,7 @@ function Harness() {
             command_id: commandId,
             command_type: "shell_command",
             command_line: "run long command",
+            step: 1,
             success: true,
             output: output(),
           },
@@ -63,29 +75,47 @@ function Harness() {
   window.__toolInspectorHarness = {
     updateOutput: (label: string) => setOutput(outputLines(label)),
     snapshot: () => {
+      const titlebar = document.querySelector<HTMLElement>(".app-titlebar");
+      const inspectorShell = document.querySelector<HTMLElement>(".tool-inspector");
+      const inspectorHeader = document.querySelector<HTMLElement>(".tool-inspector header");
       const inspector = document.querySelector<HTMLElement>(".inspector-scroll");
       const consoleEl = document.querySelector<HTMLElement>(".inspector-console");
+      const titlebarRect = titlebar?.getBoundingClientRect();
+      const inspectorRect = inspectorShell?.getBoundingClientRect();
+      const headerRect = inspectorHeader?.getBoundingClientRect();
       return {
         inspectorScrollTop: inspector?.scrollTop ?? 0,
         consoleScrollTop: consoleEl?.scrollTop ?? 0,
         consoleText: consoleEl?.innerText ?? "",
+        titlebarBottom: titlebarRect?.bottom ?? 0,
+        inspectorTop: inspectorRect?.top ?? 0,
+        inspectorBottom: inspectorRect?.bottom ?? 0,
+        headerTop: headerRect?.top ?? 0,
+        viewportHeight: window.innerHeight,
       };
     },
   };
 
   return (
-    <ToolInspector
-      parts={[part()]}
-      selectedId={partId}
-      open={true}
-      overlay={false}
-      width={560}
-      maxWidth={680}
-      minMainWidth={320}
-      onWidth={() => undefined}
-      onSelect={() => undefined}
-      onClose={() => undefined}
-    />
+    <>
+      <header class="app-titlebar" data-tauri-drag-region>
+        <div class="app-titlebar-brand" data-tauri-drag-region>
+          <span data-tauri-drag-region>Tura</span>
+        </div>
+      </header>
+      <ToolInspector
+        parts={[part()]}
+        selectedId={partId}
+        open={true}
+        overlay={false}
+        width={560}
+        maxWidth={680}
+        minMainWidth={320}
+        onWidth={() => undefined}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />
+    </>
   );
 }
 

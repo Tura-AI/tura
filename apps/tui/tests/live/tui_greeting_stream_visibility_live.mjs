@@ -183,7 +183,7 @@ async function writeWorkspaceConfig() {
       `active_agent=${process.env.TURA_TUI_LIVE_AGENT || "direct"}`,
       "session_type=coding",
       `model_variant=${process.env.TURA_TUI_LIVE_MODEL_VARIANT || "medium"}`,
-      "model_acceleration_enabled=true",
+      `model_acceleration_enabled=${process.env.TURA_TUI_LIVE_PRIORITY === "1"}`,
       "kill_processes_on_start=false",
       "validator_enabled=false",
       "force_planning=false",

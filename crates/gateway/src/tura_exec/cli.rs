@@ -32,6 +32,7 @@ Options:
       --goal                      keep the CLI session running until task_status marks done/question
       --no-op                     disable operation manual injection unless goal/reflection overrides it
       --json                      emit JSONL events instead of final text only
+      -log, --log                 write current-turn tokens, timing, tools, and text to stderr
       --quiet, --silent           suppress progress on stderr
       --output-last-message PATH  write the final assistant message to PATH
       --model-reasoning-effort LEVEL
@@ -74,6 +75,7 @@ Examples:
 pub(crate) struct CliConfig {
     pub(crate) cwd: PathBuf,
     pub(crate) json: bool,
+    pub(crate) log: bool,
     pub(crate) quiet: bool,
     pub(crate) model: Option<String>,
     pub(crate) reasoning_effort: Option<String>,
@@ -103,6 +105,7 @@ impl CliConfig {
         let mut config = Self {
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             json: false,
+            log: false,
             quiet: false,
             model: None,
             reasoning_effort: None,
@@ -175,6 +178,10 @@ impl CliConfig {
                 }
                 "--json" => {
                     config.json = true;
+                    index += 1;
+                }
+                "-log" | "--log" => {
+                    config.log = true;
                     index += 1;
                 }
                 "--quiet" | "--silent" => {
@@ -375,6 +382,27 @@ mod tests {
 
         assert!(quiet.quiet);
         assert!(silent.quiet);
+    }
+
+    #[test]
+    fn log_flag_enables_stderr_turn_diagnostics_without_entering_prompt() {
+        let short = CliConfig::parse(vec![
+            "exec".to_string(),
+            "-log".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse -log cli");
+        let long = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--log".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse --log cli");
+
+        assert!(short.log);
+        assert!(long.log);
+        assert_eq!(short.prompt().as_deref(), Ok("inspect"));
+        assert_eq!(long.prompt().as_deref(), Ok("inspect"));
     }
 
     #[test]

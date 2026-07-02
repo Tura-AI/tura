@@ -40,7 +40,7 @@ export function AgentSettingsPanel(props: {
   const [selectedModel, setSelectedModel] = createSignal("");
   const [selectedReasoningEffort, setSelectedReasoningEffort] =
     createSignal<(typeof AGENT_REASONING_EFFORTS)[number]>("high");
-  const [priorityEnabled, setPriorityEnabled] = createSignal(true);
+  const [priorityEnabled, setPriorityEnabled] = createSignal(false);
   const [loadingAgent, setLoadingAgent] = createSignal(false);
   const [agentQuery, setAgentQuery] = createSignal("");
   const visibleAgents = createMemo(() => visibleConfigurableAgents(props.agents));
@@ -124,7 +124,7 @@ export function AgentSettingsPanel(props: {
         defaultModelTier: selectedDefaultModelTier(),
         currentModel: selectedModelValue(),
         reasoningEffort: selectedReasoningEffort(),
-        priority: priorityEnabled(),
+        priorityEnabled: priorityEnabled(),
       }),
       prompt: stored.prompt ?? undefined,
     };
@@ -215,7 +215,7 @@ export function AgentSettingsPanel(props: {
                   option.value,
                   currentAgentModelOption(selectedAgent(), storedAgent()),
                 )[0];
-                setSelectedModel(firstModel?.value.split("/").slice(1).join("/") ?? "");
+                setSelectedModel(providerModelPair(firstModel?.value)?.model ?? "");
               }}
             />
           </div>
@@ -227,7 +227,7 @@ export function AgentSettingsPanel(props: {
                 options={modelOptions()}
                 placeholder={currentModelLabel()}
                 onSelect={(option) => {
-                  const model = option.value.split("/").slice(1).join("/");
+                  const model = providerModelPair(option.value)?.model ?? "";
                   setSelectedModel(model);
                 }}
               />
@@ -243,24 +243,16 @@ export function AgentSettingsPanel(props: {
               }
             />
           </div>
-          <div class="field-row">
+          <div class="field-row agent-priority-row">
             <span>{t("modelPriority")}</span>
-            <div class="segmented two agent-priority-segmented">
-              <button
-                type="button"
-                class={classNames(priorityEnabled() && "selected")}
-                onClick={() => setPriorityEnabled(true)}
-              >
-                {t("enabled")}
-              </button>
-              <button
-                type="button"
-                class={classNames(!priorityEnabled() && "selected")}
-                onClick={() => setPriorityEnabled(false)}
-              >
-                {t("disabled")}
-              </button>
-            </div>
+            <label class="settings-toggle-row">
+              <input
+                type="checkbox"
+                checked={priorityEnabled()}
+                onChange={(event) => setPriorityEnabled(event.currentTarget.checked)}
+              />
+              <span>{t("acceleration")}</span>
+            </label>
           </div>
           <div class="field-row agent-capabilities-row">
             <span>{t("capabilities")}</span>
@@ -375,6 +367,18 @@ function agentReasoningEffort(agent?: Agent, stored?: StoredAgent): string {
   );
 }
 
+function agentPriorityEnabled(agent?: Agent, stored?: StoredAgent): boolean {
+  return (
+    readProviderBoolean(stored?.config.provider, ["model_acceleration_enabled"]) ??
+    readProviderBoolean(agent?.options?.provider, ["model_acceleration_enabled"]) ??
+    readProviderBoolean(agent?.options, ["model_acceleration_enabled"]) ??
+    readServiceTierPriority(stored?.config.provider) ??
+    readServiceTierPriority(agent?.options?.provider) ??
+    readServiceTierPriority(agent?.options) ??
+    false
+  );
+}
+
 function normalizeReasoningEffort(
   value: string | undefined,
 ): (typeof AGENT_REASONING_EFFORTS)[number] {
@@ -395,19 +399,6 @@ function reasoningEffortLabel(value: string): string {
   return labels[value] ? t(labels[value]) : value;
 }
 
-function agentPriorityEnabled(agent?: Agent, stored?: StoredAgent): boolean {
-  const configured =
-    readProviderBool(stored?.config.provider, "model_acceleration_enabled") ??
-    readProviderBool(agent?.options?.provider, "model_acceleration_enabled");
-  if (configured !== undefined) {
-    return configured;
-  }
-  const serviceTierPriority =
-    readProviderString(stored?.config.provider, ["service_tier"]) === "priority" ||
-    readProviderString(agent?.options?.provider, ["service_tier"]) === "priority";
-  return serviceTierPriority || true;
-}
-
 function readProviderString(value: unknown, keys: string[]): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -422,12 +413,26 @@ function readProviderString(value: unknown, keys: string[]): string | undefined 
   return undefined;
 }
 
-function readProviderBool(value: unknown, key: string): boolean | undefined {
+function readProviderBoolean(value: unknown, keys: string[]): boolean | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
-  const field = (value as Record<string, unknown>)[key];
-  return typeof field === "boolean" ? field : undefined;
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const field = record[key];
+    if (typeof field === "boolean") {
+      return field;
+    }
+  }
+  return undefined;
+}
+
+function readServiceTierPriority(value: unknown): boolean | undefined {
+  const serviceTier = readProviderString(value, ["service_tier"]);
+  if (!serviceTier) {
+    return undefined;
+  }
+  return serviceTier === "priority";
 }
 
 function agentConfigWithProviderSettings(
@@ -436,7 +441,7 @@ function agentConfigWithProviderSettings(
     defaultModelTier: (typeof DEFAULT_MODEL_TIERS)[number];
     currentModel: string;
     reasoningEffort: (typeof AGENT_REASONING_EFFORTS)[number];
-    priority: boolean;
+    priorityEnabled: boolean;
   },
 ): AgentConfig {
   const provider =
@@ -451,8 +456,8 @@ function agentConfigWithProviderSettings(
       tura_llm_name: settings.defaultModelTier,
       ...(settings.currentModel ? { current_model: settings.currentModel } : {}),
       model_reasoning_effort: settings.reasoningEffort,
-      model_acceleration_enabled: settings.priority,
-      service_tier: settings.priority ? "priority" : "default",
+      model_acceleration_enabled: settings.priorityEnabled,
+      service_tier: settings.priorityEnabled ? "priority" : "auto",
     },
   };
 }
@@ -514,6 +519,7 @@ function modelOptionsForProvider(
       id: modelOptionValue(option),
       label: option.model_name || option.model,
       value: modelOptionValue(option),
+      model: option.model,
       detail: option.provider_name || option.provider,
       preview: "inherit",
     }));

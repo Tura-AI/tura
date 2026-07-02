@@ -229,7 +229,7 @@ function phasePrompt(phase) {
     "**Snake Phase 3: Playwright interaction verification**",
     "",
     "TUI Snake business Playwright phase 3. Final verification summary in concise rich Markdown.",
-    "State that the script used real LLM calls with model codex/gpt-5.5, agent fast, low reasoning, and priority enabled by default.",
+    "State that the script used real LLM calls with model codex/gpt-5.5, agent fast, low reasoning, and priority off by default.",
     "List the three phase screenshot groups and include the literal strings `desktop.png ok`, `mobile.png ok`, and `no horizontal overflow`.",
     "",
     "- desktop.png ok",

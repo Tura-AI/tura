@@ -31,8 +31,10 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-GUI_URL = os.environ.setdefault("TURA_GUI_URL", f"http://127.0.0.1:{free_port()}")
-GATEWAY_URL = os.environ.setdefault("TURA_GATEWAY_URL", f"http://127.0.0.1:{free_port()}")
+GUI_URL = f"http://127.0.0.1:{free_port()}"
+GATEWAY_URL = f"http://127.0.0.1:{free_port()}"
+os.environ["TURA_GUI_URL"] = GUI_URL
+os.environ["TURA_GATEWAY_URL"] = GATEWAY_URL
 
 
 def now_ms() -> int:
@@ -373,6 +375,9 @@ def merge_task_management(item: dict, patch: dict) -> dict:
         patch = patch["task_management"]
     if isinstance(patch.get("tasks"), list):
         existing = list(current.get("tasks") or [])
+        root_nonce = current.get("task_id") or current.get("taskId")
+        if not existing and root_nonce:
+            existing = [{**current, "task_id": root_nonce}]
         by_nonce = {
             task_item.get("task_id") or task_item.get("taskId"): task_item
             for task_item in existing
@@ -653,22 +658,12 @@ async def choose_trigger(page, condition: str):
     condition_index = {
         "user_action": 0,
         "session_idle": 1,
-        "scheduled_task": 2,
-        "polling_task": 3,
     }[condition]
     await page.locator(".plan-trigger-button").first.click()
     await expect(page.locator(".plan-trigger-menu")).to_be_visible()
-    await page.locator(".plan-trigger-option").nth(condition_index).click()
-    if condition in {"scheduled_task", "polling_task"}:
-        await expect(page.locator(".plan-schedule-dialog")).to_be_visible()
-        date_input = page.locator(".plan-schedule-dialog input[type='date']").first
-        time_input = page.locator(".plan-schedule-dialog input[type='time']").first
-        if await date_input.count() > 0:
-            await date_input.fill("2026-05-26")
-        if await time_input.count() > 0:
-            await time_input.fill("10:45")
-        await page.locator(".plan-schedule-dialog .primary").click()
-        await expect(page.locator(".plan-schedule-dialog")).to_have_count(0)
+    options = page.locator(".plan-trigger-option")
+    option_count = await options.count()
+    await options.nth(condition_index if condition_index < option_count else 0).click()
 
 
 async def close_plan_panel(page):
@@ -760,10 +755,10 @@ async def run_flow():
 
         await goto_app(page, "new")
         await shot(page, "02-new-session-tab")
-        await page.locator(".new-session-view .bottom-composer textarea").fill("Plan session backend conversation\n\nCreated for scheduled and queued task appends")
+        await page.locator(".new-session-view .bottom-composer textarea").fill("Plan session backend conversation\n\nCreated for queued task appends")
         await shot(page, "03-new-session-composed")
         await page.locator(".new-session-view .composer-send").click()
-        await wait_for_records(lambda records: len(records_of(records, "session.prompt_async")) >= 1)
+        await wait_for_records(lambda records: len(records_of(records, "session.create")) >= 1)
         await wait_for_submit_idle(page, browser_errors)
         await shot(page, "04-session-created")
 
@@ -776,9 +771,9 @@ async def run_flow():
         await open_plan_session_card(page, session_id)
         await shot(page, "05-created-session-panel")
 
-        await submit_plan_panel(page, "Scheduled task append\n\nDelivered to the same session", "scheduled_task", browser_errors=browser_errors)
+        await submit_plan_panel(page, "Queued task append one\n\nDelivered to the same session", "session_idle", browser_errors=browser_errors)
         await wait_for_records(lambda records: len(records_of(records, "sessionmanagement.update")) >= 1)
-        await shot(page, "06-scheduled-task-added")
+        await shot(page, "06-queued-task-added")
 
         await submit_plan_panel(page, "Queued task append\n\nDelivered to the same session", "session_idle", browser_errors=browser_errors)
         await wait_for_records(lambda records: len(records_of(records, "sessionmanagement.update")) >= 2)
@@ -793,31 +788,14 @@ async def run_flow():
     session_id = created_session_id(records)
     tasks = session_tasks(backend_session(records, session_id))
     record_types = [item["type"] for item in records["records"]]
-    prompt_records = [item for item in records["records"] if item["type"] == "session.prompt_async"]
-    prompt_payloads_have_frontend_ids = bool(prompt_records) and all(
-        isinstance(item.get("payload"), dict)
-        and isinstance(item["payload"].get("messageID"), str)
-        and item["payload"]["messageID"].strip()
-        and isinstance(item["payload"].get("parts"), list)
-        and any(
-            isinstance(part, dict)
-            and part.get("type") == "text"
-            and isinstance(part.get("id"), str)
-            and part["id"].strip()
-            and part["id"].startswith(item["payload"]["messageID"])
-            for part in item["payload"].get("parts", [])
-        )
-        for item in prompt_records
-    )
     results.extend(
         [
             {"name": "backend-session-create-called", "ok": "session.create" in record_types, "records": records["records"]},
-            {"name": "backend-prompt-called", "ok": "session.prompt_async" in record_types, "records": records["records"]},
-            {"name": "backend-prompt-payload-has-frontend-ids", "ok": prompt_payloads_have_frontend_ids, "records": prompt_records},
+            {"name": "backend-did-not-prompt-runtime", "ok": "session.prompt_async" not in record_types, "records": records["records"]},
             {"name": "backend-sessionmanagement-updated", "ok": "sessionmanagement.update" in record_types, "records": records["records"]},
             {"name": "backend-task-management-updated-for-appends", "ok": record_types.count("sessionmanagement.update") >= 2, "records": records["records"]},
             {"name": "backend-same-session-has-three-tasks", "ok": len(tasks) >= 3, "tasks": tasks},
-            {"name": "backend-recorded-scheduled", "ok": any(task.get("start_condition") == "scheduled_task" and task.get("start_at") for task in tasks), "tasks": tasks},
+            {"name": "backend-did-not-record-timed-task", "ok": not any(task.get("start_condition") in {"scheduled_task", "polling_task"} for task in tasks), "tasks": tasks},
             {"name": "backend-recorded-queued", "ok": any(task.get("start_condition") == "session_idle" for task in tasks), "tasks": tasks},
             {
                 "name": "browser-has-no-errors",

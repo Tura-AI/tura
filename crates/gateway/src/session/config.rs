@@ -47,7 +47,7 @@ impl Default for TuraSessionConfig {
             active_persona: Some(DEFAULT_SESSION_PERSONA.to_string()),
             session_type: Some(DEFAULT_SESSION_TYPE.to_string()),
             model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
-            model_acceleration_enabled: Some(true),
+            model_acceleration_enabled: Some(false),
             context_message_limit: None,
             kill_processes_on_start: None,
             validator_enabled: None,
@@ -330,7 +330,7 @@ fn parse_config(content: &str) -> TuraSessionConfig {
             .map(|value| parse_json_value(value)),
     };
     if config.model_acceleration_enabled.is_none() {
-        config.model_acceleration_enabled = Some(true);
+        config.model_acceleration_enabled = Some(false);
     }
     if config.show_react_kaomoji.is_none() {
         config.show_react_kaomoji = Some(true);

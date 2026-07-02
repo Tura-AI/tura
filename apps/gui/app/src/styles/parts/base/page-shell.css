@@ -9,7 +9,7 @@
 
 .rail-open-button {
   position: fixed;
-  top: var(--rail-open-button-top);
+  top: calc(var(--app-titlebar-height) + var(--rail-open-button-top));
   left: calc(var(--rail) + var(--rail-open-button-top));
   z-index: 120;
   display: grid;
@@ -34,6 +34,41 @@
   color: var(--ink);
 }
 
+.error-strip {
+  position: fixed;
+  top: calc(var(--app-titlebar-height) + var(--space-5));
+  right: var(--space-5);
+  z-index: 120;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  width: max-content;
+  max-width: min(520px, calc(100vw - var(--rail) - 72px));
+  min-height: var(--rail-open-button-size);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  box-shadow: var(--shadow-control);
+}
+
+.rail-collapsed .error-strip,
+.rail-fullscreen .error-strip {
+  max-width: min(520px, calc(100vw - 72px));
+}
+
+.error-strip.success {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+
+.error-strip button {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
 .rail-collapsed .product-workbench,
 .rail-collapsed .plan-detail,
 .rail-collapsed .conversation-view,
@@ -49,7 +84,7 @@
 .settings-view {
   display: grid;
   gap: var(--space-5);
-  height: 100vh;
+  height: 100%;
   min-height: 0;
   padding: var(--page-title-top-space) var(--page-shell-padding-inline)
     var(--page-shell-padding-bottom);

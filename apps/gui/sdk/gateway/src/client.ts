@@ -16,6 +16,7 @@ import type {
   PathResponse,
   ProviderAuthActionResponse,
   ProviderAuthInput,
+  ProviderAuthValidationInput,
   ProviderAuthMethod,
   ProviderAuthStatusResponse,
   ProductConfig,
@@ -243,6 +244,10 @@ export class GatewayClient {
     return this.patch(`/session/${encodeURIComponent(sessionId)}`, payload);
   }
 
+  deleteSession(sessionId: string): Promise<boolean> {
+    return this.delete(`/session/${encodeURIComponent(sessionId)}`);
+  }
+
   updateSessionTaskManagement(
     sessionId: string,
     task_management: TaskManagement | TaskManagement[],
@@ -296,8 +301,11 @@ export class GatewayClient {
     return this.post(`/provider/${encodeURIComponent(providerId)}/auth/logout`, {});
   }
 
-  providerAuthValidate(providerId: string): Promise<ProviderAuthActionResponse> {
-    return this.post(`/provider/${encodeURIComponent(providerId)}/auth/validate`, {});
+  providerAuthValidate(
+    providerId: string,
+    payload: ProviderAuthValidationInput = {},
+  ): Promise<ProviderAuthActionResponse> {
+    return this.post(`/provider/${encodeURIComponent(providerId)}/auth/validate`, payload);
   }
 
   providerOauthAuthorize(

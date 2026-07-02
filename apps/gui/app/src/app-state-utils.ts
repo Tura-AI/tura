@@ -1,11 +1,13 @@
-import { GatewayError, type Message, type Session } from "@tura/gateway-sdk";
+import { GatewayError, type Message, type Project, type Session } from "@tura/gateway-sdk";
 import {
-  sessionHasDisplayName,
+  sessionUpdatedAt,
   systemThemeMode,
   type AppState,
+  type CornerRadiusMode,
   type ThemeMode,
 } from "./state/global-store";
 import { mergeMessageForCache } from "./state/message-cache";
+import { samePath } from "./utils/app-format";
 import { providerIdFromAuthError, providerIdFromModel } from "./utils/settings";
 
 const LAST_SESSION_OPENED_STORAGE_KEY = "last_session_opened";
@@ -83,18 +85,25 @@ export function mergeSessions(remoteSessions: Session[], localSessions: Session[
   }
   for (const session of localSessions) {
     const remote = byId.get(session.id);
-    if (!remote) {
+    if (remote) {
+      byId.set(session.id, mergeSessionSnapshot(session, remote));
+    } else {
       byId.set(session.id, session);
-    } else if (!sessionHasDisplayName(remote) && sessionHasDisplayName(session)) {
-      byId.set(session.id, {
-        ...remote,
-        name: session.name,
-        session_display_name: session.session_display_name,
-        plan_summary: session.plan_summary,
-      });
     }
   }
   return [...byId.values()].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+}
+
+export function mergeSessionSnapshot(existing: Session | undefined, incoming: Session): Session {
+  if (!existing) {
+    return incoming;
+  }
+  const existingUpdatedAt = sessionUpdatedAt(existing);
+  const incomingUpdatedAt = sessionUpdatedAt(incoming);
+  if (existingUpdatedAt > 0 && incomingUpdatedAt > 0 && incomingUpdatedAt < existingUpdatedAt) {
+    return existing;
+  }
+  return incoming;
 }
 
 export function mergeMessagePages(prefix: Message[], suffix: Message[]): Message[] {
@@ -122,6 +131,25 @@ export function shouldFetchSessionMessages(
   return forceRefreshMessages || existingMessages.length === 0;
 }
 
+export function blankSessionState(state: AppState, workspace?: Project): AppState {
+  const projects = workspace
+    ? state.projects.some((project) => samePath(project.worktree, workspace.worktree))
+      ? state.projects.map((project) => (samePath(project.worktree, workspace.worktree) ? workspace : project))
+      : [workspace, ...state.projects]
+    : state.projects;
+  return {
+    ...state,
+    directory: workspace?.worktree ?? state.directory,
+    projects,
+    lastSessionOpenedId: state.selectedSessionId ?? state.lastSessionOpenedId,
+    activeTab: "conversation",
+    previousMainTab: "conversation",
+    selectedSessionId: undefined,
+    composerText: "",
+    error: undefined,
+  };
+}
+
 function isOptimisticDuplicate(existing: Message, incoming: Message): boolean {
   return (
     existing.role === "user" &&
@@ -147,6 +175,26 @@ export function normalizeThemeMode(value: string | null | undefined): ThemeMode 
     value === "liangzhu"
     ? value
     : systemThemeMode();
+}
+
+export function normalizeCornerRadiusMode(value: string | null | undefined): CornerRadiusMode {
+  return value === "0px" || value === "2px" || value === "8px" || value === "9.6px"
+    ? value
+    : "8px";
+}
+
+export function cornerRadiusScale(value: CornerRadiusMode): number {
+  switch (value) {
+    case "0px":
+      return 0;
+    case "2px":
+      return 0.25;
+    case "9.6px":
+      return 1.2;
+    case "8px":
+    default:
+      return 1;
+  }
 }
 
 export function clampNumber(

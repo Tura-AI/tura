@@ -25,6 +25,7 @@ export function PlanPageOutlet(props: {
   onEditTask: (session: Session, task: TaskManagement, composerText: string) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
   onSubmit: () => void;
+  onQueueSubmit?: () => void;
   onOpenProviderSettings: (providerId?: string) => void;
   leftRailOpen: boolean;
   leftRailWidth: number;
@@ -104,15 +105,6 @@ export function PlanPageOutlet(props: {
           planDraftStartCondition,
         }))
       }
-      onDraftStartAt={(planDraftStartAt) =>
-        props.setState((previous) => ({ ...previous, planDraftStartAt }))
-      }
-      onDraftPollInterval={(planDraftPollInterval) =>
-        props.setState((previous) => ({
-          ...previous,
-          planDraftPollInterval,
-        }))
-      }
       onDraftSession={(planDraftSessionId) => void selectDraftSession(planDraftSessionId)}
       onCreateTicket={createPlanTicket}
       onStatus={updatePlanTicketStatus}
@@ -129,6 +121,7 @@ export function PlanPageOutlet(props: {
         props.setState((previous) => ({ ...previous, composerImages }))
       }
       onSubmit={props.onSubmit}
+      onQueueSubmit={props.onQueueSubmit}
       onStop={(session) => void abortSession(session.id)}
       onAgent={(selectedAgent) =>
         props.onRuntimeSetting((previous) => ({

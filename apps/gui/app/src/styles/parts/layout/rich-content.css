@@ -100,7 +100,7 @@
   overflow-y: visible;
   scrollbar-width: none;
   scrollbar-gutter: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
 }
 
 .rich-table-scroll::-webkit-scrollbar {
@@ -117,14 +117,13 @@
 .rich-table-scroll table {
   width: max-content;
   min-width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
   border-spacing: 0;
   color: var(--ink);
   font-family: inherit;
   font-size: inherit;
   font-weight: 400;
-  line-height: 1.44;
-  table-layout: auto;
+  line-height: 1.32;
 }
 
 .rich-table-scroll caption {
@@ -138,28 +137,45 @@
 
 .rich-table-scroll th,
 .rich-table-scroll td {
-  min-width: 10rem;
-  padding: 15px 18px;
+  min-width: 14.5rem;
+  width: max(14.5rem, var(--rich-table-cell-width, 26ch));
+  max-width: max(14.5rem, var(--rich-table-cell-width, 26ch));
+  padding: var(--space-3) 10px;
   border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   overflow: visible;
   text-align: left;
-  text-overflow: clip;
   vertical-align: top;
   white-space: normal;
-  overflow-wrap: normal;
+}
+
+.rich-table-scroll tbody tr:not(:last-child) > th,
+.rich-table-scroll tbody tr:not(:last-child) > td {
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--line) 46%, transparent);
+}
+
+.rich-table-scroll tbody tr:first-child > th {
+  box-shadow: inset 0 -1px 0 var(--line-strong);
+}
+
+.rich-table-cell-content {
+  display: block;
+  overflow: visible;
+  overflow-wrap: anywhere;
   word-break: normal;
 }
 
 .rich-table-scroll th:first-child,
 .rich-table-scroll td:first-child {
-  min-width: 10rem;
-  text-align: left;
+  min-width: 5.5rem;
+  width: max(5.5rem, var(--rich-table-cell-width, 12ch));
+  max-width: max(5.5rem, var(--rich-table-cell-width, 12ch));
 }
 
 .rich-table-scroll th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   background: var(--paper);
-  border-bottom-color: color-mix(in srgb, var(--line-strong) 64%, transparent);
   color: var(--ink);
   font-weight: 700;
 }
@@ -170,7 +186,7 @@
 
 .rich-table-overflow-bar > div {
   position: absolute;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--line-strong);
 }
 
@@ -186,28 +202,9 @@
 }
 
 .rich-spoiler {
-  border-radius: 3px;
+  border-radius: var(--radius-tiny);
   background: var(--accent);
   color: transparent;
-}
-
-.rich-local-path {
-  display: inline;
-  max-width: min(100%, 42rem);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  text-decoration: underline;
-  word-break: break-all;
-  cursor: pointer;
-}
-
-.rich-local-path:disabled {
-  cursor: wait;
-  opacity: 0.7;
 }
 
 .rich-media img,
@@ -237,7 +234,7 @@
   place-items: center;
   margin-left: var(--space-1);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--muted);
   font-size: var(--font-small);
 }
@@ -259,7 +256,6 @@
   padding: 0;
   border: 0;
   background: transparent;
-  cursor: pointer;
 }
 
 .rich-media figcaption {
@@ -309,23 +305,11 @@
   border-radius: var(--radius-small);
   background: var(--surface);
   color: var(--ink);
-  cursor: pointer;
 }
 
 .rich-media > .rich-file-tile {
   width: 160px;
   max-width: 100%;
-}
-
-.rich-file-tile:hover,
-.rich-file-tile:focus-visible {
-  border-color: var(--line-strong);
-  background: var(--wash);
-}
-
-.rich-file-tile:disabled {
-  cursor: wait;
-  opacity: 0.72;
 }
 
 .rich-file-name,

@@ -8,6 +8,7 @@ import { For, type JSX, Show, createEffect, createMemo, createSignal, onCleanup 
 import { t } from "../i18n";
 import { classNames } from "../state/format";
 import { type ComposerImage } from "../state/global-store";
+import { composerActionState } from "./composer-action";
 import { ImageLightbox } from "./message-rich-text";
 
 export function Composer(props: {
@@ -50,18 +51,63 @@ export function Composer(props: {
   });
   const submitBlocked = createMemo(
     () =>
-      props.submitting ||
-      (!props.running && props.submitDisabled) ||
-      (!props.text.trim() && props.images.length === 0),
+      props.submitting || props.submitDisabled || (!props.text.trim() && props.images.length === 0),
   );
   const textEmpty = createMemo(() => !props.text.trim() && props.images.length === 0);
+  const actionState = createMemo(() =>
+    composerActionState({
+      text: props.text,
+      imageCount: props.images.length,
+      running: Boolean(props.running),
+      submitting: props.submitting,
+      submitDisabled: props.submitDisabled,
+      hasStopHandler: Boolean(props.onStop),
+    }),
+  );
   const composerDragActive = createMemo(() => composerDragDepth() > 0);
 
+  function controlActionThrottled(): boolean {
+    const now = Date.now();
+    if (now - lastSubmitAt < 350) {
+      return true;
+    }
+    lastSubmitAt = now;
+    return false;
+  }
+
   function submitFromControl() {
-    if (props.running) {
-      void props.onStop?.();
+    if (submitBlocked()) {
       return;
     }
+    if (controlActionThrottled()) {
+      return;
+    }
+    void props.onSubmit();
+  }
+
+  function stopFromControl() {
+    if (actionState().disabled || actionState().kind !== "stop") {
+      return;
+    }
+    if (controlActionThrottled()) {
+      return;
+    }
+    void props.onStop?.();
+  }
+
+  function activateControlAction() {
+    if (actionState().kind === "stop") {
+      stopFromControl();
+      return;
+    }
+    submitFromControl();
+  }
+
+  function submitFromKeyboard(event: KeyboardEvent) {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
+      return;
+    }
+    event.preventDefault();
     if (submitBlocked()) {
       return;
     }
@@ -73,29 +119,11 @@ export function Composer(props: {
     void props.onSubmit();
   }
 
-  function submitFromKeyboard(event: KeyboardEvent) {
-    if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
-      return;
-    }
-    event.preventDefault();
-    if (props.running) {
-      return;
-    }
-    if (submitBlocked()) {
-      return;
-    }
-    const now = Date.now();
-    if (now - lastSubmitAt < 350) {
-      return;
-    }
-    lastSubmitAt = now;
-    void ((event.metaKey || event.ctrlKey) && props.onQueueSubmit
-      ? props.onQueueSubmit()
-      : props.onSubmit());
-  }
-
   const sendButtonTitle = createMemo(() =>
-    props.running ? t("stop") : t("sendButtonHint", { modifier: shortcutModifierLabel() }),
+    t("sendButtonHint", { modifier: shortcutModifierLabel() }),
+  );
+  const actionButtonTitle = createMemo(() =>
+    actionState().kind === "stop" ? t("stop") : sendButtonTitle(),
   );
 
   createEffect(() => {
@@ -422,25 +450,27 @@ export function Composer(props: {
         <button
           class="composer-send"
           type="button"
-          title={sendButtonTitle()}
+          title={actionButtonTitle()}
+          aria-label={actionButtonTitle()}
+          data-action={actionState().kind}
           data-submitting={props.submitting ? "true" : "false"}
           data-submit-disabled={props.submitDisabled ? "true" : "false"}
           data-text-empty={textEmpty() ? "true" : "false"}
-          disabled={props.running ? !props.onStop : submitBlocked()}
+          disabled={actionState().disabled}
           onPointerDown={(event) => {
             if (event.button !== 0) {
               return;
             }
             event.preventDefault();
-            submitFromControl();
+            activateControlAction();
           }}
           onClick={(event) => {
             event.preventDefault();
-            submitFromControl();
+            activateControlAction();
           }}
         >
-          <Show when={props.running} fallback={<ArrowUp size={16} strokeWidth={1.8} />}>
-            <Square size={13} strokeWidth={2} fill="currentColor" />
+          <Show when={actionState().kind === "stop"} fallback={<ArrowUp size={16} strokeWidth={1.8} />}>
+            <Square size={14} strokeWidth={2.1} />
           </Show>
         </button>
       </div>

@@ -5,7 +5,7 @@ pub(crate) use gateway::api::provider::{
 };
 pub(crate) use gateway::contracts::{
     OAuthCallbackParams, OAuthCallbackPayload, OAuthRedirectCallbackParams, ProviderAuth,
-    ProviderAuthActionDetail,
+    ProviderAuthActionDetail, ProviderAuthValidationRequest,
 };
 pub(crate) use gateway::mock::global_store;
 pub(crate) use serde_json::json;
@@ -278,6 +278,17 @@ pub(crate) fn assert_detail(details: &[ProviderAuthActionDetail], code: &str) {
     assert!(
         details.iter().any(|detail| detail.code == code),
         "missing detail {code}; got {:?}",
+        details
+            .iter()
+            .map(|detail| detail.code.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+pub(crate) fn assert_no_detail(details: &[ProviderAuthActionDetail], code: &str) {
+    assert!(
+        !details.iter().any(|detail| detail.code == code),
+        "unexpected detail {code}; got {:?}",
         details
             .iter()
             .map(|detail| detail.code.as_str())

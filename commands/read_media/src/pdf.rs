@@ -173,12 +173,15 @@ for page_index, page in enumerate(doc):
 doc.close()
 sys.stdout.write("\n".join(parts))
 "#;
-    let output = std::process::Command::new("python")
+    let mut command = std::process::Command::new("python");
+    command
         .arg("-c")
         .arg(script)
         .arg(path)
         .arg(max_text_chars.to_string())
-        .arg(max_pages.to_string())
+        .arg(max_pages.to_string());
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let output = command
         .output()
         .map_err(|err| format!("python fitz PDF fallback failed to start: {err}"))?;
     if !output.status.success() {

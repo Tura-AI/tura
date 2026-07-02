@@ -13,7 +13,12 @@ import {
   tryStartGateway,
   waitForGatewayHealth,
 } from "../app-gateway-startup";
-import { clampNumber, mergeSessions, normalizeThemeMode } from "../app-state-utils";
+import {
+  clampNumber,
+  mergeSessions,
+  normalizeCornerRadiusMode,
+  normalizeThemeMode,
+} from "../app-state-utils";
 import { DEFAULT_AGENT_ID, DEFAULT_MODEL_ID } from "../config/defaults";
 import { setLanguage, t } from "../i18n";
 import { applyGatewayEvent } from "../state/event-reducer";
@@ -199,7 +204,9 @@ export function useAppGatewayLifecycle(options: {
       const selectedSessionId = forceNewSession
         ? undefined
         : (state().selectedSessionId ?? sessions[0]?.id);
-      const configuredModel = workspaceModelFromConfig(workspaceConfig) ?? config.model;
+      const configuredModel =
+        workspaceModelFromConfig(workspaceConfig, modelConfig) ??
+        workspaceModelFromConfig(config, modelConfig);
       const configuredAgent = readConfigString(workspaceConfig, "active_agent") ?? config.agent;
       const configuredVariant = readConfigString(workspaceConfig, "model_variant");
       const configuredLanguage = readConfigString(workspaceConfig, "language") ?? config.language;
@@ -251,6 +258,9 @@ export function useAppGatewayLifecycle(options: {
           providers?.connected[0] ??
           providers?.all[0]?.id,
         themeMode: previous.bootstrapped ? previous.themeMode : normalizeThemeMode(config.theme),
+        cornerRadius: previous.bootstrapped
+          ? previous.cornerRadius
+          : normalizeCornerRadiusMode(config.corner_radius),
         mainFont: previous.bootstrapped
           ? previous.mainFont
           : (config.main_font ?? previous.mainFont),
@@ -268,7 +278,7 @@ export function useAppGatewayLifecycle(options: {
           : (configuredVariant ?? previous.modelVariant ?? "medium"),
         accelerationEnabled: previous.bootstrapped
           ? previous.accelerationEnabled
-          : (configuredAcceleration ?? previous.accelerationEnabled ?? true),
+          : (configuredAcceleration ?? previous.accelerationEnabled ?? false),
         loading: false,
         sessionsLoading: false,
         bootstrapped: true,
@@ -291,7 +301,6 @@ export function useAppGatewayLifecycle(options: {
       }));
     }
   }
-
 }
 
 function mergeWorkspaceProjects(
@@ -334,10 +343,7 @@ function mergeWorkspaceProjects(
   return merged;
 }
 
-async function bootstrapSafe<T>(
-  run: () => Promise<T>,
-  fallback: T,
-): Promise<T> {
+async function bootstrapSafe<T>(run: () => Promise<T>, fallback: T): Promise<T> {
   return safe(() => withTimeout(run(), BOOTSTRAP_REQUEST_TIMEOUT_MS), fallback);
 }
 

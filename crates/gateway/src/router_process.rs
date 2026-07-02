@@ -898,13 +898,7 @@ fn router_executable_candidates(root: &Path) -> Vec<PathBuf> {
 }
 
 fn hide_child_window_and_detach(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
-    }
+    tura_path::process_hardening::hide_child_console_window_and_detach(command);
 }
 
 #[cfg(test)]

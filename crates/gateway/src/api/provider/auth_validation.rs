@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use super::catalog::{provider_api_from_settings, provider_env_from_settings};
-use super::{config_value, ProviderAuthActionDetail, ProviderAuthStatusResponse};
+use super::{
+    config_value, ProviderAuthActionDetail, ProviderAuthStatusResponse,
+    ProviderAuthValidationRequest,
+};
 
 pub(super) struct ProviderValidationReceipt {
     pub(super) ok: bool,
@@ -14,15 +17,24 @@ pub(super) struct ProviderValidationReceipt {
 pub(super) async fn validate_provider_auth_config(
     provider_id: &str,
     status: &ProviderAuthStatusResponse,
+    request: Option<&ProviderAuthValidationRequest>,
 ) -> ProviderValidationReceipt {
     let settings = tura_llm_rust::Settings::default().await.ok();
     let provider_config = settings
         .as_deref()
         .and_then(|settings| settings.model_catalog.providers.get(provider_id));
     let mut env_keys = Vec::new();
-    push_unique_env(&mut env_keys, status.token_env.as_deref());
-    push_unique_env(&mut env_keys, status.login_env.as_deref());
-    push_unique_env(&mut env_keys, status.refresh_env.as_deref());
+    let api_key_validation = uses_api_key_validation(provider_id, provider_config, status, request);
+    push_unique_env(
+        &mut env_keys,
+        request
+            .and_then(|payload| payload.token_env.as_deref())
+            .or(status.token_env.as_deref()),
+    );
+    if !api_key_validation {
+        push_unique_env(&mut env_keys, status.login_env.as_deref());
+        push_unique_env(&mut env_keys, status.refresh_env.as_deref());
+    }
     if let Some(settings) = settings.as_ref() {
         for env in provider_env_from_settings(Some(settings), provider_id) {
             push_unique_env(&mut env_keys, Some(&env));
@@ -30,18 +42,29 @@ pub(super) async fn validate_provider_auth_config(
     }
     if let Some(entry) = tura_llm_rust::provider_auth_registry_entry(provider_id) {
         push_unique_env(&mut env_keys, entry.token_env);
-        push_unique_env(&mut env_keys, entry.login_env);
-        push_unique_env(&mut env_keys, entry.refresh_env);
+        if !api_key_validation {
+            push_unique_env(&mut env_keys, entry.login_env);
+            push_unique_env(&mut env_keys, entry.refresh_env);
+        }
     }
+
+    let request_token_env = request.and_then(|payload| payload.token_env.as_deref());
+    let request_token = request.and_then(validation_request_token);
 
     let present: Vec<String> = env_keys
         .iter()
-        .filter(|key| config_value(key).is_some())
+        .filter(|key| {
+            config_value(key).is_some()
+                || (request_token.is_some() && request_token_env == Some(key.as_str()))
+        })
         .cloned()
         .collect();
     let missing: Vec<String> = env_keys
         .iter()
-        .filter(|key| config_value(key).is_none())
+        .filter(|key| {
+            config_value(key).is_none()
+                && !(request_token.is_some() && request_token_env == Some(key.as_str()))
+        })
         .cloned()
         .collect();
 
@@ -62,12 +85,15 @@ pub(super) async fn validate_provider_auth_config(
             tura_llm_rust::provider_auth_registry_entry(provider_id)
                 .and_then(|entry| entry.token_env)
         });
-    let token = token_env.and_then(config_value);
+    let token = request_token
+        .map(ToString::to_string)
+        .or_else(|| token_env.and_then(config_value));
     let external_validation = validate_provider_credentials_remotely(
         provider_id,
         provider_config,
         base_url.as_deref(),
         token.as_deref(),
+        api_key_validation,
     )
     .await;
     let warning = matches!(
@@ -143,8 +169,10 @@ pub(super) async fn validate_provider_auth_config(
             details.push(detail);
         }
     }
-    details.push(validation_detail("provider.request.no_paid_model", None));
-    parts.push("no paid model request was sent".to_string());
+    if unsupported {
+        details.push(validation_detail("provider.request.no_paid_model", None));
+        parts.push("no paid model request was sent".to_string());
+    }
     let level = if unsupported {
         "unsupported"
     } else if ok && warning {
@@ -181,6 +209,7 @@ pub(super) async fn validate_provider_credentials_remotely(
     provider_config: Option<&tura_llm_rust::ProviderCatalogConfig>,
     base_url: Option<&str>,
     token: Option<&str>,
+    api_key_validation: bool,
 ) -> ProviderCredentialValidation {
     let api_style = provider_config
         .map(|provider| provider.api_style.as_str())
@@ -213,8 +242,9 @@ pub(super) async fn validate_provider_credentials_remotely(
         }
     };
 
-    if matches!(api_style, "codex" | "claude_code")
-        || matches!(provider_id, "codex" | "claude-code" | "antigravity")
+    if !api_key_validation
+        && (matches!(api_style, "codex" | "claude_code")
+            || matches!(provider_id, "codex" | "claude-code" | "antigravity"))
     {
         let Some(token) = token else {
             return ProviderCredentialValidation::Failed(validation_detail(
@@ -230,7 +260,23 @@ pub(super) async fn validate_provider_credentials_remotely(
         }
     }
 
-    if api_style == "codex" || provider_id == "codex" {
+    if api_key_validation && (api_style == "codex" || provider_id == "codex") {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.api_key_missing",
+                Some("OpenAI".to_string()),
+            ));
+        };
+        let Some(url) = validation_url(Some("https://api.openai.com/v1"), "models") else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.base_url.invalid",
+                Some("OpenAI".to_string()),
+            ));
+        };
+        return validate_openai_compatible_models(&client, &url, Some(token)).await;
+    }
+
+    if !api_key_validation && (api_style == "codex" || provider_id == "codex") {
         let Some(token) = token else {
             return ProviderCredentialValidation::Failed(validation_detail(
                 "provider.credential.oauth_token_missing",
@@ -247,7 +293,7 @@ pub(super) async fn validate_provider_credentials_remotely(
         .await;
     }
 
-    if provider_id == "antigravity" || api_style == "antigravity" {
+    if !api_key_validation && (provider_id == "antigravity" || api_style == "antigravity") {
         let Some(token) = token else {
             return ProviderCredentialValidation::Failed(validation_detail(
                 "provider.credential.oauth_token_missing",
@@ -461,6 +507,22 @@ pub(super) async fn validate_provider_credentials_remotely(
         return validate_google_models(&client, &url, token).await;
     }
 
+    if api_key_validation && has_llm_domain && api_style == "antigravity" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.api_key_missing",
+                Some("Antigravity".to_string()),
+            ));
+        };
+        let Some(url) = validation_url(base_url, "models") else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.base_url.invalid",
+                Some("Antigravity".to_string()),
+            ));
+        };
+        return validate_openai_compatible_models(&client, &url, Some(token)).await;
+    }
+
     if has_llm_domain
         && (matches!(api_style, "openapi" | "ollama") || is_openai_compatible_provider(provider_id))
     {
@@ -490,6 +552,69 @@ fn provider_has_domain(provider: &tura_llm_rust::ProviderCatalogConfig, domain: 
         .domains
         .iter()
         .any(|value| value.eq_ignore_ascii_case(domain))
+}
+
+fn uses_api_key_validation(
+    provider_id: &str,
+    provider_config: Option<&tura_llm_rust::ProviderCatalogConfig>,
+    status: &ProviderAuthStatusResponse,
+    request: Option<&ProviderAuthValidationRequest>,
+) -> bool {
+    if let Some(request) = request {
+        if request_field_eq(request.auth_type.as_deref(), "api")
+            || request_field_eq(request.kind.as_deref(), "api_key")
+            || request_field_eq(request.login.as_deref(), "api")
+        {
+            return true;
+        }
+        if request_field_eq(request.auth_type.as_deref(), "oauth")
+            || request_field_eq(request.kind.as_deref(), "oauth")
+            || request_field_eq(request.login.as_deref(), "oauth")
+            || request_field_eq(request.login.as_deref(), "browser")
+        {
+            return false;
+        }
+    }
+    if status
+        .login
+        .as_deref()
+        .is_some_and(|login| login.eq_ignore_ascii_case("api"))
+    {
+        return true;
+    }
+    provider_config
+        .map(|provider| {
+            provider
+                .auth_methods
+                .iter()
+                .any(|method| method.eq_ignore_ascii_case("api_key"))
+                && !provider
+                    .auth_methods
+                    .iter()
+                    .any(|method| method.eq_ignore_ascii_case("oauth"))
+        })
+        .unwrap_or_else(|| {
+            tura_llm_rust::provider_auth_registry_entry(provider_id)
+                .map(|entry| {
+                    entry.capabilities.supports_api_key && !entry.capabilities.supports_subscription
+                })
+                .unwrap_or(false)
+        })
+}
+
+fn request_field_eq(value: Option<&str>, expected: &str) -> bool {
+    value
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case(expected))
+}
+
+fn validation_request_token(request: &ProviderAuthValidationRequest) -> Option<&str> {
+    request
+        .key
+        .as_deref()
+        .or(request.access.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 pub(super) fn validation_detail(code: &str, value: Option<String>) -> ProviderAuthActionDetail {
@@ -895,7 +1020,8 @@ mod tests {
 
     #[tokio::test]
     async fn remote_validation_fails_locally_before_network_for_missing_credentials() {
-        let codex_missing = validate_provider_credentials_remotely("codex", None, None, None).await;
+        let codex_missing =
+            validate_provider_credentials_remotely("codex", None, None, None, false).await;
         assert!(matches!(
             codex_missing,
             ProviderCredentialValidation::Failed(detail)
@@ -903,7 +1029,7 @@ mod tests {
         ));
 
         let codex_short =
-            validate_provider_credentials_remotely("codex", None, None, Some("short")).await;
+            validate_provider_credentials_remotely("codex", None, None, Some("short"), false).await;
         assert!(matches!(
             codex_short,
             ProviderCredentialValidation::Failed(detail)
@@ -911,7 +1037,7 @@ mod tests {
         ));
 
         let openrouter_missing =
-            validate_provider_credentials_remotely("openrouter", None, None, None).await;
+            validate_provider_credentials_remotely("openrouter", None, None, None, true).await;
         assert!(matches!(
             openrouter_missing,
             ProviderCredentialValidation::Failed(detail)
@@ -920,7 +1046,8 @@ mod tests {
         ));
 
         let unsupported =
-            validate_provider_credentials_remotely("perplexity", None, None, Some("token")).await;
+            validate_provider_credentials_remotely("perplexity", None, None, Some("token"), true)
+                .await;
         assert!(matches!(
             unsupported,
             ProviderCredentialValidation::Unsupported(detail)
@@ -948,6 +1075,7 @@ mod tests {
             Some(&provider),
             Some(&base_url),
             Some("secret-key"),
+            true,
         )
         .await;
 
@@ -963,6 +1091,7 @@ mod tests {
             Some(&provider),
             Some("https://api.example.test/v1"),
             None,
+            true,
         )
         .await;
         assert!(matches!(
@@ -979,12 +1108,46 @@ mod tests {
             Some(&provider),
             Some(&no_token_base_url),
             None,
+            true,
         )
         .await;
         assert!(matches!(
             local,
             ProviderCredentialValidation::Passed(detail)
                 if detail.code == "provider.remote.accepted"
+        ));
+    }
+
+    #[tokio::test]
+    async fn antigravity_api_key_validation_uses_configured_models_endpoint_not_oauth() {
+        let provider = tura_llm_rust::ProviderCatalogConfig {
+            api_style: "antigravity".to_string(),
+            base_url: "http://127.0.0.1:0/v1".to_string(),
+            domains: vec!["llm".to_string()],
+            auth_methods: vec!["api_key".to_string()],
+            ..Default::default()
+        };
+        let url = serve_http_once(
+            200,
+            r#"{"data":[]}"#,
+            Some(ServerBehavior::AssertBearer("secret-key")),
+        );
+        let base_url = url.trim_end_matches("/models").to_string();
+
+        let passed = validate_provider_credentials_remotely(
+            "antigravity",
+            Some(&provider),
+            Some(&base_url),
+            Some("secret-key"),
+            true,
+        )
+        .await;
+
+        assert!(matches!(
+            passed,
+            ProviderCredentialValidation::Passed(detail)
+                if detail.code == "provider.remote.accepted"
+                    && detail.value.as_deref() == Some("OpenAI-compatible /models")
         ));
     }
 

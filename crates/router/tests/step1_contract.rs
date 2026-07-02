@@ -153,6 +153,56 @@ fn gateway_session_db_client_is_read_only_without_one_shot_processes() {
 }
 
 #[test]
+fn windows_process_launches_use_shared_console_hiding_policy() {
+    let helper = read("crates/path/src/process_hardening.rs");
+    assert!(
+        helper.contains("WINDOWS_CREATE_NO_WINDOW")
+            && helper.contains("pub fn hide_child_console_window")
+            && helper.contains("pub fn hide_child_console_window_and_detach"),
+        "process hardening must expose the shared Windows no-console policy"
+    );
+
+    for path in [
+        "crates/gateway/src/router_process.rs",
+        "crates/gateway/src/tura_exec/router.rs",
+        "crates/gateway/src/tura_exec/session.rs",
+        "crates/gateway/src/api/session_shell.rs",
+        "crates/gateway/src/api/file.rs",
+        "crates/gateway/src/api/directory_picker.rs",
+        "crates/gateway/src/session/docker_snapshot.rs",
+        "crates/gateway/src/tray.rs",
+        "crates/router/src/services/session_db.rs",
+        "crates/runtime/src/workspace_git.rs",
+        "crates/runtime/src/manas/child_dispatch.rs",
+        "commands/read_media/src/video.rs",
+        "commands/read_media/src/processing.rs",
+        "commands/read_media/src/pdf.rs",
+        "commands/web_discover/src/search.rs",
+        "commands/web_discover/src/download.rs",
+        "commands/generate_media/src/speech.rs",
+        "apps/tauri/src-tauri/src/main.rs",
+    ] {
+        let source = read(path);
+        assert!(
+            source.contains("hide_child_console_window"),
+            "{path} starts processes and must apply the shared Windows no-console helper"
+        );
+    }
+
+    for path in [
+        "crates/tools/src/shell_executor/process.rs",
+        "crates/tools/src/external/launcher.rs",
+        "crates/router/src/services/process_scope.rs",
+    ] {
+        let source = read(path);
+        assert!(
+            source.contains("WINDOWS_CREATE_NO_WINDOW"),
+            "{path} configures tokio::process::Command and must reuse the shared Windows flag constant"
+        );
+    }
+}
+
+#[test]
 fn session_db_service_replays_durable_queue_on_startup() {
     let store = read("crates/session_log/src/store.rs");
     let store_queue = read("crates/session_log/src/store/queue.rs");

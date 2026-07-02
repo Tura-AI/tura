@@ -130,6 +130,22 @@ pub struct ProviderAuthActionDetail {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProviderAuthValidationRequest {
+    #[serde(default, rename = "type")]
+    pub auth_type: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub login: Option<String>,
+    #[serde(default)]
+    pub token_env: Option<String>,
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub access: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ProviderAuthQuery {
     pub directory: Option<String>,
     pub workspace: Option<String>,

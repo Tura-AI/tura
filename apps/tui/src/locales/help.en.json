@@ -33,7 +33,10 @@
         "summary": "Gateway base URL; defaults to TURA_GATEWAY_URL, the project active URL, then dev 4125 / release 4126"
       },
       { "flags": "--cwd PATH", "summary": "Workspace directory sent to gateway" },
-      { "flags": "--initial-session ID", "summary": "open the interactive TUI on a specific session" },
+      {
+        "flags": "--initial-session ID",
+        "summary": "open the interactive TUI on a specific session"
+      },
       { "flags": "--json", "summary": "JSON output where supported" },
       { "flags": "--color MODE", "summary": "auto, always, or never" },
       { "flags": "--lang zh-CN|en", "summary": "display language" },
@@ -149,7 +152,7 @@
       "tura [OPTIONS] agent create AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent update AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent delete AGENT_ID [--json]",
-      "tura [OPTIONS] agent model AGENT_ID [PROVIDER/MODEL] [--reasoning LEVEL] [--priority|--no-priority]"
+      "tura [OPTIONS] agent model AGENT_ID [PROVIDER/MODEL] [--reasoning LEVEL]"
     ],
     "sections": [
       { "title": "Example", "lines": ["tura run -a AGENT_ID -m PROVIDER/MODEL -p \"prompt\""] }

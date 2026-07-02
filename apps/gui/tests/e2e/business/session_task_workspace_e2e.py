@@ -30,8 +30,10 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-GUI_URL = os.environ.setdefault("TURA_GUI_URL", f"http://127.0.0.1:{free_port()}")
-GATEWAY_URL = os.environ.setdefault("TURA_GATEWAY_URL", "http://127.0.0.1:5198")
+GUI_URL = f"http://127.0.0.1:{free_port()}"
+GATEWAY_URL = f"http://127.0.0.1:{free_port()}"
+os.environ["TURA_GUI_URL"] = GUI_URL
+os.environ["TURA_GATEWAY_URL"] = GATEWAY_URL
 
 
 def now_ms() -> int:
@@ -113,9 +115,7 @@ class SessionTaskGateway(ThreadingHTTPServer):
                             "每小时状态巡检",
                             "todo",
                             "alpha-polling",
-                            "polling_task",
-                            "2026-05-26T10:30:00Z",
-                            {"h": 1, "m": 0, "s": 0},
+                            "session_idle",
                         ),
                     ],
                 },
@@ -338,8 +338,6 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
         if path == "/session":
             ts = now_ms()
             management = payload.get("task_management") or task("New session task")
-            if isinstance(management, dict) and management.get("start_condition") in {"scheduled_task", "polling_task"}:
-                management = {**management, "task_status": "todo"}
             title = management.get("task_summary") or management.get("summary") or management.get("plan_summary") or "New session task"
             item = session(f"created-{ts}", title, payload.get("directory") or self.server.alpha, "idle", management)
             item["model"] = payload.get("model")
@@ -541,11 +539,10 @@ async def page_metrics(page):
           boardColumns: Array.from(document.querySelectorAll('.board-column')).map((column) => column.innerText),
           composerText: document.querySelector('.bottom-composer textarea')?.value ?? '',
           triggerText: document.querySelector('.plan-trigger-button')?.innerText ?? '',
-          scheduleDialog: document.querySelector('.plan-schedule-dialog')?.innerText ?? '',
           taskRows: Array.from(document.querySelectorAll('.composer-task-row')).map((row) => row.innerText),
           selectedTaskRows: Array.from(document.querySelectorAll('.composer-task-row.selected')).map((row) => row.innerText),
           ganttBars: Array.from(document.querySelectorAll('.plan-timeline-bar')).map((bar) => bar.innerText),
-          calendarEvents: Array.from(document.querySelectorAll('.plan-calendar-event')).map((event) => event.innerText),
+          calendarButtons: document.querySelectorAll('[data-plan-mode="calendar"]').length,
           files: Array.from(document.querySelectorAll('.workspace-children .child-row')).map((row) => row.innerText),
           errors: document.querySelector('.error-strip')?.innerText ?? '',
           overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -606,21 +603,6 @@ async def choose_trigger(page, label: str):
     await page.locator(".plan-trigger-button").first.click()
     await expect(page.locator(".plan-trigger-menu")).to_be_visible()
     await page.locator(".plan-trigger-option").filter(has_text=label).click()
-    if label in {"定时任务", "轮询任务", "Scheduled task", "Polling task"}:
-        await expect(page.locator(".plan-schedule-dialog")).to_be_visible()
-        inputs = page.locator(".plan-schedule-dialog input")
-        if await inputs.count() > 0:
-            first_type = await inputs.first.get_attribute("type")
-            if first_type == "date":
-                await inputs.first.fill("2026-06-10")
-                if await inputs.count() > 1 and await inputs.nth(1).get_attribute("type") == "time":
-                    await inputs.nth(1).fill("10:45")
-            else:
-                await inputs.first.fill("2026-06-10T10:45")
-        if label in {"轮询任务", "Polling task"} and await inputs.count() >= 4:
-            await inputs.nth(2).fill("2")
-        await page.locator(".plan-schedule-dialog .primary").click()
-        await expect(page.locator(".plan-schedule-dialog")).to_have_count(0)
 
 
 async def drag_first_card_to_column(page, card_text: str, column_text: str):
@@ -793,7 +775,7 @@ async def debug_submit_state(page, name: str):
           sendTitle: document.querySelector('.bottom-composer .composer-send')?.getAttribute('title') ?? '',
           sendHtml: document.querySelector('.bottom-composer .composer-send')?.outerHTML ?? '',
           triggerText: document.querySelector('.bottom-composer .plan-trigger-button')?.innerText ?? '',
-          scheduleValues: Array.from(document.querySelectorAll('.plan-schedule-dialog input, .bottom-composer input'))
+          composerInputs: Array.from(document.querySelectorAll('.bottom-composer input'))
             .map((input) => ({ type: input.type, value: input.value, min: input.min, max: input.max })),
           error: document.querySelector('.error-strip')?.innerText ?? '',
           notice: document.querySelector('.plan-notice, .conversation-notice')?.innerText ?? '',
@@ -853,16 +835,16 @@ async def run_flow():
         await fill_composer(
             page,
             ".bottom-composer",
-            "定时巡检任务\n\n从 GUI 创建并同步到 gateway/session management",
+            "排队巡检任务\n\n从 GUI 创建并同步到 gateway/session management",
         )
-        await choose_trigger(page, "定时任务")
-        await shot(page, "05-scheduled-task-composed")
+        await choose_trigger(page, "排队执行")
+        await shot(page, "05-queued-task-composed")
         await send_composer(page, ".bottom-composer")
         await page.wait_for_timeout(1000)
-        await shot(page, "06-scheduled-session-created")
-        await debug_submit_state(page, "06-scheduled-session-created")
+        await shot(page, "06-queued-session-created")
+        await debug_submit_state(page, "06-queued-session-created")
         created = await page_metrics(page)
-        results.append({"name": "created-scheduled-session-visible", "ok": "定时巡检任务" in created["body"], "metrics": created})
+        results.append({"name": "created-queued-session-visible", "ok": "排队巡检任务" in created["body"] and created["calendarButtons"] == 0, "metrics": created})
 
         await click_tab(page, "计划")
         await shot(page, "07-plan-after-create-before-wait")
@@ -875,24 +857,18 @@ async def run_flow():
             raise
         await shot(page, "07-plan-after-create")
         after_create = await page_metrics(page)
-        results.append({"name": "new-task-on-plan-board", "ok": any("定时巡检任务" in card for card in after_create["boardCards"]), "metrics": after_create})
+        results.append({"name": "new-task-on-plan-board", "ok": any("排队巡检任务" in card for card in after_create["boardCards"]), "metrics": after_create})
 
-        # Exercise timed views while the scheduled task is still queued; doing
-        # and done items intentionally leave the timed planning views.
+        # Exercise the remaining planning views. Calendar mode has been removed.
         await page.locator('[data-plan-mode="gantt"]').click()
         await page.wait_for_timeout(500)
         await shot(page, "08-gantt-view")
         gantt = await page_metrics(page)
-        results.append({"name": "gantt-shows-timed-task", "ok": any("定时巡检任务" in bar for bar in gantt["ganttBars"]), "metrics": gantt})
-        await page.locator('[data-plan-mode="calendar"]').click()
-        await page.wait_for_timeout(500)
-        await shot(page, "09-calendar-view")
-        calendar = await page_metrics(page)
-        results.append({"name": "calendar-shows-timed-task", "ok": any("定时巡检任务" in event for event in calendar["calendarEvents"]), "metrics": calendar})
+        results.append({"name": "gantt-shows-queued-task", "ok": any("排队巡检任务" in bar for bar in gantt["ganttBars"]) and gantt["calendarButtons"] == 0, "metrics": gantt})
         await page.locator('[data-plan-mode="todo"]').click()
         await page.wait_for_timeout(500)
 
-        await page.locator(".board-card").filter(has_text="定时巡检任务").first.click()
+        await page.locator(".board-card").filter(has_text="排队巡检任务").first.click()
         await page.wait_for_selector(".plan-conversation-panel", timeout=10_000)
         await shot(page, "10-session-panel-open")
         if await page.locator(".plan-conversation-panel .composer-task-row").count() > 0:
@@ -901,24 +877,24 @@ async def run_flow():
         await fill_composer(
             page,
             ".plan-conversation-panel .bottom-composer",
-            "定时巡检任务 - 已修改\n\n更新后的交付说明",
+            "排队巡检任务 - 已修改\n\n更新后的交付说明",
         )
         await send_composer(page, ".plan-conversation-panel .bottom-composer")
         await page.wait_for_timeout(900)
         await shot(page, "11-task-edited-from-panel")
         edited = await page_metrics(page)
-        results.append({"name": "edited-task-visible", "ok": "定时巡检任务 - 已修改" in edited["body"], "metrics": edited})
+        results.append({"name": "edited-task-visible", "ok": "排队巡检任务 - 已修改" in edited["body"], "metrics": edited})
 
         await close_plan_panel(page)
-        await drag_first_card_to_column(page, "定时巡检任务", "进行中")
+        await drag_first_card_to_column(page, "排队巡检任务", "进行中")
         await shot(page, "12-task-dragged-doing")
         after_drag = await page_metrics(page)
-        results.append({"name": "drag-status-update-visible", "ok": any("定时巡检任务" in col and "进行中" in col for col in after_drag["boardColumns"]), "metrics": after_drag})
+        results.append({"name": "drag-status-update-visible", "ok": any("排队巡检任务" in col and "进行中" in col for col in after_drag["boardColumns"]), "metrics": after_drag})
 
-        await drag_first_card_to_column(page, "定时巡检任务", "完成")
+        await drag_first_card_to_column(page, "排队巡检任务", "完成")
         await shot(page, "13-task-done")
         done = await page_metrics(page)
-        results.append({"name": "done-status-visible", "ok": any("定时巡检任务" in col and "完成" in col for col in done["boardColumns"]), "metrics": done})
+        results.append({"name": "done-status-visible", "ok": any("排队巡检任务" in col and "完成" in col for col in done["boardColumns"]), "metrics": done})
 
         await click_tab(page, "文件")
         await page.wait_for_timeout(700)
@@ -931,13 +907,13 @@ async def run_flow():
     with urlopen(GATEWAY_URL + "/__records", timeout=5) as response:
         records = json.loads(response.read().decode("utf-8"))
     record_types = [item["type"] for item in records["records"]]
-    payload_text = json.dumps(records, ensure_ascii=False)
+    payload_text = json.dumps(records["records"], ensure_ascii=False)
     results.extend(
         [
             {"name": "gateway-create-session-called", "ok": "session.create" in record_types, "records": records["records"]},
             {"name": "gateway-sessionmanagement-updated", "ok": "sessionmanagement.update" in record_types, "records": records["records"]},
-            {"name": "gateway-recorded-scheduled-task", "ok": "scheduled_task" in payload_text, "records": records["records"]},
-            {"name": "gateway-recorded-edited-task", "ok": "定时巡检任务 - 已修改" in payload_text, "records": records["records"]},
+            {"name": "gateway-did-not-record-timed-task", "ok": "scheduled_task" not in payload_text and "polling_task" not in payload_text, "records": records["records"]},
+            {"name": "gateway-recorded-edited-task", "ok": "排队巡检任务 - 已修改" in payload_text, "records": records["records"]},
             {"name": "no-browser-errors", "ok": not browser_errors, "errors": browser_errors},
         ]
     )

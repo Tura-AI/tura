@@ -1,6 +1,4 @@
-import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { t } from "../i18n.js";
 import {
   activeCapabilities,
@@ -457,24 +455,10 @@ function graphemesForTable(value: string): string[] {
 
 const markdownLinkPattern = /\[([^\]\n]+)\]\(((?:<[^>\n]+>|[^()\n]+|\([^()\n]*\))+)\)/gu;
 
-function renderInlineMarkdown(source: string, options: RenderRichTextOptions = {}): string {
-  const linked = source.replace(markdownLinkPattern, (_match, label, href) =>
-    renderLinkTarget(markdownLinkTarget(String(href)), String(label), options),
-  );
-  const preserved = preserveAnsiSequences(linked);
-  const localLinked = linkLocalPathsPreservingOsc(preserved.text, options);
-  return restoreAnsiSequences(renderInlineDecorations(localLinked), preserved.tokens);
-}
-
-function markdownLinkTarget(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  if (trimmed.startsWith("<")) {
-    const close = trimmed.indexOf(">");
-    if (close > 0) return decodeHtml(trimmed.slice(1, close).trim());
-  }
-  const withoutTitle = trimmed.match(/^(\S+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/u);
-  return decodeHtml((withoutTitle?.[1] ?? trimmed).trim());
+function renderInlineMarkdown(source: string, _options: RenderRichTextOptions = {}): string {
+  const unlinked = source.replace(markdownLinkPattern, (_match, label) => String(label));
+  const preserved = preserveAnsiSequences(unlinked);
+  return restoreAnsiSequences(renderInlineDecorations(preserved.text), preserved.tokens);
 }
 
 function preserveAnsiSequences(source: string): { text: string; tokens: string[] } {
@@ -529,8 +513,8 @@ function renderInlineDecorations(source: string): string {
 
 function renderMediaToken(path: string, options: RenderRichTextOptions = {}): string {
   const label = mediaDisplayPath(path, options.workspaceDirectory);
-  return isLinkTarget(path)
-    ? terminalLink(linkTargetUrl(path, options.workspaceDirectory), mediaLinkLabel(label, path))
+  return isWebUrl(path)
+    ? terminalLink(path, mediaLinkLabel(label, path))
     : mediaLinkLabel(label, path);
 }
 
@@ -546,143 +530,25 @@ function normalizeDisplayPath(value: string): string {
 function renderLinkTarget(
   target: string,
   label: string,
-  options: RenderRichTextOptions = {},
+  _options: RenderRichTextOptions = {},
 ): string {
   const visibleLabel = stripAnsi(label).trim() || stripAnsi(target).trim();
-  if (!isLinkTarget(target)) return visibleLabel;
+  if (!isWebUrl(target)) return visibleLabel;
   const visible = linkLabel(visibleLabel, target);
-  return terminalLink(linkTargetUrl(target, options.workspaceDirectory), visible);
+  return terminalLink(target, visible);
 }
 
-function linkLabel(label: string, target: string): string {
-  const style = isLocalLinkTarget(target) ? `${textAgentRich}${underline}` : textAgentRich;
-  return `${style}${label}${reset}`;
+function linkLabel(label: string, _target: string): string {
+  return `${textAgentRich}${label}${reset}`;
 }
 
-function mediaLinkLabel(label: string, target: string): string {
-  const localStyle = isLocalLinkTarget(target) ? underline : "";
+function mediaLinkLabel(label: string, _target: string): string {
   if (activeCapabilities.level === "plain") return label;
-  return `${richInlineBg}${textAgentRich}${localStyle} ${label} ${reset}`;
-}
-
-const LOCAL_PATH_PATTERN =
-  /(?:[A-Za-z]:[\\/][^\r\n<>"'`]+|\\\\[^\\/\r\n<>"'`]+\\[^\\/\r\n<>"'`]+(?:\\[^\r\n<>"'`]+)*|\/[A-Za-z0-9_. -]+(?:\/[A-Za-z0-9_. -]+)+|\.{1,2}[\\/][^\r\n<>"'`]+|(?:[A-Za-z0-9_.-]+[\\/])+(?:[A-Za-z0-9_. -]+))/gu;
-const FILE_URL_PATTERN = /file:\/\/[^\s\r\n<>"'`]+/giu;
-const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/u;
-const KNOWN_FILE_EXTENSION_PATTERN =
-  /\.(?:png|jpe?g|gif|webp|svg|bmp|mp4|mov|webm|m4v|mp3|wav|ogg|flac|pdf|md|markdown|txt|tsx?|jsx?|json|ya?ml|toml|html?|css|scss|rs|py|go|java|kt|swift|c|cc|cpp|h|hpp|cs)(?=$|[\s),.;:!?])/iu;
-
-function linkLocalPaths(source: string, options: RenderRichTextOptions = {}): string {
-  const fileLinks: string[] = [];
-  const protectedFileLinks = source.replace(FILE_URL_PATTERN, (raw) => {
-    const path = normalizeMatchedPath(raw, options);
-    const trailing = raw.slice(path.length);
-    const label = localFilesystemPath(path, options.workspaceDirectory) ?? path;
-    const index =
-      fileLinks.push(
-        terminalLink(linkTargetUrl(path, options.workspaceDirectory), linkLabel(label, path)),
-      ) - 1;
-    return `\u0000FILELINK${index}\u0000${trailing}`;
-  });
-  const linked = protectedFileLinks.replace(LOCAL_PATH_PATTERN, (raw, offset: number) => {
-    if (protectedFileLinks.slice(Math.max(0, offset - 10), offset).includes("\u0000FILELINK"))
-      return raw;
-    if (protectedFileLinks.slice(Math.max(0, offset - 8), offset).includes("[MEDIA:")) return raw;
-    if (
-      offset > 1 &&
-      protectedFileLinks[offset - 2] === ":" &&
-      protectedFileLinks[offset - 1] === "/"
-    )
-      return raw;
-    if (
-      /^[A-Za-z]:[\\/]/u.test(raw) &&
-      offset > 0 &&
-      /[A-Za-z0-9]/u.test(protectedFileLinks[offset - 1])
-    )
-      return raw;
-    const path = normalizeMatchedPath(raw, options);
-    const trailing = raw.slice(path.length);
-    if (!isLocalPathReference(path)) return raw;
-    if (activeCapabilities.level === "rich" || activeCapabilities.level === "ansi")
-      return `${terminalLink(linkTargetUrl(path, options.workspaceDirectory), linkLabel(path, path))}${trailing}`;
-    return `${path}${trailing}`;
-  });
-  return linked.replace(
-    /\u0000FILELINK(\d+)\u0000/gu,
-    (_match, index) => fileLinks[Number(index)] ?? "",
-  );
-}
-
-function linkLocalPathsPreservingOsc(source: string, options: RenderRichTextOptions = {}): string {
-  if (stripAnsi(source).trimStart().startsWith("◇")) return source;
-  let cursor = 0;
-  let output = "";
-  for (const match of source.matchAll(osc8FullPattern)) {
-    const index = match.index ?? 0;
-    output += linkLocalPaths(source.slice(cursor, index), options);
-    output += match[0];
-    cursor = index + match[0].length;
-  }
-  output += linkLocalPaths(source.slice(cursor), options);
-  return output;
-}
-
-function normalizeMatchedPath(raw: string, options: RenderRichTextOptions = {}): string {
-  const existing = longestExistingMatchedPath(raw, options.workspaceDirectory);
-  if (existing) return existing;
-  const trimmed = raw.replace(TRAILING_PATH_PUNCTUATION, "");
-  if (!/\s/u.test(trimmed)) return trimmed;
-  const extension = trimmed.match(KNOWN_FILE_EXTENSION_PATTERN);
-  if (extension?.index !== undefined) {
-    return trimmed.slice(0, extension.index + extension[0].trimEnd().length);
-  }
-  return trimmed.trimEnd();
-}
-
-function longestExistingMatchedPath(raw: string, workspaceDirectory?: string): string | undefined {
-  const candidates = matchedPathCandidates(raw);
-  for (const candidate of candidates) {
-    if (localTargetExists(candidate, workspaceDirectory)) return candidate;
-  }
-  return undefined;
-}
-
-function matchedPathCandidates(raw: string): string[] {
-  const endings = new Set<number>([raw.length]);
-  for (let end = raw.length; end > 0; end -= 1) {
-    const previous = raw[end - 1] ?? "";
-    if (!/[),.;:!?]/u.test(previous)) break;
-    endings.add(end - 1);
-  }
-  for (let index = 0; index < raw.length; index += 1) {
-    if (/[\s,.;:!?]/u.test(raw[index] ?? "")) endings.add(index);
-    if (/[\])}]/u.test(raw[index] ?? "")) {
-      endings.add(index);
-      endings.add(index + 1);
-    }
-  }
-  return [...endings]
-    .map((end) => raw.slice(0, end).trimEnd())
-    .filter((candidate) => candidate && isLocalLinkTarget(candidate))
-    .sort((left, right) => right.length - left.length);
-}
-
-function isLocalPath(value: string): boolean {
-  return /^(?:[A-Za-z]:[\\/]|\\\\|\/|\.{1,2}[\\/])/u.test(value);
-}
-
-function isRelativePath(value: string): boolean {
-  return (
-    !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value) && !value.startsWith("#") && /[\\/]/u.test(value)
-  );
-}
-
-function isLocalPathReference(value: string): boolean {
-  return isLocalPath(value) || isRelativePath(value);
+  return `${richInlineBg}${textAgentRich} ${label} ${reset}`;
 }
 
 function terminalLink(url: string, label: string): string {
-  return isLinkTarget(url) && activeCapabilities.osc8 && activeCapabilities.level !== "plain"
+  return isWebUrl(url) && activeCapabilities.osc8 && activeCapabilities.level !== "plain"
     ? `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`
     : label;
 }
@@ -791,45 +657,24 @@ function restoreMarkdownCodeFences(source: string, tokens: string[]): string {
   return source.replace(/\u0000FENCE(\d+)\u0000/gu, (_match, index) => tokens[Number(index)] ?? "");
 }
 
-function isLinkTarget(value: string): boolean {
-  return /^(?:https?:\/\/|file:\/\/)/iu.test(value) || isLocalPathReference(value);
-}
-
-function isLocalLinkTarget(value: string): boolean {
-  return /^file:\/\//iu.test(value) || isLocalPathReference(value);
-}
-
-function linkTargetUrl(value: string, workspaceDirectory?: string): string {
-  if (/^(?:https?:\/\/|file:\/\/)/iu.test(value)) return value;
-  return localPathUrl(value, workspaceDirectory);
-}
-
-function localPathUrl(value: string, workspaceDirectory?: string): string {
-  const resolved = localFilesystemPath(value, workspaceDirectory) ?? value;
-  const normalized = resolved.replace(/\\/g, "/");
-  const withSlash = /^[A-Za-z]:\//u.test(normalized) ? `/${normalized}` : normalized;
-  return `file://${encodeURI(withSlash)}`;
-}
-
-function localTargetExists(value: string, workspaceDirectory?: string): boolean {
-  const resolved = localFilesystemPath(value, workspaceDirectory);
-  return Boolean(resolved && existsSync(resolved));
+function isWebUrl(value: string): boolean {
+  return /^https?:\/\//iu.test(value);
 }
 
 function localFilesystemPath(value: string, workspaceDirectory?: string): string | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
-  if (/^file:\/\//iu.test(trimmed)) {
-    try {
-      return fileURLToPath(trimmed);
-    } catch {
-      return undefined;
-    }
-  }
-  if (!isLocalPathReference(trimmed)) return undefined;
+  if (!isLocalMediaPath(trimmed)) return undefined;
   if (/^[A-Za-z]:[\\/]/u.test(trimmed)) return trimmed;
   if (path.isAbsolute(trimmed)) return trimmed;
   return path.resolve(workspaceDirectory || process.cwd(), trimmed);
+}
+
+function isLocalMediaPath(value: string): boolean {
+  return (
+    /^(?:[A-Za-z]:[\\/]|\\\\|\/|\.{1,2}[\\/])/u.test(value) ||
+    (!/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value) && !value.startsWith("#") && /[\\/]/u.test(value))
+  );
 }
 
 function decodeHtml(value: string): string {

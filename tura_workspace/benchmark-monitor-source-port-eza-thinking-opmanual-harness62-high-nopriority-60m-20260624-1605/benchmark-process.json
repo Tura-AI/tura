@@ -1,8 +1,0 @@
-{
-  "run_id": "source-port-eza-thinking-opmanual-harness62-high-nopriority-60m-20260624-1605",
-  "pid": 5988,
-  "started_at": "2026-06-24T15:56:51.0324256+02:00",
-  "script": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-thinking-opmanual-harness62-high-nopriority-60m-20260624-1605\\run-benchmark.ps1",
-  "stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-thinking-opmanual-harness62-high-nopriority-60m-20260624-1605\\runner.stdout.log",
-  "stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-eza-thinking-opmanual-harness62-high-nopriority-60m-20260624-1605\\runner.stderr.log"
-}

@@ -1,6 +1,7 @@
 export type GatewayConfig = {
   language?: string | null;
   theme?: string | null;
+  corner_radius?: string | null;
   main_font?: string | null;
   code_font?: string | null;
   main_font_size?: number | null;

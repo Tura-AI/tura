@@ -128,6 +128,11 @@ path = "tests/business/workspace_config_api_flow.rs"
 required-features = ["business-tests"]
 
 [[test]]
+name = "default_session_agent_test"
+path = "tests/business/default_session_agent_test.rs"
+required-features = ["business-tests"]
+
+[[test]]
 name = "process_lifecycle_e2e"
 path = "tests/os_testing/process_lifecycle_e2e.rs"
 required-features = ["os-tests"]

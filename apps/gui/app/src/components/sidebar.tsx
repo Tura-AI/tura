@@ -51,19 +51,20 @@ export function WorkspaceTree(props: {
   expandedGroup?: string;
   attentionAcknowledged: (session: Session) => boolean;
   onWorkspace: (project: Project) => void;
-  onBlankSession: () => void;
+  onBlankSession: (project: Project) => void;
   onGroup: (id: string) => void;
   onIssue: (issue: ProductIssue) => void;
   onStatus: (session: Session, status: PlanStatus) => void;
   onSession: (sessionId: string) => void;
-  onRenameSession: (sessionId: string, title: string) => void;
+  onDeleteSession: (sessionId: string) => void;
+  onDeleteWorkspace: (project: Project) => void;
   onFile: (file: FileInfo) => void;
   onFileTreeDirectory: (file: FileInfo) => void;
   onUp: () => void;
-  onSettings: () => void;
 }) {
   const [workspaceSectionOpen, setWorkspaceSectionOpen] = createSignal(true);
   const [archivedSectionOpen, setArchivedSectionOpen] = createSignal(true);
+  const [confirmDeleteSession, setConfirmDeleteSession] = createSignal<Session>();
   const projects = createMemo(() => sidebarWorkspaceProjects(props.projects, props.directory));
   const activeWorkspaceSessions = (worktree: string) =>
     props.sessions.filter(
@@ -123,6 +124,14 @@ export function WorkspaceTree(props: {
       props.onStatus(session, "archived");
     }
   }
+  function deleteConfirmedSession() {
+    const session = confirmDeleteSession();
+    if (!session) {
+      return;
+    }
+    setConfirmDeleteSession(undefined);
+    props.onDeleteSession(session.id);
+  }
 
   return (
     <div class="workspace-tree">
@@ -171,14 +180,13 @@ export function WorkspaceTree(props: {
                         title={t("newSession")}
                         onClick={(event) => {
                           event.stopPropagation();
-                          props.onBlankSession();
+                          props.onBlankSession(project);
                         }}
                       >
                         <Plus size={14} strokeWidth={1.8} />
                       </button>
                       <WorkspaceMenu
-                        onSettings={props.onSettings}
-                        onNewSession={props.onBlankSession}
+                        onDeleteWorkspace={() => props.onDeleteWorkspace(project)}
                       />
                     </div>
                   </div>
@@ -199,9 +207,8 @@ export function WorkspaceTree(props: {
                       selectedFile={props.selectedFile}
                       onIssue={props.onIssue}
                       onGroup={props.onGroup}
-                      onStatus={props.onStatus}
                       onSession={openRailSession}
-                      onRenameSession={props.onRenameSession}
+                      onDeleteSession={setConfirmDeleteSession}
                       onFile={props.onFile}
                       onFileTreeDirectory={props.onFileTreeDirectory}
                       onUp={props.onUp}
@@ -244,15 +251,34 @@ export function WorkspaceTree(props: {
                   <div class="workspace-children archived-group">
                     <For each={group.sessions}>
                       {(session) => (
-                        <button
+                        <div
+                          role="button"
+                          tabindex={0}
                           class="child-row session-row"
                           style={{ "--depth": 1 }}
                           onClick={() => openRailSession(session)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              openRailSession(session);
+                            }
+                          }}
                           title={sessionHoverTitle(session)}
                         >
                           <span>{shortSessionTitle(sessionTitle(session))}</span>
                           <small>{relativeSessionTime(session)}</small>
-                        </button>
+                          <button
+                            type="button"
+                            class="session-row-action"
+                            title={t("delete")}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setConfirmDeleteSession(session);
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
                       )}
                     </For>
                   </div>
@@ -262,6 +288,45 @@ export function WorkspaceTree(props: {
           </For>
         </Show>
       </Show>
+      <Show when={confirmDeleteSession()}>
+        {(session) => (
+          <ConfirmSessionDeleteDialog
+            session={session()}
+            onCancel={() => setConfirmDeleteSession(undefined)}
+            onConfirm={deleteConfirmedSession}
+          />
+        )}
+      </Show>
+    </div>
+  );
+}
+
+function ConfirmSessionDeleteDialog(props: {
+  session: Session;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div class="modal-scrim" onMouseDown={props.onCancel}>
+      <div class="name-dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <h2>{t("deleteSessionTitle")}</h2>
+            <p>{t("deleteSessionDescription", { name: sessionTitle(props.session) })}</p>
+          </div>
+          <button type="button" onClick={props.onCancel}>
+            ×
+          </button>
+        </header>
+        <footer>
+          <button type="button" class="secondary" onClick={props.onCancel}>
+            {t("cancel")}
+          </button>
+          <button type="button" class="primary" onClick={props.onConfirm}>
+            {t("delete")}
+          </button>
+        </footer>
+      </div>
     </div>
   );
 }

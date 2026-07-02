@@ -91,7 +91,11 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
         model_variant: state().modelVariant,
         model_acceleration_enabled: state().accelerationEnabled,
       };
-      const configPayload = configDraftToPatch(state().configDraft, state().themeMode);
+      const configPayload = configDraftToPatch(
+        state().configDraft,
+        state().themeMode,
+        state().cornerRadius,
+      );
       const [workspaceConfig, config] = await Promise.all([
         directoryClient().patchWorkspaceConfig(payload),
         rootClient().patchConfig(configPayload),
@@ -197,7 +201,7 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
     }
   }
 
-  async function validateProvider(providerId: string) {
+  async function validateProvider(providerId: string, method?: ProviderAuthMethod) {
     setState((previous) => ({
       ...previous,
       settingsSaving: true,
@@ -205,7 +209,16 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
       error: undefined,
     }));
     try {
-      const result = await rootClient().providerAuthValidate(providerId);
+      const draftKey = method ? providerAuthDraftKey(providerId, method) : undefined;
+      const draftKeyValue = draftKey ? state().authDrafts[draftKey]?.trim() : undefined;
+      const result = await rootClient().providerAuthValidate(providerId, {
+        type: method?.type,
+        kind: method?.kind,
+        login: method?.login,
+        token_env: method?.token_env,
+        key: draftKeyValue || undefined,
+        access: draftKeyValue || undefined,
+      });
       setState((previous) => ({
         ...previous,
         settingsSaving: false,

@@ -1,5 +1,6 @@
 import type { Session, TaskManagement } from "@tura/gateway-sdk";
-import { Match, Show, Switch, createSignal } from "solid-js";
+import { Match, Show, Switch, createEffect, createSignal, onCleanup } from "solid-js";
+import { cornerRadiusScale } from "../app-state-utils";
 import { DEFAULT_CODE_FONT, DEFAULT_MAIN_FONT } from "../config/defaults";
 import { sessionTasks, taskDisplayText, taskNonceId } from "../features/plan/tasks";
 import { t } from "../i18n";
@@ -13,7 +14,7 @@ import { AppLoadingPlaceholder, GatewayConnectionLoadingOverlay } from "./loadin
 import { PlanPageOutlet } from "./plan-page-outlet";
 import { ProviderAuthPortal } from "./provider-auth-portal";
 import { SettingsPageOutlet } from "./settings-page-outlet";
-import { ErrorStrip, RailToggleButton } from "./shell-chrome";
+import { AppTitleBar, ErrorStrip, RailToggleButton } from "./shell-chrome";
 import { useIdleScrollbars } from "./use-idle-scrollbars";
 import { useRailLayout } from "./use-rail-layout";
 
@@ -24,6 +25,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
     slashCommands,
     setState,
     submitPrompt,
+    queuePrompt,
     runPlanTaskNow,
     updatePlanTicketTask,
     updateEditingTaskFromComposer,
@@ -107,6 +109,14 @@ export function AppShell(props: { view: AppShellViewModel }) {
   });
 
   useIdleScrollbars();
+
+  createEffect(() => {
+    document.documentElement.style.setProperty(
+      "--corner-radius-scale",
+      String(cornerRadiusScale(state().cornerRadius)),
+    );
+  });
+  onCleanup(() => document.documentElement.style.removeProperty("--corner-radius-scale"));
 
   function showGatewayLoadingOverlay() {
     return !state().bootstrapped && state().connection !== "connected" && !state().error;
@@ -227,16 +237,29 @@ export function AppShell(props: { view: AppShellViewModel }) {
     }));
   }
 
-  async function submitCurrentComposer(options: { queued?: boolean } = {}) {
+  async function submitCurrentComposer() {
     if (state().editingTask) {
       await updateEditingTaskFromComposer();
       return;
     }
-    await submitPrompt(options);
+    if (state().planDraftStartCondition === "session_idle") {
+      await queuePrompt();
+      return;
+    }
+    await submitPrompt();
+  }
+
+  async function queueCurrentComposer() {
+    if (state().editingTask) {
+      await updateEditingTaskFromComposer();
+      return;
+    }
+    await queuePrompt();
   }
 
   return (
     <>
+      <AppTitleBar />
       <main
         class={classNames(
           "workbench",
@@ -257,6 +280,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
           "--code-font-family": state().codeFont || DEFAULT_CODE_FONT,
           "--base-font-size": `${state().mainFontSize || 12}px`,
           "--code-font-size": `${state().codeFontSize || 12}px`,
+          "--corner-radius-scale": String(cornerRadiusScale(state().cornerRadius)),
         }}
       >
         <AppRail view={props.view} collapseAfterSelection={collapseRailAfterCompactSelection} />
@@ -306,6 +330,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   }
                   onRunTask={(session, task) => void runEditingTaskNow(session, task)}
                   onSubmit={() => void submitCurrentComposer()}
+                  onQueueSubmit={() => void queueCurrentComposer()}
                   onOpenProviderSettings={openProviderSettings}
                   leftRailOpen={!railCollapsed()}
                   leftRailWidth={railFullscreen() ? 0 : railWidth()}
@@ -331,7 +356,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   leftRailWidth={railFullscreen() ? 0 : railWidth()}
                   view={props.view}
                   onSubmit={() => void submitCurrentComposer()}
-                  onQueueSubmit={() => void submitCurrentComposer({ queued: true })}
+                  onQueueSubmit={() => void queueCurrentComposer()}
                   onInspectorLayout={setConversationInspector}
                   closeInspectorSignal={conversationInspectorCloseToken()}
                   onRequestCollapseLeftRail={collapseRailForMainWidth}

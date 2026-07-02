@@ -43,7 +43,8 @@ export type SettingsSection =
   | "agents"
   | "personalization";
 export type ThemeMode = "light" | "dark" | "caral" | "uruk" | "liangzhu";
-export type PlanMode = "todo" | "gantt" | "calendar";
+export type CornerRadiusMode = "0px" | "2px" | "8px" | "9.6px";
+export type PlanMode = "todo" | "gantt";
 export type ProviderAuthPanel = {
   providerId: string;
   reason?: string;
@@ -85,6 +86,7 @@ export type AppState = {
   previousMainTab: Exclude<MainTab, "settings">;
   settingsSection: SettingsSection;
   themeMode: ThemeMode;
+  cornerRadius: CornerRadiusMode;
   mainFont: string;
   codeFont: string;
   mainFontSize: number;
@@ -105,6 +107,7 @@ export type AppState = {
   messagesBySession: Record<string, Message[]>;
   messagePagingBySession: Record<string, { hasEarlier: boolean; loadingEarlier: boolean }>;
   transcriptScrollBySession: Record<string, number>;
+  transcriptScrollToBottomRequest?: { sessionId: string; token: number };
   todosBySession: Record<string, TodoItem[]>;
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
@@ -165,6 +168,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     settingsSection: drafts.settingsSection,
     lastSessionOpenedId: undefined,
     themeMode: systemThemeMode(),
+    cornerRadius: "8px",
     mainFont: "",
     codeFont: "",
     mainFontSize: 12,
@@ -172,6 +176,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     messagesBySession: {},
     messagePagingBySession: {},
     transcriptScrollBySession: {},
+    transcriptScrollToBottomRequest: undefined,
     todosBySession: {},
     permissions: [],
     questions: [],
@@ -194,7 +199,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     providerSearch: drafts.providerSearch,
     providerAuthPanel: undefined,
     modelVariant: "medium",
-    accelerationEnabled: true,
+    accelerationEnabled: false,
     authDrafts: drafts.authDrafts,
     authCodeDrafts: drafts.authCodeDrafts,
     settingsSaving: false,
@@ -208,42 +213,8 @@ export function systemThemeMode(): Extract<ThemeMode, "light" | "dark"> {
     : "light";
 }
 
-export const SESSION_FALLBACK_NAME_MAX_LENGTH = 48;
-
-export function sessionFallbackNameFromInput(
-  input: string,
-  maxLength = SESSION_FALLBACK_NAME_MAX_LENGTH,
-): string {
-  const normalized = input.replace(/\s+/gu, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-  return Array.from(normalized).slice(0, maxLength).join("");
-}
-
-export function sessionHasDisplayName(session: Session): boolean {
-  return Boolean(
-    session.session_display_name?.trim() || session.plan_summary?.trim() || session.name?.trim(),
-  );
-}
-
-export function withSessionFallbackName(session: Session, input: string): Session {
-  if (sessionHasDisplayName(session)) {
-    return session;
-  }
-  const fallbackName = sessionFallbackNameFromInput(input);
-  if (!fallbackName) {
-    return session;
-  }
-  return {
-    ...session,
-    name: fallbackName,
-    session_display_name: fallbackName,
-  };
-}
-
 export function sessionTitle(session: Session): string {
-  return session.session_display_name || session.plan_summary || session.name || "New Session";
+  return session.session_display_name || session.name || "New Session";
 }
 
 export function sessionUpdatedAt(session: Session): number {

@@ -127,7 +127,7 @@
   min-height: 26px;
   padding: 0 8px;
   border: 1px solid color-mix(in srgb, var(--accent-ink) 28%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent-ink) 18%, transparent);
   color: var(--accent-ink);
   font-size: var(--font-body);

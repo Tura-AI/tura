@@ -8,20 +8,8 @@ import {
   type TuraConfigModelPair,
 } from "@tura/gateway-sdk";
 import ArrowLeft from "lucide-solid/icons/arrow-left";
-import FolderSearch from "lucide-solid/icons/folder-search";
-import LayoutList from "lucide-solid/icons/layout-list";
-import MessageSquare from "lucide-solid/icons/message-square";
 import Search from "lucide-solid/icons/search";
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  Match,
-  Show,
-  Switch,
-  type JSX,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { t } from "../../i18n";
 import {
   AgentAvatarCanvas,
@@ -38,6 +26,7 @@ import { classNames } from "../../state/format";
 import {
   systemThemeMode,
   type AppState,
+  type CornerRadiusMode,
   type MainTab,
   type SettingsSection,
   type ThemeMode,
@@ -48,8 +37,10 @@ import { AppearanceSelect, CONFIGURE_PROVIDER_OPTION } from "./appearance-select
 import { providerDomains } from "./provider-domain";
 import { ProviderConfigGroup } from "./provider-settings";
 import { AgentSettingsPanel } from "./agent-settings-panel";
+import { mainTabEntries } from "./main-tabs";
 import { settingsRoutes, settingsRouteTitle } from "./settings-router";
 import {
+  CORNER_RADIUS_OPTIONS,
   DEFAULT_PROVIDER_DOMAIN,
   LANGUAGE_OPTIONS,
   DEFAULT_MODEL_TIER_CONFIG_TIERS,
@@ -69,34 +60,16 @@ export function MainTabs(props: {
   conversationLabel?: string;
   onChange: (tab: Exclude<MainTab, "settings">) => void;
 }) {
-  const tabs: Array<{
-    id: Exclude<MainTab, "settings">;
-    label: string;
-    icon?: JSX.Element;
-  }> = [
-    {
-      id: "conversation",
-      label: props.conversationLabel ?? t("session"),
-      icon: <MessageSquare size={15} />,
-    },
-    { id: "plan", label: t("plan"), icon: <LayoutList size={15} /> },
-    { id: "files", label: t("fileBrowser"), icon: <FolderSearch size={15} /> },
-  ];
+  const tabs = () => mainTabEntries(props.conversationLabel);
   return (
     <nav class="main-tabs">
-      <For each={tabs}>
+      <For each={tabs()}>
         {(item) => (
           <button
-            class={classNames(props.active === item.id && "selected")}
+            class={classNames("no-icon", props.active === item.id && "selected")}
             onClick={() => props.onChange(item.id)}
           >
-            <Show when={item.icon}>{(icon) => icon()}</Show>
             <span>{item.label}</span>
-            <Show when={item.id === "conversation"}>
-              <span class="main-tab-hidden-alias">
-                {t("sessionHistory")} {t("newSession")}
-              </span>
-            </Show>
           </button>
         )}
       </For>
@@ -149,6 +122,7 @@ export function SettingsView(props: {
   onModelTier: (tier: string, option: TuraConfigModelPair) => void;
   onConfigureProviders: () => void;
   onTheme: (theme: ThemeMode) => void;
+  onCornerRadius: (cornerRadius: CornerRadiusMode) => void;
   onMainFont: (font: string) => void;
   onCodeFont: (font: string) => void;
   onMainFontSize: (size: number) => void;
@@ -266,6 +240,14 @@ export function SettingsView(props: {
                         )}
                       </For>
                     </div>
+                  </div>
+                  <div class="field-row">
+                    <span>{t("radius")}</span>
+                    <AppearanceSelect
+                      value={props.state.cornerRadius}
+                      options={CORNER_RADIUS_OPTIONS}
+                      onSelect={(option) => props.onCornerRadius(option.value as CornerRadiusMode)}
+                    />
                   </div>
                   <div class="field-row">
                     <span>{t("mainFont")}</span>

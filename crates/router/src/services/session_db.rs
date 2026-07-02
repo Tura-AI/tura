@@ -45,7 +45,7 @@ impl SessionDbService {
         if let Some(root) = std::env::var_os("TURA_PROJECT_ROOT") {
             command.env("TURA_PROJECT_ROOT", root);
         }
-        hide_child_window(&mut command);
+        tura_path::process_hardening::hide_child_console_window(&mut command);
         let child = command.spawn()?;
         *self
             .child
@@ -203,15 +203,6 @@ fn find_repo_root(path: &Path) -> Option<PathBuf> {
         .ancestors()
         .find(|candidate| candidate.join("crates").join("router").is_dir())
         .map(Path::to_path_buf)
-}
-
-fn hide_child_window(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
 }
 
 #[cfg(test)]

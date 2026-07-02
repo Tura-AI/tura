@@ -27,6 +27,25 @@ describe("composer attachment drag and sizing", () => {
     expect(inputBlock).not.toContain("onDrop=");
   });
 
+  test("keeps Enter submission semantics stable while sessions are running", () => {
+    expect(composerSource).toContain(
+      'if (event.key !== "Enter" || event.shiftKey || event.isComposing) {',
+    );
+    expect(composerSource).toContain("event.preventDefault();");
+    const submitFromControlBlock = composerSource.slice(
+      composerSource.indexOf("function submitFromControl"),
+      composerSource.indexOf("function stopFromControl"),
+    );
+    const submitFromKeyboardBlock = composerSource.slice(
+      composerSource.indexOf("function submitFromKeyboard"),
+      composerSource.indexOf("const sendButtonTitle"),
+    );
+    expect(submitFromControlBlock).not.toContain("props.running");
+    expect(submitFromControlBlock).not.toContain("props.onStop");
+    expect(submitFromKeyboardBlock).not.toContain("props.running");
+    expect(submitFromKeyboardBlock).not.toContain("props.onStop");
+  });
+
   test("keeps attachment chips at the current composer text height", () => {
     expect(composerCss).toContain(".composer-attachment-token");
     expect(composerCss).toContain("height: 1lh;");

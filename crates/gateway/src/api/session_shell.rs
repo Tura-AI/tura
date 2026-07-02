@@ -47,6 +47,7 @@ pub(super) fn run_session_shell_command(directory: &str, input: &str) -> Result<
         command
     };
     command.current_dir(directory);
+    tura_path::process_hardening::hide_child_console_window(&mut command);
     let output = command.output().map_err(|error| {
         format!("failed to spawn session shell command in {directory}: {error}")
     })?;

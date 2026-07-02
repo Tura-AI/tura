@@ -30,7 +30,7 @@ export class MockGatewayClient {
     active_model: "gpt-5.5",
     model: "codex/gpt-5.5",
     model_variant: "high",
-    model_acceleration_enabled: true,
+    model_acceleration_enabled: false,
   };
 
   constructor(options: { directory: string }) {
@@ -290,6 +290,24 @@ export class MockGatewayClient {
 
   async listAgents(): Promise<StoredAgent[]> {
     return [
+      {
+        summary: {
+          id: "thoughtful",
+          name: "Thoughtful",
+          description:
+            "Reflects on each step and stays steady across long-running tasks.",
+          source: "static",
+          path: "mock://agents/thoughtful",
+          aliases: ["planning"],
+          capabilities: ["chat"],
+          hidden: false,
+        },
+        config: {
+          agent_name: "thoughtful",
+          description:
+            "Reflects on each step and stays steady across long-running tasks.",
+        },
+      },
       {
         summary: {
           id: "balanced",

@@ -133,17 +133,14 @@ async def main() -> None:
                 ".settings-view",
             )
             await expect(page.locator(".settings-view")).to_be_visible(timeout=15000)
-            await expect(page.get_by_role("heading", name="外观")).to_be_visible(timeout=15000)
+            await page.locator('button[data-section="appearance"]').click()
+            await expect(page.locator(".appearance-panel")).to_be_visible(timeout=15000)
 
-            themes = [
-                ("浅色", "light"),
-                ("深色", "dark"),
-                ("Caral", "caral"),
-                ("Uruk", "uruk"),
-                ("Liangzhu", "liangzhu"),
-            ]
-            for label, theme_id in themes:
-                await page.get_by_role("button", name=label).click()
+            themes = ["light", "dark", "caral", "uruk", "liangzhu"]
+            theme_buttons = page.locator(".theme-choice")
+            await expect(theme_buttons).to_have_count(len(themes))
+            for index, theme_id in enumerate(themes):
+                await theme_buttons.nth(index).click()
                 await expect(page.locator("html")).to_have_attribute(
                     "data-theme",
                     theme_id,
@@ -152,23 +149,91 @@ async def main() -> None:
             await page.screenshot(path=OUT / "01-themes.png", full_page=True)
 
             selects = page.locator(".appearance-select-button")
-            await expect(selects).to_have_count(4)
+            await expect(selects).to_have_count(5)
             await selects.nth(0).click()
+            await expect(page.locator(".appearance-select-menu")).to_be_visible()
+            await page.get_by_role("button", name="0px").click()
+            await expect(page.locator(".appearance-select-menu")).to_have_count(0)
+            zero_radius = await page.locator(".settings-panel").evaluate(
+                """
+                (panel) => {
+                  const root = getComputedStyle(document.querySelector('.workbench'));
+                  const thumb = getComputedStyle(document.documentElement, '::-webkit-scrollbar-thumb');
+                  return {
+                    panelRadius: getComputedStyle(panel).borderRadius,
+                    tokenRadius: root.getPropertyValue('--radius').trim(),
+                    tokenSmall: root.getPropertyValue('--radius-small').trim(),
+                    tokenScale: root.getPropertyValue('--corner-radius-scale').trim(),
+                    scrollbarRadius: thumb.borderRadius,
+                  };
+                }
+                """
+            )
+            if zero_radius["panelRadius"] != "0px" or zero_radius["tokenScale"] != "0":
+                checks.append({"name": "zero-radius-applies", "ok": False, "metrics": zero_radius})
+            else:
+                checks.append({"name": "zero-radius-applies", "ok": True, "metrics": zero_radius})
+
+            await selects.nth(0).click()
+            await expect(page.locator(".appearance-select-menu")).to_be_visible()
+            await page.get_by_role("button", name="8px").click()
+            await expect(page.locator(".appearance-select-menu")).to_have_count(0)
+            default_radius = await page.locator(".settings-panel").evaluate(
+                """
+                (panel) => {
+                  const root = getComputedStyle(document.querySelector('.workbench'));
+                  return {
+                    panelRadius: getComputedStyle(panel).borderRadius,
+                    tokenRadius: root.getPropertyValue('--radius').trim(),
+                    tokenSmall: root.getPropertyValue('--radius-small').trim(),
+                    tokenScale: root.getPropertyValue('--corner-radius-scale').trim(),
+                  };
+                }
+                """
+            )
+            if default_radius["panelRadius"] != "8px" or default_radius["tokenScale"] != "1":
+                checks.append({"name": "default-radius-matches-current", "ok": False, "metrics": default_radius})
+            else:
+                checks.append({"name": "default-radius-matches-current", "ok": True, "metrics": default_radius})
+
+            await selects.nth(0).click()
+            await expect(page.locator(".appearance-select-menu")).to_be_visible()
+            await page.get_by_role("button", name="9.6px").click()
+            await expect(page.locator(".appearance-select-menu")).to_have_count(0)
+            large_radius = await page.locator(".settings-panel").evaluate(
+                """
+                (panel) => {
+                  const root = getComputedStyle(document.querySelector('.workbench'));
+                  return {
+                    panelRadius: getComputedStyle(panel).borderRadius,
+                    tokenRadius: root.getPropertyValue('--radius').trim(),
+                    tokenSmall: root.getPropertyValue('--radius-small').trim(),
+                    tokenScale: root.getPropertyValue('--corner-radius-scale').trim(),
+                  };
+                }
+                """
+            )
+            if large_radius["panelRadius"] != "9.6px" or large_radius["tokenScale"] != "1.2":
+                checks.append({"name": "large-radius-applies", "ok": False, "metrics": large_radius})
+            else:
+                checks.append({"name": "large-radius-applies", "ok": True, "metrics": large_radius})
+
+            await selects.nth(1).click()
             await expect(page.locator(".appearance-select-menu")).to_be_visible()
             await page.get_by_role("button", name="Arial").click()
             await expect(page.locator(".appearance-select-menu")).to_have_count(0)
 
-            await selects.nth(1).click()
+            await selects.nth(2).click()
             await expect(page.locator(".appearance-select-menu")).to_be_visible()
             await page.get_by_role("button", name="Consolas").click()
             await expect(page.locator(".appearance-select-menu")).to_have_count(0)
 
-            await selects.nth(2).click()
+            await selects.nth(3).click()
             await expect(page.locator(".appearance-select-menu")).to_be_visible()
             await page.get_by_role("button", name="13").click()
             await expect(page.locator(".appearance-select-menu")).to_have_count(0)
 
-            await selects.nth(3).click()
+            await selects.nth(4).click()
             await expect(page.locator(".appearance-select-menu")).to_be_visible()
             await page.locator(".appearance-select-menu").get_by_role(
                 "button", name="12"

@@ -690,10 +690,6 @@ async def run_round():
             entry_link = page.locator(f'.rich-text a[href="{SNAKE_ENTRY_LINK}"]').first
             await expect(demo_link).to_be_visible()
             await expect(entry_link).to_be_visible()
-            await page.wait_for_function(
-                "() => document.querySelectorAll('.rich-local-path').length >= 2",
-                timeout=10_000,
-            )
             screenshots.append(await shot(page, "04b-media-and-links"))
 
             await page.locator(".rich-gallery-item").first.click()
@@ -753,11 +749,7 @@ async def run_round():
                     href: a.href,
                     target: a.target,
                   })),
-                  localPathLinks: [...document.querySelectorAll('.rich-local-path')].map((button) => ({
-                    text: button.innerText,
-                    title: button.getAttribute('title') || '',
-                    disabled: button.disabled,
-                  })),
+                  localPathLinks: document.querySelectorAll('.rich-local-path').length,
                   overflowX: Math.max(
                     document.documentElement.scrollWidth - document.documentElement.clientWidth,
                     document.body.scrollWidth - window.innerWidth
@@ -788,7 +780,7 @@ async def run_round():
                 failures.append("open-link-render")
             if not any(link["href"] == SNAKE_ENTRY_LINK and link["target"] == "_blank" for link in metrics["openLinks"]):
                 failures.append("entry-file-link-render")
-            if len(metrics["localPathLinks"]) < 2 or any(link["disabled"] for link in metrics["localPathLinks"]):
+            if metrics["localPathLinks"] != 0:
                 failures.append("local-path-link-render")
             if not demo_body.strip():
                 failures.append("open-link-popup")

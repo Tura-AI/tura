@@ -176,6 +176,10 @@ fn handle_call(payload: &Value) -> Value {
         .and_then(Value::as_bool)
         .unwrap_or_else(no_op_manual_enabled_from_env);
     let planning_mode_override = call.get("planning_mode_override").and_then(Value::as_bool);
+    let return_log = call
+        .get("return_log")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let agent_spec = call.get("agent_spec").cloned();
 
     if prompt.trim().is_empty() {
@@ -206,14 +210,19 @@ fn handle_call(payload: &Value) -> Value {
         input,
         directory,
     ) {
-        Ok(result) => response_from_mano_result(&session_id, result),
+        Ok(result) => response_from_mano_result(&session_id, result, return_log),
         Err(error) => json!({ "ok": false, "session_id": session_id, "error": error }),
     }
 }
 
-fn response_from_mano_result(session_id: &str, result: ManoProcessResult) -> Value {
+fn response_from_mano_result(
+    session_id: &str,
+    result: ManoProcessResult,
+    return_log: bool,
+) -> Value {
     let final_text = final_assistant_text(&result.session.session_log).unwrap_or_default();
     let message_count = result.session.session_log.len();
+    let turn_started_at_ms = result.session.session_started_at.timestamp_millis();
     if result.session.state == SessionState::Failed {
         let error = result
             .final_error
@@ -225,31 +234,46 @@ fn response_from_mano_result(session_id: &str, result: ManoProcessResult) -> Val
                     .then_some("runtime session failed without a final provider error".to_string())
             })
             .unwrap_or_else(|| final_text.clone());
-        return json!({
+        let mut response = json!({
             "ok": false,
             "session_id": session_id,
             "session_state": result.session.state,
             "message_count": message_count,
+            "turn_started_at_ms": turn_started_at_ms,
             "final_text": final_text,
             "error": error,
         });
+        if return_log {
+            response["session_log"] = json!(result.session.session_log);
+        }
+        return response;
     }
     if final_text.trim().is_empty() {
-        return json!({
+        let mut response = json!({
             "ok": false,
             "session_id": session_id,
             "session_state": result.session.state,
             "message_count": message_count,
+            "turn_started_at_ms": turn_started_at_ms,
             "error": "runtime completed without a final assistant message",
         });
+        if return_log {
+            response["session_log"] = json!(result.session.session_log);
+        }
+        return response;
     }
-    json!({
+    let mut response = json!({
         "ok": true,
         "session_id": session_id,
         "session_state": result.session.state,
         "message_count": message_count,
+        "turn_started_at_ms": turn_started_at_ms,
         "final_text": final_text,
-    })
+    });
+    if return_log {
+        response["session_log"] = json!(result.session.session_log);
+    }
+    response
 }
 
 fn final_assistant_text(session_log: &[String]) -> Option<String> {
@@ -397,6 +421,7 @@ mod tests {
                         .to_string(),
                 ),
             },
+            false,
         );
 
         assert_eq!(reply["ok"], false);
@@ -406,6 +431,43 @@ mod tests {
             .as_str()
             .is_some_and(|error| error.contains("rate_limit_exceeded")));
         assert_eq!(reply["final_text"], "stale fallback");
+    }
+
+    #[test]
+    fn response_from_mano_result_includes_session_log_only_when_requested() {
+        let mut session = test_session("log-response-session");
+        session
+            .transition(SessionState::Running, Utc::now())
+            .expect("running transition");
+        session
+            .session_log
+            .push(json!({"role":"assistant","content":"visible"}).to_string());
+        session
+            .transition(SessionState::Completed, Utc::now())
+            .expect("completed transition");
+
+        let without_log = response_from_mano_result(
+            "log-response-session",
+            ManoProcessResult {
+                session: session.clone(),
+                agents: Vec::new(),
+                final_error: None,
+            },
+            false,
+        );
+        let with_log = response_from_mano_result(
+            "log-response-session",
+            ManoProcessResult {
+                session,
+                agents: Vec::new(),
+                final_error: None,
+            },
+            true,
+        );
+
+        assert!(without_log.get("session_log").is_none());
+        assert_eq!(with_log["session_log"].as_array().expect("log").len(), 1);
+        assert!(with_log["turn_started_at_ms"].as_i64().is_some());
     }
 
     fn test_session(session_id: &str) -> SessionManagement {

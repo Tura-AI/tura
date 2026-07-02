@@ -169,7 +169,24 @@ export async function terminalViewportText(page) {
   );
 }
 
+export async function terminalBufferText(page) {
+  return page.evaluate(() => {
+    const buffer = globalThis.__turaTerminal?.buffer?.active;
+    if (!buffer) return "";
+    const lines = [];
+    for (let index = 0; index < buffer.length; index += 1) {
+      lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+    }
+    return lines.join("\n");
+  });
+}
+
 export async function assertTerminalVisualContract(page, profile) {
+  await page.waitForFunction(
+    () => globalThis.__turaTerminal?.unicode?.activeVersion === "11",
+    null,
+    { timeout: 15_000 },
+  );
   const contract = await page.evaluate(() => {
     const row = document.querySelector(".xterm-rows > div");
     const rowStyle = row ? getComputedStyle(row) : undefined;

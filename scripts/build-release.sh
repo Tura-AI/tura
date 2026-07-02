@@ -72,6 +72,28 @@ copy_gui_dist() {
   cp -R "$src"/. "$dst"/
 }
 
+install_js_if_missing() {
+  workspace_dir=$1
+  shift
+  [ -f "$workspace_dir/package.json" ] || return 0
+
+  missing=0
+  for sentinel in "$@"; do
+    [ -e "$workspace_dir/$sentinel" ] || { missing=1; break; }
+  done
+  [ "$missing" -eq 1 ] || return 0
+
+  echo "Installing JavaScript dependencies in $workspace_dir"
+  if [ -f "$workspace_dir/bun.lock" ]; then
+    (cd "$workspace_dir" && bun install --frozen-lockfile)
+  elif [ -f "$workspace_dir/package-lock.json" ]; then
+    command -v npm >/dev/null 2>&1 || { echo "npm was not found on PATH." >&2; exit 1; }
+    (cd "$workspace_dir" && npm ci)
+  else
+    (cd "$workspace_dir" && bun install)
+  fi
+}
+
 is_under_repo() {
   case "$1" in
     "$REPO_ROOT"|"$REPO_ROOT"/*) return 0 ;;
@@ -126,11 +148,13 @@ fi
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p generate_media -p read_media -p web_discover)
 
 if [ "$BUILD_GUI" -eq 1 ]; then
+  install_js_if_missing "$REPO_ROOT/apps/gui" "app/node_modules/vite/package.json"
   (cd "$REPO_ROOT/apps/gui" && bun run build)
   copy_gui_dist
 fi
 
 if [ "$BUILD_TUI" -eq 1 ]; then
+  install_js_if_missing "$REPO_ROOT/apps/tui" "node_modules/typescript/package.json"
   mkdir -p "$TARGET_DIR"
   case "$(uname -s 2>/dev/null || echo unknown)" in
   MINGW*|MSYS*|CYGWIN*)
@@ -143,6 +167,8 @@ if [ "$BUILD_TUI" -eq 1 ]; then
 fi
 
 if [ "$BUILD_TAURI" -eq 1 ]; then
+  install_js_if_missing "$REPO_ROOT/apps/gui" "app/node_modules/vite/package.json"
+  install_js_if_missing "$REPO_ROOT/apps/tauri" "node_modules/@tauri-apps/cli/package.json"
   (cd "$REPO_ROOT/apps/tauri" && bun run build)
 fi
 

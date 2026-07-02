@@ -76,7 +76,7 @@ fn create_agent_by_name(
                 "thinking-planning" | "coding_agent_planning" | "coding_agent" | "coding" => {
                     "thoughtful"
                 }
-                "thinking" | "coding_agent_thinking" => "balanced",
+                "thinking" | "coding_agent_thinking" => "thoughtful",
                 "fast" | "coding_agent_fast" => "direct",
                 "fast-text-only" => "direct-text-only",
                 other => other,

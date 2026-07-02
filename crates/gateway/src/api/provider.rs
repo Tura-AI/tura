@@ -88,9 +88,10 @@ pub async fn provider_auth_status(
 
 pub async fn provider_auth_validate(
     Path(provider_id): Path<String>,
+    Json(payload): Json<ProviderAuthValidationRequest>,
 ) -> Json<ProviderAuthActionResponse> {
     let status = build_provider_auth_status(&provider_id);
-    let receipt = validate_provider_auth_config(&provider_id, &status).await;
+    let receipt = validate_provider_auth_config(&provider_id, &status, Some(&payload)).await;
     Json(ProviderAuthActionResponse {
         ok: receipt.ok,
         provider_id,
@@ -771,13 +772,22 @@ fn upsert_provider_auth_config(
     };
     let registry_entry = tura_llm_rust::provider_auth_registry_entry(provider_id);
 
+    let token_env = auth
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("token_env"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
+        .unwrap_or_else(|| provider_env_key(provider_id));
+
     let mut entry = serde_json::json!({
         "type": auth_type,
         "login": login,
         "status": "connected",
         "provider": provider_runtime_id(provider_id),
         "auth_url": auth_url,
-        "token_env": provider_env_key(provider_id),
+        "token_env": token_env,
         "login_env": login_env,
         "updated_at": Utc::now().to_rfc3339(),
     });

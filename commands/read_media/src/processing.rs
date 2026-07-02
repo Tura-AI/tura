@@ -125,7 +125,8 @@ fn process_video_thumbnail(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Valu
     std::fs::create_dir_all(&temp_dir)
         .map_err(|err| format!("failed to create temp video thumbnail dir: {err}"))?;
     let frame = temp_dir.join("frame.jpg");
-    let status = std::process::Command::new(ffmpeg)
+    let mut command = std::process::Command::new(ffmpeg);
+    command
         .arg("-hide_banner")
         .arg("-loglevel")
         .arg("error")
@@ -138,12 +139,12 @@ fn process_video_thumbnail(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Valu
         .arg("-q:v")
         .arg("4")
         .arg("-y")
-        .arg(&frame)
-        .status()
-        .map_err(|err| {
-            let _ = std::fs::remove_dir_all(&temp_dir);
-            format!("failed to run ffmpeg for video thumbnail: {err}")
-        })?;
+        .arg(&frame);
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let status = command.status().map_err(|err| {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        format!("failed to run ffmpeg for video thumbnail: {err}")
+    })?;
     if !status.success() {
         let _ = std::fs::remove_dir_all(&temp_dir);
         return process_video_with_python_cv2(path, &thumb_args).map_err(|cv_err| {

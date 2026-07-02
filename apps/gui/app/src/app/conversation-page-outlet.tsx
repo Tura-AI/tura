@@ -3,16 +3,7 @@ import type { Accessor, Setter } from "solid-js";
 import { Show, createMemo } from "solid-js";
 import { AgentComposerMenu } from "../conversation/agent-composer-menu";
 import { ConversationView } from "../conversation/conversation-view";
-import {
-  defaultLocalStartAt,
-  defaultPollInterval,
-  localDateTimeToUtcIso,
-  taskNonceId,
-  taskPollInterval,
-  taskStartCondition,
-  timedTaskPatch,
-  utcIsoToLocalDateTime,
-} from "../features/plan/tasks";
+import { taskNonceId, taskStartCondition } from "../features/plan/tasks";
 import { ConversationEmptyView } from "../pages/new-session";
 import { PlanComposerControls, PlanConversationFeedbackNotice } from "../pages/plan/plan-composer";
 import type { AppState } from "../state/global-store";
@@ -84,6 +75,18 @@ export function ConversationPageOutlet(props: {
     });
   }
 
+  function consumeScrollToBottomRequest(sessionId: string, token: number) {
+    props.setState((previous) => {
+      if (
+        previous.transcriptScrollToBottomRequest?.sessionId !== sessionId ||
+        previous.transcriptScrollToBottomRequest.token !== token
+      ) {
+        return previous;
+      }
+      return { ...previous, transcriptScrollToBottomRequest: undefined };
+    });
+  }
+
   function setActiveAgent(selectedAgent: string) {
     props.onRuntimeSetting((previous) => ({
       ...previous,
@@ -126,15 +129,6 @@ export function ConversationPageOutlet(props: {
               planDraftStartCondition,
             }))
           }
-          onDraftStartAt={(planDraftStartAt) =>
-            props.setState((previous) => ({ ...previous, planDraftStartAt }))
-          }
-          onDraftPollInterval={(planDraftPollInterval) =>
-            props.setState((previous) => ({
-              ...previous,
-              planDraftPollInterval,
-            }))
-          }
           agentMenu={agentMenu()}
           onSubmit={props.onSubmit}
           onQueueSubmit={props.onQueueSubmit}
@@ -147,6 +141,14 @@ export function ConversationPageOutlet(props: {
           session={session()}
           messages={props.selectedMessages()}
           initialScrollTop={props.state().transcriptScrollBySession[session().id]}
+          scrollToBottomToken={
+            props.state().transcriptScrollToBottomRequest?.sessionId === session().id
+              ? props.state().transcriptScrollToBottomRequest?.token
+              : undefined
+          }
+          onScrollToBottomRequestConsumed={(token) =>
+            consumeScrollToBottomRequest(session().id, token)
+          }
           onTranscriptScroll={(scrollTop) => setTranscriptScroll(session().id, scrollTop)}
           onLoadEarlierMessages={() => props.loadEarlierMessages(session().id)}
           slashCommands={props.slashCommands()}
@@ -155,7 +157,7 @@ export function ConversationPageOutlet(props: {
           onSubmit={props.onSubmit}
           onStop={() => abortSession(session().id)}
           onQueueSubmit={props.onQueueSubmit}
-          running={session().status !== "idle"}
+          running={session().status === "busy"}
           leftRailOpen={props.leftRailOpen}
           leftRailWidth={props.leftRailWidth}
           onRequestCollapseLeftRail={props.onRequestCollapseLeftRail}
@@ -176,39 +178,20 @@ export function ConversationPageOutlet(props: {
               <>
                 <PlanComposerControls
                   startCondition={taskStartCondition(props.selectedEditingTask()!)}
-                  startAt={utcIsoToLocalDateTime(props.selectedEditingTask()!.start_at)}
-                  pollInterval={props.selectedEditingTask()!.poll_interval ?? defaultPollInterval()}
-                  onStartCondition={(start_condition) => {
+                  onStartCondition={(startCondition) => {
                     const task = props.selectedEditingTask()!;
-                    if (start_condition === "user_action") {
+                    if (startCondition === "user_action") {
                       props.onRunTask(selectedSession()!, task);
                       return;
                     }
-                    const startAt =
-                      localDateTimeToUtcIso(
-                        utcIsoToLocalDateTime(task.start_at) || defaultLocalStartAt(),
-                      ) ?? localDateTimeToUtcIso(defaultLocalStartAt());
                     void updatePlanTicketTask(selectedSession()!, {
                       task_id: taskNonceId(task),
                       status: "todo",
-                      ...timedTaskPatch(start_condition, startAt, taskPollInterval(task)),
+                      start_condition: "session_idle",
+                      start_at: undefined,
+                      poll_interval: undefined,
                     });
                   }}
-                  onStartAt={(value) => {
-                    const start_at = localDateTimeToUtcIso(value);
-                    if (start_at) {
-                      void updatePlanTicketTask(selectedSession()!, {
-                        task_id: taskNonceId(props.selectedEditingTask()!),
-                        start_at,
-                      });
-                    }
-                  }}
-                  onPollInterval={(poll_interval) =>
-                    updatePlanTicketTask(selectedSession()!, {
-                      task_id: taskNonceId(props.selectedEditingTask()!),
-                      poll_interval,
-                    })
-                  }
                 />
                 {agentMenu()}
               </>
@@ -216,24 +199,10 @@ export function ConversationPageOutlet(props: {
               <>
                 <PlanComposerControls
                   startCondition={props.state().planDraftStartCondition}
-                  startAt={props.state().planDraftStartAt}
-                  pollInterval={props.state().planDraftPollInterval}
                   onStartCondition={(planDraftStartCondition) =>
                     props.setState((previous) => ({
                       ...previous,
                       planDraftStartCondition,
-                    }))
-                  }
-                  onStartAt={(planDraftStartAt) =>
-                    props.setState((previous) => ({
-                      ...previous,
-                      planDraftStartAt,
-                    }))
-                  }
-                  onPollInterval={(planDraftPollInterval) =>
-                    props.setState((previous) => ({
-                      ...previous,
-                      planDraftPollInterval,
                     }))
                   }
                 />

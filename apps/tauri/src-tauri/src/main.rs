@@ -350,13 +350,7 @@ fn spawn_gateway_child(
         )
         .env("TURA_ENV_PATH", runtime_root.join(".env"))
         .env("PORT", endpoint.port.to_string());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        const DETACHED_PROCESS: u32 = 0x00000008;
-        command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
-    }
+    tura_path::process_hardening::hide_child_console_window_and_detach(&mut command);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -369,12 +363,7 @@ fn spawn_gateway_child(
 
 fn open_url_in_default_browser(url: &str) -> Result<(), String> {
     let mut command = default_browser_command(url);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
+    tura_path::process_hardening::hide_child_console_window(&mut command);
     command
         .spawn()
         .map(|_| ())

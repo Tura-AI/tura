@@ -7,10 +7,8 @@ import {
   stripEmojiDirectives,
 } from "../../../app/src/conversation/message-rich-protocol";
 import {
-  localOpenPathQueryValue,
   localPathQueryValue,
   mediaSource,
-  parseLocalTextReferences,
 } from "../../../app/src/conversation/message-rich-text-paths";
 
 const richTextSource = readFileSync(
@@ -18,38 +16,12 @@ const richTextSource = readFileSync(
   "utf8",
 );
 
-describe("message rich text local path parsing", () => {
-  test("parses relative, absolute, and spaced local markdown links", () => {
-    const nodes = parseLocalTextReferences(
-      [
-        "[Relative](docs/My File.md)",
-        "[Absolute](C:/tmp/My File.png)",
-        "raw ./shots/final image.png.",
-      ].join("\n"),
-    );
-    const locals = nodes.filter((node) => node.kind === "local-path");
-
-    expect(locals.map((node) => node.path)).toEqual([
-      "docs/My File.md",
-      "C:/tmp/My File.png",
-      "./shots/final image.png",
-    ]);
-    expect(locals.map((node) => node.label)).toEqual(["Relative", "Absolute", undefined]);
-  });
-
+describe("message rich text media paths", () => {
   test("normalizes file URLs and includes workspace directory in media requests", () => {
     expect(localPathQueryValue("file:///C:/tmp/My%20File.png")).toBe("C:/tmp/My File.png");
     expect(mediaSource("shots/final image.png", "C:/repo with space")).toBe(
       "/file/media?path=shots%2Ffinal+image.png&directory=C%3A%2Frepo+with+space",
     );
-  });
-
-  test("normalizes GUI code links before opening them with the system default app", () => {
-    expect(localOpenPathQueryValue("/C:/Users/liuliu/Documents/tura/Cargo.toml:12")).toBe(
-      "C:/Users/liuliu/Documents/tura/Cargo.toml",
-    );
-    expect(localOpenPathQueryValue("file:///C:/tmp/main.rs:10:2")).toBe("C:/tmp/main.rs");
-    expect(localOpenPathQueryValue("docs/readme.md:4")).toBe("docs/readme.md");
   });
 });
 
@@ -63,9 +35,11 @@ describe("message rich text emoji protocol directives", () => {
   });
 
   test("routes sticker directives through the rich text parser instead of dropping them", () => {
-    expect(richTextSource).toContain('| { kind: "emoji"; variant: "sticker" | "react"; value: string }');
+    expect(richTextSource).toContain(
+      '| { kind: "emoji"; variant: "sticker" | "react"; value: string }',
+    );
     expect(richTextSource).toContain('match[3] === "sticker" || match[3] === "react"');
-    expect(richTextSource).toContain('class={`rich-emoji rich-${props.node.variant}`}');
+    expect(richTextSource).toContain("class={`rich-emoji rich-${props.node.variant}`}");
   });
 });
 
@@ -88,6 +62,13 @@ describe("message rich text table cells", () => {
     expect(richTextSource).toContain("function parseInlineRichText");
     expect(richTextSource).toContain("children: parseInlineRichText(cell.trim())");
     expect(richTextSource).not.toContain("children: splitInlineTextReferences(cell.trim())");
+  });
+
+  test("sizes table cells from text length while leaving full content visible", () => {
+    expect(richTextSource).toContain("const TABLE_CELL_MAX_CH = 96;");
+    expect(richTextSource).toContain("function tableCellWidthStyle");
+    expect(richTextSource).toContain('class="rich-table-cell-content"');
+    expect(richTextSource).toContain('"--rich-table-cell-width"');
   });
 
   test("keeps compaction threshold explanation visible around inline HTML and angle brackets", () => {
@@ -133,7 +114,7 @@ describe("message rich text scrollbars", () => {
 
     expect(richContentCss).toContain(".rich-text a");
     expect(richContentCss).toContain("color: inherit;");
-    expect(richContentCss).not.toContain(".rich-local-path:hover");
+    expect(richContentCss).not.toContain(".rich-local-path");
     expect(richContentCss).not.toContain(".rich-spoiler:hover");
   });
 

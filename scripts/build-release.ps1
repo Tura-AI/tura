@@ -48,6 +48,33 @@ function Invoke-Checked {
   }
 }
 
+function Invoke-JsInstallIfMissing {
+  param([string]$Directory, [string[]]$SentinelPaths)
+  if (-not (Test-Path -LiteralPath (Join-Path $Directory "package.json"))) {
+    return
+  }
+
+  $Missing = $false
+  foreach ($SentinelPath in $SentinelPaths) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Directory $SentinelPath))) {
+      $Missing = $true
+      break
+    }
+  }
+  if (-not $Missing) {
+    return
+  }
+
+  Write-Host "Installing JavaScript dependencies in $Directory"
+  if (Test-Path -LiteralPath (Join-Path $Directory "bun.lock")) {
+    Invoke-Checked "bun" @("install", "--frozen-lockfile") $Directory
+  } elseif (Test-Path -LiteralPath (Join-Path $Directory "package-lock.json")) {
+    Invoke-Checked "npm" @("ci") $Directory
+  } else {
+    Invoke-Checked "bun" @("install") $Directory
+  }
+}
+
 function Add-RustFlag {
   param([string]$Flag)
   if ([string]::IsNullOrWhiteSpace($env:RUSTFLAGS)) {
@@ -145,11 +172,13 @@ try {
 }
 
 if ($BuildGui) {
+  Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")
   Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\gui")
   Copy-GuiDist
 }
 
 if ($BuildTui) {
+  Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\tui") @("node_modules\typescript\package.json")
   New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
   $bunArgs = @(
     "build",
@@ -165,6 +194,8 @@ if ($BuildTui) {
 }
 
 if ($BuildTauri) {
+  Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")
+  Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\tauri") @("node_modules\@tauri-apps\cli\package.json")
   Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\tauri")
 }
 

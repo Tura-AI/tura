@@ -3,11 +3,6 @@
   overflow: hidden;
 }
 
-.plan-board.calendar-mode {
-  min-height: 0;
-  overflow: hidden;
-}
-
 .board-shell {
   position: relative;
   display: grid;
@@ -92,13 +87,13 @@
   display: block;
   width: 7px;
   height: 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--muted);
   transform-origin: center;
 }
 
 .plan-status-indicator.status-doing {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .plan-status-indicator.status-doing::before {

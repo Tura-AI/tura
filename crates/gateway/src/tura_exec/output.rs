@@ -2,7 +2,11 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
+
+use super::cli::CliConfig;
+use super::env::normalize_model;
 
 pub(crate) fn write_last_message(path: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
@@ -15,12 +19,11 @@ pub(crate) fn write_last_message(path: &Path, text: &str) -> Result<(), String> 
 pub(crate) fn write_jsonl(
     session_log: &[String],
     session_id: &str,
-    cwd: &Path,
+    config: &CliConfig,
     emit_thread_start: bool,
 ) -> Result<(), String> {
     if emit_thread_start {
-        emit_jsonl(&json!({"type": "thread.started", "thread_id": session_id}))?;
-        emit_jsonl(&json!({"type": "turn.started"}))?;
+        emit_cli_start_events(config, session_id)?;
     }
 
     let mut item_index = 0usize;
@@ -72,20 +75,113 @@ pub(crate) fn write_jsonl(
                     item_index += 1;
                 }
                 if !cli_live_jsonl_enabled() {
-                    emit_command_run_events(&value, &mut item_index, cwd)?;
+                    emit_command_run_events(&value, &mut item_index, &config.cwd)?;
                 }
             }
         }
     }
 
     let usage = aggregate_runtime_usage(session_log);
-    emit_jsonl(&json!({
-        "type": "turn.completed",
-        "usage": usage
-    }))?;
+    emit_jsonl(&turn_completed_event(
+        config,
+        session_id,
+        usage,
+        "completed",
+        None,
+    ))?;
     io::stdout()
         .flush()
         .map_err(|err| format!("failed to flush stdout: {err}"))
+}
+
+pub(crate) fn emit_cli_start_events(config: &CliConfig, session_id: &str) -> Result<(), String> {
+    emit_jsonl(&thread_started_event(config, session_id))?;
+    emit_jsonl(&turn_started_event(config, session_id))
+}
+
+pub(crate) fn thread_started_event(config: &CliConfig, session_id: &str) -> Value {
+    let mut event = cli_run_event(config, session_id, "thread.started");
+    if let Some(object) = event.as_object_mut() {
+        object.insert("thread_id".to_string(), json!(session_id));
+    }
+    event
+}
+
+pub(crate) fn turn_started_event(config: &CliConfig, session_id: &str) -> Value {
+    cli_run_event(config, session_id, "turn.started")
+}
+
+pub(crate) fn turn_completed_event(
+    config: &CliConfig,
+    session_id: &str,
+    usage: Value,
+    status: &str,
+    error: Option<&str>,
+) -> Value {
+    let mut event = cli_run_event(config, session_id, "turn.completed");
+    if let Some(object) = event.as_object_mut() {
+        object.insert("status".to_string(), json!(status));
+        object.insert("usage".to_string(), usage);
+        if let Some(error) = error {
+            object.insert("error".to_string(), json!(error));
+        }
+    }
+    event
+}
+
+fn cli_run_event(config: &CliConfig, session_id: &str, event_type: &str) -> Value {
+    let metadata = cli_run_metadata(config, session_id);
+    let mut object = metadata
+        .as_object()
+        .cloned()
+        .unwrap_or_else(serde_json::Map::new);
+    object.insert("type".to_string(), json!(event_type));
+    object.insert("metadata".to_string(), metadata);
+    Value::Object(object)
+}
+
+fn cli_run_metadata(config: &CliConfig, session_id: &str) -> Value {
+    let model = config
+        .model
+        .as_deref()
+        .map(normalize_model)
+        .or_else(|| env_nonempty("TURA_SESSION_MODEL_OVERRIDE"));
+    let reasoning_effort = config
+        .reasoning_effort
+        .clone()
+        .or_else(|| env_nonempty("TURA_SESSION_REASONING_EFFORT"));
+    json!({
+        "session_id": session_id,
+        "cwd": config.cwd.to_string_lossy().to_string(),
+        "agent": config.agent,
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+        "service_tier": if config.priority { "priority" } else { "default" },
+        "priority": config.priority,
+        "acceleration_enabled": config.priority,
+        "max_tokens": config.max_tokens,
+    })
+}
+
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+pub(crate) fn write_turn_log_stderr(
+    session_log: &[String],
+    turn_started_at_ms: Option<i64>,
+) -> Result<(), String> {
+    let summary = turn_log_summary(session_log, turn_started_at_ms);
+    writeln!(
+        io::stderr(),
+        "TURA_TURN_LOG {}",
+        serde_json::to_string(&summary)
+            .map_err(|err| format!("failed to encode turn log: {err}"))?
+    )
+    .map_err(|err| format!("failed to write turn log to stderr: {err}"))
 }
 
 fn cli_live_jsonl_enabled() -> bool {
@@ -99,7 +195,7 @@ fn cli_live_jsonl_enabled() -> bool {
         })
 }
 
-fn aggregate_runtime_usage(session_log: &[String]) -> Value {
+pub(crate) fn aggregate_runtime_usage(session_log: &[String]) -> Value {
     let mut input_tokens = 0u64;
     let mut cached_input_tokens = 0u64;
     let mut cache_write_tokens = 0u64;
@@ -141,6 +237,138 @@ fn aggregate_runtime_usage(session_log: &[String]) -> Value {
         "total_tokens": total_tokens,
         "latency_ms": latency_ms,
     })
+}
+
+fn turn_log_summary(session_log: &[String], turn_started_at_ms: Option<i64>) -> Value {
+    let entries = current_turn_values(session_log, turn_started_at_ms);
+    let entry_strings = entries.iter().map(Value::to_string).collect::<Vec<_>>();
+    let usage = aggregate_runtime_usage(&entry_strings);
+    let timing = turn_timing(&entries, &usage);
+    let tools = entries
+        .iter()
+        .filter_map(tool_log_entry)
+        .collect::<Vec<_>>();
+    let text = entries
+        .iter()
+        .filter_map(text_log_entry)
+        .collect::<Vec<_>>();
+
+    json!({
+        "type": "turn.log",
+        "usage": usage,
+        "timing": timing,
+        "tool_calls": tools,
+        "text": text,
+    })
+}
+
+fn current_turn_values(session_log: &[String], turn_started_at_ms: Option<i64>) -> Vec<Value> {
+    let values = session_log
+        .iter()
+        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .collect::<Vec<_>>();
+    if let Some(started_at) = turn_started_at_ms {
+        let filtered = values
+            .iter()
+            .filter(|value| log_entry_millis(value).is_none_or(|millis| millis >= started_at))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !filtered.is_empty() {
+            return filtered;
+        }
+    }
+    let start = values
+        .iter()
+        .rposition(|value| value.get("role").and_then(Value::as_str) == Some("user"))
+        .unwrap_or(0);
+    values.into_iter().skip(start).collect()
+}
+
+fn turn_timing(entries: &[Value], usage: &Value) -> Value {
+    let mut times = entries
+        .iter()
+        .filter_map(log_entry_millis)
+        .collect::<Vec<_>>();
+    times.sort_unstable();
+    let started_at_ms = times.first().copied().unwrap_or_default();
+    let finished_at_ms = times.last().copied().unwrap_or(started_at_ms);
+    json!({
+        "started_at_ms": started_at_ms,
+        "finished_at_ms": finished_at_ms,
+        "duration_ms": finished_at_ms.saturating_sub(started_at_ms),
+        "provider_latency_ms": json_u64(usage, "latency_ms"),
+    })
+}
+
+fn log_entry_millis(value: &Value) -> Option<i64> {
+    value
+        .get("updated_at")
+        .and_then(Value::as_i64)
+        .or_else(|| value.get("created_at").and_then(Value::as_i64))
+        .or_else(|| value.get("timestamp").and_then(timestamp_millis))
+}
+
+fn timestamp_millis(value: &Value) -> Option<i64> {
+    let text = value.as_str()?;
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|timestamp| timestamp.with_timezone(&Utc).timestamp_millis())
+}
+
+fn tool_log_entry(value: &Value) -> Option<Value> {
+    if value.get("type").and_then(Value::as_str) != Some("tool_result") {
+        return None;
+    }
+    Some(json!({
+        "tool_name": value.get("tool_name").cloned().unwrap_or(Value::Null),
+        "runtime_id": value.get("runtime_id").cloned().unwrap_or(Value::Null),
+        "success": value.get("success").cloned().unwrap_or(Value::Null),
+        "error": value.get("error").cloned().unwrap_or(Value::Null),
+        "input": value.get("input").cloned().unwrap_or(Value::Null),
+        "output": value.get("output").cloned().unwrap_or(Value::Null),
+        "timestamp": value.get("timestamp").cloned().unwrap_or(Value::Null),
+    }))
+}
+
+fn text_log_entry(value: &Value) -> Option<Value> {
+    let role = value.get("role").and_then(Value::as_str)?;
+    if !matches!(role, "user" | "assistant") {
+        return None;
+    }
+    let content = text_content(value.get("content")?)?;
+    let content = if role == "assistant" {
+        clean_agent_message(&content)
+    } else {
+        content.trim().to_string()
+    };
+    if content.trim().is_empty() {
+        return None;
+    }
+    Some(json!({
+        "role": role,
+        "runtime_id": value.get("runtime_id").cloned().unwrap_or(Value::Null),
+        "content": content,
+        "timestamp": value.get("timestamp").cloned().unwrap_or(Value::Null),
+    }))
+}
+
+fn text_content(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.to_string()),
+        Value::Array(parts) => {
+            let text = parts
+                .iter()
+                .filter_map(|part| {
+                    part.get("text")
+                        .or_else(|| part.get("content"))
+                        .and_then(Value::as_str)
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            (!text.trim().is_empty()).then_some(text)
+        }
+        _ => None,
+    }
 }
 
 fn json_u64(value: &Value, key: &str) -> u64 {
@@ -414,7 +642,9 @@ mod tests {
     use super::{
         aggregate_runtime_usage, clean_agent_message, command_output, display_command,
         file_changes, final_message_text, flatten_command_results, shell_display_output,
+        thread_started_event, turn_completed_event, turn_log_summary,
     };
+    use crate::tura_exec::cli::CliConfig;
     use serde_json::{json, Value};
     use std::path::PathBuf;
 
@@ -467,6 +697,46 @@ mod tests {
     }
 
     #[test]
+    fn cli_run_events_include_benchmark_metadata() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--cwd".to_string(),
+            "C:/workspace".to_string(),
+            "--agent-id".to_string(),
+            "tura-direct".to_string(),
+            "--model".to_string(),
+            "gpt-5.5".to_string(),
+            "--model-reasoning-effort".to_string(),
+            "medium".to_string(),
+            "--priority".to_string(),
+            "hi".to_string(),
+        ])
+        .expect("parse cli");
+
+        let started = thread_started_event(&config, "session-1");
+        let completed = turn_completed_event(
+            &config,
+            "session-1",
+            json!({"total_tokens": 42}),
+            "completed",
+            None,
+        );
+
+        assert_eq!(started["type"], "thread.started");
+        assert_eq!(started["thread_id"], "session-1");
+        assert_eq!(started["session_id"], "session-1");
+        assert_eq!(started["agent"], "tura-direct");
+        assert_eq!(started["model"], "openai/gpt-5.5");
+        assert_eq!(started["reasoning_effort"], "medium");
+        assert_eq!(started["service_tier"], "priority");
+        assert_eq!(started["metadata"]["agent"], "tura-direct");
+        assert_eq!(completed["type"], "turn.completed");
+        assert_eq!(completed["status"], "completed");
+        assert_eq!(completed["usage"]["total_tokens"], 42);
+        assert_eq!(completed["metadata"]["model"], "openai/gpt-5.5");
+    }
+
+    #[test]
     fn clean_agent_message_removes_raw_tool_payloads_and_keeps_visible_prefix() {
         assert_eq!(clean_agent_message("  hello user  "), "hello user");
         assert_eq!(
@@ -494,6 +764,33 @@ mod tests {
             final_message_text(&["bad json".to_string()]),
             "Tura session completed."
         );
+    }
+
+    #[test]
+    fn turn_log_summary_reports_only_current_turn_usage_timing_tools_and_text() {
+        let log = vec![
+            json!({"role": "user", "content": "old", "created_at": 1000}).to_string(),
+            json!({"type": "runtime_usage", "usage": {"input_tokens": 100, "output_tokens": 1, "total_tokens": 101, "latency_ms": 9}, "timestamp": "2026-01-01T00:00:01Z"}).to_string(),
+            json!({"role": "assistant", "content": "old answer", "created_at": 1100}).to_string(),
+            json!({"role": "user", "content": [{"type": "input_text", "text": "new"}], "created_at": 2000}).to_string(),
+            json!({"type": "tool_result", "tool_name": "command_run", "input": {"commands": [{"command_type": "shell_command", "command_line": "echo ok"}]}, "output": {"results": [{"success": true}]}, "success": true, "timestamp": "2026-01-01T00:00:03Z"}).to_string(),
+            json!({"type": "runtime_usage", "usage": {"input_tokens": 10, "output_tokens": 5, "reasoning_tokens": 2, "total_tokens": 17, "latency_ms": 250}, "timestamp": "2026-01-01T00:00:04Z"}).to_string(),
+            json!({"role": "assistant", "content": " final ", "created_at": 5000, "runtime_id": "runtime-new"}).to_string(),
+        ];
+
+        let summary = turn_log_summary(&log, None);
+
+        assert_eq!(summary["usage"]["input_tokens"], 10);
+        assert_eq!(summary["usage"]["total_tokens"], 17);
+        assert_eq!(summary["timing"]["provider_latency_ms"], 250);
+        assert_eq!(summary["tool_calls"].as_array().expect("tools").len(), 1);
+        assert_eq!(summary["tool_calls"][0]["tool_name"], "command_run");
+        let text = summary["text"].as_array().expect("text");
+        assert_eq!(text.len(), 2);
+        assert_eq!(text[0]["role"], "user");
+        assert_eq!(text[0]["content"], "new");
+        assert_eq!(text[1]["role"], "assistant");
+        assert_eq!(text[1]["content"], "final");
     }
 
     #[test]

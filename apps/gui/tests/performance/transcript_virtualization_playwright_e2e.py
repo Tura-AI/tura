@@ -12,12 +12,18 @@ from playwright.async_api import async_playwright
 ROOT = Path(__file__).resolve().parents[4]
 GUI_URL = os.environ.setdefault("TURA_GUI_URL", "http://127.0.0.1:5181")
 STREAM_ROOT_SELECTOR = '[data-message-id="fixture-stream-assistant"] .rich-text'
+FOLLOW_BOTTOM_RATIO = 0.005
+FOLLOW_BOTTOM_MIN_PX = 2
 OUT = Path(
     os.environ.setdefault(
         "TURA_GUI_E2E_OUT",
         str(ROOT / "apps" / "gui" / "test-results" / "transcript-virtualization"),
     )
 )
+
+
+def follow_bottom_threshold(scrollable_height: float) -> float:
+    return max(FOLLOW_BOTTOM_MIN_PX, scrollable_height * FOLLOW_BOTTOM_RATIO)
 
 
 def url_ready(url: str) -> bool:
@@ -293,9 +299,20 @@ async def assert_scrollbar_drag_not_pulled_by_delta(page) -> None:
         await page.screenshot(path=str(OUT / f"scrollbar-drag-{step:02d}.png"), full_page=False)
     await page.wait_for_timeout(120)
     geometry = await page.locator(".transcript").evaluate(
-        "(el) => ({ scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, remaining: el.scrollHeight - el.scrollTop - el.clientHeight })"
+        """
+        (el) => {
+          const max = Math.max(0, el.scrollHeight - el.clientHeight);
+          return {
+            max,
+            scrollTop: el.scrollTop,
+            scrollHeight: el.scrollHeight,
+            clientHeight: el.clientHeight,
+            remaining: el.scrollHeight - el.scrollTop - el.clientHeight,
+          };
+        }
+        """
     )
-    if geometry["remaining"] < 28:
+    if geometry["remaining"] <= follow_bottom_threshold(geometry["max"]):
         raise AssertionError(f"scrollbar drag did not leave the bottom: {geometry}")
     anchor_before = await page.evaluate(
         """
@@ -329,6 +346,41 @@ async def assert_scrollbar_drag_not_pulled_by_delta(page) -> None:
         raise AssertionError(f"visible row jittered after offscreen delta: before={anchor_before}, after={anchor_after}")
 
 
+async def assert_near_bottom_stream_delta_follows_bottom(page) -> None:
+    await page.goto(f"{GUI_URL}/?e2eFixture=streaming-delta", wait_until="domcontentloaded")
+    await page.evaluate("selector => { window.__streamRootSelector = selector; }", STREAM_ROOT_SELECTOR)
+    await page.wait_for_selector(".transcript-virtual-space[data-virtual-count='82']", state="attached", timeout=20_000)
+    await page.wait_for_selector(STREAM_ROOT_SELECTOR, state="attached", timeout=20_000)
+    geometry_before = await page.locator(".transcript").evaluate(
+        """
+        (el) => {
+          const max = Math.max(0, el.scrollHeight - el.clientHeight);
+          const threshold = Math.max(2, max * 0.005);
+          const remaining = Math.min(threshold, Math.max(3, Math.floor(threshold * 0.8)));
+          el.scrollTop = Math.max(0, max - remaining);
+          el.dispatchEvent(new Event('scroll', { bubbles: true }));
+          return {
+            max,
+            remaining: el.scrollHeight - el.scrollTop - el.clientHeight,
+            threshold,
+          };
+        }
+        """
+    )
+    if not (0 <= geometry_before["remaining"] <= geometry_before["threshold"]):
+        raise AssertionError(f"near-bottom setup did not land in the 0.5% band: {geometry_before}")
+    for index in range(4):
+        await append_stream_delta(page, index, " near-bottom-live-update" * 32)
+        await page.wait_for_timeout(80)
+        geometry_after = await page.locator(".transcript").evaluate(
+            "(el) => ({ scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, remaining: el.scrollHeight - el.scrollTop - el.clientHeight })"
+        )
+        if geometry_after["remaining"] > 2:
+            raise AssertionError(
+                f"near-bottom live delta did not follow to bottom at update {index}: before={geometry_before}, after={geometry_after}"
+            )
+
+
 async def assert_scroll_restored_after_conversation_remount(page) -> None:
     await page.goto(f"{GUI_URL}/?e2eFixture=long-transcript", wait_until="domcontentloaded")
     await page.wait_for_selector(
@@ -353,11 +405,23 @@ async def assert_scroll_restored_after_conversation_remount(page) -> None:
         """
     )
     await page.screenshot(path=str(OUT / "scroll-restore-before.png"), full_page=False)
-    await page.get_by_role("button", name="文件浏览器").click()
+    await page.get_by_role("button", name="File browser").click()
     await page.wait_for_selector(".files-view", state="attached", timeout=20_000)
-    await page.get_by_role("button", name="会话").click()
+    await page.get_by_role("button", name="Session").click()
     await page.wait_for_selector(".transcript-virtual-space[data-virtual-count='2200']", state="attached", timeout=20_000)
-    await page.wait_for_timeout(260)
+    await page.wait_for_function(
+        """
+        ({ id, scrollTop, y }) => {
+          const row = document.querySelector(`[data-message-id="${id}"]`);
+          const transcript = document.querySelector(".transcript");
+          if (!row || !transcript) return false;
+          const box = row.getBoundingClientRect();
+          return Math.abs(transcript.scrollTop - scrollTop) <= 4 && Math.abs(box.y - y) <= 6;
+        }
+        """,
+        arg=anchor_before,
+        timeout=2_000,
+    )
     anchor_after = await page.evaluate(
         """
         (id) => {
@@ -435,24 +499,34 @@ async def main() -> None:
                 "(el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll', { bubbles: true })); }"
             )
             await page.wait_for_timeout(120)
-            at_bottom = await page.locator(".transcript").evaluate(
-                "(el) => el.scrollHeight - el.scrollTop - el.clientHeight < 28"
+            bottom_geometry = await page.locator(".transcript").evaluate(
+                """
+                (el) => {
+                  const max = Math.max(0, el.scrollHeight - el.clientHeight);
+                  return { max, remaining: el.scrollHeight - el.scrollTop - el.clientHeight };
+                }
+                """
             )
-            if not at_bottom:
-                raise AssertionError("native transcript did not land at bottom")
+            if bottom_geometry["remaining"] > follow_bottom_threshold(bottom_geometry["max"]):
+                raise AssertionError(f"native transcript did not land at bottom: {bottom_geometry}")
 
             await page.locator(".transcript").hover()
-            remaining = 0
+            leave_bottom_geometry = {"max": 0, "remaining": 0}
             for _ in range(12):
                 await page.mouse.wheel(0, -60000)
                 await page.wait_for_timeout(120)
-                remaining = await page.locator(".transcript").evaluate(
-                    "(el) => el.scrollHeight - el.scrollTop - el.clientHeight"
+                leave_bottom_geometry = await page.locator(".transcript").evaluate(
+                    """
+                    (el) => {
+                      const max = Math.max(0, el.scrollHeight - el.clientHeight);
+                      return { max, remaining: el.scrollHeight - el.scrollTop - el.clientHeight };
+                    }
+                    """
                 )
-                if remaining >= 28:
+                if leave_bottom_geometry["remaining"] > follow_bottom_threshold(leave_bottom_geometry["max"]):
                     break
-            if remaining < 28:
-                raise AssertionError(f"transcript did not leave bottom after wheel input: remaining={remaining}")
+            if leave_bottom_geometry["remaining"] <= follow_bottom_threshold(leave_bottom_geometry["max"]):
+                raise AssertionError(f"transcript did not leave bottom after wheel input: {leave_bottom_geometry}")
             await page.wait_for_selector(".scroll-follow")
             button_count = await page.locator(".scroll-follow").count()
             if button_count == 0:
@@ -463,7 +537,14 @@ async def main() -> None:
             await page.locator(".scroll-follow").click()
             try:
                 await page.wait_for_function(
-                    "() => { const el = document.querySelector('.transcript'); return el && el.scrollHeight - el.scrollTop - el.clientHeight < 28; }",
+                    """
+                    () => {
+                      const el = document.querySelector('.transcript');
+                      if (!el) return false;
+                      const max = Math.max(0, el.scrollHeight - el.clientHeight);
+                      return el.scrollHeight - el.scrollTop - el.clientHeight <= Math.max(2, max * 0.005);
+                    }
+                    """,
                     timeout=1500,
                 )
             except Exception:
@@ -475,6 +556,7 @@ async def main() -> None:
             await page.screenshot(path=str(OUT / "long-transcript-bottom.png"), full_page=False)
 
             await assert_stream_append_only(page)
+            await assert_near_bottom_stream_delta_follows_bottom(page)
             await assert_scrollbar_drag_not_pulled_by_delta(page)
             await assert_scroll_restored_after_conversation_remount(page)
             await browser.close()

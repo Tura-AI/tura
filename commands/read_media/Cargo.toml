@@ -27,6 +27,7 @@ image.workspace = true
 pdfium-render.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
+tura_path.workspace = true
 
 [dev-dependencies]
 filetime.workspace = true

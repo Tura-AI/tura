@@ -2165,7 +2165,7 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
         .map(|run| run.session_id.as_str())
         .collect::<Vec<_>>();
     claimed_ids.sort_unstable();
-    let mut expected_ids = vec![scheduled.id.as_str(), idle.id.as_str()];
+    let mut expected_ids = vec![scheduled.id.as_str()];
     expected_ids.sort_unstable();
 
     assert_eq!(claimed_ids, expected_ids);
@@ -2188,8 +2188,8 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
         store
             .get_session(&idle.id)
             .expect("idle should exist")
-            .status,
-        ApiSessionStatus::Busy
+            .task_management["status"],
+        "waiting_user"
     );
     assert_eq!(
         store
@@ -2208,6 +2208,93 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
     );
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn new_session_idle_task_added_while_idle_waits_for_user_action() {
+    let store = SessionStore::new();
+    let now = Utc::now();
+    let session = store.create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    store.update_session(
+        &session.id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(serde_json::json!({
+            "task_summary": "idle-added queued task",
+            "status": "todo",
+            "start_condition": "session_idle"
+        })),
+    );
+
+    let updated = store
+        .get_session(&session.id)
+        .expect("session should exist");
+    assert_eq!(updated.task_management["status"], "waiting_user");
+    assert!(
+        store.claim_due_task_runs(now).is_empty(),
+        "session_idle task added while already idle must wait for user action"
+    );
+}
+
+#[test]
+fn new_session_idle_task_added_while_busy_runs_after_idle_edge() {
+    let store = SessionStore::new();
+    let now = Utc::now();
+    let session = store.create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    store.update_session_status(&session.id, SessionStatusMano::Busy);
+    store.update_session(
+        &session.id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(serde_json::json!({
+            "task_summary": "busy-added queued task",
+            "status": "todo",
+            "start_condition": "session_idle"
+        })),
+    );
+
+    assert!(store.claim_due_task_runs(now).is_empty());
+
+    store.update_session_status(&session.id, SessionStatusMano::Idle);
+
+    let claimed = store.claim_due_task_runs(now);
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].session_id, session.id);
+    assert_eq!(claimed[0].task_summary, "busy-added queued task");
 }
 
 #[test]
@@ -2283,121 +2370,6 @@ fn scheduler_claim_persists_next_polling_start() {
     );
 
     let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn abort_pause_marks_all_non_terminal_tasks_waiting_user_and_stops_scheduler_claims() {
-    let store = SessionStore::new();
-    let now = Utc::now();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
-    store.update_session(
-        &session.id,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(serde_json::json!({
-            "plan_summary": "abort pause plan",
-            "tasks": [
-                {
-                    "task_id": "todo-due",
-                    "task_summary": "scheduled todo",
-                    "status": "todo",
-                    "start_condition": "scheduled_task",
-                    "start_at": (now - chrono::Duration::minutes(5)).to_rfc3339()
-                },
-                {
-                    "task_id": "doing-now",
-                    "task_summary": "running work",
-                    "status": "doing",
-                    "start_condition": "session_idle"
-                },
-                {
-                    "task_id": "question-now",
-                    "task_summary": "question work",
-                    "status": "question",
-                    "start_condition": "session_idle"
-                },
-                {
-                    "task_id": "done-work",
-                    "task_summary": "completed work",
-                    "status": "done",
-                    "start_condition": "session_idle"
-                },
-                {
-                    "task_id": "archived-work",
-                    "task_summary": "archived work",
-                    "status": "archived",
-                    "start_condition": "session_idle"
-                }
-            ]
-        })),
-    );
-    store.update_session_status(&session.id, SessionStatusMano::Busy);
-    store.append_user_command(&session.id, "stale queued command");
-
-    let paused = store
-        .pause_session_for_abort(&session.id)
-        .expect("session should pause for abort");
-    let cleared = store.clear_user_commands_for_session(&session.id);
-
-    assert_eq!(paused.status, ApiSessionStatus::Idle);
-    assert_eq!(cleared, vec!["stale queued command".to_string()]);
-    assert!(store.user_commands_for_session(&session.id).is_empty());
-    let tasks = paused
-        .task_management
-        .get("tasks")
-        .and_then(serde_json::Value::as_array)
-        .expect("multi task state should serialize tasks");
-    assert_eq!(
-        task_by_id_for_store_test(tasks, "todo-due")["status"],
-        "waiting_user"
-    );
-    assert_eq!(
-        task_by_id_for_store_test(tasks, "doing-now")["status"],
-        "waiting_user"
-    );
-    assert_eq!(
-        task_by_id_for_store_test(tasks, "question-now")["status"],
-        "waiting_user"
-    );
-    assert_eq!(
-        task_by_id_for_store_test(tasks, "done-work")["status"],
-        "done"
-    );
-    assert_eq!(
-        task_by_id_for_store_test(tasks, "archived-work")["status"],
-        "archived"
-    );
-    assert!(
-        store.claim_due_task_runs(now).is_empty(),
-        "paused tasks must not be scheduler-claimed after abort"
-    );
-}
-
-fn task_by_id_for_store_test<'a>(
-    tasks: &'a [serde_json::Value],
-    task_id: &str,
-) -> &'a serde_json::Value {
-    tasks
-        .iter()
-        .find(|task| task.get("task_id").and_then(serde_json::Value::as_str) == Some(task_id))
-        .expect("task should exist")
 }
 
 #[test]

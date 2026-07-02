@@ -105,6 +105,70 @@ async def main() -> None:
             )
             await page.goto(f"{GUI_URL}/tool-inspector-scroll-playwright.html")
             await page.wait_for_selector(".tool-inspector.open .inspector-console", timeout=15_000)
+            await page.screenshot(path=str(OUT / "tool-inspector-command-steps.png"), full_page=True)
+
+            layout = await page.evaluate("window.__toolInspectorHarness.snapshot()")
+            checks.append(
+                {
+                    "name": "inspector-starts-below-titlebar",
+                    "ok": layout["inspectorTop"] >= layout["titlebarBottom"] - 0.5,
+                    "value": layout,
+                }
+            )
+            checks.append(
+                {
+                    "name": "inspector-header-visible-below-titlebar",
+                    "ok": layout["headerTop"] >= layout["titlebarBottom"] - 0.5,
+                    "value": layout,
+                }
+            )
+            checks.append(
+                {
+                    "name": "inspector-height-stays-inside-content-viewport",
+                    "ok": layout["inspectorBottom"] <= layout["viewportHeight"] + 0.5,
+                    "value": layout,
+                }
+            )
+
+            record_headers = await page.evaluate(
+                """
+                () => Array.from(document.querySelectorAll('.inspector-record-toggle')).slice(0, 2).map((button) => ({
+                  step: button.querySelector('.inspector-record-step')?.textContent?.trim() ?? '',
+                  text: button.textContent ?? '',
+                  meta: button.querySelector('small')?.textContent ?? '',
+                }))
+                """
+            )
+            checks.append(
+                {
+                    "name": "completed-command-shows-left-step",
+                    "ok": record_headers[0]["step"] == "#1",
+                    "value": record_headers[0] if record_headers else None,
+                }
+            )
+            checks.append(
+                {
+                    "name": "completed-command-hides-elapsed-timeout",
+                    "ok": bool(record_headers)
+                    and "/" not in record_headers[0]["meta"]
+                    and not any(char.isdigit() for char in record_headers[0]["meta"]),
+                    "value": record_headers[0] if record_headers else None,
+                }
+            )
+            checks.append(
+                {
+                    "name": "pending-command-shows-left-step",
+                    "ok": len(record_headers) > 1 and record_headers[1]["step"] == "#2",
+                    "value": record_headers[1] if len(record_headers) > 1 else None,
+                }
+            )
+            checks.append(
+                {
+                    "name": "pending-command-keeps-elapsed-timeout",
+                    "ok": len(record_headers) > 1 and "/5m" in record_headers[1]["meta"],
+                    "value": record_headers[1] if len(record_headers) > 1 else None,
+                }
+            )
 
             before = await page.evaluate(
                 """

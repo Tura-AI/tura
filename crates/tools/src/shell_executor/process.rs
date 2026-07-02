@@ -282,10 +282,7 @@ impl ShellProcessScope {
 
 #[cfg(windows)]
 fn configure_platform_spawn(command: &mut Command) {
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    use std::os::windows::process::CommandExt;
-    command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    tura_path::process_hardening::hide_child_console_window_and_create_group(command);
 }
 
 #[cfg(unix)]
@@ -299,9 +296,10 @@ fn configure_platform_spawn(_command: &mut Command) {}
 
 #[cfg(windows)]
 fn configure_tokio_platform_spawn(command: &mut tokio::process::Command) {
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    command.creation_flags(
+        tura_path::process_hardening::WINDOWS_CREATE_NO_WINDOW
+            | tura_path::process_hardening::WINDOWS_CREATE_NEW_PROCESS_GROUP,
+    );
 }
 
 #[cfg(unix)]

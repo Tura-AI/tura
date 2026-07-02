@@ -50,7 +50,7 @@
   width: 56px;
   height: 56px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-large);
   background: var(--paper);
   box-shadow: var(--shadow-control);
 }

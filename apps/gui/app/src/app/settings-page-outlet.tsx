@@ -72,6 +72,16 @@ export function SettingsPageOutlet(props: {
           },
         }))
       }
+      onCornerRadius={(cornerRadius) =>
+        props.onRuntimeSetting((previous) => ({
+          ...previous,
+          cornerRadius,
+          configDraft: {
+            ...previous.configDraft,
+            corner_radius: cornerRadius,
+          },
+        }))
+      }
       onMainFont={(mainFont) =>
         props.onRuntimeSetting((previous) => ({
           ...previous,

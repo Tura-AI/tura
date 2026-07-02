@@ -1,9 +1,0 @@
-{
-  "RunId": "source-port-eza-thinking-release-20260620-152623",
-  "RunRoot": "C:\\Users\\liuliu\\Documents\\tura_workspace\\target\\project-rebuild-source-port\\source-port-eza-thinking-release-20260620-152623",
-  "MonitorRoot": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-20260620-152623",
-  "Pid": 19356,
-  "Stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-20260620-152623\\benchmark.stdout.log",
-  "Stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-20260620-152623\\benchmark.stderr.log",
-  "ReleaseExe": "C:\\Users\\liuliu\\Documents\\tura\\target\\release\\tura_exec.exe"
-}

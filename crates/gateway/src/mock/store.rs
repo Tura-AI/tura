@@ -74,7 +74,7 @@ impl Store {
             force_planning: false,
             disable_permission_restrictions: false,
             model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
-            model_acceleration_enabled: true,
+            model_acceleration_enabled: false,
             status: SessionStatus::Idle,
             message_count: 0,
             task_management: serde_json::json!({}),
@@ -192,7 +192,7 @@ impl Store {
             force_planning: false,
             disable_permission_restrictions: false,
             model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
-            model_acceleration_enabled: true,
+            model_acceleration_enabled: false,
             status: SessionStatus::Idle,
             message_count: 0,
             task_management: serde_json::json!({}),
@@ -335,6 +335,21 @@ impl Store {
         }
         if let Some(theme) = patch.theme {
             config.theme = Some(theme);
+        }
+        if let Some(corner_radius) = patch.corner_radius {
+            config.corner_radius = Some(corner_radius);
+        }
+        if let Some(main_font) = patch.main_font {
+            config.main_font = Some(main_font);
+        }
+        if let Some(code_font) = patch.code_font {
+            config.code_font = Some(code_font);
+        }
+        if let Some(main_font_size) = patch.main_font_size {
+            config.main_font_size = Some(main_font_size);
+        }
+        if let Some(code_font_size) = patch.code_font_size {
+            config.code_font_size = Some(code_font_size);
         }
         if let Some(model) = patch.model {
             config.model = Some(model);
@@ -655,12 +670,22 @@ mod tests {
         let updated = store.update_config(ConfigPatch {
             language: Some("zh-CN".to_string()),
             theme: Some("dark".to_string()),
+            corner_radius: Some("9.6px".to_string()),
+            main_font: Some("Arial".to_string()),
+            code_font: Some("Consolas".to_string()),
+            main_font_size: Some(13),
+            code_font_size: Some(11),
             model: Some("gpt-5.5".to_string()),
             agent: Some("coding".to_string()),
             skill_folders: Some(vec!["skills".to_string()]),
         });
         assert_eq!(updated.language.as_deref(), Some("zh-CN"));
         assert_eq!(updated.theme.as_deref(), Some("dark"));
+        assert_eq!(updated.corner_radius.as_deref(), Some("9.6px"));
+        assert_eq!(updated.main_font.as_deref(), Some("Arial"));
+        assert_eq!(updated.code_font.as_deref(), Some("Consolas"));
+        assert_eq!(updated.main_font_size, Some(13));
+        assert_eq!(updated.code_font_size, Some(11));
         assert_eq!(updated.model.as_deref(), Some("gpt-5.5"));
         assert_eq!(updated.agent.as_deref(), Some("coding"));
         assert_eq!(updated.skill_folders, vec!["skills"]);

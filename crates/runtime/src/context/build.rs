@@ -1148,8 +1148,13 @@ mod tests {
             serde_json::json!({
                 "type": "tool_result",
                 "tool_name": "command_run",
-                "context_cache": {
-                    "output": "RECENT_TOOL_RESULT_SENTINEL"
+                "output": {
+                    "results": [{
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": "RECENT_TOOL_RESULT_SENTINEL"
+                    }]
                 },
                 "success": true,
                 "timestamp": (base + Duration::minutes(80)).to_rfc3339()
@@ -1160,6 +1165,15 @@ mod tests {
 
         compact_session_context_automatically(&mut session, "automatic handoff")
             .expect("automatic compact should succeed");
+        assert!(
+            session.session_log_retention.omitted_entries >= 180,
+            "compact should retain a DB-sync boundary for omitted entries"
+        );
+        let retained_log = session.session_log.join("\n");
+        assert!(
+            !retained_log.contains("old-history-00"),
+            "compacted runtime state should not keep DB-sync-dead history: {retained_log}"
+        );
         let compact = session
             .session_log
             .iter()
@@ -1184,6 +1198,16 @@ mod tests {
             "tool outputs must remain in normal tool context messages, not compact summaries: {content}"
         );
         assert!(!content.contains("old-history-00"), "{content}");
+
+        let rebuilt = build_messages_from_session(&session)
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            rebuilt.contains("RECENT_TOOL_RESULT_SENTINEL"),
+            "retained tail tool context must still be available after trimming: {rebuilt}"
+        );
     }
 
     #[test]

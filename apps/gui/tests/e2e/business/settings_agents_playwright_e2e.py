@@ -201,15 +201,11 @@ async def main() -> None:
                 .filter(has_text="快速 · openai/gpt-5.5-mini")
             ).to_be_visible()
             await expect(page.get_by_text("思考强度")).to_be_visible()
-            await expect(page.get_by_text("Priority")).to_be_visible()
             await page.locator(".agent-editor .field-row").filter(
                 has_text="思考强度"
             ).locator(".appearance-select-button").click()
             await page.locator(".appearance-select-menu").get_by_role(
                 "button", name="高", exact=True
-            ).click()
-            await page.locator(".agent-priority-segmented").get_by_role(
-                "button", name="开启"
             ).click()
             await page.get_by_role("button", name="保存").click()
             await expect(page.get_by_text("已保存")).to_be_visible()

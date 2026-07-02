@@ -87,7 +87,7 @@ a single workspace cargo test as its main backend check. `business`,
 types at the workspace root; crate-owned typed tests use the backend package
 directories. None of these types owns or nests the others. Backend quality
 checks enforce this layout through `tests/business`, `tests/os_testing`,
-`tests/performance`, `tests/live`, `tests/release`, and `tests/benchmark`.
+`tests/performance`, `tests/live`, `tests/release`, and `benchmark`.
 Do not run OS testing coverage with a single parallel workspace cargo command:
 process-owning tests share global env, local sockets, owner locks, and
 child-process cleanup, so the backend OS runner serializes every typed target
@@ -134,7 +134,7 @@ The typed directories are peers, not nested suites:
 <backend-package>/tests/os_testing/         process, daemon, owner, and OS policy flows
 <backend-package>/tests/performance/        performance, stress, load, and soak tests
 <backend-package>/tests/live/               third-party or live-network tests
-<backend-package>/tests/benchmark/          scoring and comparison tests
+<backend-package>/benchmark/          scoring and comparison tests
 ```
 
 Business and OS testing targets may use `helpers/` plus target-owned module
@@ -286,12 +286,12 @@ sh xtask/scripts/run-backend-performance-tests.sh --crate gateway --timeout-seco
 
 ## Benchmarks
 
-`tests/benchmark/` contains manual comparison, scoring, and long-running repair
+`benchmark/` contains manual comparison, scoring, and long-running repair
 suites. GitHub CI must not execute scripts from this directory or read them as
 test fixtures. Crate-owned tests should live under the owning crate, for example
 `crates/*/tests/`.
 
-See `tests/benchmark/README.md` for the benchmark entry list and contract.
+See `benchmark/README.md` for the benchmark entry list and contract.
 
 ## Inspecting Logs In Tests
 

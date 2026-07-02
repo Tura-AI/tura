@@ -45,6 +45,10 @@ import {
 import { createResizeDrawGate, createTerminalResizeHandler } from "./resize.js";
 import { mediaTokenForInputPath, saveClipboardImageInput } from "./clipboard-image.js";
 
+const GATEWAY_SHUTDOWN_POLL_MS = 1_000;
+const GATEWAY_SHUTDOWN_PROBE_TIMEOUT_MS = 1_500;
+const GATEWAY_SHUTDOWN_FAILURES = 3;
+
 export type TuiKeypressKey = {
   name?: string;
   ctrl?: boolean;
@@ -103,6 +107,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   const capabilities = detectTerminalCapabilities(context.display);
   let client: TuiGatewayClient;
   let devLogPath: string | undefined;
+  let connectedGatewayUrl: string | undefined;
   if (context.mock) {
     client = new MockGatewayClient({ directory: context.cwd });
   } else {
@@ -112,6 +117,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
       context.dev,
       context.gatewayUrlExplicit,
     );
+    connectedGatewayUrl = gatewayUrl;
     client = new GatewayClient({
       baseUrl: gatewayUrl,
       directory: context.cwd,
@@ -228,6 +234,10 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     if (!state.sessionsOpen || state.sessionLoading) return;
     void refreshOpenSessionPicker(client, () => state, dispatch);
   }, SESSION_PICKER_REFRESH_MS);
+  let requestInputExit: (() => void) | undefined;
+  const gatewayShutdownTimer = connectedGatewayUrl
+    ? startGatewayShutdownWatcher(connectedGatewayUrl, () => requestInputExit?.())
+    : undefined;
 
   // Load the initial session + transcript in the background. Keeping it off the
   // startup path means a slow or wedged gateway can never freeze the UI or block
@@ -269,9 +279,19 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     }
   })();
 
-  await inputLoop(client, () => state, dispatch, capabilities, resizeDrawGate.enterResize);
+  await inputLoop(
+    client,
+    () => state,
+    dispatch,
+    capabilities,
+    resizeDrawGate.enterResize,
+    (exit) => {
+      requestInputExit = exit;
+    },
+  );
   clearInterval(heartbeatTimer);
   clearInterval(sessionPickerRefreshTimer);
+  if (gatewayShutdownTimer) clearInterval(gatewayShutdownTimer);
   controller.abort();
   resizeDrawGate.dispose();
   flushDraw();
@@ -286,6 +306,7 @@ async function inputLoop(
   dispatch: (action: Parameters<typeof reducer>[1]) => void,
   capabilities: TerminalCapabilities,
   onResize?: () => void,
+  onExitReady?: (exit: () => void) => void,
 ): Promise<void> {
   emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY && capabilities.interactive) process.stdin.setRawMode(true);
@@ -296,12 +317,47 @@ async function inputLoop(
       process.stdout.off("resize", onTerminalResize);
       resolve();
     };
+    onExitReady?.(onExit);
     const onKeypress = async (text: string, key: TuiKeypressKey | undefined) => {
       await handleTuiKeypress(client, getState, dispatch, text, key, onExit);
     };
     process.stdin.on("keypress", onKeypress);
     process.stdout.on("resize", onTerminalResize);
   });
+}
+
+function startGatewayShutdownWatcher(gatewayUrl: string, onShutdown: () => void): ReturnType<typeof setInterval> {
+  let consecutiveFailures = 0;
+  let probing = false;
+  return setInterval(() => {
+    if (probing) return;
+    probing = true;
+    void gatewayHealthReachable(gatewayUrl)
+      .then((reachable) => {
+        consecutiveFailures = reachable ? 0 : consecutiveFailures + 1;
+        if (consecutiveFailures >= GATEWAY_SHUTDOWN_FAILURES) {
+          onShutdown();
+        }
+      })
+      .finally(() => {
+        probing = false;
+      });
+  }, GATEWAY_SHUTDOWN_POLL_MS);
+}
+
+async function gatewayHealthReachable(gatewayUrl: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GATEWAY_SHUTDOWN_PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${gatewayUrl.replace(/\/+$/u, "")}/global/health`, {
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function pageSelectionDelta(
@@ -548,21 +604,7 @@ async function slashCommand(
   const [name, ...args] = input.slice(1).trim().split(/\s+/).filter(Boolean);
   if (!name || name === "help") dispatch({ type: "toggle-help" });
   else if (name === "chat") dispatch({ type: "close-panels" });
-  else if (name === "commands") {
-    if (args[0]) {
-      const config = await client.patchSessionConfig(
-        sessionConfigPatchFromAssignments([
-          `show_command_instructions=${args[0]}`,
-          ...args.slice(1),
-        ]),
-      );
-      dispatch({ type: "session-config", value: config, open: true });
-      dispatch({ type: "notice", value: undefined });
-    } else {
-      dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
-      dispatch({ type: "open-setting-detail", detail: "commands" });
-    }
-  } else if (name === "quit" || name === "exit") return true;
+  else if (name === "quit" || name === "exit") return true;
   else if (name === "new") await createAndSelectSession(client, getState, dispatch);
   else if (name === "resume") {
     const id = args[0];

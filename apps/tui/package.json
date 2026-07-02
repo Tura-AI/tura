@@ -35,7 +35,7 @@
     "test:business:real-session-db": "npm run build && node ./tests/e2e/business/tui_real_session_db_replay_playwright.mjs",
     "test:performance:history": "npm run build && node ./tests/performance/heavy-history-session-perf.mjs",
     "test:performance:full-chain": "npm run build && node ./tests/performance/full_chain_e2e_stress.mjs",
-    "stress:memory": "npm run build && node --expose-gc ../../tests/benchmark/tui/tui_streaming_memory_stress.mjs",
+    "stress:memory": "npm run build && node --expose-gc ../../benchmark/build/tui-streaming-memory/runner.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src tests",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"tests/**/*.mjs\" \"scripts/**/*.mjs\" \"*.md\"",

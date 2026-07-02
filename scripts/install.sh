@@ -30,11 +30,11 @@ Usage:
 Installs project dependencies without building Tura. The root installer verifies
 git and shell_command/bash/zsh coverage, installs missing git/bash/zsh dependencies when
 possible, ensures user-local uv/bun are available, runs command-owned installers
-under commands/*, and installs Bun workspaces in their own directories.
+under commands/*, and installs JavaScript workspaces in their own directories.
 
 Options:
   --skip-commands  skip commands/*/install.* scripts
-  --skip-apps      skip Bun installs for apps/tui, apps/gui, and apps/tauri
+  --skip-apps      skip JavaScript installs for apps/tui, apps/gui, and apps/tauri
   --skip-uv        do not install or verify uv
   --skip-bun       do not install or verify bun
   --check-only     verify expected tools/environments without installing
@@ -467,23 +467,36 @@ run_command_installers() {
   done
 }
 
-install_bun_workspace() {
+install_js_workspace() {
   workspace_dir=$1
   [ "$SKIP_APPS" -eq 1 ] && return
   [ -f "$workspace_dir/package.json" ] || return
 
-  ensure_bun
   if [ "$CHECK_ONLY" -eq 1 ]; then
-    echo "Bun workspace present: $workspace_dir"
+    echo "JavaScript workspace present: $workspace_dir"
     return
   fi
 
-  step "Installing Bun workspace: $workspace_dir"
-  bun_args="install"
-  [ -f "$workspace_dir/bun.lock" ] && bun_args="$bun_args --frozen-lockfile"
-  [ "$OFFLINE" -eq 1 ] && bun_args="$bun_args --offline"
-  # shellcheck disable=SC2086
-  (cd "$workspace_dir" && bun $bun_args)
+  step "Installing JavaScript workspace: $workspace_dir"
+  if [ -f "$workspace_dir/bun.lock" ]; then
+    ensure_bun
+    bun_args="install --frozen-lockfile"
+    [ "$OFFLINE" -eq 1 ] && bun_args="$bun_args --offline"
+    # shellcheck disable=SC2086
+    (cd "$workspace_dir" && bun $bun_args)
+  elif [ -f "$workspace_dir/package-lock.json" ]; then
+    command -v npm >/dev/null 2>&1 || { echo "npm was not found on PATH. Install Node.js/npm or add npm to PATH, then rerun." >&2; exit 1; }
+    npm_args="ci"
+    [ "$OFFLINE" -eq 1 ] && npm_args="$npm_args --offline"
+    # shellcheck disable=SC2086
+    (cd "$workspace_dir" && npm $npm_args)
+  else
+    ensure_bun
+    bun_args="install"
+    [ "$OFFLINE" -eq 1 ] && bun_args="$bun_args --offline"
+    # shellcheck disable=SC2086
+    (cd "$workspace_dir" && bun $bun_args)
+  fi
 }
 
 cd "$REPO_ROOT"
@@ -496,10 +509,10 @@ ensure_bun
 run_command_installers
 
 if [ "$SKIP_APPS" -eq 0 ]; then
-  install_bun_workspace "$REPO_ROOT/scripts/packages/playwright_node"
-  install_bun_workspace "$REPO_ROOT/apps/tui"
-  install_bun_workspace "$REPO_ROOT/apps/gui"
-  install_bun_workspace "$REPO_ROOT/apps/tauri"
+  install_js_workspace "$REPO_ROOT/scripts/packages/playwright_node"
+  install_js_workspace "$REPO_ROOT/apps/tui"
+  install_js_workspace "$REPO_ROOT/apps/gui"
+  install_js_workspace "$REPO_ROOT/apps/tauri"
 fi
 
 step "Tura dependency install completed"

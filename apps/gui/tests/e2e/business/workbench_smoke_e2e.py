@@ -110,6 +110,95 @@ async def goto_app(page, url: str, expected_selector: str) -> None:
     raise AssertionError(f"App failed to load after retries: {last_error}")
 
 
+async def assert_root_viewport_locked(page, checks: list[dict], name: str) -> None:
+    metrics = await page.evaluate(
+        """
+        () => ({
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          document: {
+            clientWidth: document.documentElement.clientWidth,
+            clientHeight: document.documentElement.clientHeight,
+            scrollWidth: document.documentElement.scrollWidth,
+            scrollHeight: document.documentElement.scrollHeight,
+          },
+          body: {
+            clientWidth: document.body.clientWidth,
+            clientHeight: document.body.clientHeight,
+            scrollWidth: document.body.scrollWidth,
+            scrollHeight: document.body.scrollHeight,
+            overflowX: getComputedStyle(document.body).overflowX,
+            overflowY: getComputedStyle(document.body).overflowY,
+          },
+        })
+        """,
+    )
+    ok = (
+        metrics["document"]["scrollWidth"] <= metrics["viewport"]["width"] + 1
+        and metrics["body"]["scrollWidth"] <= metrics["viewport"]["width"] + 1
+        and metrics["document"]["scrollHeight"] <= metrics["viewport"]["height"] + 1
+        and metrics["body"]["scrollHeight"] <= metrics["viewport"]["height"] + 1
+    )
+    checks.append({"name": f"{name}-root-has-no-page-scrollbars", "ok": ok, "metrics": metrics})
+
+
+async def assert_rail_toggle_clear_of_titlebar(page, checks: list[dict], name: str) -> None:
+    metrics = await page.evaluate(
+        """
+        () => {
+          const titlebar = document.querySelector('.app-titlebar');
+          const button = document.querySelector('.rail-open-button');
+          if (!titlebar || !button) return { found: false };
+          const titlebarRect = titlebar.getBoundingClientRect();
+          const buttonRect = button.getBoundingClientRect();
+          const x = buttonRect.left + buttonRect.width / 2;
+          const y = buttonRect.top + buttonRect.height / 2;
+          const hit = document.elementFromPoint(x, y);
+          return {
+            found: true,
+            titlebarBottom: titlebarRect.bottom,
+            buttonTop: buttonRect.top,
+            buttonBottom: buttonRect.bottom,
+            hitClassName: hit?.className,
+            hitIsRailToggle: Boolean(hit?.closest?.('.rail-open-button')),
+          };
+        }
+        """,
+    )
+    ok = (
+        metrics.get("found")
+        and metrics["buttonTop"] >= metrics["titlebarBottom"] + 4
+        and metrics["hitIsRailToggle"]
+    )
+    checks.append({"name": f"{name}-rail-toggle-clear-of-titlebar", "ok": ok, "metrics": metrics})
+
+
+async def click_center_and_expect_visible(page, selector: str, expected_selector: str) -> dict:
+    hit = await page.evaluate(
+        """
+        (selector) => {
+          const target = document.querySelector(selector);
+          if (!target) return { found: false };
+          const rect = target.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          const hit = document.elementFromPoint(x, y);
+          return {
+            found: true,
+            x,
+            y,
+            tag: hit?.tagName,
+            className: hit?.className,
+            text: hit?.textContent?.trim().slice(0, 80),
+          };
+        }
+        """,
+        selector,
+    )
+    await page.mouse.click(hit["x"], hit["y"])
+    await expect(page.locator(expected_selector)).to_be_visible(timeout=5_000)
+    return hit
+
+
 async def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     process = start_server()
@@ -134,15 +223,33 @@ async def main() -> None:
             )
             await page.wait_for_load_state("networkidle")
             await expect(page.locator(".new-session-view")).to_be_visible(timeout=15000)
+            await assert_root_viewport_locked(page, checks, "new-session")
+            await assert_rail_toggle_clear_of_titlebar(page, checks, "new-session")
+            hit = await click_center_and_expect_visible(
+                page,
+                ".plan-session-button",
+                ".plan-session-menu",
+            )
+            checks.append({"name": "new-session-workspace-button-clickable", "ok": True, "hit": hit})
+            await page.keyboard.press("Escape")
             await page.screenshot(path=OUT / "01-new-session.png", full_page=True)
             checks.append({"name": "new-session-visible", "ok": True})
 
-            await page.get_by_role("button", name="计划").click()
+            await goto_app(
+                page,
+                f"{GUI_URL}/?{urlencode({'tab': 'plan', 'e2eFixture': 'communication-protocol'})}",
+                ".plan-workbench",
+            )
             await expect(page.locator(".plan-workbench")).to_be_visible(timeout=15000)
+            await assert_root_viewport_locked(page, checks, "plan")
             await page.screenshot(path=OUT / "02-plan.png", full_page=True)
             checks.append({"name": "plan-visible", "ok": True})
 
-            await page.get_by_role("button", name="文件浏览器").click()
+            await goto_app(
+                page,
+                f"{GUI_URL}/?{urlencode({'tab': 'files', 'e2eFixture': 'communication-protocol'})}",
+                ".files-view",
+            )
             await expect(page.locator(".files-view")).to_be_visible(timeout=15000)
             await page.screenshot(path=OUT / "03-files.png", full_page=True)
             checks.append({"name": "files-visible", "ok": True})
