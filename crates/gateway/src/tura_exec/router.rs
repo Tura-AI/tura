@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use super::cli::CliConfig;
 use super::env::normalize_model;
-use super::output::{emit_jsonl, write_last_message};
+use super::output::{emit_jsonl, write_last_message, write_turn_log_stderr};
 use super::session::final_text_from_session_db;
 
 const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
@@ -35,6 +35,9 @@ pub(crate) fn run_via_router(
         "directory": config.cwd.to_string_lossy(),
         "prompt": prompt,
     });
+    if config.log {
+        payload["return_log"] = json!(true);
+    }
     if let Some(agent) = config.agent.as_deref() {
         payload["agent"] = json!(agent);
     }
@@ -81,6 +84,11 @@ pub(crate) fn run_via_router(
         router_final_text(&response).unwrap_or_else(|| final_text_from_session_db(session_id));
     if let Some(path) = config.last_message_path.as_ref() {
         write_last_message(path, &text)?;
+    }
+    if config.log {
+        if let Some(session_log) = router_session_log(&response) {
+            write_turn_log_stderr(&session_log, router_turn_started_at_ms(&response))?;
+        }
     }
     if config.json {
         emit_jsonl(
@@ -345,6 +353,29 @@ fn router_final_text(response: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+fn router_session_log(response: &Value) -> Option<Vec<String>> {
+    response
+        .pointer("/payload/result/result/session_log")
+        .or_else(|| response.pointer("/payload/result/session_log"))
+        .or_else(|| response.pointer("/payload/session_log"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .filter(|items| !items.is_empty())
+}
+
+fn router_turn_started_at_ms(response: &Value) -> Option<i64> {
+    response
+        .pointer("/payload/result/result/turn_started_at_ms")
+        .or_else(|| response.pointer("/payload/result/turn_started_at_ms"))
+        .or_else(|| response.pointer("/payload/turn_started_at_ms"))
+        .and_then(Value::as_i64)
+}
+
 fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
     const KEYS: &[&str] = &[
         "TURA_SESSION_REASONING_EFFORT",
@@ -502,7 +533,8 @@ fn resolve_router_binary() -> Option<PathBuf> {
 mod tests {
     use super::{
         read_router_response, router_callback_cli_events, router_final_text, router_health_ok,
-        router_stderr_log_path, worker_env_from_current_process,
+        router_session_log, router_stderr_log_path, router_turn_started_at_ms,
+        worker_env_from_current_process,
     };
     use serde_json::json;
     use std::collections::HashSet;
@@ -555,6 +587,25 @@ mod tests {
             router_final_text(&json!({"payload": {"final_text": "  "}})),
             None
         );
+    }
+
+    #[test]
+    fn router_log_helpers_read_nested_runtime_worker_log_payload() {
+        let response = json!({
+            "payload": {
+                "result": {
+                    "result": {
+                        "session_log": ["{\"role\":\"user\",\"content\":\"hi\"}"],
+                        "turn_started_at_ms": 1234
+                    }
+                }
+            }
+
+        });
+
+        let log = router_session_log(&response).expect("session log");
+        assert_eq!(log.len(), 1);
+        assert_eq!(router_turn_started_at_ms(&response), Some(1234));
     }
 
     #[test]

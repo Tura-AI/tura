@@ -37,6 +37,8 @@ pub(crate) struct RunAgentRequest {
     pub(crate) runtime_context: Option<String>,
     #[serde(default)]
     pub(crate) planning_mode_override: Option<bool>,
+    #[serde(default)]
+    pub(crate) return_log: bool,
     /// Worker env contract computed by the gateway (model / planning /
     /// stall-guard / ...). The router injects it into the subprocess as-is.
     #[serde(default)]
@@ -269,6 +271,7 @@ async fn dispatch_run_agent_inner(
         "prompt": prompt,
         "runtime_context": req.runtime_context,
         "planning_mode_override": req.planning_mode_override,
+        "return_log": req.return_log,
     });
     let ctx = CallContext {
         request_id: if ipc_request_id.trim().is_empty() {

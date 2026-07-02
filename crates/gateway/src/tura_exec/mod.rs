@@ -11,7 +11,9 @@ use serde_json::json;
 
 use self::cli::{print_help, wants_help, CliConfig};
 use self::env::configure_runtime_env;
-use self::output::{emit_jsonl, final_message_text, write_jsonl, write_last_message};
+use self::output::{
+    emit_jsonl, final_message_text, write_jsonl, write_last_message, write_turn_log_stderr,
+};
 use self::router::run_via_router;
 use self::session::{ensure_session_db_owner, reject_busy_session};
 
@@ -76,6 +78,13 @@ fn run() -> Result<i32, String> {
 
     if let Some(path) = config.last_message_path.as_ref() {
         write_last_message(path, &final_message_text(&result.session.session_log))?;
+    }
+
+    if config.log {
+        write_turn_log_stderr(
+            &result.session.session_log,
+            Some(result.session.session_started_at.timestamp_millis()),
+        )?;
     }
 
     if config.json {
