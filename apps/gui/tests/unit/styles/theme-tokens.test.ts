@@ -15,22 +15,32 @@ function themeBlock(theme?: string): string {
 }
 
 function tokenValue(block: string, token: string): string {
-  const match = block.match(new RegExp(`${token}:\\s*(#[0-9a-fA-F]{6})`));
-  expect(match?.[1]).toBeDefined();
-  return match![1]!;
+  const line = block
+    .split(/\r?\n/u)
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(`${token}:`));
+  const value = line?.slice(token.length + 1).trim().replace(/;$/u, "");
+  expect(value).toBeDefined();
+  return value!;
+}
+
+function colorTokenValue(block: string, token: string): string {
+  const value = tokenValue(block, token);
+  expect(value).toMatch(/^#[0-9a-fA-F]{6}$/u);
+  return value;
 }
 
 describe("theme accent tokens", () => {
   test("uses low-saturation theme accents instead of vivid colors", () => {
-    expect(tokenValue(themeBlock(), "--accent")).toBe("#3f4652");
-    expect(tokenValue(themeBlock("dark"), "--accent")).toBe("#d8d4ca");
-    expect(tokenValue(themeBlock("uruk"), "--accent")).toBe("#6d5148");
-    expect(tokenValue(themeBlock("caral"), "--accent")).toBe("#000000");
-    expect(tokenValue(themeBlock("liangzhu"), "--accent")).toBe("#2f7f79");
+    expect(colorTokenValue(themeBlock(), "--accent")).toBe("#3f4652");
+    expect(colorTokenValue(themeBlock("dark"), "--accent")).toBe("#d8d4ca");
+    expect(colorTokenValue(themeBlock("uruk"), "--accent")).toBe("#6d5148");
+    expect(tokenValue(themeBlock("caral"), "--accent")).toBe("var(--ink)");
+    expect(colorTokenValue(themeBlock("liangzhu"), "--accent")).toBe("#2f7f79");
   });
 
   test("uses white accent text on the caral black controls", () => {
-    expect(tokenValue(themeBlock("caral"), "--accent-ink")).toBe("#ffffff");
+    expect(colorTokenValue(themeBlock("caral"), "--accent-ink")).toBe("#ffffff");
   });
 });
 
