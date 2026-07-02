@@ -338,6 +338,10 @@ describe("assistant command run blocks", () => {
   });
 
   test("summarizes elapsed time from the whole command_run group instead of the last command", () => {
+    const startedAt = 1_700_000_100_000;
+    const firstEndedAt = 1_700_000_170_000;
+    const secondStartedAt = 1_700_000_175_000;
+    const endedAt = 1_700_000_180_000;
     const part: MessagePart = {
       id: "runtime-group.tool.command_run",
       sessionID: "s1",
@@ -346,24 +350,24 @@ describe("assistant command run blocks", () => {
       tool: "command_run",
       state: {
         status: "completed",
-        created_at: 100_000,
-        updated_at: 180_000,
-        time: { start: 100_000, end: 180_000 },
+        created_at: startedAt,
+        updated_at: endedAt,
+        time: { start: startedAt, end: endedAt },
         input: {
           commands: [
             {
               command_id: "runtime-group.tool.command_run:call_1:0",
               command_type: "shell_command",
               command_line: "prepare",
-              started_at: 100_000,
-              completed_at: 170_000,
+              started_at: startedAt,
+              completed_at: firstEndedAt,
             },
             {
               command_id: "runtime-group.tool.command_run:call_1:1",
               command_type: "shell_command",
               command_line: "verify",
-              started_at: 175_000,
-              completed_at: 180_000,
+              started_at: secondStartedAt,
+              completed_at: endedAt,
             },
           ],
         },
@@ -374,16 +378,16 @@ describe("assistant command run blocks", () => {
               command_type: "shell_command",
               command_line: "prepare",
               success: true,
-              started_at: 100_000,
-              completed_at: 170_000,
+              started_at: startedAt,
+              completed_at: firstEndedAt,
             },
             {
               command_id: "runtime-group.tool.command_run:call_1:1",
               command_type: "shell_command",
               command_line: "verify",
               success: true,
-              started_at: 175_000,
-              completed_at: 180_000,
+              started_at: secondStartedAt,
+              completed_at: endedAt,
             },
           ],
         },
@@ -398,8 +402,11 @@ describe("assistant command run blocks", () => {
 
   test("keeps running command_run group elapsed time live from the group start", () => {
     const originalNow = Date.now;
-    Date.now = () => 190_000;
+    Date.now = () => 1_700_000_190_000;
     try {
+      const startedAt = 1_700_000_100_000;
+      const updatedAt = 1_700_000_180_000;
+      const commandStartedAt = 1_700_000_175_000;
       const part: MessagePart = {
         id: "runtime-running-group.tool.command_run",
         sessionID: "s1",
@@ -408,16 +415,16 @@ describe("assistant command run blocks", () => {
         tool: "command_run",
         state: {
           status: "running",
-          created_at: 100_000,
-          updated_at: 180_000,
-          time: { start: 100_000, updated: 180_000 },
+          created_at: startedAt,
+          updated_at: updatedAt,
+          time: { start: startedAt, updated: updatedAt },
           input: {
             commands: [
               {
                 command_id: "runtime-running-group.tool.command_run:call_1:0",
                 command_type: "shell_command",
                 command_line: "verify",
-                started_at: 175_000,
+                started_at: commandStartedAt,
               },
             ],
           },

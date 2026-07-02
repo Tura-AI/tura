@@ -298,7 +298,9 @@ function patchRecordsFromState(part: MessagePart, state: JsonRecord): ToolRecord
       command: cleanCommandLine(part.tool ?? "apply_patch", command),
       output,
       status: toolStatus(state),
-      hasResult: Boolean(output.trim()) || ["completed", "failed", "success", "done"].includes(toolStatus(state)),
+      hasResult:
+        Boolean(output.trim()) ||
+        ["completed", "failed", "success", "done"].includes(toolStatus(state)),
       durationMs:
         toolDurationMs(part) ?? durationFromText(output) ?? fallbackDurationMs(toolStatus(state)),
       timeoutMs: commandTimeoutMs(state, undefined, command),
@@ -324,7 +326,9 @@ function fallbackRecord(part: MessagePart): ToolRecord {
     command: cleanCommandLine(part.tool ?? part.type, command),
     output,
     status: toolStatus(state),
-    hasResult: Boolean(output.trim()) || ["completed", "failed", "success", "done"].includes(toolStatus(state)),
+    hasResult:
+      Boolean(output.trim()) ||
+      ["completed", "failed", "success", "done"].includes(toolStatus(state)),
     durationMs:
       toolDurationMs(part) ?? durationFromText(output) ?? fallbackDurationMs(toolStatus(state)),
     timeoutMs: commandTimeoutMs(state, undefined, command),
