@@ -191,6 +191,8 @@ function parseAgents(value) {
     ["codex-documents", "codex-documents"],
     ["codex-docs", "codex-documents"],
     ["codex-alt", "codex-documents"],
+    ["codex-ponytail", "codex-ponytail"],
+    ["ponytail", "codex-ponytail"],
     ["claude", "claude-code"],
     ["claude-code", "claude-code"],
     ["claude-opus", "claude-code"],
@@ -1485,9 +1487,29 @@ function writeAgentInvocationArchive(agentDir, details) {
   })
 }
 
+function codexHomeForAgent(agentDir, label) {
+  const defaultCodexHome = process.env.CODEX_HOME || path.join(homeDir, ".codex")
+  if (label === "codex-ponytail") return process.env.COMMAND_RUN_AGENT_CODEX_PONYTAIL_HOME || defaultCodexHome
+  if (!truthy(process.env.COMMAND_RUN_AGENT_CODEX_CLEAN_HOME || "0")) return process.env.CODEX_HOME || undefined
+  const cleanHome = path.join(agentDir, "codex-home-clean")
+  mkdirp(cleanHome)
+  const authSource = path.join(defaultCodexHome, "auth.json")
+  if (fs.existsSync(authSource)) fs.copyFileSync(authSource, path.join(cleanHome, "auth.json"))
+  writeFile(path.join(cleanHome, "config.toml"), [
+    `model = ${JSON.stringify(model)}`,
+    `model_reasoning_effort = ${JSON.stringify(reasoning)}`,
+    `approval_policy = "never"`,
+    `sandbox_mode = "danger-full-access"`,
+    `service_tier = ${JSON.stringify(serviceTier)}`,
+    "",
+  ].join("\n"))
+  return cleanHome
+}
+
 async function runCodexLike(workspace, agentDir, prompt, onProgress, codexExe, label) {
   assert(fs.existsSync(codexExe), `missing ${label} exe: ${codexExe}`)
   const codexLogDir = path.join(agentDir, "codex-log")
+  const codexHome = codexHomeForAgent(agentDir, label)
   const command = codexExe
   const args = [
     "exec",
@@ -1508,6 +1530,7 @@ async function runCodexLike(workspace, agentDir, prompt, onProgress, codexExe, l
   const env = {
     COMMAND_RUN_AGENT_CONTEXT_ARCHIVE: "1",
     CODEX_LOG_DIR: codexLogDir,
+    ...(codexHome ? { CODEX_HOME: codexHome } : {}),
   }
   writeAgentInvocationArchive(agentDir, {
     agent: label,
@@ -1543,6 +1566,10 @@ async function runCodexMain(workspace, agentDir, prompt, onProgress) {
 
 async function runCodexDocuments(workspace, agentDir, prompt, onProgress) {
   return runCodexLike(workspace, agentDir, prompt, onProgress, codexDocumentsExe, "codex-documents")
+}
+
+async function runCodexPonytail(workspace, agentDir, prompt, onProgress) {
+  return runCodexLike(workspace, agentDir, prompt, onProgress, codexDocumentsExe, "codex-ponytail")
 }
 
 async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgress) {
@@ -2090,6 +2117,7 @@ async function runAgent(agentId, task, taskIndex, agentIndex, onAgentUpdate = nu
   }
   if (agentId === "codex-main") result = await runCodexMain(prep.workspace, agentDir, prompt, publishProgress)
   else if (agentId === "codex-documents") result = await runCodexDocuments(prep.workspace, agentDir, prompt, publishProgress)
+  else if (agentId === "codex-ponytail") result = await runCodexPonytail(prep.workspace, agentDir, prompt, publishProgress)
   else if (agentId === "tura-fast-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast", publishProgress)
   else if (agentId === "tura-fast-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast", publishProgress)
   else if (agentId === "tura-balanced") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "balanced", publishProgress)
