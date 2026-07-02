@@ -1,0 +1,24 @@
+{
+  "schema": "tura.benchmark.task-declaration.v1",
+  "id": "source-port-python-default-eza",
+  "type": "refactoring",
+  "title": "eza Python source-port default workflow",
+  "directory": "benchmark/tasks/refactoring/source-port-python-default-eza",
+  "summary": "Ports eza from Rust to Python with the default source-port workflow.",
+  "contract": {
+    "cliMetadata": "tura.benchmark.cli-metadata.v1",
+    "round": "tura.benchmark.agent-round.v1",
+    "taskReport": "tura.benchmark.task-report.v1",
+    "harnessReport": "tura.benchmark.harness-report.v1"
+  },
+  "variants": [
+    {
+      "id": "default",
+      "label": "eza default workflow",
+      "runner": "runner.mjs",
+      "default": true
+    }
+  ],
+  "legacyScripts": ["tests/benchmark/project-rebuild-refactor/rust_cli_python_port_suite.mjs"],
+  "duplicatePolicy": "none"
+}

@@ -40,9 +40,9 @@ Benchmark tasks are grouped by task type. Every task has its own directory and a
 `benchmark.task.json` declaration.
 
 ```text
-benchmark/build/<task>/benchmark.task.json
-benchmark/debug/<task>/benchmark.task.json
-benchmark/refactoring/<task>/benchmark.task.json
+benchmark/tasks/build/<task>/benchmark.task.json
+benchmark/tasks/debug/<task>/benchmark.task.json
+benchmark/tasks/refactoring/<task>/benchmark.task.json
 ```
 
 Current task groups:
@@ -104,22 +104,22 @@ run directory's `contracts/` folder.
 
 ## Entry Points
 
-- `benchmark/build/apply-patch-contract/`
-- `benchmark/build/game-prompt-difficulty/`
-- `benchmark/build/ogas-pdf-cost/`
-- `benchmark/build/tui-streaming-memory/`
-- `benchmark/debug/react-ops-board-playwright-repair/`
-- `benchmark/debug/retail-ops-defect-repair/`
-- `benchmark/debug/swebench-verified-issue-patch/`
-- `benchmark/refactoring/programbench-cli-cleanroom-rebuild/`
-- `benchmark/refactoring/prompt-gallery-tanstack-frontend-rebuild/`
-- `benchmark/refactoring/prompt-gallery-tanstack-fullstack-rebuild/`
-- `benchmark/refactoring/react-ops-board-programbench-rebuild/`
-- `benchmark/refactoring/source-port-python-composite/`
-- `benchmark/refactoring/source-port-python-default-eza/`
-- `benchmark/refactoring/source-port-python-default-nushell/`
-- `benchmark/refactoring/source-port-python-default-xsv/`
-- `benchmark/refactoring/source-port-python-default-zip-password-finder/`
-- `benchmark/refactoring/source-port-python-defined-workflow-nushell/`
-- `benchmark/refactoring/source-port-python-defined-workflow-xsv/`
-- `benchmark/refactoring/source-port-python-defined-workflow-zip-password-finder/`
+- `benchmark/tasks/build/apply-patch-contract/`
+- `benchmark/tasks/build/game-prompt-difficulty/`
+- `benchmark/tasks/build/ogas-pdf-cost/`
+- `benchmark/tasks/build/tui-streaming-memory/`
+- `benchmark/tasks/debug/react-ops-board-playwright-repair/`
+- `benchmark/tasks/debug/retail-ops-defect-repair/`
+- `benchmark/tasks/debug/swebench-verified-issue-patch/`
+- `benchmark/tasks/refactoring/programbench-cli-cleanroom-rebuild/`
+- `benchmark/tasks/refactoring/prompt-gallery-tanstack-frontend-rebuild/`
+- `benchmark/tasks/refactoring/prompt-gallery-tanstack-fullstack-rebuild/`
+- `benchmark/tasks/refactoring/react-ops-board-programbench-rebuild/`
+- `benchmark/tasks/refactoring/source-port-python-composite/`
+- `benchmark/tasks/refactoring/source-port-python-default-eza/`
+- `benchmark/tasks/refactoring/source-port-python-default-nushell/`
+- `benchmark/tasks/refactoring/source-port-python-default-xsv/`
+- `benchmark/tasks/refactoring/source-port-python-default-zip-password-finder/`
+- `benchmark/tasks/refactoring/source-port-python-defined-workflow-nushell/`
+- `benchmark/tasks/refactoring/source-port-python-defined-workflow-xsv/`
+- `benchmark/tasks/refactoring/source-port-python-defined-workflow-zip-password-finder/`

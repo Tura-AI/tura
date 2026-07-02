@@ -1,0 +1,24 @@
+{
+  "schema": "tura.benchmark.task-declaration.v1",
+  "id": "react-ops-board-programbench-rebuild",
+  "type": "refactoring",
+  "title": "React ops board ProgramBench rebuild",
+  "directory": "benchmark/tasks/refactoring/react-ops-board-programbench-rebuild",
+  "summary": "Browser-scored full ProgramBench rebuild task for React operations board workflows.",
+  "contract": {
+    "cliMetadata": "tura.benchmark.cli-metadata.v1",
+    "round": "tura.benchmark.agent-round.v1",
+    "taskReport": "tura.benchmark.task-report.v1",
+    "harnessReport": "tura.benchmark.harness-report.v1"
+  },
+  "variants": [
+    {
+      "id": "full",
+      "label": "Full ProgramBench rebuild",
+      "runner": "runner.mjs",
+      "default": true
+    }
+  ],
+  "legacyScripts": ["tests/benchmark/frontend-playwright/react_ops_board_programbench_rebuild_full.mjs"],
+  "duplicatePolicy": "none"
+}
