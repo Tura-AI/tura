@@ -34,18 +34,23 @@ test("agent cli resolver maps each agent to an editable launch command", async (
   const workspaceDirectory = "C:/workspace/task";
   const matrix = resolveBenchmarkAgentMatrix(config.defaultAgents, { workspaceDirectory, reasoning: "low" }, config);
   const byId = new Map(matrix.map((agent) => [agent.agentId, agent]));
+  const pi = mustGet(byId, "pi");
+  const codex = mustGet(byId, "codex");
+  const claudecode = mustGet(byId, "claudecode");
+  const opencode = mustGet(byId, "opencode");
+  const tura = mustGet(byId, "tura");
 
-  assert.equal(byId.get("pi")?.cliLaunchCommandName, "pi");
-  assert.deepEqual(byId.get("pi")?.cliArgs.slice(0, 2), ["--mode", "json"]);
-  assert.equal(byId.get("codex")?.cliLaunchCommandName, "codex");
-  assert.ok(byId.get("codex")?.cliArgs.includes(workspaceDirectory));
-  assert.equal(byId.get("claudecode")?.cliLaunchCommandName, "claude");
-  assert.ok(byId.get("claudecode")?.cliArgs.includes("stream-json"));
-  assert.equal(byId.get("opencode")?.cliLaunchCommandName, "opencode");
-  assert.deepEqual(byId.get("opencode")?.cliArgs.slice(0, 2), ["run", "--model"]);
-  assert.equal(byId.get("tura")?.cliLaunchCommandName, "tura");
-  assert.ok(byId.get("tura")?.cliArgs.includes("--cwd"));
-  assert.equal(byId.get("tura")?.env?.TURA_COMMAND_RUN_STRICT_JSON, "0");
+  assert.equal(pi.cliLaunchCommandName, "pi");
+  assert.deepEqual(pi.cliArgs?.slice(0, 2), ["--mode", "json"]);
+  assert.equal(codex.cliLaunchCommandName, "codex");
+  assert.ok(codex.cliArgs?.includes(workspaceDirectory));
+  assert.equal(claudecode.cliLaunchCommandName, "claude");
+  assert.ok(claudecode.cliArgs?.includes("stream-json"));
+  assert.equal(opencode.cliLaunchCommandName, "opencode");
+  assert.deepEqual(opencode.cliArgs?.slice(0, 2), ["run", "--model"]);
+  assert.equal(tura.cliLaunchCommandName, "tura");
+  assert.ok(tura.cliArgs?.includes("--cwd"));
+  assert.equal(tura.env?.TURA_COMMAND_RUN_STRICT_JSON, "0");
 });
 
 test("agent cli resolver honors environment command and model overrides", async () => {
@@ -63,5 +68,11 @@ test("agent cli resolver honors environment command and model overrides", async 
   );
 
   assert.equal(codex.cliLaunchCommandName, "C:/tools/codex.exe");
-  assert.ok(codex.cliArgs.includes("openai/custom-codex"));
+  assert.ok(codex.cliArgs?.includes("openai/custom-codex"));
 });
+
+function mustGet<K, V>(map: Map<K, V>, key: K): V {
+  const value = map.get(key);
+  assert.ok(value, `missing map entry: ${String(key)}`);
+  return value;
+}

@@ -8,6 +8,32 @@ Benchmarks are not part of GitHub CI or default `cargo test --workspace`.
 Correctness, release, live, performance, and OS tests stay under `tests/` or the
 owning crate/app. Benchmarks are deliberately separate from `tests/`.
 
+## Agent CLI Configuration
+
+The five local benchmark agents are mapped in `config/agents.json`:
+
+- `pi`
+- `codex`
+- `claudecode`
+- `opencode`
+- `tura`
+
+Each profile declares aliases, the default executable name, editable argument
+templates, model/reasoning environment variables, and any agent-specific env.
+The resolver in `src/agents.ts` turns those profiles into the common
+`AgentLaunchConfig` consumed by `src/preparer.ts`.
+
+Executable overrides are environment based:
+
+- `COMMAND_RUN_AGENT_PI_EXE`
+- `COMMAND_RUN_AGENT_CODEX_EXE`
+- `COMMAND_RUN_AGENT_CLAUDE_EXE`
+- `COMMAND_RUN_AGENT_OPENCODE_EXE`
+- `COMMAND_RUN_AGENT_TURA_EXE`
+
+Model overrides follow the same pattern, for example
+`COMMAND_RUN_AGENT_CODEX_MODEL` and `COMMAND_RUN_AGENT_TURA_MODEL`.
+
 ## Layout
 
 Benchmark tasks are grouped by task type. Every task has its own directory and a
