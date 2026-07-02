@@ -15,11 +15,13 @@ Important scripts:
 
 - `install.*`: install dependencies only. The root installer checks
   `shell_command`, `bash`, `zsh`, and `git` coverage on every platform, ensures
-  user-local `uv` and `bun`, calls command-owned `commands/*/install.*`
-  scripts, and runs Bun installs inside app/package directories. It does not
-  build binaries or register PATH launchers. Windows adds common Git/MSYS shell
-  paths before checking bash/zsh. macOS asserts zsh and bash and reports
-  optional PowerShell (`pwsh`) coverage.
+  user-local `uv`, Python 3.12 through `uv`, and `bun`, calls command-owned
+  `commands/*/install.*` scripts, and runs Bun installs inside app/package
+  directories. `--skip-uv`/`-SkipUv` requires command installers to be skipped,
+  and `--skip-bun`/`-SkipBun` requires app installs to be skipped when Bun
+  workspaces are present. It does not build binaries or register PATH launchers.
+  Windows adds common Git/MSYS shell paths before checking bash/zsh. macOS
+  asserts zsh and bash and reports optional PowerShell (`pwsh`) coverage.
 - `build-debug.*`: build Rust debug binaries and the TUI entry into `target/debug`.
 - `build-release.*`: build Rust release binaries, the web GUI dist, the TUI entry,
   and the Tauri desktop bundle. CLI/TUI artifacts and copied web assets land in

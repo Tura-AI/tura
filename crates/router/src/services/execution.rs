@@ -69,10 +69,13 @@ impl ExecutionService {
         {
             let mut sessions = self.sessions.lock();
             if sessions.contains_key(&request.session_id) {
-                return Err(anyhow!(
-                    "session {} already has an active turn",
-                    request.session_id
-                ));
+                return Ok(json!({
+                    "ok": false,
+                    "code": "session_active_turn",
+                    "session_id": request.session_id,
+                    "turn_id": request.turn_id,
+                    "error": format!("session {} already has an active turn", request.session_id),
+                }));
             }
             let queued = sessions
                 .values()
@@ -468,6 +471,37 @@ mod tests {
         assert_eq!(sessions[0]["active_turn"], true);
         assert_eq!(sessions[0]["queued_turn"], true);
         assert_eq!(sessions[0]["worker_alive"], false);
+    }
+
+    #[tokio::test]
+    async fn enqueue_turn_reports_active_session_as_structured_payload_without_dispatch() {
+        let state = build_state();
+        let service = ExecutionService::new();
+        service
+            .sessions
+            .lock()
+            .insert("active-session".to_string(), RuntimeTurnState::Running);
+
+        let response = service
+            .enqueue_turn(
+                &state,
+                json!({
+                    "turn_id": "active-turn-2",
+                    "session_id": "active-session",
+                    "payload": {
+                        "prompt": "append instead of failing"
+                    }
+                }),
+            )
+            .await
+            .expect("active-session rejection is a gateway-handled payload");
+
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["code"], "session_active_turn");
+        assert_eq!(response["session_id"], "active-session");
+        assert_eq!(response["turn_id"], "active-turn-2");
+        assert!(service.sessions.lock().contains_key("active-session"));
+        assert_eq!(state.manager.count_workers_with_prefix("runtime_worker:"), 0);
     }
 
     #[tokio::test]
