@@ -12,11 +12,12 @@ import {
 } from "./contracts.js";
 
 const TASK_TYPES = new Set<BenchmarkTaskType>(["build", "debug", "refactoring"]);
+const TASKS_DIRECTORY = "tasks";
 
 export async function discoverTaskDeclarations(root: string): Promise<BenchmarkTaskDeclaration[]> {
   const declarations: BenchmarkTaskDeclaration[] = [];
   for (const type of TASK_TYPES) {
-    const typeDirectory = path.join(root, type);
+    const typeDirectory = path.join(root, TASKS_DIRECTORY, type);
     if (!(await isDirectory(typeDirectory))) continue;
     for (const entry of await readdir(typeDirectory, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;

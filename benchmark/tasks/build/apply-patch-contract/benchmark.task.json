@@ -1,0 +1,32 @@
+{
+  "schema": "tura.benchmark.task-declaration.v1",
+  "id": "apply-patch-contract",
+  "type": "build",
+  "title": "Apply patch command contract",
+  "directory": "benchmark/tasks/build/apply-patch-contract",
+  "summary": "Compares apply_patch command shaping variants and records command contract validity.",
+  "contract": {
+    "cliMetadata": "tura.benchmark.cli-metadata.v1",
+    "round": "tura.benchmark.agent-round.v1",
+    "taskReport": "tura.benchmark.task-report.v1",
+    "harnessReport": "tura.benchmark.harness-report.v1"
+  },
+  "variants": [
+    {
+      "id": "single-block",
+      "label": "Single block apply_patch contract",
+      "runner": "single-block.runner.mjs",
+      "default": true
+    },
+    {
+      "id": "marker-ablation",
+      "label": "Apply patch marker ablation",
+      "runner": "marker-ablation.runner.mjs"
+    }
+  ],
+  "legacyScripts": [
+    "tests/benchmark/commands/apply_patch_single_block_contract_harness.mjs",
+    "tests/benchmark/commands/apply_patch_marker_ablation_arcade_harness.mjs"
+  ],
+  "duplicatePolicy": "merged-variant"
+}

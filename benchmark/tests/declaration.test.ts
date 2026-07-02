@@ -44,7 +44,7 @@ test("all declared variants point at existing task-local runners", async () => {
   const declarations = await discoverTaskDeclarations(benchmarkRoot);
 
   for (const declaration of declarations) {
-    const taskDirectory = path.join(benchmarkRoot, declaration.type, path.basename(declaration.directory));
+    const taskDirectory = path.join(benchmarkRoot, "tasks", declaration.type, path.basename(declaration.directory));
     assert.equal(path.normalize(path.join(repoRoot, declaration.directory)), path.normalize(taskDirectory));
     assert.ok(existsSync(path.join(taskDirectory, "benchmark.task.json")), declaration.id);
     for (const variant of declaration.variants) {

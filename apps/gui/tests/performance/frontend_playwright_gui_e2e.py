@@ -303,7 +303,7 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
                         "state": {
                             "status": "completed",
                             "title": "Read frontend Playwright reference",
-                            "command": "Get-Content benchmark/refactoring/react-ops-board-programbench-rebuild/runner.mjs -TotalCount 80",
+                            "command": "Get-Content benchmark/tasks/refactoring/react-ops-board-programbench-rebuild/runner.mjs -TotalCount 80",
                             "exit_code": 0,
                             "output": "Reference uses Vite, Playwright screenshots, probes, artifact summary checks, timeouts, and cleanup.",
                             "time": {"start": now - 31000, "end": now - 30000},
