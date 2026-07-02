@@ -196,6 +196,7 @@ test("source-port result bridge aggregates lifecycle events into per-agent round
 
   const taskReport = JSON.parse(fs.readFileSync(summary.benchmark_contracts.task_report_path, "utf8"))
   const harnessReport = JSON.parse(fs.readFileSync(summary.benchmark_contracts.harness_report_path, "utf8"))
+  assert.equal(summary.ok, false)
   assert.equal(taskReport.rounds.length, 2)
   assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentId), ["tura-direct", "codex-documents"])
   assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentKind), ["tura", "codex"])

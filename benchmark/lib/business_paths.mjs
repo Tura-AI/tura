@@ -15,8 +15,23 @@ export { businessRunPaths, businessTargetRoot, defaultUserWorkspace, userHome }
 
 export function normalizeBusinessSummary(summary, paths, extras = {}) {
   const normalized = normalizeBaseBusinessSummary(summary, paths, extras)
+  normalized.ok = normalizeSummaryOk(normalized)
   writeBenchmarkContracts(normalized, paths)
   return normalized
+}
+
+function normalizeSummaryOk(summary) {
+  const results = Array.isArray(summary.results) ? summary.results : []
+  const evalResults = results.filter((result) => result?.eval?.ran)
+  if (evalResults.length === 0) return summary.ok
+  return Boolean(summary.ok) && evalResults.every(resultEvaluationPassed)
+}
+
+function resultEvaluationPassed(result) {
+  if (result?.error) return false
+  const reports = Array.isArray(result?.eval?.report?.reports) ? result.eval.report.reports : []
+  const failed = reports.reduce((total, report) => total + Number(report?.failed || 0), 0)
+  return Number(result?.eval?.exit_code) === 0 && failed === 0
 }
 
 function writeBenchmarkContracts(summary, paths) {
@@ -505,9 +520,17 @@ function providerToolCalls(providerRecords) {
   for (const record of providerRecords) {
     pushOpenAiOutput(calls, record?.response?.output)
     const events = Array.isArray(record?.response?.events) ? record.response.events : []
+    const completedItemIds = new Set(
+      events
+        .filter((event) => event?.type === "response.output_item.done" && isToolCall(event.item))
+        .map((event) => firstTextOrNull(event.item?.id, event.item?.call_id))
+        .filter(Boolean),
+    )
     for (const event of events) {
       if (event?.type === "response.output_item.done" && isToolCall(event.item)) calls.push(event.item)
       if (event?.type === "response.function_call_arguments.done") {
+        const itemId = firstTextOrNull(event.item_id, event.call_id)
+        if (itemId && completedItemIds.has(itemId)) continue
         calls.push({
           id: event.item_id,
           call_id: event.call_id,
