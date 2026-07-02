@@ -173,9 +173,10 @@ function normalizeRound(callback, index) {
   const startedAt = firstTextOrNull(record.startedAt, record.startTimestamp, record.started_at) || new Date().toISOString()
   const endedAt = firstTextOrNull(record.endedAt, record.endTimestamp, record.ended_at) || startedAt
   const usage = usageFromRecord(record)
+  const roundId = firstText(record.roundId, record.id, record.turnId, record.turn_id, record.session_id, record.sessionId, `round-${index + 1}`)
   return {
     schema: "tura.benchmark.agent-round.v1",
-    roundId: firstText(record.roundId, record.id, record.turnId, record.turn_id, record.session_id, record.sessionId, `round-${index + 1}`),
+    roundId,
     roundIndex: index,
     startedAt,
     endedAt,
@@ -184,7 +185,42 @@ function normalizeRound(callback, index) {
     usage,
     providerDurationMs: firstNumber(record.providerDurationMs, record.provider_duration_ms, record.duration_ms, record.metrics?.durationMs, record.runtime_usage?.latency_ms, 0),
     toolCalls: toolCallsFromRecord(record),
+    metadata: roundMetadata(record, roundId),
   }
+}
+
+function roundMetadata(record, roundId) {
+  const agentId = firstTextOrNull(record.agentId, record.agent_id, record.agent, record.provider, record.source_agent) || inferAgentId(record)
+  const serviceTier = firstTextOrNull(record.serviceTier, record.service_tier, record.tier, record.metadata?.serviceTier, record.metadata?.service_tier) || "unknown"
+  return {
+    agentId,
+    agentKind: firstTextOrNull(record.agentKind, record.agent_kind, record.kind) || inferAgentKind(agentId),
+    agentMode: firstTextOrNull(record.agentMode, record.agent_mode, record.mode, record.tura_agent) || inferAgentMode(agentId),
+    model: firstTextOrNull(record.model, record.model_id, record.provider_model, record.metadata?.model) || "unknown",
+    reasoning: firstTextOrNull(record.reasoning, record.reasoning_effort, record.reasoningEffort, record.metadata?.reasoning) || "unknown",
+    serviceTier,
+    priorityEnabled: firstBoolean(record.priorityEnabled, record.priority_enabled, record.priority, record.is_priority) ?? serviceTier.toLowerCase() === "priority",
+    roundSource: firstTextOrNull(record.roundSource, record.round_source, record.source) || "callback",
+    eventType: firstTextOrNull(record.type, record.event, record.event_type, record.eventType) || "unknown",
+    sessionOrTurnId: firstTextOrNull(record.sessionOrTurnId, record.session_or_turn_id, record.turnId, record.turn_id, record.session_id, record.sessionId, record.id) || roundId,
+  }
+}
+
+function inferAgentId(record) {
+  const type = firstTextOrNull(record.type, record.event, record.event_type, record.eventType) || ""
+  const prefix = type.split(".")[0]
+  if (!prefix) return "unknown"
+  return prefix === "claude" ? "claudecode" : prefix
+}
+
+function inferAgentKind(agentId) {
+  return String(agentId || "unknown").replace(/-\d+$/, "") || "unknown"
+}
+
+function inferAgentMode(agentId) {
+  const text = String(agentId || "")
+  if (text.startsWith("tura-")) return text.slice("tura-".length).replace(/-shll$/, "")
+  return "unknown"
 }
 
 function pushRoundCallbacks(callbacks, value) {
@@ -345,6 +381,19 @@ function firstFinite(...values) {
   for (const value of values) {
     const number = Number(value)
     if (Number.isFinite(number)) return number
+  }
+  return null
+}
+
+function firstBoolean(...values) {
+  for (const value of values) {
+    if (typeof value === "boolean") return value
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase()
+      if (["1", "true", "yes", "on", "enabled"].includes(normalized)) return true
+      if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false
+    }
+    if (typeof value === "number" && Number.isFinite(value)) return value !== 0
   }
   return null
 }

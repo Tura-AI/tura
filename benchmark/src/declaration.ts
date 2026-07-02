@@ -56,6 +56,7 @@ async function isDirectory(directory: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
 
 async function isFile(filePath: string): Promise<boolean> {
   try {
@@ -63,5 +64,4 @@ async function isFile(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
 }

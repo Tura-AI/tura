@@ -60,7 +60,9 @@ Each task declaration uses `tura.benchmark.task-declaration.v1` and declares:
 
 - `id`, `type`, `title`, `directory`, and `summary`
 - the common output contracts: CLI metadata, agent round, task report, harness report
-- one or more `variants`, each pointing to a task-local runner
+- one or more `variants`, each pointing to a task-local runner. Refactoring
+  benchmark declarations use exactly one default variant so every refactoring
+  question has one file and one entry point.
 - `legacyScripts`, preserving the old script provenance
 - `duplicatePolicy`, used when old scripts were merged into variants
 
@@ -68,10 +70,14 @@ Merged duplicates:
 
 - `build/apply-patch-contract`: single-block and marker-ablation are variants of
   one apply-patch contract task.
-- `refactoring/prompt-gallery-tanstack-rebuild`: the old frontend wrapper is now
-  a `frontend` variant with `COMMAND_RUN_MAKEUP_TANSTACK_VERSION=frontend`.
-- `refactoring/source-port-python`: default, defined-workflow, and composite are
-  variants of one source-port task.
+
+Refactoring task split:
+
+- `prompt-gallery-tanstack-frontend-rebuild` and
+  `prompt-gallery-tanstack-fullstack-rebuild` are separate task declarations.
+- `source-port-python-{default,defined-workflow,composite}-{zip-password-finder,xsv,eza,nushell}`
+  are separate task declarations. Each wrapper pins `SOURCE_PORT_TASKS` and then
+  imports the shared source-port runner implementation.
 
 ## TypeScript Abstraction Layer
 
@@ -82,7 +88,9 @@ Merged duplicates:
 - `parser.ts`: normalizes benchmark instructions into CLI commands and converts
   agent round callbacks into `tura.benchmark.agent-round.v1` JSON. It flattens
   Tura `command_run` batches, ordinary tools, and parallel tool calls into one
-  `toolCalls[]` shape with command names and full command lines.
+  `toolCalls[]` shape with command names and full command lines. Each round also
+  carries explicit metadata: agent id/kind/mode, model, reasoning, service tier,
+  priority flag, source, event type, and session/turn id.
 - `preparer.ts`: builds the task workspace, captures the initial repository
   snapshot, records CLI metadata, and creates the agent launch request.
 - `monitor.ts`: records each agent round, aggregates token/provider timings,
@@ -104,6 +112,18 @@ run directory's `contracts/` folder.
 - `benchmark/debug/retail-ops-defect-repair/`
 - `benchmark/debug/swebench-verified-issue-patch/`
 - `benchmark/refactoring/programbench-cli-cleanroom-rebuild/`
-- `benchmark/refactoring/prompt-gallery-tanstack-rebuild/`
+- `benchmark/refactoring/prompt-gallery-tanstack-frontend-rebuild/`
+- `benchmark/refactoring/prompt-gallery-tanstack-fullstack-rebuild/`
 - `benchmark/refactoring/react-ops-board-programbench-rebuild/`
-- `benchmark/refactoring/source-port-python/`
+- `benchmark/refactoring/source-port-python-composite-eza/`
+- `benchmark/refactoring/source-port-python-composite-nushell/`
+- `benchmark/refactoring/source-port-python-composite-xsv/`
+- `benchmark/refactoring/source-port-python-composite-zip-password-finder/`
+- `benchmark/refactoring/source-port-python-default-eza/`
+- `benchmark/refactoring/source-port-python-default-nushell/`
+- `benchmark/refactoring/source-port-python-default-xsv/`
+- `benchmark/refactoring/source-port-python-default-zip-password-finder/`
+- `benchmark/refactoring/source-port-python-defined-workflow-eza/`
+- `benchmark/refactoring/source-port-python-defined-workflow-nushell/`
+- `benchmark/refactoring/source-port-python-defined-workflow-xsv/`
+- `benchmark/refactoring/source-port-python-defined-workflow-zip-password-finder/`
