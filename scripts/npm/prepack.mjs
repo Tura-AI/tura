@@ -48,4 +48,19 @@ if (!packageJson.bin?.tura) {
   process.exit(1);
 }
 
+if (!Array.isArray(packageJson.keywords) || packageJson.keywords.length === 0) {
+  console.error("npm package check failed; keywords are required.");
+  process.exit(1);
+}
+
+if (!packageJson.repository?.url || !packageJson.homepage || !packageJson.bugs?.url) {
+  console.error("npm package check failed; repository, homepage, and bugs URLs are required.");
+  process.exit(1);
+}
+
+if (packageJson.publishConfig?.access !== "public") {
+  console.error("npm package check failed; publishConfig.access must be public.");
+  process.exit(1);
+}
+
 console.log("npm package metadata looks ready.");

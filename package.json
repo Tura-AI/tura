@@ -5,6 +5,14 @@
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "author": "Tura",
+  "keywords": [
+    "ai-agent",
+    "coding-agent",
+    "cli",
+    "tui",
+    "tauri",
+    "rust"
+  ],
   "homepage": "https://github.com/Tura-AI/tura#readme",
   "repository": {
     "type": "git",
@@ -19,6 +27,11 @@
   "engines": {
     "node": ">=20"
   },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
   "packageManager": "bun@1.3.11",
   "files": [
     "LICENSE",
