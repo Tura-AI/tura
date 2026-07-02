@@ -142,9 +142,8 @@
   max-width: max(14.5rem, var(--rich-table-cell-width, 26ch));
   padding: var(--space-3) 10px;
   border: 0;
-  overflow: hidden;
-  text-align: left;
-  text-overflow: clip;
+  overflow: visible;
+  text-align: right;
   vertical-align: top;
   white-space: normal;
 }
@@ -154,11 +153,14 @@
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--line) 46%, transparent);
 }
 
+.rich-table-scroll tbody tr:first-child > th {
+  box-shadow: inset 0 -1px 0 var(--line-strong);
+}
+
 .rich-table-cell-content {
   display: block;
-  max-height: calc(1.35em * 4);
-  overflow: hidden;
-  overflow-wrap: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
   word-break: normal;
 }
 
@@ -167,7 +169,6 @@
   min-width: 5.5rem;
   width: max(5.5rem, var(--rich-table-cell-width, 12ch));
   max-width: max(5.5rem, var(--rich-table-cell-width, 12ch));
-  text-align: right;
 }
 
 .rich-table-scroll th {

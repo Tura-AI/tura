@@ -50,7 +50,6 @@ export function parseAgentRound(callback: unknown, roundIndex = 0): BenchmarkAge
   const endedAt = readString(record, ["endedAt", "endTimestamp", "ended_at"]) ?? startedAt;
   const usage = readUsage(record);
   const toolCalls = normalizeToolCalls(callback);
-  const rawJson = toJsonValue(callback);
 
   return {
     schema: ROUND_SCHEMA,
@@ -66,7 +65,6 @@ export function parseAgentRound(callback: unknown, roundIndex = 0): BenchmarkAge
     usage,
     providerDurationMs: readNumber(record, ["providerDurationMs", "provider_duration_ms", "duration_ms"]) ?? 0,
     toolCalls,
-    rawCallbackPath: rawJson ? undefined : undefined,
   };
 }
 
@@ -109,7 +107,8 @@ function collectToolCallCandidates(value: unknown): UnknownRecord[] {
 
   const body = asRecord(root.body) ?? asRecord(root.response) ?? asRecord(root.provider) ?? root;
   pushOpenAiOutput(result, body.output);
-  pushArrayRecords(result, asRecord(asArray(body.choices)?.[0])?.message ? asRecord(asRecord(asArray(body.choices)?.[0])?.message)?.tool_calls : undefined);
+  const firstChoice = asRecord(asArray(body.choices)[0]);
+  pushArrayRecords(result, asRecord(firstChoice?.message)?.tool_calls);
 
   if (isFunctionCall(root)) result.push(root);
   return result;

@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "types": ["node"],
+    "typeRoots": ["../../apps/tui/node_modules/@types"],
     "rootDir": ".",
     "outDir": "dist",
     "strict": true,

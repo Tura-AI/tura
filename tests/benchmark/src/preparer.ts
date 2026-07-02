@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { cp, mkdir, readFile, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { cp, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -130,18 +131,19 @@ export async function executeAgentRunRequest(
     const child = spawn(request.commandName, request.args, {
       cwd: request.workspaceDirectory,
       env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
     }, timeoutMs);
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
       stdout += chunk;
     });
-    child.stderr.on("data", (chunk: string) => {
+    child.stderr?.on("data", (chunk: string) => {
       stderr += chunk;
     });
     child.on("close", (exitCode, signal) => {
@@ -203,6 +205,7 @@ function softwareMetadata(repoRoot: string): BenchmarkSoftwareMetadata {
     platform: process.platform,
     arch: process.arch,
     nodeVersion: process.version,
+    systemSoftwareVersion: `${process.platform}/${process.arch} node ${process.version}`,
     packageName: packageJson?.name,
     packageVersion: packageJson?.version,
     gitHead: runGit(repoRoot, ["rev-parse", "HEAD"]),
@@ -218,8 +221,8 @@ function agentMetadata(agent: AgentLaunchConfig, cliCommand: string): BenchmarkA
     cliLaunchCommandName: agent.cliLaunchCommandName,
     cliCommand,
     pluginSkillGithubUrls: agent.pluginSkillGithubUrls ?? [],
-    releaseDownloadUrl: agent.releaseDownloadUrl,
-    releaseSha256: agent.releaseSha256,
+    releaseDownloadUrl: agent.releaseDownloadUrl ?? null,
+    releaseSha256: agent.releaseSha256 ?? null,
   };
 }
 
@@ -230,16 +233,11 @@ function runGit(repoRoot: string, args: string[]): string | undefined {
 
 function readPackageJson(repoRoot: string): { name?: string; version?: string } | undefined {
   try {
-    return JSON.parse(spawnSync(process.execPath, ["-e", "process.stdout.write(require('fs').readFileSync('package.json','utf8'))"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      windowsHide: true,
-    }).stdout) as { name?: string; version?: string };
+    return JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
+      name?: string;
+      version?: string;
+    };
   } catch {
-    try {
-      return JSON.parse(String(readFile(path.join(repoRoot, "package.json")))) as { name?: string; version?: string };
-    } catch {
-      return undefined;
-    }
+    return undefined;
   }
 }

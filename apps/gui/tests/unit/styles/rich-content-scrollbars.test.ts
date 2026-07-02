@@ -29,12 +29,12 @@ describe("rich content table scrollbars", () => {
     expect(richContentCss).not.toContain(".rich-table-overflow-y");
   });
 
-  test("keeps table rows separated and cells capped to four lines", () => {
+  test("keeps table rows separated while showing complete right-aligned cell content", () => {
     expect(cssBlock(".rich-table-scroll table")).toContain("min-width: 100%;");
     expect(cssBlock(".rich-table-scroll table")).toContain("width: max-content;");
     expect(cssBlock(".rich-table-scroll table")).toContain("border-collapse: separate;");
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
-      "text-align: left;",
+      "text-align: right;",
     );
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
       "padding: var(--space-3) 10px;",
@@ -43,13 +43,22 @@ describe("rich content table scrollbars", () => {
       "white-space: normal;",
     );
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
-      "overflow: hidden;",
+      "overflow: visible;",
     );
-    expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
+    expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).not.toContain(
       "text-overflow: clip;",
     );
-    expect(cssBlock(".rich-table-cell-content")).toContain("max-height: calc(1.35em * 4);");
-    expect(cssBlock(".rich-table-cell-content")).toContain("overflow: hidden;");
+    expect(cssBlock(".rich-table-cell-content")).not.toContain("max-height");
+    expect(cssBlock(".rich-table-cell-content")).toContain("overflow: visible;");
+    expect(cssBlock(".rich-table-cell-content")).toContain("overflow-wrap: anywhere;");
+    expect(cssBlock(".rich-table-scroll tbody tr:first-child > th")).toContain(
+      "var(--line-strong)",
+    );
+    expect(richContentCss.indexOf(".rich-table-scroll tbody tr:first-child > th")).toBeGreaterThan(
+      richContentCss.indexOf(
+        ".rich-table-scroll tbody tr:not(:last-child) > th,\n.rich-table-scroll tbody tr:not(:last-child) > td",
+      ),
+    );
     expect(
       cssBlock(
         ".rich-table-scroll tbody tr:not(:last-child) > th,\n.rich-table-scroll tbody tr:not(:last-child) > td",

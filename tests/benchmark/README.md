@@ -24,6 +24,22 @@ tests/benchmark/tui/
 
 Shared benchmark helper re-exports live under `tests/benchmark/lib/`.
 
+## TypeScript Abstraction Layer
+
+`tests/benchmark/src/` defines a common benchmark contract for new suites and
+for adapters around the historical `.mjs` harnesses:
+
+- `parser.ts` normalizes benchmark instructions into CLI commands and converts
+  agent round callbacks into `tura.benchmark.agent-round.v1` JSON files. It
+  flattens Tura `command_run` batches, ordinary tools, and parallel tool calls
+  into one `toolCalls[]` shape with command names and full command lines.
+- `preparer.ts` builds the task workspace, captures the initial repository
+  snapshot, records CLI metadata, and creates the agent launch request.
+- `monitor.ts` records each agent round, aggregates token/provider timings, saves
+  git diff, and writes `tura.benchmark.task-report.v1`.
+- `harness.ts` runs scoring harnesses and writes `tura.benchmark.harness-report.v1`
+  so every model, agent, and task type emits the same contract files.
+
 ## What They Measure
 
 The benchmark harnesses are built to make agent claims falsifiable. Depending on

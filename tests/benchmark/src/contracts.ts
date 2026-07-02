@@ -28,6 +28,7 @@ export interface BenchmarkSoftwareMetadata {
   platform: NodeJS.Platform;
   arch: string;
   nodeVersion: string;
+  systemSoftwareVersion: string;
   packageName?: string;
   packageVersion?: string;
   gitHead?: string;
@@ -41,8 +42,8 @@ export interface BenchmarkAgentMetadata {
   cliLaunchCommandName: string;
   cliCommand: string;
   pluginSkillGithubUrls: string[];
-  releaseDownloadUrl?: string;
-  releaseSha256?: string;
+  releaseDownloadUrl: string | null;
+  releaseSha256: string | null;
 }
 
 export interface BenchmarkCliMetadata {
