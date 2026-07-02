@@ -148,7 +148,10 @@ impl WorkerProcessScope {
 
 #[cfg(windows)]
 fn configure_platform_spawn(command: &mut Command) {
-    command.creation_flags(tura_path::process_hardening::WINDOWS_CREATE_NO_WINDOW);
+    command.creation_flags(
+        tura_path::process_hardening::WINDOWS_CREATE_NO_WINDOW
+            | tura_path::process_hardening::WINDOWS_CREATE_NEW_PROCESS_GROUP,
+    );
 }
 
 #[cfg(unix)]

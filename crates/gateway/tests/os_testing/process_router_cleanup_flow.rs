@@ -67,6 +67,7 @@ async fn gateway_abort_session_stops_router_worker_without_workspace_process_sca
     )
     .await;
 
+    let Json(before_abort) = gateway::api::session::get_session(Path(session.id.clone())).await;
     let mut scoped_child = ChildGuard::spawn(workspace.path(), "abort-target")?;
     let mut unrelated_child = ChildGuard::spawn(other_workspace.path(), "abort-unrelated")?;
 
@@ -90,30 +91,25 @@ async fn gateway_abort_session_stops_router_worker_without_workspace_process_sca
         "abort must not kill unrelated workspace processes"
     );
 
+    assert!(
+        !gateway::session::session_store().is_cancelled(&session.id),
+        "abort must not mark session cancellation state; it only stops the runtime worker"
+    );
+
     let Json(after_abort) = gateway::api::session::get_session(Path(session.id)).await;
     assert_eq!(
         serde_json::to_value(after_abort.status)?,
-        serde_json::json!("idle")
+        serde_json::to_value(before_abort.status)?,
+        "abort must not change the session status artifact"
     );
-    let tasks = after_abort
-        .task_management
-        .get("tasks")
-        .and_then(serde_json::Value::as_array)
-        .expect("abort should preserve multi-task state");
-    assert_eq!(task_by_id(tasks, "doing-task")["status"], "waiting_user");
-    assert_eq!(task_by_id(tasks, "todo-task")["status"], "waiting_user");
-    assert_eq!(task_by_id(tasks, "done-task")["status"], "done");
+    assert_eq!(
+        after_abort.task_management, before_abort.task_management,
+        "abort must not rewrite task management; task updates are separate user-visible actions"
+    );
 
     scoped_child.kill_and_wait()?;
     unrelated_child.kill_and_wait()?;
     Ok(())
-}
-
-fn task_by_id<'a>(tasks: &'a [serde_json::Value], task_id: &str) -> &'a serde_json::Value {
-    tasks
-        .iter()
-        .find(|task| task.get("task_id").and_then(serde_json::Value::as_str) == Some(task_id))
-        .expect("task should exist")
 }
 
 #[tokio::test]

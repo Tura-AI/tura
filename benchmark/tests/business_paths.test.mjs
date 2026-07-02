@@ -109,3 +109,109 @@ test("legacy benchmark summary bridge writes unified per-round contracts", () =>
   assert.deepEqual(taskReport.rounds.at(-1).toolCalls.map((tool) => [tool.kind, tool.name, tool.commandLine]), [["command", "shell_command", "cargo test"]])
   assert.equal(fs.readdirSync(taskReport.roundsDirectory).length, 5)
 })
+
+test("source-port result bridge aggregates lifecycle events into per-agent rounds", () => {
+  const runRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tura-benchmark-source-port-contract-"))
+  const paths = {
+    test_name: "project-rebuild-source-port",
+    run_id: "zip-password-direct-codex-test",
+    user_workspace: runRoot,
+    target_root: runRoot,
+    run_root: runRoot,
+    summary_path: path.join(runRoot, "summary.json"),
+  }
+  const turaDir = path.join(runRoot, "zip-password-finder", "tura-direct-1")
+  const codexDir = path.join(runRoot, "zip-password-finder", "codex-documents-2")
+  fs.mkdirSync(path.join(turaDir, "context-and-calls"), { recursive: true })
+  fs.mkdirSync(codexDir, { recursive: true })
+  const promptPath = path.join(turaDir, "PYTHON_PORT_TASK.md")
+  fs.writeFileSync(promptPath, "Port zip-password-finder", "utf8")
+  const providerCallsPath = path.join(turaDir, "context-and-calls", "provider-calls-full.jsonl")
+  fs.writeFileSync(providerCallsPath, `${JSON.stringify({
+    started_at: "2026-01-01T00:00:00.000Z",
+    finished_at: "2026-01-01T00:00:10.000Z",
+    duration_ms: 10_000,
+    response: {
+      output_text: "Tura patched it.",
+      usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 30, reasoning_tokens: 5, total_tokens: 135 },
+      events: [
+        {
+          type: "response.function_call_arguments.done",
+          call_id: "call_tura_1",
+          item_id: "fc_tura_1",
+          arguments: JSON.stringify({
+            commands: [
+              { command_type: "shell_command", command_line: "python -m py_compile executable", step: 1 },
+              { command_type: "apply_patch", command_line: "PATCH", step: 2 },
+            ],
+          }),
+        },
+      ],
+    },
+  })}\n`, "utf8")
+  const turaStdout = [
+    { type: "thread.started", thread_id: "thread-tura" },
+    { type: "turn.started" },
+    { type: "item.started", item: { type: "command_execution", id: "runtime.tool.command_run:call_tura_1:0", provider_tool_call_id: "call_tura_1", command_index: 0, status: "in_progress" } },
+    { type: "item.completed", item: { type: "command_execution", id: "runtime.tool.command_run:call_tura_1:0", provider_tool_call_id: "call_tura_1", command_index: 0, status: "completed" } },
+    { type: "item.completed", item: { type: "assistant_message", text: "Implemented the Python port." } },
+    { type: "turn.completed" },
+  ].map((event) => JSON.stringify(event)).join("\n")
+  const codexStdout = [
+    { type: "thread.started", thread_id: "thread-codex" },
+    { type: "turn.started" },
+    { type: "item.completed", item: { id: "item_0", type: "agent_message", text: "Codex patched it." } },
+    { type: "item.started", item: { id: "item_1", type: "command_execution", command: "python -m py_compile executable", status: "in_progress" } },
+    { type: "item.completed", item: { id: "item_1", type: "command_execution", command: "python -m py_compile executable", status: "completed", exit_code: 0, aggregated_output: "" } },
+    { type: "turn.completed", usage: { input_tokens: 200, cached_input_tokens: 50, output_tokens: 40, reasoning_output_tokens: 10 } },
+  ].map((event) => JSON.stringify(event)).join("\n")
+
+  const summary = normalizeBusinessSummary({
+    ok: true,
+    model: "gpt-5.5",
+    tura_model: "openai/gpt-5.5",
+    reasoning: "medium",
+    service_tier: "default",
+    results: [
+      {
+        agent: "tura-direct",
+        task: "zip-password-finder",
+        stdout: turaStdout,
+        stdout_path: path.join(turaDir, "stdout.jsonl"),
+        prep: { prompt_path: promptPath },
+        context_archive: { provider_calls_full_path: providerCallsPath },
+        usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 30, reasoning_tokens: 5, total_tokens: 135 },
+        eval: { ran: true, exit_code: 1, stdout_path: path.join(turaDir, "eval.stdout.log"), stderr_path: path.join(turaDir, "eval.stderr.log"), report: { reports: [{ passed: 12, failed: 3 }] } },
+      },
+      {
+        agent: "codex-documents",
+        task: "zip-password-finder",
+        stdout: codexStdout,
+        stdout_path: path.join(codexDir, "stdout.jsonl"),
+        usage: { input_tokens: 200, cached_input_tokens: 50, output_tokens: 40, reasoning_tokens: 10, total_tokens: 300 },
+        eval: { ran: true, exit_code: 0, stdout_path: path.join(codexDir, "eval.stdout.log"), stderr_path: path.join(codexDir, "eval.stderr.log"), report: { reports: [{ passed: 15, failed: 0 }] } },
+      },
+    ],
+  }, paths)
+
+  const taskReport = JSON.parse(fs.readFileSync(summary.benchmark_contracts.task_report_path, "utf8"))
+  const harnessReport = JSON.parse(fs.readFileSync(summary.benchmark_contracts.harness_report_path, "utf8"))
+  assert.equal(taskReport.rounds.length, 2)
+  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentId), ["tura-direct", "codex-documents"])
+  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentKind), ["tura", "codex"])
+  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.agentMode), ["direct", "documents"])
+  assert.deepEqual(taskReport.rounds.map((round) => round.metadata.model), ["openai/gpt-5.5", "gpt-5.5"])
+  assert(!taskReport.rounds.some((round) => ["item", "thread", "turn"].includes(round.metadata.agentId)))
+  assert.deepEqual(taskReport.rounds.map((round) => round.output.assistantMessage), ["Tura patched it.", "Codex patched it."])
+  assert.deepEqual(taskReport.rounds.map((round) => round.usage.totalTokens), [135, 300])
+  assert.deepEqual(taskReport.rounds[0].toolCalls.map((tool) => [tool.kind, tool.name, tool.commandLine, tool.parentToolName]), [
+    ["command", "shell_command", "python -m py_compile executable", "command_run"],
+    ["command", "apply_patch", "PATCH", "command_run"],
+  ])
+  assert.deepEqual(taskReport.rounds[1].toolCalls.map((tool) => [tool.kind, tool.commandLine]), [["command", "python -m py_compile executable"]])
+  assert.deepEqual(harnessReport.scores.map((score) => [score.details.agent, score.details.passed, score.details.failed, score.passed]), [
+    ["tura-direct", 12, 3, false],
+    ["codex-documents", 15, 0, true],
+  ])
+  assert.equal(harnessReport.finalScore, (12 / 15 + 1) / 2)
+})

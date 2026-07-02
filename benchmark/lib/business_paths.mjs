@@ -82,13 +82,14 @@ function buildCliMetadata(summary) {
 }
 
 function buildHarnessReport(summary, paths) {
-  const finalScore = numericScore(summary)
+  const scores = harnessScores(summary, paths)
+  const finalScore = numericScore(summary) ?? aggregateScores(scores)
   return {
     schema: "tura.benchmark.harness-report.v1",
     runId: paths.run_id,
     taskId: paths.test_name,
     harnessDirectory: firstText(summary.harness_directory, summary.harness_dir, paths.run_root),
-    scores: finalScore === null ? [] : [{ harnessId: paths.test_name, score: finalScore, passed: Boolean(summary.ok) }],
+    scores: scores.length > 0 ? scores : (finalScore === null ? [] : [{ harnessId: paths.test_name, score: finalScore, passed: Boolean(summary.ok) }]),
     finalScore,
     createdAt: new Date().toISOString(),
   }
@@ -150,14 +151,26 @@ function collectRounds(summary, roundsDirectory) {
   pushRoundCallbacks(callbacks, summary.rounds)
   pushRoundCallbacks(callbacks, summary.agent_rounds)
   pushRoundCallbacks(callbacks, summary.callbacks)
-  for (const result of Array.isArray(summary.results) ? summary.results : []) {
-    pushJsonlCallbacks(callbacks, result?.stdout)
-    pushJsonlCallbacks(callbacks, readOptionalText(result?.stdout_path || result?.stdoutPath))
-    pushRoundCallbacks(callbacks, result?.rounds)
-    pushRoundCallbacks(callbacks, result?.callbacks)
-  }
 
-  const rounds = callbacks.map((callback, index) => normalizeRound(callback, index))
+  const rounds = callbacks.map((callback, index) => normalizeRound(enrichRoundRecord(callback, summary), index))
+  for (const result of Array.isArray(summary.results) ? summary.results : []) {
+    const resultCallbacks = []
+    pushRoundCallbacks(resultCallbacks, result?.rounds)
+    pushRoundCallbacks(resultCallbacks, result?.callbacks)
+
+    const stdoutText = firstTextOrNull(result?.stdout) || readOptionalText(result?.stdout_path || result?.stdoutPath)
+    const stdoutRecords = parseJsonlRecords(stdoutText)
+    if (resultCallbacks.length > 0) {
+      for (const callback of resultCallbacks) rounds.push(normalizeRound(enrichRoundRecord(callback, summary, result), rounds.length))
+      continue
+    }
+    if (stdoutRecords.length > 0 && stdoutRecords.every(isExplicitRoundRecord)) {
+      for (const callback of stdoutRecords) rounds.push(normalizeRound(enrichRoundRecord(callback, summary, result), rounds.length))
+      continue
+    }
+    const aggregate = aggregateResultRound(result, summary, stdoutText, stdoutRecords)
+    if (aggregate) rounds.push(normalizeRound(aggregate, rounds.length))
+  }
   if (rounds.length === 0) return []
   fs.mkdirSync(roundsDirectory, { recursive: true })
   for (const round of rounds) {
@@ -189,6 +202,60 @@ function normalizeRound(callback, index) {
   }
 }
 
+function enrichRoundRecord(callback, summary, result = {}) {
+  const record = objectOrEmpty(callback)
+  const agentId = firstTextOrNull(record.agentId, record.agent_id, record.agent, record.provider, result.agent, summary.agent_id, summary.agent, summary.provider)
+  return {
+    ...record,
+    agent_id: agentId || record.agent_id,
+    agent_kind: firstTextOrNull(record.agentKind, record.agent_kind) || inferAgentKind(agentId),
+    agent_mode: firstTextOrNull(record.agentMode, record.agent_mode, record.mode, record.tura_agent) || inferAgentMode(agentId),
+    model: firstTextOrNull(record.model, record.model_id, record.provider_model) || modelForAgent(agentId, summary, result),
+    reasoning: firstTextOrNull(record.reasoning, record.reasoning_effort, record.reasoningEffort) || firstTextOrNull(summary.reasoning, summary.reasoning_effort),
+    service_tier: firstTextOrNull(record.serviceTier, record.service_tier, record.tier) || firstTextOrNull(summary.service_tier, summary.serviceTier),
+    priority_enabled: firstBoolean(record.priorityEnabled, record.priority_enabled, record.priority, record.is_priority) ?? isPriority(summary),
+    round_source: firstTextOrNull(record.roundSource, record.round_source, record.source) || "callback",
+  }
+}
+
+function aggregateResultRound(result, summary, stdoutText, stdoutRecords) {
+  if (!result || typeof result !== "object") return null
+  const agentId = firstTextOrNull(result.agent, result.agent_id, result.provider)
+  if (!agentId && stdoutRecords.length === 0) return null
+  const providerRecords = providerRoundRecords(result)
+  const usage = usageFromAggregateResult(result, providerRecords, stdoutRecords)
+  const assistantMessages = assistantMessagesFromEvents(stdoutRecords)
+  const providerMessages = providerRecords.map((record) => firstTextOrNull(record.response?.output_text, record.output_text)).filter(Boolean)
+  const allMessages = [...assistantMessages, ...providerMessages]
+  const startedAt = firstTextOrNull(result.started_at, result.startedAt, providerRecords[0]?.started_at) || new Date().toISOString()
+  const endedAt = firstTextOrNull(result.ended_at, result.endedAt, providerRecords.at(-1)?.finished_at) || startedAt
+  const toolCalls = mergeToolCalls(providerToolCalls(providerRecords), commandExecutionToolCalls(stdoutRecords))
+  return {
+    type: "benchmark.agent.round.completed",
+    roundId: firstTextOrNull(result.round_id, result.roundId, result.turn_id, result.session_id) || `${firstText(result.task, "task")}-${firstText(agentId, "agent")}-round-1`,
+    started_at: startedAt,
+    ended_at: endedAt,
+    agent_id: agentId,
+    agent_kind: inferAgentKind(agentId),
+    agent_mode: inferAgentMode(agentId),
+    model: modelForAgent(agentId, summary, result),
+    reasoning: firstTextOrNull(result.reasoning, summary.reasoning, summary.reasoning_effort),
+    service_tier: firstTextOrNull(result.service_tier, result.serviceTier, summary.service_tier, summary.serviceTier),
+    priority_enabled: isPriority(summary),
+    round_source: "agent-result",
+    task: result.task,
+    full_context: firstTextOrNull(readOptionalText(result.prep?.prompt_path), readOptionalText(result.context_archive?.input_prompt_path)),
+    full_output: allMessages.join("\n\n"),
+    assistant_message: allMessages.at(-1) || "",
+    usage,
+    provider_duration_ms: firstNumber(result.elapsed_ms, ...providerRecords.map((record) => record.duration_ms), 0),
+    toolCalls,
+    eval: result.eval,
+    source_stdout_path: result.stdout_path || result.stdoutPath || null,
+    source_provider_calls_path: result.context_archive?.provider_calls_full_path || null,
+  }
+}
+
 function roundMetadata(record, roundId) {
   const agentId = firstTextOrNull(record.agentId, record.agent_id, record.agent, record.provider, record.source_agent) || inferAgentId(record)
   const serviceTier = firstTextOrNull(record.serviceTier, record.service_tier, record.tier, record.metadata?.serviceTier, record.metadata?.service_tier) || "unknown"
@@ -214,12 +281,19 @@ function inferAgentId(record) {
 }
 
 function inferAgentKind(agentId) {
-  return String(agentId || "unknown").replace(/-\d+$/, "") || "unknown"
+  const text = String(agentId || "unknown").replace(/-\d+$/, "")
+  if (text.startsWith("tura-")) return "tura"
+  if (text.startsWith("codex-")) return "codex"
+  if (text === "claude-code") return "claudecode"
+  if (text === "pi-agent") return "pi"
+  return text || "unknown"
 }
 
 function inferAgentMode(agentId) {
   const text = String(agentId || "")
   if (text.startsWith("tura-")) return text.slice("tura-".length).replace(/-shll$/, "")
+  if (text.startsWith("codex-")) return text.slice("codex-".length)
+  if (text === "claude-code" || text === "pi-agent") return "cli"
   return "unknown"
 }
 
@@ -229,15 +303,28 @@ function pushRoundCallbacks(callbacks, value) {
 }
 
 function pushJsonlCallbacks(callbacks, text) {
-  if (typeof text !== "string" || !text.trim()) return
+  for (const record of parseJsonlRecords(text)) callbacks.push(record)
+}
+
+function parseJsonlRecords(text) {
+  if (typeof text !== "string" || !text.trim()) return []
+  const records = []
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue
     try {
-      callbacks.push(JSON.parse(line))
+      records.push(JSON.parse(line))
     } catch {
       // Ignore non-JSON progress lines from CLIs that mix human output and JSONL.
     }
   }
+  return records
+}
+
+function isExplicitRoundRecord(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return false
+  const type = firstTextOrNull(record.type, record.event, record.event_type, record.eventType)
+  if (type && /(^|\.)round\./.test(type)) return true
+  return Boolean(record.roundId || record.round_id || record.turnId || record.turn_id || record.session_id || record.sessionId)
 }
 
 function readOptionalText(file) {
@@ -281,6 +368,21 @@ function toolCallsFromRecord(record) {
 }
 
 function normalizeToolCall(call, index) {
+  if ((call.kind === "command" || call.kind === "tool") && firstTextOrNull(call.commandLine, call.command_line)) {
+    return [{
+      id: firstTextOrNull(call.id, call.call_id, call.tool_call_id) || `${call.name || call.kind}-${index + 1}`,
+      kind: call.kind,
+      name: firstTextOrNull(call.name, call.tool_name) || call.kind,
+      commandLine: firstText(call.commandLine, call.command_line),
+      arguments: jsonValue(call.arguments ?? call.args ?? call.input ?? {}) ?? {},
+      parentToolName: firstTextOrNull(call.parentToolName, call.parent_tool_name),
+      parentToolCallId: firstTextOrNull(call.parentToolCallId, call.parent_tool_call_id),
+      parallelGroupId: firstTextOrNull(call.parallelGroupId, call.parallel_group_id, call.step),
+      startedAt: firstTextOrNull(call.startedAt, call.started_at),
+      endedAt: firstTextOrNull(call.endedAt, call.ended_at),
+      raw: jsonValue(call.raw ?? call),
+    }]
+  }
   const name = firstTextOrNull(call.name, call.tool_name, call.function?.name) || "tool"
   const id = firstTextOrNull(call.id, call.call_id, call.tool_call_id) || `${name}-${index + 1}`
   const args = toolArguments(call)
@@ -351,6 +453,116 @@ function textFromContent(value) {
   return pieces.join("\n")
 }
 
+function providerRoundRecords(result) {
+  const records = []
+  const archivePath = firstTextOrNull(result?.context_archive?.provider_calls_full_path)
+  if (archivePath) records.push(...parseJsonlRecords(readOptionalText(archivePath)))
+  if (Array.isArray(result?.provider_calls)) records.push(...result.provider_calls)
+  return records.filter((record) => record && typeof record === "object" && !Array.isArray(record))
+}
+
+function usageFromAggregateResult(result, providerRecords, stdoutRecords) {
+  const resultUsage = objectOrEmpty(result?.usage)
+  const usage = {
+    inputTokens: firstNumber(resultUsage.inputTokens, resultUsage.input_tokens, resultUsage.prompt_tokens, 0),
+    cacheInputTokens: firstNumber(resultUsage.cacheInputTokens, resultUsage.cached_input_tokens, resultUsage.cached, resultUsage.cache_read_input_tokens, 0),
+    outputTokens: firstNumber(resultUsage.outputTokens, resultUsage.output_tokens, resultUsage.completion_tokens, 0),
+    reasoningTokens: firstNumber(resultUsage.reasoningTokens, resultUsage.reasoning_tokens, resultUsage.reasoning_output_tokens, 0),
+    totalTokens: firstNumber(resultUsage.totalTokens, resultUsage.total_tokens, resultUsage.total, 0),
+  }
+  if (usage.inputTokens === 0 && usage.outputTokens === 0) {
+    for (const record of providerRecords) addUsageInto(usage, usageFromRecord(record.response || record.metrics || record))
+  }
+  if (usage.inputTokens === 0 && usage.outputTokens === 0) {
+    for (const record of stdoutRecords) addUsageInto(usage, usageFromRecord(record))
+  }
+  if (usage.totalTokens === 0) usage.totalTokens = usage.inputTokens + usage.cacheInputTokens + usage.outputTokens + usage.reasoningTokens
+  return usage
+}
+
+function addUsageInto(total, usage) {
+  total.inputTokens += usage.inputTokens
+  total.cacheInputTokens += usage.cacheInputTokens
+  total.outputTokens += usage.outputTokens
+  total.reasoningTokens += usage.reasoningTokens
+  total.totalTokens += usage.totalTokens
+}
+
+function assistantMessagesFromEvents(records) {
+  const messages = []
+  for (const record of records) {
+    const item = record?.item
+    if (item?.type === "agent_message" || item?.type === "assistant_message") {
+      const text = firstTextOrNull(item.text, item.message, item.content) || textFromContent(item.content)
+      if (text) messages.push(text)
+    }
+  }
+  return messages
+}
+
+function providerToolCalls(providerRecords) {
+  const calls = []
+  for (const record of providerRecords) {
+    pushOpenAiOutput(calls, record?.response?.output)
+    const events = Array.isArray(record?.response?.events) ? record.response.events : []
+    for (const event of events) {
+      if (event?.type === "response.output_item.done" && isToolCall(event.item)) calls.push(event.item)
+      if (event?.type === "response.function_call_arguments.done") {
+        calls.push({
+          id: event.item_id,
+          call_id: event.call_id,
+          name: "command_run",
+          arguments: event.arguments,
+          type: "function_call",
+        })
+      }
+    }
+  }
+  return calls
+}
+
+function commandExecutionToolCalls(records) {
+  const byId = new Map()
+  for (const record of records) {
+    const item = record?.item
+    if (item?.type !== "command_execution") continue
+    const id = firstTextOrNull(item.id, item.provider_tool_call_id) || `command-${byId.size + 1}`
+    const existing = byId.get(id)
+    if (!existing || record.type === "item.completed") byId.set(id, { event: record, item })
+  }
+  const commands = []
+  for (const { event, item } of byId.values()) {
+    const commandLine = firstTextOrNull(item.command, item.commandLine, item.command_line)
+    if (!commandLine) continue
+    commands.push({
+      id: firstTextOrNull(item.id, item.provider_tool_call_id),
+      kind: "command",
+      name: firstTextOrNull(item.command_type, item.commandType) || inferCommandName(commandLine),
+      commandLine,
+      arguments: jsonValue({ status: item.status, exit_code: item.exit_code, aggregated_output: item.aggregated_output }) ?? {},
+      parentToolName: "command_execution",
+      parentToolCallId: firstTextOrNull(item.provider_tool_call_id),
+      parallelGroupId: firstTextOrNull(item.parallel_group_id, item.parallelGroupId, item.command_index),
+      raw: jsonValue(event),
+    })
+  }
+  return commands
+}
+
+function mergeToolCalls(...groups) {
+  const merged = []
+  const seen = new Set()
+  for (const group of groups) {
+    for (const call of Array.isArray(group) ? group : []) {
+      const key = `${firstTextOrNull(call.call_id, call.id, call.name)}\u0000${firstTextOrNull(call.arguments, call.commandLine, call.command_line) || JSON.stringify(jsonValue(call.arguments ?? call.input ?? call) ?? {})}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(call)
+    }
+  }
+  return merged
+}
+
 function sumRoundUsage(rounds) {
   return rounds.reduce((total, round) => ({
     inputTokens: total.inputTokens + round.usage.inputTokens,
@@ -371,6 +583,54 @@ function numericScore(summary) {
     summary.standard_metrics?.scores?.score,
     summary.standard_metrics?.scores?.harness_score,
   )
+}
+
+function harnessScores(summary, paths) {
+  const scores = []
+  for (const result of Array.isArray(summary.results) ? summary.results : []) {
+    const reports = Array.isArray(result?.eval?.report?.reports) ? result.eval.report.reports : []
+    let passed = 0
+    let failed = 0
+    for (const report of reports) {
+      passed += firstNumber(report?.passed, 0)
+      failed += firstNumber(report?.failed, 0)
+    }
+    if (!result?.eval?.ran && reports.length === 0) continue
+    const total = passed + failed
+    scores.push({
+      harnessId: `${paths.test_name}:${firstText(result?.task, "task")}:${firstText(result?.agent, "agent")}`,
+      score: total > 0 ? passed / total : (Number(result?.eval?.exit_code) === 0 ? 1 : 0),
+      maxScore: 1,
+      passed: Number(result?.eval?.exit_code) === 0 && failed === 0,
+      details: jsonValue({
+        agent: result?.agent ?? null,
+        task: result?.task ?? null,
+        evalExitCode: result?.eval?.exit_code ?? null,
+        passed,
+        failed,
+        stdoutPath: result?.eval?.stdout_path ?? null,
+        stderrPath: result?.eval?.stderr_path ?? null,
+      }) ?? {},
+      artifacts: [result?.eval?.stdout_path, result?.eval?.stderr_path].filter((value) => typeof value === "string" && value),
+    })
+  }
+  return scores
+}
+
+function aggregateScores(scores) {
+  if (!Array.isArray(scores) || scores.length === 0) return null
+  return scores.reduce((total, score) => total + Number(score.score || 0), 0) / scores.length
+}
+
+function modelForAgent(agentId, summary, result = {}) {
+  const text = String(agentId || "")
+  if (text.startsWith("tura-")) return firstTextOrNull(result.tura_model, summary.tura_model, result.model, summary.model) || "unknown"
+  return firstTextOrNull(result.model, summary.model, summary.tura_model) || "unknown"
+}
+
+function isPriority(summary) {
+  return firstBoolean(summary.priority_enabled, summary.priorityEnabled, summary.priority, summary.is_priority) ??
+    String(firstTextOrNull(summary.service_tier, summary.serviceTier) || "").toLowerCase() === "priority"
 }
 
 function firstNumber(...values) {

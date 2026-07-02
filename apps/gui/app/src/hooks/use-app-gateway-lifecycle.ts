@@ -40,9 +40,6 @@ function gatewayArray<T>(value: T[] | unknown): T[] {
 }
 
 const BOOTSTRAP_REQUEST_TIMEOUT_MS = 20_000;
-const GATEWAY_SHUTDOWN_POLL_MS = 1_000;
-const GATEWAY_SHUTDOWN_PROBE_TIMEOUT_MS = 1_500;
-const GATEWAY_SHUTDOWN_FAILURES = 3;
 
 export function useAppGatewayLifecycle(options: {
   state: Accessor<AppState>;
@@ -107,29 +104,6 @@ export function useAppGatewayLifecycle(options: {
       onError: () => setState((previous) => ({ ...previous, connection: "disconnected" })),
     });
     onCleanup(() => stream.close());
-  });
-
-  createEffect(() => {
-    if (e2eFixture || connection() !== "connected" || !isTauriRuntime()) {
-      return;
-    }
-    let consecutiveFailures = 0;
-    let probing = false;
-    const timer = window.setInterval(() => {
-      if (probing) return;
-      probing = true;
-      void gatewayHealthReachable(gatewayUrl())
-        .then((reachable) => {
-          consecutiveFailures = reachable ? 0 : consecutiveFailures + 1;
-          if (consecutiveFailures >= GATEWAY_SHUTDOWN_FAILURES) {
-            void closeTauriWindow();
-          }
-        })
-        .finally(() => {
-          probing = false;
-        });
-    }, GATEWAY_SHUTDOWN_POLL_MS);
-    onCleanup(() => window.clearInterval(timer));
   });
 
   onMount(() => {
@@ -326,34 +300,6 @@ export function useAppGatewayLifecycle(options: {
         error: isGatewayTimeoutError(error) ? t("gatewayResponseTimeout") : errorMessage(error),
       }));
     }
-  }
-}
-
-function isTauriRuntime(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
-async function closeTauriWindow(): Promise<void> {
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().close();
-  } catch {
-    window.close();
-  }
-}
-
-async function gatewayHealthReachable(gatewayUrl: string): Promise<boolean> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), GATEWAY_SHUTDOWN_PROBE_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${gatewayUrl.replace(/\/+$/u, "")}/global/health`, {
-      signal: controller.signal,
-    });
-    return response.ok;
-  } catch {
-    return false;
-  } finally {
-    window.clearTimeout(timer);
   }
 }
 

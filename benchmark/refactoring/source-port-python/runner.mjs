@@ -2158,7 +2158,7 @@ async function ensureTaskAssets(task) {
 
 function buildSuiteSummary(results, assets, inProgress = false) {
   return normalizeBusinessSummary({
-    ok: !inProgress && results.every((result) => !result.error && result.events?.callback_ok),
+    ok: !inProgress && results.every(resultPassed),
     in_progress: inProgress,
     suite_root: suiteRoot,
     model,
@@ -2172,6 +2172,14 @@ function buildSuiteSummary(results, assets, inProgress = false) {
     assets,
     results,
   }, runPaths)
+}
+
+function resultPassed(result) {
+  if (result.error || !result.events?.callback_ok) return false
+  if (!result.eval?.ran) return true
+  const reports = Array.isArray(result.eval?.report?.reports) ? result.eval.report.reports : []
+  const failed = reports.reduce((total, report) => total + Number(report?.failed || 0), 0)
+  return Number(result.eval.exit_code) === 0 && failed === 0
 }
 
 async function main() {

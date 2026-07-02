@@ -596,61 +596,12 @@ fn abort_session_scope(session_id: &str) -> AbortResponse {
         });
     }
 
-    for id in &aborted_sessions {
-        session_store().mark_cancelled(id);
-        session_store().clear_user_commands_for_session(id);
-        if let Err(error) = router.clear_user_commands(id, id) {
-            tracing::warn!(
-                session_id = %id,
-                error = %error,
-                "failed to clear router queued user commands during abort"
-            );
-        }
-        session_store().finish_todos(id, false);
-        if let Some(session) = session_store().pause_session_for_abort(id) {
-            session_store().push_event(GlobalEvent::SessionUpdated {
-                properties: SessionUpdatedProperties {
-                    session_id: id.clone(),
-                    info: session,
-                },
-            });
-        }
-        session_store().update_session_status(id, SessionStatusMano::Idle);
-        if let Err(error) = persist_aborted_session(id) {
-            tracing::warn!(
-                session_id = %id,
-                error = %error,
-                "failed to persist aborted session snapshot"
-            );
-        }
-        if let Err(error) = commit_aborted_session(id) {
-            tracing::warn!(
-                session_id = %id,
-                error = %error,
-                "failed to commit aborted session workspace checkpoint"
-            );
-        }
-    }
-
     AbortResponse {
         aborted: true,
         sessions: aborted_sessions,
         cleanup: cleanups.first().cloned(),
         cleanups,
     }
-}
-
-fn persist_aborted_session(session_id: &str) -> Result<(), String> {
-    let request = session_store().session_log_upsert_request(session_id)?;
-    crate::session_log_writer::write_session_log(SessionLogCommand::UpsertSession(request))
-        .map_err(|error| error.to_string())
-}
-
-fn commit_aborted_session(session_id: &str) -> Result<(), String> {
-    let info = session_store()
-        .get_session_info(session_id)
-        .ok_or_else(|| format!("session {session_id} not found"))?;
-    runtime::workspace_git::commit_session_checkpoint(&info.management, "aborted").map(|_| ())
 }
 
 pub async fn fork_session(
