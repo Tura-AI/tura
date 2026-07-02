@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 $CommandDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VenvDir = Join-Path $CommandDir ".venv"
 $RequirementsPath = Join-Path $CommandDir "requirements.txt"
+$PythonVersion = "3.12"
 
 if ($Help) {
   Write-Host "Usage: commands\generate_media\install.ps1 [-CheckOnly] [-Offline]"
@@ -29,6 +30,30 @@ function Get-VenvPython {
 function Require-Uv {
   if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     throw "uv was not found. Run the root scripts\install.ps1 first or install uv from https://docs.astral.sh/uv/."
+  }
+}
+
+function Test-UvPythonAvailable {
+  $findArgs = @("python", "find", $PythonVersion)
+  if ($Offline) {
+    $findArgs += "--offline"
+  }
+  & uv @findArgs > $null 2>&1
+  return $LASTEXITCODE -eq 0
+}
+
+function Ensure-PythonRuntime {
+  if (Test-UvPythonAvailable) {
+    return
+  }
+  if ($Offline) {
+    throw "Python $PythonVersion was not found in uv's cache or on PATH, and -Offline was supplied. Run the root scripts\install.ps1 without -Offline so uv can install Python first."
+  }
+  Write-Host "Installing Python $PythonVersion for generate_media virtual environment"
+  & uv python install $PythonVersion
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  if (-not (Test-UvPythonAvailable)) {
+    throw "uv installed Python $PythonVersion, but it is still not discoverable."
   }
 }
 
@@ -54,6 +79,7 @@ if ($CheckOnly) {
 Push-Location $CommandDir
 try {
   if (-not (Test-Path -LiteralPath (Get-VenvPython))) {
+    Ensure-PythonRuntime
     $venvArgs = @("venv", "--python", "3.12", ".venv")
     if ($Offline) {
       $venvArgs += "--offline"

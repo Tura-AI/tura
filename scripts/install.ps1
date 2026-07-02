@@ -14,6 +14,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir ".."))
 $CommandsDir = Join-Path $RepoRoot "commands"
+$CommandPythonVersion = "3.12"
 
 if ($Help) {
   Write-Host @"
@@ -536,6 +537,44 @@ function Ensure-Uv {
   Write-DetectedVersion "uv" (Get-CommandOutputLine "uv" @("--version"))
 }
 
+function Test-UvPythonAvailable {
+  $findArgs = @("python", "find", $CommandPythonVersion)
+  if ($Offline) {
+    $findArgs += "--offline"
+  }
+  & uv @findArgs > $null 2>&1
+  return $LASTEXITCODE -eq 0
+}
+
+function Ensure-CommandPython {
+  if ($SkipCommands) {
+    Write-Host "Skipping command Python setup."
+    return
+  }
+  if ($SkipUv) {
+    Write-Host "Skipping command Python setup because uv setup was skipped."
+    return
+  }
+  if (Test-UvPythonAvailable) {
+    Write-DetectedVersion "python" (Get-CommandOutputLine "uv" @("python", "find", $CommandPythonVersion, "--show-version"))
+    return
+  }
+  if ($CheckOnly) {
+    throw "Python $CommandPythonVersion was not found by uv. Run .\scripts\install.ps1 without -CheckOnly so uv can install it, or install Python $CommandPythonVersion manually."
+  }
+  if ($Offline) {
+    throw "Python $CommandPythonVersion was not found in uv's cache or on PATH, and -Offline was supplied. Rerun without -Offline or install/cache Python $CommandPythonVersion first."
+  }
+
+  Write-Step "Installing Python $CommandPythonVersion for command virtual environments"
+  & uv python install $CommandPythonVersion
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  if (-not (Test-UvPythonAvailable)) {
+    throw "uv installed Python $CommandPythonVersion, but it is still not discoverable. Check uv's Python install directory and PATH, then rerun."
+  }
+  Write-DetectedVersion "python" (Get-CommandOutputLine "uv" @("python", "find", $CommandPythonVersion, "--show-version"))
+}
+
 function Ensure-Bun {
   if ($SkipBun) {
     Write-Host "Skipping bun setup."
@@ -642,6 +681,7 @@ Write-Step "Checking root dependency installers"
 Ensure-ShellToolCoverage
 Ensure-GitTool
 Ensure-Uv
+Ensure-CommandPython
 Ensure-Bun
 
 Invoke-CommandInstallers

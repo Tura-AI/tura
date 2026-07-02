@@ -7,8 +7,9 @@ clients, and CI-style checks.
 ## Install Dependencies
 
 Install user-local dependency tools and package-owned dependencies first. This
-does not build binaries: it installs `uv`, `bun`, command-local Python `.venv`
-directories, and Bun workspaces in place.
+does not build binaries: it installs `uv`, ensures Python 3.12 is available to
+`uv`, installs `bun`, command-local Python `.venv` directories, and Bun
+workspaces in place.
 
 ```powershell
 .\scripts\install.ps1

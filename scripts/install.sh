@@ -6,6 +6,7 @@ export PATH
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 COMMANDS_DIR="$REPO_ROOT/commands"
+COMMAND_PYTHON_VERSION=3.12
 
 SKIP_COMMANDS=0
 SKIP_APPS=0
@@ -418,6 +419,42 @@ ensure_uv() {
   print_version uv uv --version
 }
 
+uv_python_available() {
+  if [ "$OFFLINE" -eq 1 ]; then
+    uv python find "$COMMAND_PYTHON_VERSION" --offline >/dev/null 2>&1
+  else
+    uv python find "$COMMAND_PYTHON_VERSION" >/dev/null 2>&1
+  fi
+}
+
+ensure_command_python() {
+  if [ "$SKIP_COMMANDS" -eq 1 ]; then
+    echo "Skipping command Python setup."
+    return
+  fi
+  if [ "$SKIP_UV" -eq 1 ]; then
+    echo "Skipping command Python setup because uv setup was skipped."
+    return
+  fi
+  if uv_python_available; then
+    print_version python uv python find "$COMMAND_PYTHON_VERSION" --show-version
+    return
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "Python $COMMAND_PYTHON_VERSION was not found by uv. Run scripts/install.sh without --check-only so uv can install it, or install Python $COMMAND_PYTHON_VERSION manually." >&2
+    exit 1
+  fi
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "Python $COMMAND_PYTHON_VERSION was not found in uv's cache or on PATH, and --offline was supplied. Rerun without --offline or install/cache Python $COMMAND_PYTHON_VERSION first." >&2
+    exit 1
+  fi
+
+  step "Installing Python $COMMAND_PYTHON_VERSION for command virtual environments"
+  uv python install "$COMMAND_PYTHON_VERSION"
+  uv_python_available || { echo "uv installed Python $COMMAND_PYTHON_VERSION, but it is still not discoverable. Check uv's Python install directory and PATH, then rerun." >&2; exit 1; }
+  print_version python uv python find "$COMMAND_PYTHON_VERSION" --show-version
+}
+
 ensure_bun() {
   [ "$SKIP_BUN" -eq 1 ] && { echo "Skipping bun setup."; return; }
   add_user_tool_paths
@@ -505,6 +542,7 @@ step "Checking root dependency installers"
 ensure_shell_tool_coverage
 ensure_git
 ensure_uv
+ensure_command_python
 ensure_bun
 run_command_installers
 
