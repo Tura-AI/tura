@@ -76,7 +76,7 @@ function Harness() {
   const [draftSessionId, setDraftSessionId] = createSignal<string | undefined>(sessions[0]!.id);
   const [startCondition, setStartCondition] = createSignal<StartCondition>("user_action");
   const [agent, setAgent] = createSignal("balanced");
-  const [font, setFont] = createSignal("Inter");
+  const [font, setFont] = createSignal("Archivo");
 
   return (
     <div style={harnessStyle}>
@@ -126,8 +126,8 @@ function Harness() {
         <AppearanceSelect
           value={font()}
           options={[
-            { id: "inter", label: "Inter", value: "Inter", preview: "Inter" },
-            { id: "arial", label: "Arial", value: "Arial", preview: "Arial" },
+            { id: "archivo", label: "Archivo", value: "Archivo", preview: "Archivo" },
+            { id: "plex", label: "IBM Plex Sans", value: "IBM Plex Sans", preview: "IBM Plex Sans" },
           ]}
           onSelect={(option) => setFont(option.value)}
         />

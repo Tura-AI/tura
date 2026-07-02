@@ -1,6 +1,6 @@
 import type { TuraConfigModelPair, TuraConfigResponse } from "@tura/gateway-sdk";
 import { currentLanguage, LANGUAGE_OPTIONS, t, type TextKey } from "../../i18n";
-import { DEFAULT_CODE_FONT } from "../../config/defaults";
+import { DEFAULT_CODE_FONT, DEFAULT_MAIN_FONT } from "../../config/defaults";
 import type { CornerRadiusMode, ThemeMode } from "../../state/global-store";
 import type { AppearanceOption } from "./appearance-select";
 
@@ -59,174 +59,234 @@ export const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as con
 export const DEFAULT_MODEL_TIER_CONFIG_TIERS = ["thinking", "fast"];
 export { LANGUAGE_OPTIONS };
 
-type FontLocale = "en" | "zhHans" | "zhHant" | "es" | "hi" | "ar" | "pt" | "bn" | "ru" | "ja";
+type FontLocale =
+  | "en"
+  | "zhHans"
+  | "zhHant"
+  | "es"
+  | "hi"
+  | "ar"
+  | "pt"
+  | "bn"
+  | "ru"
+  | "ja"
+  | "ko"
+  | "th"
+  | "he"
+  | "vi";
 const FONT_LOCALE_ORDER: FontLocale[] = [
-  "zhHans",
-  "zhHant",
   "en",
   "es",
+  "pt",
+  "vi",
+  "ru",
+  "zhHans",
+  "zhHant",
+  "ja",
+  "ko",
   "hi",
   "ar",
-  "pt",
   "bn",
-  "ru",
-  "ja",
+  "th",
+  "he",
 ];
 
 const MAIN_FONT_MAP = [
   {
-    id: "system",
+    id: "archivo-plex",
     names: {
-      en: "Segoe UI",
-      zhHans: "微软雅黑",
-      zhHant: "蘋方-繁",
-      es: "Segoe UI",
-      hi: "Nirmala UI",
-      ar: "Segoe UI Arabic",
-      pt: "Segoe UI",
-      bn: "Nirmala UI",
-      ru: "Segoe UI",
-      ja: "Yu Gothic UI",
+      en: "Archivo",
+      zhHans: "IBM Plex Sans SC",
+      zhHant: "IBM Plex Sans TC",
+      es: "Archivo",
+      hi: "IBM Plex Sans Devanagari",
+      ar: "IBM Plex Sans Arabic",
+      pt: "Archivo",
+      bn: "IBM Plex Sans Bengali",
+      ru: "IBM Plex Sans",
+      ja: "IBM Plex Sans JP",
+      ko: "IBM Plex Sans KR",
+      th: "IBM Plex Sans Thai",
+      he: "IBM Plex Sans Hebrew",
+      vi: "Archivo",
     },
     families: {
-      en: '"Segoe UI"',
-      zhHans: '"Microsoft YaHei"',
-      zhHant: '"PingFang TC", "Microsoft JhengHei"',
-      es: '"Segoe UI"',
-      hi: '"Nirmala UI"',
-      ar: '"Segoe UI Arabic"',
-      pt: '"Segoe UI"',
-      bn: '"Nirmala UI"',
-      ru: '"Segoe UI"',
-      ja: '"Yu Gothic UI", "Yu Gothic"',
+      en: '"Archivo"',
+      zhHans: '"IBM Plex Sans SC"',
+      zhHant: '"IBM Plex Sans TC"',
+      es: '"Archivo"',
+      hi: '"IBM Plex Sans Devanagari"',
+      ar: '"IBM Plex Sans Arabic"',
+      pt: '"Archivo"',
+      bn: '"IBM Plex Sans Bengali"',
+      ru: '"IBM Plex Sans"',
+      ja: '"IBM Plex Sans JP"',
+      ko: '"IBM Plex Sans KR"',
+      th: '"IBM Plex Sans Thai"',
+      he: '"IBM Plex Sans Hebrew"',
+      vi: '"Archivo"',
     },
   },
   {
-    id: "arial",
+    id: "plex-sans",
     names: {
-      en: "Arial",
-      zhHans: "黑体",
-      zhHant: "微軟正黑體",
-      es: "Arial",
-      hi: "Nirmala UI",
-      ar: "Arial",
-      pt: "Arial",
-      bn: "Nirmala UI",
-      ru: "Arial",
-      ja: "Meiryo",
+      en: "IBM Plex Sans",
+      zhHans: "IBM Plex Sans SC",
+      zhHant: "IBM Plex Sans TC",
+      es: "IBM Plex Sans",
+      hi: "IBM Plex Sans Devanagari",
+      ar: "IBM Plex Sans Arabic",
+      pt: "IBM Plex Sans",
+      bn: "IBM Plex Sans Bengali",
+      ru: "IBM Plex Sans",
+      ja: "IBM Plex Sans JP",
+      ko: "IBM Plex Sans KR",
+      th: "IBM Plex Sans Thai",
+      he: "IBM Plex Sans Hebrew",
+      vi: "IBM Plex Sans",
     },
     families: {
-      en: "Arial",
-      zhHans: "SimHei",
-      zhHant: '"Microsoft JhengHei"',
-      es: "Arial",
-      hi: '"Nirmala UI"',
-      ar: "Arial",
-      pt: "Arial",
-      bn: '"Nirmala UI"',
-      ru: "Arial",
-      ja: "Meiryo",
+      en: '"IBM Plex Sans"',
+      zhHans: '"IBM Plex Sans SC"',
+      zhHant: '"IBM Plex Sans TC"',
+      es: '"IBM Plex Sans"',
+      hi: '"IBM Plex Sans Devanagari"',
+      ar: '"IBM Plex Sans Arabic"',
+      pt: '"IBM Plex Sans"',
+      bn: '"IBM Plex Sans Bengali"',
+      ru: '"IBM Plex Sans"',
+      ja: '"IBM Plex Sans JP"',
+      ko: '"IBM Plex Sans KR"',
+      th: '"IBM Plex Sans Thai"',
+      he: '"IBM Plex Sans Hebrew"',
+      vi: '"IBM Plex Sans"',
     },
   },
   {
-    id: "noto-sans",
+    id: "spline-sarasa",
     names: {
-      en: "Noto Sans",
-      zhHans: "思源黑体",
-      zhHant: "思源黑體",
-      es: "Noto Sans",
-      hi: "Noto Sans Devanagari",
-      ar: "Noto Sans Arabic",
-      pt: "Noto Sans",
-      bn: "Noto Sans Bengali",
-      ru: "Noto Sans",
-      ja: "Noto Sans JP",
+      en: "Spline Sans",
+      zhHans: "Sarasa UI SC",
+      zhHant: "Sarasa UI TC",
+      es: "Spline Sans",
+      hi: "IBM Plex Sans Devanagari",
+      ar: "IBM Plex Sans Arabic",
+      pt: "Spline Sans",
+      bn: "IBM Plex Sans Bengali",
+      ru: "Spline Sans",
+      ja: "Sarasa UI J",
+      ko: "Sarasa UI K",
+      th: "IBM Plex Sans Thai",
+      he: "IBM Plex Sans Hebrew",
+      vi: "Spline Sans",
     },
     families: {
-      en: '"Noto Sans"',
-      zhHans: '"Noto Sans SC", "Source Han Sans SC"',
-      zhHant: '"Noto Sans TC", "Source Han Sans TC"',
-      es: '"Noto Sans"',
-      hi: '"Noto Sans Devanagari"',
-      ar: '"Noto Sans Arabic"',
-      pt: '"Noto Sans"',
-      bn: '"Noto Sans Bengali"',
-      ru: '"Noto Sans"',
-      ja: '"Noto Sans JP"',
+      en: '"Spline Sans"',
+      zhHans: '"Sarasa UI SC"',
+      zhHant: '"Sarasa UI TC"',
+      es: '"Spline Sans"',
+      hi: '"IBM Plex Sans Devanagari"',
+      ar: '"IBM Plex Sans Arabic"',
+      pt: '"Spline Sans"',
+      bn: '"IBM Plex Sans Bengali"',
+      ru: '"Spline Sans"',
+      ja: '"Sarasa UI J"',
+      ko: '"Sarasa UI K"',
+      th: '"IBM Plex Sans Thai"',
+      he: '"IBM Plex Sans Hebrew"',
+      vi: '"Spline Sans"',
     },
   },
   {
-    id: "humanist",
+    id: "chivo-tsanger",
     names: {
-      en: "Aptos",
-      zhHans: "等线",
-      zhHant: "蘋方-繁",
-      es: "Aptos",
-      hi: "Nirmala UI",
-      ar: "Dubai",
-      pt: "Aptos",
-      bn: "Nirmala UI",
-      ru: "Aptos",
-      ja: "Yu Gothic",
+      en: "Chivo",
+      zhHans: "Tsanger YuYangT SC",
+      zhHant: "Tsanger YuYangT TC",
+      es: "Chivo",
+      hi: "IBM Plex Sans Devanagari",
+      ar: "IBM Plex Sans Arabic",
+      pt: "Chivo",
+      bn: "IBM Plex Sans Bengali",
+      ru: "Chivo",
+      ja: "Tsanger YuYangT JP",
+      ko: "IBM Plex Sans KR",
+      th: "IBM Plex Sans Thai",
+      he: "IBM Plex Sans Hebrew",
+      vi: "Chivo",
     },
     families: {
-      en: "Aptos",
-      zhHans: "DengXian",
-      zhHant: '"PingFang TC"',
-      es: "Aptos",
-      hi: '"Nirmala UI"',
-      ar: "Dubai",
-      pt: "Aptos",
-      bn: '"Nirmala UI"',
-      ru: "Aptos",
-      ja: '"Yu Gothic"',
+      en: '"Chivo"',
+      zhHans: '"Tsanger YuYangT SC"',
+      zhHant: '"Tsanger YuYangT TC"',
+      es: '"Chivo"',
+      hi: '"IBM Plex Sans Devanagari"',
+      ar: '"IBM Plex Sans Arabic"',
+      pt: '"Chivo"',
+      bn: '"IBM Plex Sans Bengali"',
+      ru: '"Chivo"',
+      ja: '"Tsanger YuYangT JP"',
+      ko: '"IBM Plex Sans KR"',
+      th: '"IBM Plex Sans Thai"',
+      he: '"IBM Plex Sans Hebrew"',
+      vi: '"Chivo"',
     },
   },
   {
-    id: "serif",
+    id: "hanken-lxgw",
     names: {
-      en: "Georgia",
-      zhHans: "宋体",
-      zhHant: "新細明體",
-      es: "Georgia",
-      hi: "Noto Serif Devanagari",
-      ar: "Noto Naskh Arabic",
-      pt: "Georgia",
-      bn: "Noto Serif Bengali",
-      ru: "Georgia",
-      ja: "Yu Mincho",
+      en: "Hanken Grotesk",
+      zhHans: "LXGW Neo XiHei",
+      zhHant: "LXGW Neo XiHei TC",
+      es: "Hanken Grotesk",
+      hi: "IBM Plex Sans Devanagari",
+      ar: "IBM Plex Sans Arabic",
+      pt: "Hanken Grotesk",
+      bn: "IBM Plex Sans Bengali",
+      ru: "Hanken Grotesk",
+      ja: "IBM Plex Sans JP",
+      ko: "IBM Plex Sans KR",
+      th: "IBM Plex Sans Thai",
+      he: "IBM Plex Sans Hebrew",
+      vi: "Hanken Grotesk",
     },
     families: {
-      en: "Georgia",
-      zhHans: "SimSun",
-      zhHant: "PMingLiU",
-      es: "Georgia",
-      hi: '"Noto Serif Devanagari"',
-      ar: '"Noto Naskh Arabic"',
-      pt: "Georgia",
-      bn: '"Noto Serif Bengali"',
-      ru: "Georgia",
-      ja: '"Yu Mincho"',
+      en: '"Hanken Grotesk"',
+      zhHans: '"LXGW Neo XiHei"',
+      zhHant: '"LXGW Neo XiHei TC"',
+      es: '"Hanken Grotesk"',
+      hi: '"IBM Plex Sans Devanagari"',
+      ar: '"IBM Plex Sans Arabic"',
+      pt: '"Hanken Grotesk"',
+      bn: '"IBM Plex Sans Bengali"',
+      ru: '"Hanken Grotesk"',
+      ja: '"IBM Plex Sans JP"',
+      ko: '"IBM Plex Sans KR"',
+      th: '"IBM Plex Sans Thai"',
+      he: '"IBM Plex Sans Hebrew"',
+      vi: '"Hanken Grotesk"',
     },
   },
 ] as const;
 
 const CODE_FONT_OPTIONS = [
-  { label: "System Mono (Default)", value: DEFAULT_CODE_FONT },
-  { label: "Cascadia Code", value: '"Cascadia Code", Consolas, monospace' },
-  { label: "JetBrains Mono", value: '"JetBrains Mono", Consolas, monospace' },
-  { label: "Fira Code", value: '"Fira Code", Consolas, monospace' },
-  { label: "Consolas", value: "Consolas, monospace" },
+  { label: "IBM Plex Mono (Default)", value: DEFAULT_CODE_FONT },
+  { label: "Iosevka Term", value: '"Iosevka Term", "IBM Plex Mono", ui-monospace, monospace' },
+  { label: "Commit Mono", value: '"Commit Mono", "IBM Plex Mono", ui-monospace, monospace' },
+  {
+    label: "Recursive Mono",
+    value: '"Recursive Mono Linear Static", "IBM Plex Mono", ui-monospace, monospace',
+  },
+  { label: "Sometype Mono", value: '"Sometype Mono", "IBM Plex Mono", ui-monospace, monospace' },
 ] as const;
 
 function displayFontLocale(): FontLocale {
   return currentLanguage() === "zh-CN" ? "zhHans" : "en";
 }
 
-function fontFamilyValue(fonts: Record<FontLocale, string>, preferred: FontLocale): string {
-  const ordered = [preferred, ...FONT_LOCALE_ORDER.filter((locale) => locale !== preferred)];
+function fontFamilyValue(fonts: Record<FontLocale, string>): string {
   return [
-    ...new Set(ordered.map((locale) => fonts[locale])),
+    ...new Set(FONT_LOCALE_ORDER.map((locale) => fonts[locale])),
     "ui-sans-serif",
     "system-ui",
     "sans-serif",
@@ -236,13 +296,14 @@ function fontFamilyValue(fonts: Record<FontLocale, string>, preferred: FontLocal
 export function mainFontOptions(): AppearanceOption[] {
   const locale = displayFontLocale();
   return MAIN_FONT_MAP.map((font) => {
-    const value = fontFamilyValue(font.families, locale);
+    const value = font.id === "archivo-plex" ? DEFAULT_MAIN_FONT : fontFamilyValue(font.families);
     const localizedName = font.names[locale];
     const englishName = font.names.en;
+    const defaultFont = font.id === "archivo-plex";
     return {
       id: font.id,
       label:
-        font.id === "system"
+        defaultFont
           ? locale === "en" || localizedName === englishName
             ? `${localizedName} (${t("default")})`
             : `${localizedName} / ${englishName} (${t("default")})`

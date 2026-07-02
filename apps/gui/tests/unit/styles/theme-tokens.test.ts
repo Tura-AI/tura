@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 const tokens = readFileSync(resolve(import.meta.dir, "../../../app/src/styles/tokens.css"), "utf8");
+const defaults = readFileSync(resolve(import.meta.dir, "../../../app/src/config/defaults.ts"), "utf8");
 
 function themeBlock(theme?: string): string {
   if (!theme) {
@@ -55,4 +56,15 @@ describe("corner radius tokens", () => {
     expect(root).toContain("--radius-xl: calc(18px * var(--corner-radius-scale));");
     expect(root).toContain("--radius-pill: calc(16px * var(--corner-radius-scale));");
   });
+
+describe("typography tokens", () => {
+  test("defaults to the Archivo and IBM Plex multilingual font system", () => {
+    expect(defaults).toContain('"Archivo"');
+    expect(defaults).toContain('"IBM Plex Sans SC"');
+    expect(defaults).toContain('"IBM Plex Mono"');
+    expect(tokens).toContain('"Archivo"');
+    expect(tokens).toContain('"IBM Plex Sans SC"');
+    expect(tokens).toContain('"IBM Plex Mono"');
+  });
+});
 });
