@@ -501,7 +501,10 @@ mod tests {
         assert_eq!(response["session_id"], "active-session");
         assert_eq!(response["turn_id"], "active-turn-2");
         assert!(service.sessions.lock().contains_key("active-session"));
-        assert_eq!(state.manager.count_workers_with_prefix("runtime_worker:"), 0);
+        assert_eq!(
+            state.manager.count_workers_with_prefix("runtime_worker:"),
+            0
+        );
     }
 
     #[tokio::test]

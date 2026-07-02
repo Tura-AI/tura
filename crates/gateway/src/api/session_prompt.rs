@@ -546,7 +546,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
     }
 
     match result {
-        Ok(()) => {
+        Ok(ForwardRunAgentResult::Dispatched) => {
             session_store().update_session_status(&session_id, SessionStatusMano::Idle);
             session_store().finish_todos(&session_id, true);
             if let Some(message) = final_agent_message(&session_id, before_count) {
@@ -557,6 +557,9 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                     },
                 });
             }
+        }
+        Ok(ForwardRunAgentResult::AppendedToActiveRuntime) => {
+            session_store().update_session_status(&session_id, SessionStatusMano::Busy);
         }
         Err(error) => {
             session_store().update_session_status(&session_id, SessionStatusMano::Error);
@@ -571,11 +574,17 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
 
 /// Submit through the gateway-owned persistent router instead of spawning a
 /// runtime worker directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForwardRunAgentResult {
+    Dispatched,
+    AppendedToActiveRuntime,
+}
+
 fn forward_run_agent_to_router(
     turn_id: &str,
     session_id: &str,
     body: &serde_json::Value,
-) -> Result<(), String> {
+) -> Result<ForwardRunAgentResult, String> {
     let value = crate::router_client::RouterClient::global()
         .enqueue_turn(crate::router_client::EnqueueTurnRequest {
             turn_id: turn_id.to_string(),
@@ -590,8 +599,19 @@ fn forward_run_agent_to_router(
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(true)
     {
-        Ok(())
+        Ok(ForwardRunAgentResult::Dispatched)
     } else {
+        if value.get("code").and_then(serde_json::Value::as_str) == Some("session_active_turn") {
+            let command = body
+                .get("prompt")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("Prompt submitted")
+                .to_string();
+            crate::api::session::append_user_command_for_runtime(session_id, command);
+            return Ok(ForwardRunAgentResult::AppendedToActiveRuntime);
+        }
         let error = value
             .get("error")
             .and_then(serde_json::Value::as_str)
