@@ -72,6 +72,19 @@ export interface BenchmarkToolCall {
   raw?: JsonValue;
 }
 
+export interface BenchmarkAgentRoundMetadata {
+  agentId: string;
+  agentKind: string;
+  agentMode: string;
+  model: string;
+  reasoning: string;
+  serviceTier: string;
+  priorityEnabled: boolean;
+  roundSource: string;
+  eventType: string;
+  sessionOrTurnId: string;
+}
+
 export interface BenchmarkAgentRound {
   schema: typeof ROUND_SCHEMA;
   roundId: string;
@@ -88,6 +101,7 @@ export interface BenchmarkAgentRound {
   usage: TokenUsage;
   providerDurationMs: number;
   toolCalls: BenchmarkToolCall[];
+  metadata: BenchmarkAgentRoundMetadata;
   rawCallbackPath?: string;
 }
 

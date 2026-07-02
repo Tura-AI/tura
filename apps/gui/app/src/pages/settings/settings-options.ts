@@ -97,12 +97,12 @@ const MAIN_FONT_MAP = [
     names: {
       en: "Archivo",
       zhHans: "IBM Plex Sans SC",
-      zhHant: "IBM Plex Sans TC",
+      zhHant: "LXGW Marker Gothic",
       es: "Archivo",
       hi: "IBM Plex Sans Devanagari",
       ar: "IBM Plex Sans Arabic",
       pt: "Archivo",
-      bn: "IBM Plex Sans Bengali",
+      bn: "Anek Bangla",
       ru: "IBM Plex Sans",
       ja: "IBM Plex Sans JP",
       ko: "IBM Plex Sans KR",
@@ -113,12 +113,12 @@ const MAIN_FONT_MAP = [
     families: {
       en: '"Archivo"',
       zhHans: '"IBM Plex Sans SC"',
-      zhHant: '"IBM Plex Sans TC"',
+      zhHant: '"LXGW Marker Gothic"',
       es: '"Archivo"',
       hi: '"IBM Plex Sans Devanagari"',
       ar: '"IBM Plex Sans Arabic"',
       pt: '"Archivo"',
-      bn: '"IBM Plex Sans Bengali"',
+      bn: '"Anek Bangla"',
       ru: '"IBM Plex Sans"',
       ja: '"IBM Plex Sans JP"',
       ko: '"IBM Plex Sans KR"',
@@ -132,12 +132,12 @@ const MAIN_FONT_MAP = [
     names: {
       en: "IBM Plex Sans",
       zhHans: "IBM Plex Sans SC",
-      zhHant: "IBM Plex Sans TC",
+      zhHant: "LXGW Marker Gothic",
       es: "IBM Plex Sans",
       hi: "IBM Plex Sans Devanagari",
       ar: "IBM Plex Sans Arabic",
       pt: "IBM Plex Sans",
-      bn: "IBM Plex Sans Bengali",
+      bn: "Anek Bangla",
       ru: "IBM Plex Sans",
       ja: "IBM Plex Sans JP",
       ko: "IBM Plex Sans KR",
@@ -148,12 +148,12 @@ const MAIN_FONT_MAP = [
     families: {
       en: '"IBM Plex Sans"',
       zhHans: '"IBM Plex Sans SC"',
-      zhHant: '"IBM Plex Sans TC"',
+      zhHant: '"LXGW Marker Gothic"',
       es: '"IBM Plex Sans"',
       hi: '"IBM Plex Sans Devanagari"',
       ar: '"IBM Plex Sans Arabic"',
       pt: '"IBM Plex Sans"',
-      bn: '"IBM Plex Sans Bengali"',
+      bn: '"Anek Bangla"',
       ru: '"IBM Plex Sans"',
       ja: '"IBM Plex Sans JP"',
       ko: '"IBM Plex Sans KR"',
@@ -166,32 +166,32 @@ const MAIN_FONT_MAP = [
     id: "spline-sarasa",
     names: {
       en: "Spline Sans",
-      zhHans: "Sarasa UI SC",
-      zhHant: "Sarasa UI TC",
+      zhHans: "LXGW Marker Gothic",
+      zhHant: "LXGW Marker Gothic",
       es: "Spline Sans",
       hi: "IBM Plex Sans Devanagari",
       ar: "IBM Plex Sans Arabic",
       pt: "Spline Sans",
-      bn: "IBM Plex Sans Bengali",
+      bn: "Anek Bangla",
       ru: "Spline Sans",
-      ja: "Sarasa UI J",
-      ko: "Sarasa UI K",
+      ja: "IBM Plex Sans JP",
+      ko: "IBM Plex Sans KR",
       th: "IBM Plex Sans Thai",
       he: "IBM Plex Sans Hebrew",
       vi: "Spline Sans",
     },
     families: {
       en: '"Spline Sans"',
-      zhHans: '"Sarasa UI SC"',
-      zhHant: '"Sarasa UI TC"',
+      zhHans: '"LXGW Marker Gothic"',
+      zhHant: '"LXGW Marker Gothic"',
       es: '"Spline Sans"',
       hi: '"IBM Plex Sans Devanagari"',
       ar: '"IBM Plex Sans Arabic"',
       pt: '"Spline Sans"',
-      bn: '"IBM Plex Sans Bengali"',
+      bn: '"Anek Bangla"',
       ru: '"Spline Sans"',
-      ja: '"Sarasa UI J"',
-      ko: '"Sarasa UI K"',
+      ja: '"IBM Plex Sans JP"',
+      ko: '"IBM Plex Sans KR"',
       th: '"IBM Plex Sans Thai"',
       he: '"IBM Plex Sans Hebrew"',
       vi: '"Spline Sans"',
@@ -201,15 +201,15 @@ const MAIN_FONT_MAP = [
     id: "chivo-tsanger",
     names: {
       en: "Chivo",
-      zhHans: "Tsanger YuYangT SC",
-      zhHant: "Tsanger YuYangT TC",
+      zhHans: "LXGW Marker Gothic",
+      zhHant: "LXGW Marker Gothic",
       es: "Chivo",
       hi: "IBM Plex Sans Devanagari",
       ar: "IBM Plex Sans Arabic",
       pt: "Chivo",
-      bn: "IBM Plex Sans Bengali",
+      bn: "Anek Bangla",
       ru: "Chivo",
-      ja: "Tsanger YuYangT JP",
+      ja: "IBM Plex Sans JP",
       ko: "IBM Plex Sans KR",
       th: "IBM Plex Sans Thai",
       he: "IBM Plex Sans Hebrew",
@@ -217,15 +217,15 @@ const MAIN_FONT_MAP = [
     },
     families: {
       en: '"Chivo"',
-      zhHans: '"Tsanger YuYangT SC"',
-      zhHant: '"Tsanger YuYangT TC"',
+      zhHans: '"LXGW Marker Gothic"',
+      zhHant: '"LXGW Marker Gothic"',
       es: '"Chivo"',
       hi: '"IBM Plex Sans Devanagari"',
       ar: '"IBM Plex Sans Arabic"',
       pt: '"Chivo"',
-      bn: '"IBM Plex Sans Bengali"',
+      bn: '"Anek Bangla"',
       ru: '"Chivo"',
-      ja: '"Tsanger YuYangT JP"',
+      ja: '"IBM Plex Sans JP"',
       ko: '"IBM Plex Sans KR"',
       th: '"IBM Plex Sans Thai"',
       he: '"IBM Plex Sans Hebrew"',
@@ -236,13 +236,13 @@ const MAIN_FONT_MAP = [
     id: "hanken-lxgw",
     names: {
       en: "Hanken Grotesk",
-      zhHans: "LXGW Neo XiHei",
-      zhHant: "LXGW Neo XiHei TC",
+      zhHans: "LXGW Marker Gothic",
+      zhHant: "LXGW Marker Gothic",
       es: "Hanken Grotesk",
       hi: "IBM Plex Sans Devanagari",
       ar: "IBM Plex Sans Arabic",
       pt: "Hanken Grotesk",
-      bn: "IBM Plex Sans Bengali",
+      bn: "Anek Bangla",
       ru: "Hanken Grotesk",
       ja: "IBM Plex Sans JP",
       ko: "IBM Plex Sans KR",
@@ -252,13 +252,13 @@ const MAIN_FONT_MAP = [
     },
     families: {
       en: '"Hanken Grotesk"',
-      zhHans: '"LXGW Neo XiHei"',
-      zhHant: '"LXGW Neo XiHei TC"',
+      zhHans: '"LXGW Marker Gothic"',
+      zhHant: '"LXGW Marker Gothic"',
       es: '"Hanken Grotesk"',
       hi: '"IBM Plex Sans Devanagari"',
       ar: '"IBM Plex Sans Arabic"',
       pt: '"Hanken Grotesk"',
-      bn: '"IBM Plex Sans Bengali"',
+      bn: '"Anek Bangla"',
       ru: '"Hanken Grotesk"',
       ja: '"IBM Plex Sans JP"',
       ko: '"IBM Plex Sans KR"',
@@ -271,13 +271,10 @@ const MAIN_FONT_MAP = [
 
 const CODE_FONT_OPTIONS = [
   { label: "IBM Plex Mono (Default)", value: DEFAULT_CODE_FONT },
-  { label: "Iosevka Term", value: '"Iosevka Term", "IBM Plex Mono", ui-monospace, monospace' },
-  { label: "Commit Mono", value: '"Commit Mono", "IBM Plex Mono", ui-monospace, monospace' },
-  {
-    label: "Recursive Mono",
-    value: '"Recursive Mono Linear Static", "IBM Plex Mono", ui-monospace, monospace',
-  },
+  { label: "Azeret Mono", value: '"Azeret Mono", "IBM Plex Mono", ui-monospace, monospace' },
   { label: "Sometype Mono", value: '"Sometype Mono", "IBM Plex Mono", ui-monospace, monospace' },
+  { label: "Fragment Mono", value: '"Fragment Mono", "IBM Plex Mono", ui-monospace, monospace' },
+  { label: "Reddit Mono", value: '"Reddit Mono", "IBM Plex Mono", ui-monospace, monospace' },
 ] as const;
 
 function displayFontLocale(): FontLocale {
@@ -302,14 +299,13 @@ export function mainFontOptions(): AppearanceOption[] {
     const defaultFont = font.id === "archivo-plex";
     return {
       id: font.id,
-      label:
-        defaultFont
-          ? locale === "en" || localizedName === englishName
-            ? `${localizedName} (${t("default")})`
-            : `${localizedName} / ${englishName} (${t("default")})`
-          : locale === "en" || localizedName === englishName
-            ? localizedName
-            : `${localizedName} / ${englishName}`,
+      label: defaultFont
+        ? locale === "en" || localizedName === englishName
+          ? `${localizedName} (${t("default")})`
+          : `${localizedName} / ${englishName} (${t("default")})`
+        : locale === "en" || localizedName === englishName
+          ? localizedName
+          : `${localizedName} / ${englishName}`,
       value,
       preview: font.families[locale],
     };

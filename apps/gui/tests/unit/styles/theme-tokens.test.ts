@@ -3,7 +3,15 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 const tokens = readFileSync(resolve(import.meta.dir, "../../../app/src/styles/tokens.css"), "utf8");
-const defaults = readFileSync(resolve(import.meta.dir, "../../../app/src/config/defaults.ts"), "utf8");
+const defaults = readFileSync(
+  resolve(import.meta.dir, "../../../app/src/config/defaults.ts"),
+  "utf8",
+);
+const indexHtml = readFileSync(resolve(import.meta.dir, "../../../app/index.html"), "utf8");
+const fontInstaller = readFileSync(
+  resolve(import.meta.dir, "../../../scripts/install-fonts.mjs"),
+  "utf8",
+);
 
 function themeBlock(theme?: string): string {
   if (!theme) {
@@ -20,7 +28,10 @@ function tokenValue(block: string, token: string): string {
     .split(/\r?\n/u)
     .map((item) => item.trim())
     .find((item) => item.startsWith(`${token}:`));
-  const value = line?.slice(token.length + 1).trim().replace(/;$/u, "");
+  const value = line
+    ?.slice(token.length + 1)
+    .trim()
+    .replace(/;$/u, "");
   expect(value).toBeDefined();
   return value!;
 }
@@ -57,14 +68,23 @@ describe("corner radius tokens", () => {
     expect(root).toContain("--radius-pill: calc(16px * var(--corner-radius-scale));");
   });
 
-describe("typography tokens", () => {
-  test("defaults to the Archivo and IBM Plex multilingual font system", () => {
-    expect(defaults).toContain('"Archivo"');
-    expect(defaults).toContain('"IBM Plex Sans SC"');
-    expect(defaults).toContain('"IBM Plex Mono"');
-    expect(tokens).toContain('"Archivo"');
-    expect(tokens).toContain('"IBM Plex Sans SC"');
-    expect(tokens).toContain('"IBM Plex Mono"');
+  describe("typography tokens", () => {
+    test("defaults to the Archivo and IBM Plex multilingual font system", () => {
+      expect(defaults).toContain('"Archivo"');
+      expect(defaults).toContain('"IBM Plex Sans SC"');
+      expect(defaults).toContain('"IBM Plex Mono"');
+      expect(tokens).toContain('"Archivo"');
+      expect(tokens).toContain('"IBM Plex Sans SC"');
+      expect(tokens).toContain('"IBM Plex Mono"');
+    });
+
+    test("loads GUI fonts from locally installed Google Fonts assets", () => {
+      expect(indexHtml).toContain("/assets/fonts/google/fonts.css");
+      expect(fontInstaller).toContain('family: "Archivo"');
+      expect(fontInstaller).toContain('family: "IBM Plex Sans"');
+      expect(fontInstaller).toContain('family: "IBM Plex Mono"');
+      expect(fontInstaller).toContain('family: "LXGW Marker Gothic"');
+      expect(fontInstaller).toContain("fonts.googleapis.com/css2");
+    });
   });
-});
 });

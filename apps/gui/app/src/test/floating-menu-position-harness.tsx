@@ -109,7 +109,10 @@ function Harness() {
       </section>
       <section data-menu-case="start-condition" style={rowStyle}>
         <span>Start condition</span>
-        <PlanComposerControls startCondition={startCondition()} onStartCondition={setStartCondition} />
+        <PlanComposerControls
+          startCondition={startCondition()}
+          onStartCondition={setStartCondition}
+        />
       </section>
       <section data-menu-case="agent-menu" style={rowStyle}>
         <span>Agent model</span>
@@ -127,7 +130,12 @@ function Harness() {
           value={font()}
           options={[
             { id: "archivo", label: "Archivo", value: "Archivo", preview: "Archivo" },
-            { id: "plex", label: "IBM Plex Sans", value: "IBM Plex Sans", preview: "IBM Plex Sans" },
+            {
+              id: "plex",
+              label: "IBM Plex Sans",
+              value: "IBM Plex Sans",
+              preview: "IBM Plex Sans",
+            },
           ]}
           onSelect={(option) => setFont(option.value)}
         />

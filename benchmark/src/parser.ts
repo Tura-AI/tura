@@ -50,10 +50,11 @@ export function parseAgentRound(callback: unknown, roundIndex = 0): BenchmarkAge
   const endedAt = readString(record, ["endedAt", "endTimestamp", "ended_at"]) ?? startedAt;
   const usage = readUsage(record);
   const toolCalls = normalizeToolCalls(callback);
+  const roundId = readString(record, ["roundId", "id", "turnId", "turn_id", "session_id", "sessionId"]) ?? `round-${roundIndex + 1}`;
 
   return {
     schema: ROUND_SCHEMA,
-    roundId: readString(record, ["roundId", "id", "turnId", "turn_id", "session_id", "sessionId"]) ?? `round-${roundIndex + 1}`,
+    roundId,
     roundIndex,
     startedAt,
     endedAt,
@@ -65,7 +66,44 @@ export function parseAgentRound(callback: unknown, roundIndex = 0): BenchmarkAge
     usage,
     providerDurationMs: readNumber(record, ["providerDurationMs", "provider_duration_ms", "duration_ms"]) ?? 0,
     toolCalls,
+    metadata: readRoundMetadata(record, roundId),
   };
+}
+
+function readRoundMetadata(record: UnknownRecord, roundId: string) {
+  const agentId = readString(record, ["agentId", "agent_id", "agent", "provider", "source_agent"]) ?? inferAgentId(record);
+  const model = readString(record, ["model", "model_id", "provider_model"]) ?? readString(asRecord(record.metadata) ?? {}, ["model"]) ?? "unknown";
+  const reasoning = readString(record, ["reasoning", "reasoning_effort", "reasoningEffort"]) ?? readString(asRecord(record.metadata) ?? {}, ["reasoning"]) ?? "unknown";
+  const serviceTier = readString(record, ["serviceTier", "service_tier", "tier"]) ?? readString(asRecord(record.metadata) ?? {}, ["serviceTier", "service_tier"]) ?? "unknown";
+  const eventType = readString(record, ["type", "event", "event_type", "eventType"]) ?? "unknown";
+  return {
+    agentId,
+    agentKind: readString(record, ["agentKind", "agent_kind", "kind"]) ?? inferAgentKind(agentId),
+    agentMode: readString(record, ["agentMode", "agent_mode", "mode", "tura_agent"]) ?? inferAgentMode(agentId),
+    model,
+    reasoning,
+    serviceTier,
+    priorityEnabled: readBoolean(record, ["priorityEnabled", "priority_enabled", "priority", "is_priority"]) ?? serviceTier.toLowerCase() === "priority",
+    roundSource: readString(record, ["roundSource", "round_source", "source"]) ?? "callback",
+    eventType,
+    sessionOrTurnId: readString(record, ["sessionOrTurnId", "session_or_turn_id", "turnId", "turn_id", "session_id", "sessionId", "id"]) ?? roundId,
+  };
+}
+
+function inferAgentId(record: UnknownRecord): string {
+  const type = readString(record, ["type", "event", "event_type", "eventType"]) ?? "";
+  const prefix = type.split(".")[0];
+  if (prefix) return prefix === "claude" ? "claudecode" : prefix;
+  return "unknown";
+}
+
+function inferAgentKind(agentId: string): string {
+  return agentId.replace(/-\d+$/, "") || "unknown";
+}
+
+function inferAgentMode(agentId: string): string {
+  if (agentId.startsWith("tura-")) return agentId.slice("tura-".length).replace(/-shll$/, "");
+  return "unknown";
 }
 
 export function parseJsonlRounds(text: string): BenchmarkAgentRound[] {
@@ -353,6 +391,20 @@ function readNumber(record: UnknownRecord, keys: string[]): number | undefined {
   for (const key of keys) {
     const value = Number(record[key]);
     if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function readBoolean(record: UnknownRecord, keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["1", "true", "yes", "on", "enabled"].includes(normalized)) return true;
+      if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
   }
   return undefined;
 }

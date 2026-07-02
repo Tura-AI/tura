@@ -21,6 +21,7 @@ export async function discoverTaskDeclarations(root: string): Promise<BenchmarkT
     for (const entry of await readdir(typeDirectory, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const declarationPath = path.join(typeDirectory, entry.name, "benchmark.task.json");
+      if (!(await isFile(declarationPath))) continue;
       declarations.push(await readTaskDeclaration(declarationPath));
     }
   }
@@ -55,4 +56,12 @@ async function isDirectory(directory: string): Promise<boolean> {
   } catch {
     return false;
   }
+
+async function isFile(filePath: string): Promise<boolean> {
+  try {
+    return (await stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
 }

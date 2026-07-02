@@ -101,6 +101,11 @@ test("parseJsonlRounds normalizes the five benchmark agents' per-round callbacks
     {
       type: "pi.round.completed",
       agent_id: "pi",
+      agent_mode: "direct",
+      model: "gpt-5.5",
+      reasoning: "medium",
+      service_tier: "default",
+      priority_enabled: false,
       turn_id: "pi-turn-1",
       started_at: "2026-01-01T00:00:00.000Z",
       ended_at: "2026-01-01T00:00:01.000Z",
@@ -112,6 +117,11 @@ test("parseJsonlRounds normalizes the five benchmark agents' per-round callbacks
     {
       type: "codex.round.completed",
       agent_id: "codex",
+      agent_mode: "cli",
+      model: "gpt-5.5",
+      reasoning: "medium",
+      service_tier: "default",
+      priority_enabled: false,
       turn_id: "codex-turn-1",
       request: { input: [{ role: "user", content: "Fix Codex case" }] },
       response: {
@@ -129,6 +139,11 @@ test("parseJsonlRounds normalizes the five benchmark agents' per-round callbacks
     {
       type: "claude.round.completed",
       agent_id: "claudecode",
+      agent_mode: "cli",
+      model: "claude-opus-4",
+      reasoning: "medium",
+      service_tier: "default",
+      priority_enabled: false,
       session_id: "claude-turn-1",
       message: {
         role: "assistant",
@@ -139,6 +154,11 @@ test("parseJsonlRounds normalizes the five benchmark agents' per-round callbacks
     {
       type: "opencode.round.completed",
       agent_id: "opencode",
+      agent_mode: "cli",
+      model: "gpt-5.5",
+      reasoning: "medium",
+      service_tier: "default",
+      priority_enabled: false,
       id: "opencode-turn-1",
       input: { messages: [{ role: "user", content: "Fix OpenCode case" }] },
       output: { message: { content: "OpenCode patched it." } },
@@ -148,6 +168,11 @@ test("parseJsonlRounds normalizes the five benchmark agents' per-round callbacks
     {
       type: "tura.round.completed",
       agent_id: "tura",
+      agent_mode: "balanced",
+      model: "openai/gpt-5.5",
+      reasoning: "medium",
+      service_tier: "default",
+      priority_enabled: false,
       turn_id: "tura-turn-1",
       full_context: "Fix Tura case",
       assistant_message: "Tura patched it.",
@@ -176,6 +201,26 @@ test("parseJsonlRounds normalizes the five benchmark agents' per-round callbacks
     "Tura patched it.",
   ]);
   assert.deepEqual(rounds.map((round) => round.usage.totalTokens), [20, 20, 20, 23, 25]);
+  assert.deepEqual(
+    rounds.map((round) => [
+      round.metadata.agentId,
+      round.metadata.agentKind,
+      round.metadata.agentMode,
+      round.metadata.model,
+      round.metadata.reasoning,
+      round.metadata.serviceTier,
+      round.metadata.priorityEnabled,
+      round.metadata.eventType,
+      round.metadata.sessionOrTurnId,
+    ]),
+    [
+      ["pi", "pi", "direct", "gpt-5.5", "medium", "default", false, "pi.round.completed", "pi-turn-1"],
+      ["codex", "codex", "cli", "gpt-5.5", "medium", "default", false, "codex.round.completed", "codex-turn-1"],
+      ["claudecode", "claudecode", "cli", "claude-opus-4", "medium", "default", false, "claude.round.completed", "claude-turn-1"],
+      ["opencode", "opencode", "cli", "gpt-5.5", "medium", "default", false, "opencode.round.completed", "opencode-turn-1"],
+      ["tura", "tura", "balanced", "openai/gpt-5.5", "medium", "default", false, "tura.round.completed", "tura-turn-1"],
+    ],
+  );
   assert.deepEqual(
     rounds.map((round) => round.toolCalls.map((tool) => [tool.kind, tool.name, tool.commandLine])),
     [

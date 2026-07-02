@@ -35,13 +35,10 @@ const fontRequests = [
 const unavailableOnGoogleFonts = ["IBM Plex Sans SC"];
 
 function googleCssUrl({ family, weights }) {
-  const params = new URLSearchParams();
   const familyValue = weights.length
     ? `${family.replaceAll(" ", "+")}:wght@${weights.join(";")}`
     : family.replaceAll(" ", "+");
-  params.set("family", familyValue);
-  params.set("display", "swap");
-  return `https://fonts.googleapis.com/css2?${params}`;
+  return `https://fonts.googleapis.com/css2?family=${familyValue}&display=swap`;
 }
 
 function safeFileName(url, index) {
@@ -53,7 +50,7 @@ function safeFileName(url, index) {
 }
 
 async function fetchText(url) {
-  const response = await fetch(url, { headers: { "user-agent": userAgent } });
+  const response = await fetchWithRetry(url);
   if (!response.ok) {
     throw new Error(`${url} returned HTTP ${response.status}`);
   }
@@ -61,11 +58,38 @@ async function fetchText(url) {
 }
 
 async function fetchBytes(url) {
-  const response = await fetch(url, { headers: { "user-agent": userAgent } });
+  const response = await fetchWithRetry(url);
   if (!response.ok) {
     throw new Error(`${url} returned HTTP ${response.status}`);
   }
   return Buffer.from(await response.arrayBuffer());
+}
+
+async function fetchWithRetry(url) {
+  let lastError;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      return await fetch(url, { headers: { "user-agent": userAgent } });
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+    }
+  }
+  throw new Error(
+    `${url} failed after retries: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  let index = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (index < items.length) {
+      const item = items[index];
+      index += 1;
+      await mapper(item);
+    }
+  });
+  await Promise.all(workers);
 }
 
 async function main() {
@@ -101,23 +125,24 @@ async function main() {
   for (const request of fontRequests) {
     const cssUrl = googleCssUrl(request);
     const remoteCss = await fetchText(cssUrl);
-    const rewrittenCss = remoteCss.replace(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/gu, (match, fontUrl) => {
-      let localName = downloaded.get(fontUrl);
-      if (!localName) {
-        localName = safeFileName(fontUrl, fileIndex);
-        downloaded.set(fontUrl, localName);
-        fileIndex += 1;
-      }
-      return `url("./${localName}")`;
-    });
+    const rewrittenCss = remoteCss.replace(
+      /url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/gu,
+      (match, fontUrl) => {
+        let localName = downloaded.get(fontUrl);
+        if (!localName) {
+          localName = safeFileName(fontUrl, fileIndex);
+          downloaded.set(fontUrl, localName);
+          fileIndex += 1;
+        }
+        return `url("./${localName}")`;
+      },
+    );
     cssParts.push(`/* ${request.family} */`, rewrittenCss.trim(), "");
   }
 
-  await Promise.all(
-    Array.from(downloaded.entries()).map(async ([fontUrl, localName]) => {
-      await writeFile(path.join(outputDir, localName), await fetchBytes(fontUrl));
-    }),
-  );
+  await mapWithConcurrency(Array.from(downloaded.entries()), 6, async ([fontUrl, localName]) => {
+    await writeFile(path.join(outputDir, localName), await fetchBytes(fontUrl));
+  });
   await writeFile(cssOutput, `${cssParts.join("\n").trim()}\n`, "utf8");
 
   console.log(
@@ -129,6 +154,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`Failed to install GUI fonts: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(
+    `Failed to install GUI fonts: ${error instanceof Error ? error.message : String(error)}`,
+  );
   process.exit(1);
 });

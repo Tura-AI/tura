@@ -12,8 +12,8 @@ const repoRoot = path.resolve(benchmarkRoot, "..");
 test("discovers one declaration per benchmark task directory", async () => {
   const declarations = await discoverTaskDeclarations(benchmarkRoot);
 
-  assert.equal(declarations.length, 11);
-  assert.deepEqual(countByType(declarations), { build: 4, debug: 3, refactoring: 4 });
+  assert.equal(declarations.length, 23);
+  assert.deepEqual(countByType(declarations), { build: 4, debug: 3, refactoring: 16 });
   assert.deepEqual(
     declarations.map((declaration) => declaration.id),
     [
@@ -21,11 +21,23 @@ test("discovers one declaration per benchmark task directory", async () => {
       "game-prompt-difficulty",
       "ogas-pdf-cost",
       "programbench-cli-cleanroom-rebuild",
-      "prompt-gallery-tanstack-rebuild",
+      "prompt-gallery-tanstack-frontend-rebuild",
+      "prompt-gallery-tanstack-fullstack-rebuild",
       "react-ops-board-playwright-repair",
       "react-ops-board-programbench-rebuild",
       "retail-ops-defect-repair",
-      "source-port-python",
+      "source-port-python-composite-eza",
+      "source-port-python-composite-nushell",
+      "source-port-python-composite-xsv",
+      "source-port-python-composite-zip-password-finder",
+      "source-port-python-default-eza",
+      "source-port-python-default-nushell",
+      "source-port-python-default-xsv",
+      "source-port-python-default-zip-password-finder",
+      "source-port-python-defined-workflow-eza",
+      "source-port-python-defined-workflow-nushell",
+      "source-port-python-defined-workflow-xsv",
+      "source-port-python-defined-workflow-zip-password-finder",
       "swebench-verified-issue-patch",
       "tui-streaming-memory",
     ],
@@ -45,22 +57,15 @@ test("all declared variants point at existing task-local runners", async () => {
   }
 });
 
-test("known duplicate wrappers are represented as variants", async () => {
+test("refactoring benchmark questions are split into one local runner entry", async () => {
   const declarations = await discoverTaskDeclarations(benchmarkRoot);
-  const byId = new Map(declarations.map((declaration) => [declaration.id, declaration]));
 
-  assert.deepEqual(
-    byId.get("prompt-gallery-tanstack-rebuild")?.variants.map((variant) => variant.id),
-    ["fullstack", "frontend"],
-  );
-  assert.deepEqual(
-    byId.get("source-port-python")?.variants.map((variant) => variant.id),
-    ["default", "defined-workflow", "composite"],
-  );
-  assert.deepEqual(
-    byId.get("apply-patch-contract")?.variants.map((variant) => variant.id),
-    ["single-block", "marker-ablation"],
-  );
+  for (const declaration of declarations.filter((item) => item.type === "refactoring")) {
+    assert.equal(declaration.variants.length, 1, declaration.id);
+    assert.equal(declaration.duplicatePolicy, "none", declaration.id);
+    assert.equal(declaration.variants[0]?.default, true, declaration.id);
+    assert.equal(declaration.variants[0]?.env, undefined, declaration.id);
+  }
 });
 
 function countByType(declarations: Awaited<ReturnType<typeof discoverTaskDeclarations>>) {
