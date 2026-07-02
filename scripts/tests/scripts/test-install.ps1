@@ -67,6 +67,34 @@ function Test-ShellSyntax {
   }
 }
 
+function Test-WindowsInstallFindsCurrentPowerShellWithoutPath {
+  if (-not ($IsWindows -or $env:OS -eq "Windows_NT")) {
+    return
+  }
+
+  $currentPowerShell = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
+  if (-not $currentPowerShell -or -not (Test-Path -LiteralPath $currentPowerShell)) {
+    Write-Host "Current PowerShell path unavailable; skipping hidden-PATH installer coverage test."
+    return
+  }
+
+  Write-Step "Checking Windows installer detects the current PowerShell without PATH"
+  $command = @"
+`$ErrorActionPreference = 'Stop'
+`$env:Path = 'C:\definitely-missing'
+& '.\scripts\install.ps1' -CheckOnly -SkipCommands -SkipApps -SkipUv -SkipBun
+if (`$?) { exit 0 }
+exit 1
+"@
+  Push-Location $RepoRoot
+  try {
+    & $currentPowerShell -NoProfile -ExecutionPolicy Bypass -Command $command
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  } finally {
+    Pop-Location
+  }
+}
+
 function Get-CommandPython {
   param([string]$CommandId)
   $commandDir = Join-Path $RepoRoot "commands\$CommandId"
@@ -78,6 +106,7 @@ function Get-CommandPython {
 
 Set-Location $RepoRoot
 Test-PowerShellSyntax
+Test-WindowsInstallFindsCurrentPowerShellWithoutPath
 Test-ShellSyntax
 
 Write-Step "Running root dependency installer"

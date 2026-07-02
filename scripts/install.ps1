@@ -128,7 +128,26 @@ function Resolve-ExistingCommand {
   return $null
 }
 
+function Get-CurrentPowerShellPath {
+  $processPath = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
+  if ($processPath -and (Test-Path -LiteralPath $processPath)) {
+    return (Resolve-Path -LiteralPath $processPath).ProviderPath
+  }
+
+  $fallbackName = if ($PSVersionTable.PSEdition -eq "Desktop") { "powershell.exe" } else { "pwsh.exe" }
+  $fallbackPath = Join-Path $PSHOME $fallbackName
+  if (Test-Path -LiteralPath $fallbackPath) {
+    return (Resolve-Path -LiteralPath $fallbackPath).ProviderPath
+  }
+
+  return $null
+}
+
 function Find-PowerShellTool {
+  $currentPowerShell = Get-CurrentPowerShellPath
+  if ($currentPowerShell) {
+    return $currentPowerShell
+  }
   Resolve-ExistingCommand @("pwsh", "powershell.exe", "powershell")
 }
 
