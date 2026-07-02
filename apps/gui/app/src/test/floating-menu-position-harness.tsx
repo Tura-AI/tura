@@ -76,7 +76,7 @@ function Harness() {
   const [draftSessionId, setDraftSessionId] = createSignal<string | undefined>(sessions[0]!.id);
   const [startCondition, setStartCondition] = createSignal<StartCondition>("user_action");
   const [agent, setAgent] = createSignal("balanced");
-  const [font, setFont] = createSignal("Archivo");
+  const [font, setFont] = createSignal("Inter");
 
   return (
     <div style={harnessStyle}>
@@ -109,10 +109,7 @@ function Harness() {
       </section>
       <section data-menu-case="start-condition" style={rowStyle}>
         <span>Start condition</span>
-        <PlanComposerControls
-          startCondition={startCondition()}
-          onStartCondition={setStartCondition}
-        />
+        <PlanComposerControls startCondition={startCondition()} onStartCondition={setStartCondition} />
       </section>
       <section data-menu-case="agent-menu" style={rowStyle}>
         <span>Agent model</span>
@@ -129,13 +126,8 @@ function Harness() {
         <AppearanceSelect
           value={font()}
           options={[
-            { id: "archivo", label: "Archivo", value: "Archivo", preview: "Archivo" },
-            {
-              id: "plex",
-              label: "IBM Plex Sans",
-              value: "IBM Plex Sans",
-              preview: "IBM Plex Sans",
-            },
+            { id: "inter", label: "Inter", value: "Inter", preview: "Inter" },
+            { id: "arial", label: "Arial", value: "Arial", preview: "Arial" },
           ]}
           onSelect={(option) => setFont(option.value)}
         />

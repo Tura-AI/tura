@@ -48,18 +48,11 @@ From the repository root, `build-release` writes production binaries into
 
 The install scripts verify or install Bun where possible, install GUI
 dependencies, and build/check the Rust services needed by the gateway.
-During GUI install and build, `apps/gui/scripts/install-fonts.mjs` downloads the
-GUI font assets from Google Fonts into `apps/gui/app/public/assets/fonts/google`
-and the app loads them locally at runtime. Google Fonts currently does not serve
-`IBM Plex Sans SC`; the GUI keeps it first in the CJK stack for systems that have
-it installed and downloads `LXGW Marker Gothic` as the local Google Fonts CJK
-fallback.
 
 Manual GUI-only commands:
 
 ```text
 bun install --cwd apps/gui --frozen-lockfile
-bun run --cwd apps/gui fonts:install
 bun run --cwd apps/gui build
 bun run --cwd apps/gui typecheck
 ```

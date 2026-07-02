@@ -24,7 +24,6 @@ node_modules/
 **/node_modules/
 **/dist/
 **/.vite/
-apps/gui/app/public/assets/fonts/google/
 *.tsbuildinfo
 /package-lock.json
 

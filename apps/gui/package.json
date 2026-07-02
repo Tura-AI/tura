@@ -4,10 +4,8 @@
   "type": "module",
   "packageManager": "bun@1.3.11",
   "scripts": {
-    "fonts:install": "node scripts/install-fonts.mjs",
-    "postinstall": "node scripts/install-fonts.mjs",
-    "dev": "node scripts/install-fonts.mjs && bun --cwd app dev",
-    "build": "node scripts/install-fonts.mjs && bun --cwd app build",
+    "dev": "bun --cwd app dev",
+    "build": "bun --cwd app build",
     "typecheck": "bun --cwd app typecheck",
     "lint": "eslint app/src sdk/gateway/src app/vite.config.ts",
     "format": "prettier --write \"app/src/**/*.{ts,tsx,css}\" \"sdk/**/*.ts\" \"tests/unit/**/*.ts\" \"tests/**/*.mjs\" \"ARCHITECTURE.md\" \"README.md\"",
