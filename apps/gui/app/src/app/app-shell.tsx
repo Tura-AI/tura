@@ -1,5 +1,5 @@
 import type { Session, TaskManagement } from "@tura/gateway-sdk";
-import { Match, Show, Switch, createSignal } from "solid-js";
+import { Match, Show, Switch, createEffect, createSignal, onCleanup } from "solid-js";
 import { cornerRadiusScale } from "../app-state-utils";
 import { DEFAULT_CODE_FONT, DEFAULT_MAIN_FONT } from "../config/defaults";
 import { sessionTasks, taskDisplayText, taskNonceId } from "../features/plan/tasks";
@@ -109,6 +109,14 @@ export function AppShell(props: { view: AppShellViewModel }) {
   });
 
   useIdleScrollbars();
+
+  createEffect(() => {
+    document.documentElement.style.setProperty(
+      "--corner-radius-scale",
+      String(cornerRadiusScale(state().cornerRadius)),
+    );
+  });
+  onCleanup(() => document.documentElement.style.removeProperty("--corner-radius-scale"));
 
   function showGatewayLoadingOverlay() {
     return !state().bootstrapped && state().connection !== "connected" && !state().error;

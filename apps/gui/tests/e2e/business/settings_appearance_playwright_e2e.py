@@ -133,17 +133,14 @@ async def main() -> None:
                 ".settings-view",
             )
             await expect(page.locator(".settings-view")).to_be_visible(timeout=15000)
-            await expect(page.get_by_role("heading", name="外观")).to_be_visible(timeout=15000)
+            await page.locator('button[data-section="appearance"]').click()
+            await expect(page.locator(".appearance-panel")).to_be_visible(timeout=15000)
 
-            themes = [
-                ("浅色", "light"),
-                ("深色", "dark"),
-                ("Caral", "caral"),
-                ("Uruk", "uruk"),
-                ("Liangzhu", "liangzhu"),
-            ]
-            for label, theme_id in themes:
-                await page.get_by_role("button", name=label).click()
+            themes = ["light", "dark", "caral", "uruk", "liangzhu"]
+            theme_buttons = page.locator(".theme-choice")
+            await expect(theme_buttons).to_have_count(len(themes))
+            for index, theme_id in enumerate(themes):
+                await theme_buttons.nth(index).click()
                 await expect(page.locator("html")).to_have_attribute(
                     "data-theme",
                     theme_id,

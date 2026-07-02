@@ -1,3 +1,4 @@
+export * from "./agents.js";
 export * from "./contracts.js";
 export * from "./declaration.js";
 export * from "./harness.js";

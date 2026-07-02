@@ -42,6 +42,7 @@ export interface AgentLaunchConfig {
   agentApplicationVersion?: string;
   cliLaunchCommandName: string;
   cliArgs?: string[];
+  env?: Record<string, string>;
   pluginSkillGithubUrls?: string[];
   releaseDownloadUrl?: string;
   releaseSha256?: string;
@@ -54,6 +55,7 @@ export interface AgentRunRequest {
   commandName: string;
   args: string[];
   cliCommand: string;
+  env?: Record<string, string>;
   instruction: BenchmarkCliInstruction;
   cliMetadata: BenchmarkCliMetadata;
 }
@@ -109,6 +111,7 @@ export function buildAgentRunRequest(
     commandName: agent.cliLaunchCommandName,
     args,
     cliCommand,
+    env: agent.env,
     instruction,
     cliMetadata,
   };
@@ -130,7 +133,7 @@ export async function executeAgentRunRequest(
   const result = await new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) => {
     const child = spawn(request.commandName, request.args, {
       cwd: request.workspaceDirectory,
-      env: process.env,
+      env: { ...process.env, ...request.env },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
