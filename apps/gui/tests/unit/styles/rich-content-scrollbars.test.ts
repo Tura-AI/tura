@@ -29,11 +29,14 @@ describe("rich content table scrollbars", () => {
     expect(richContentCss).not.toContain(".rich-table-overflow-y");
   });
 
-  test("keeps table rows separated while showing complete right-aligned cell content", () => {
+  test("keeps table rows separated while showing complete left-aligned cell content", () => {
     expect(cssBlock(".rich-table-scroll table")).toContain("min-width: 100%;");
     expect(cssBlock(".rich-table-scroll table")).toContain("width: max-content;");
     expect(cssBlock(".rich-table-scroll table")).toContain("border-collapse: separate;");
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
+      "text-align: left;",
+    );
+    expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).not.toContain(
       "text-align: right;",
     );
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
