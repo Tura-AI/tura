@@ -32,6 +32,13 @@ describe("custom Tauri titlebar", () => {
     expect(titlebarCss).not.toContain("border-radius: 50%");
   });
 
+  test("keeps the titlebar wordmark fixed to bold Archivo", () => {
+    expect(titlebarSource).toContain('class="app-titlebar-wordmark"');
+    expect(titlebarCss).toContain(".app-titlebar-wordmark");
+    expect(titlebarCss).toContain('font-family: "Archivo", sans-serif;');
+    expect(titlebarCss).toContain("font-weight: 760;");
+  });
+
   test("grants the custom titlebar the Tauri window commands it invokes", () => {
     expect(titlebarSource).toContain("getCurrentWindow().minimize()");
     expect(titlebarSource).toContain("getCurrentWindow().toggleMaximize()");
@@ -52,11 +59,11 @@ describe("custom Tauri titlebar", () => {
       "top: calc(var(--app-titlebar-height) + var(--rail-open-button-top));",
     );
     expect(pageShellCss).toContain(".error-strip");
-    expect(pageShellCss).toContain(
-      "top: calc(var(--app-titlebar-height) + var(--space-5));",
-    );
+    expect(pageShellCss).toContain("top: calc(var(--app-titlebar-height) + var(--space-5));");
     expect(pageShellCss).toContain("right: var(--space-5);");
-    expect(pageShellCss).not.toContain(".rail-collapsed .error-strip,\n.rail-fullscreen .error-strip {\n  left:");
+    expect(pageShellCss).not.toContain(
+      ".rail-collapsed .error-strip,\n.rail-fullscreen .error-strip {\n  left:",
+    );
     expect(desktopTabletCss).toContain("inset: var(--app-titlebar-height) 0 0 0;");
     expect(desktopTabletCss).toContain("height: calc(100dvh - var(--app-titlebar-height));");
   });

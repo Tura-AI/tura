@@ -26,7 +26,9 @@ export function AppTitleBar() {
           aria-hidden="true"
           draggable={false}
         />
-        <span data-tauri-drag-region>Tura</span>
+        <span class="app-titlebar-wordmark" data-tauri-drag-region>
+          Tura
+        </span>
       </div>
       <div class="app-window-controls">
         <button

@@ -44,6 +44,7 @@
     "apps/gui/tsconfig.eslint.json",
     "apps/gui/eslint.config.js",
     "apps/gui/turbo.json",
+    "apps/gui/scripts/**",
     "apps/gui/app/package.json",
     "apps/gui/app/index.html",
     "apps/gui/app/tsconfig.json",

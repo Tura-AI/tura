@@ -34,13 +34,11 @@
   --rail: 238px;
   --tree-step: 16px;
   --app-font-family:
-    "Archivo", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans JP", "IBM Plex Sans KR",
-    "IBM Plex Sans Devanagari", "IBM Plex Sans Arabic", "IBM Plex Sans Bengali",
-    "IBM Plex Sans Thai", "IBM Plex Sans Hebrew", "IBM Plex Sans", ui-sans-serif, system-ui,
-    sans-serif;
+    "Archivo", "IBM Plex Sans SC", "LXGW Marker Gothic", "IBM Plex Sans JP", "IBM Plex Sans KR",
+    "IBM Plex Sans Devanagari", "IBM Plex Sans Arabic", "Anek Bangla", "IBM Plex Sans Thai",
+    "IBM Plex Sans Hebrew", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --code-font-family:
-    "IBM Plex Mono", "Iosevka Term", "Commit Mono", "Recursive Mono Linear Static", ui-monospace,
-    monospace;
+    "IBM Plex Mono", "Azeret Mono", "Sometype Mono", "Fragment Mono", ui-monospace, monospace;
   --base-font-size: 12px;
   --code-font-size: 12px;
   --font-ui: var(--base-font-size);

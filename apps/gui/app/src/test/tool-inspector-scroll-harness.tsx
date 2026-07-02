@@ -100,7 +100,9 @@ function Harness() {
     <>
       <header class="app-titlebar" data-tauri-drag-region>
         <div class="app-titlebar-brand" data-tauri-drag-region>
-          <span data-tauri-drag-region>Tura</span>
+          <span class="app-titlebar-wordmark" data-tauri-drag-region>
+            Tura
+          </span>
         </div>
       </header>
       <ToolInspector

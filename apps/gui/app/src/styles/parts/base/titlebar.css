@@ -25,6 +25,12 @@
   font-weight: 560;
 }
 
+.app-titlebar-wordmark {
+  font-family: "Archivo", sans-serif;
+  font-weight: 760;
+  letter-spacing: 0.01em;
+}
+
 .app-titlebar-mark {
   width: 16px;
   height: 16px;
