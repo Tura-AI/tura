@@ -22,6 +22,28 @@ const appShellSource = readFileSync(
   resolve(import.meta.dir, "../../../../app/src/app/app-shell.tsx"),
   "utf8",
 );
+const providerConfig = JSON.parse(
+  readFileSync(
+    resolve(import.meta.dir, "../../../../../../crates/provider/config/provider_config.json"),
+    "utf8",
+  ),
+);
+
+const MEDIA_GENERATION_PROVIDERS = [
+  "alibaba_cloud",
+  "azure_cloud",
+  "azure_speech",
+  "codex",
+  "elevenlabs",
+  "google",
+  "huggingface",
+  "openai",
+  "qwen",
+  "replicate",
+  "together",
+  "volcengine",
+  "xai",
+] as const;
 
 function provider(overrides: Partial<SdkProvider>): SdkProvider {
   return {
@@ -72,6 +94,17 @@ describe("providerDomains", () => {
     ).toEqual(["llm"]);
   });
 
+  test("classifies media generation providers by capability when no domain is listed", () => {
+    expect(
+      providerDomains(
+        provider({
+          id: "image-provider",
+          options: { capabilities: ["media.generation", "image.generation"] },
+        }),
+      ),
+    ).toEqual(["media_generation"]);
+  });
+
   test("keeps service providers without models visible", () => {
     expect(
       providerDomains(
@@ -81,6 +114,22 @@ describe("providerDomains", () => {
         }),
       ),
     ).toEqual(["other"]);
+  });
+
+  test("provider catalog exposes paid media generation providers to GUI filtering", () => {
+    const catalog = providerConfig.model_catalog.providers as Record<
+      string,
+      { capabilities?: string[]; domains?: string[] }
+    >;
+
+    expect(providerConfig.provider_enums.capabilities).toContain("media.generation");
+    expect(providerConfig.provider_enums.domains).toContain("media_generation");
+
+    for (const id of MEDIA_GENERATION_PROVIDERS) {
+      expect(catalog[id], `${id} provider is registered`).toBeTruthy();
+      expect(catalog[id]?.capabilities ?? [], `${id} capabilities`).toContain("media.generation");
+      expect(catalog[id]?.domains ?? [], `${id} domains`).toContain("media_generation");
+    }
   });
 });
 

@@ -42,12 +42,14 @@
         "capabilities": [
           "cloud.compute",
           "storage.object",
+          "media.generation",
           "llm.dashscope",
           "sms.send"
         ],
         "display_name": "Alibaba Cloud OpenAPI",
         "domains": [
           "infrastructure",
+          "media_generation",
           "llm",
           "communication"
         ],
@@ -550,6 +552,7 @@
         "capabilities": [
           "cloud.compute",
           "storage.object",
+          "media.generation",
           "speech.tts",
           "speech.stt",
           "llm.chat"
@@ -557,6 +560,7 @@
         "display_name": "Microsoft Azure",
         "domains": [
           "infrastructure",
+          "media_generation",
           "communication",
           "llm"
         ],
@@ -584,12 +588,14 @@
         ],
         "base_url": "https://{region}.api.cognitive.microsoft.com",
         "capabilities": [
+          "media.generation",
           "speech.tts",
           "speech.stt",
           "speech.translation"
         ],
         "display_name": "Azure AI Speech",
         "domains": [
+          "media_generation",
           "communication",
           "infrastructure"
         ],
@@ -911,10 +917,14 @@
         "capabilities": [
           "llm.chat",
           "llm.embedding",
-          "llm.tool_call"
+          "llm.tool_call",
+          "media.generation",
+          "image.generation",
+          "speech.tts"
         ],
         "display_name": "Codex",
         "domains": [
+          "media_generation",
           "llm"
         ],
         "env": [
@@ -1276,6 +1286,36 @@
         "status": "configured",
         "token_env": null
       },
+      "elevenlabs": {
+        "api_docs": "https://elevenlabs.io/docs/api-reference/introduction",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.elevenlabs.io/v1",
+        "capabilities": [
+          "media.generation",
+          "speech.tts"
+        ],
+        "display_name": "ElevenLabs",
+        "domains": [
+          "media_generation",
+          "communication"
+        ],
+        "env": [
+          "ELEVENLABS_API_KEY",
+          "XI_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "thinking": []
+        },
+        "runtime_provider": "elevenlabs",
+        "status": "configured",
+        "token_env": "ELEVENLABS_API_KEY"
+      },
       "discord": {
         "api_docs": "https://discord.com/developers/docs/reference",
         "api_style": "rest",
@@ -1546,10 +1586,13 @@
         "capabilities": [
           "llm.chat",
           "llm.embedding",
-          "llm.tool_call"
+          "llm.tool_call",
+          "media.generation",
+          "image.generation"
         ],
         "display_name": "Gemini",
         "domains": [
+          "media_generation",
           "llm"
         ],
         "env": [
@@ -1864,10 +1907,12 @@
           "llm.chat",
           "llm.embedding",
           "image.generation",
+          "media.generation",
           "audio"
         ],
         "display_name": "Hugging Face Inference Providers",
         "domains": [
+          "media_generation",
           "llm"
         ],
         "env": [
@@ -2237,10 +2282,14 @@
         "capabilities": [
           "llm.chat",
           "llm.embedding",
-          "llm.tool_call"
+          "llm.tool_call",
+          "media.generation",
+          "image.generation",
+          "speech.tts"
         ],
         "display_name": "GPT API",
         "domains": [
+          "media_generation",
           "llm"
         ],
         "env": [
@@ -2905,10 +2954,13 @@
         "capabilities": [
           "llm.chat",
           "llm.embedding",
-          "llm.tool_call"
+          "llm.tool_call",
+          "media.generation",
+          "speech.tts"
         ],
         "display_name": "Qwen Overseas",
         "domains": [
+          "media_generation",
           "llm"
         ],
         "env": [
@@ -3153,10 +3205,14 @@
         "capabilities": [
           "llm.chat",
           "llm.embedding",
-          "llm.tool_call"
+          "llm.tool_call",
+          "media.generation",
+          "image.generation",
+          "speech.tts"
         ],
         "display_name": "Replicate",
         "domains": [
+          "media_generation",
           "llm"
         ],
         "env": [
@@ -3370,10 +3426,12 @@
         "capabilities": [
           "llm.chat",
           "llm.embedding",
-          "image.generation"
+          "image.generation",
+          "media.generation"
         ],
         "display_name": "Together AI API",
         "domains": [
+          "media_generation",
           "llm"
         ],
         "env": [
@@ -3518,12 +3576,14 @@
         "capabilities": [
           "cloud.compute",
           "llm.ark",
+          "media.generation",
           "media.image",
           "speech"
         ],
         "display_name": "Volcengine OpenAPI",
         "domains": [
           "infrastructure",
+          "media_generation",
           "llm"
         ],
         "env": [
@@ -3682,10 +3742,13 @@
         "capabilities": [
           "llm.chat",
           "llm.embedding",
-          "llm.tool_call"
+          "llm.tool_call",
+          "media.generation",
+          "image.generation"
         ],
         "display_name": "Grok",
         "domains": [
+          "media_generation",
           "llm"
         ],
         "env": [
@@ -3847,6 +3910,7 @@
     "dingtalk": "https://api.dingtalk.com",
     "discord": "https://discord.com/api/v10",
     "duckduckgo_search": "https://html.duckduckgo.com/html/",
+    "elevenlabs": "https://api.elevenlabs.io/v1",
     "exa_search": "https://mcp.exa.ai/mcp",
     "feishu": "https://open.feishu.cn/open-apis",
     "fireworks": "https://api.fireworks.ai/inference/v1",
@@ -4003,6 +4067,7 @@
       "maps.places",
       "maps.route",
       "maps.weather",
+      "media.generation",
       "media.image",
       "media.processing",
       "meeting.create",
@@ -4045,6 +4110,7 @@
       "llm",
       "search",
       "communication",
+      "media_generation",
       "productivity",
       "infrastructure",
       "other"

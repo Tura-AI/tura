@@ -401,6 +401,77 @@ fn generate_media_business_flow_returns_provider_errors_when_all_fallbacks_fail(
     assert!(response
         .stderr
         .contains("chatgpt_image_2: OpenAI image generation failed"));
+    assert!(response
+        .stderr
+        .contains("set one of the matching media generation keys to enable generate_media"));
+    assert!(response.stderr.contains("REPLICATE_API_TOKEN"));
+    assert!(response.stderr.contains("OPENAI_API_KEY"));
+    assert_eq!(response.output["error"], response.stderr);
+}
+
+#[test]
+fn generate_media_business_flow_reports_media_generation_key_help_when_no_provider_is_available() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let saved_replicate = std::env::var("REPLICATE_API_TOKEN").ok();
+    let saved_replicate_key = std::env::var("REPLICATE_API_KEY").ok();
+    clear_env("REPLICATE_API_TOKEN");
+    clear_env("REPLICATE_API_KEY");
+
+    let response = execute(
+        "--prompt poster --provider replicate --output-dir out",
+        dir.path(),
+        30,
+    );
+
+    restore_env("REPLICATE_API_TOKEN", saved_replicate);
+    restore_env("REPLICATE_API_KEY", saved_replicate_key);
+
+    assert!(!response.success);
+    assert!(response
+        .stderr
+        .contains("all generate_media providers failed"));
+    assert!(response
+        .stderr
+        .contains("set one of the matching media generation keys to enable generate_media"));
+    assert!(response.stderr.contains("REPLICATE_API_TOKEN"));
+    assert_eq!(response.output["error"], response.stderr);
+}
+
+#[test]
+fn generate_media_business_flow_reports_speech_key_help_when_no_provider_is_available() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let saved_elevenlabs = std::env::var("ELEVENLABS_API_KEY").ok();
+    let saved_xi = std::env::var("XI_API_KEY").ok();
+    clear_env("ELEVENLABS_API_KEY");
+    clear_env("XI_API_KEY");
+
+    let response = execute(
+        r#"{
+            "media_type":"speech",
+            "text":"hello from speech",
+            "text_language":"en_us",
+            "role":"female_gentle",
+            "tone":"calm",
+            "speech_provider_order":"elevenlabs",
+            "output_dir":"voice-out"
+        }"#,
+        dir.path(),
+        30,
+    );
+
+    restore_env("ELEVENLABS_API_KEY", saved_elevenlabs);
+    restore_env("XI_API_KEY", saved_xi);
+
+    assert!(!response.success);
+    assert!(response
+        .stderr
+        .contains("all generate_media speech providers failed"));
+    assert!(response
+        .stderr
+        .contains("set one of the matching media generation keys to enable generate_media speech"));
+    assert!(response.stderr.contains("ELEVENLABS_API_KEY"));
     assert_eq!(response.output["error"], response.stderr);
 }
 

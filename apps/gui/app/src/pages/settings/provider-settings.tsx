@@ -484,6 +484,7 @@ const CAPABILITY_LABELS: Record<string, TextKey> = {
   "llm.tool_call": "capabilityLlmToolCall",
   "llm.vision": "capabilityLlmVision",
   "mail.send": "capabilityMailSend",
+  "media.generation": "capabilityMediaGeneration",
   "maps.directions": "capabilityMapsDirections",
   "maps.geocoding": "capabilityMapsGeocoding",
   "maps.place_search": "capabilityMapsPlaceSearch",

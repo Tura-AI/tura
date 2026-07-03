@@ -51,6 +51,7 @@ const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {
   communication: "domainCommunication",
   infrastructure: "domainInfrastructure",
   llm: "domainLlm",
+  media_generation: "domainMediaGeneration",
   other: "domainOther",
   productivity: "domainProductivity",
   search: "domainSearch",
