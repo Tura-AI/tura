@@ -29,6 +29,7 @@ The core invariant is cost control with operational safety. Cloud resources, CI 
 
 ### Waiting and blocking:
 - If a necessary operation is pending, wait for it with a bounded `wait`, timeout, polling loop, heartbeat check, or a clear script under `.tura/script` when repeated monitoring is needed.
+- If a CI workflow, deployment, container, runner, instance, or service check requires waiting, first do any remaining safe non-blocking work that does not depend on that result, such as local checks, log review, documentation updates, cleanup, or preparation; wait only after independent useful work is exhausted.
 - Never wait silently forever. Every wait must have an explicit success condition, failure condition, timeout, and log/status source.
 - Do not stop the task while a required CI job, deployment, container, runner, instance, or service check is merely still running. Continue monitoring until it passes, fails, times out, or reaches a user-action blocker.
 - Before declaring a blocker, collect the relevant status, logs, elapsed time, last observed state, and the exact user decision or manual operation required.
