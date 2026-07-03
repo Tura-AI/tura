@@ -1293,6 +1293,7 @@ function MessageCell(props: {
   const assistantBlocks = createMemo(() =>
     assistantPartBlocks(props.message.parts, new Set(visibleTextParts().map((part) => part.id))),
   );
+  const assistantFooterText = createMemo(() => assistantFooterMetaText(props.message));
   const turnDuration = createMemo(() => formatDuration(messageDurationMs(props.message)));
   const showAssistantMeta = createMemo(() => hasSummary() && !isAgentWorking());
   const [userExpanded, setUserExpanded] = createSignal(false);
@@ -1406,10 +1407,16 @@ function MessageCell(props: {
               </Index>
               <Show when={showAssistantMeta()}>
                 <div class="message-head assistant-meta">
-                  <span>{assistantFooterMetaText(props.message)}</span>
-                  <span class="assistant-meta-separator" aria-hidden="true">
-                    -
-                  </span>
+                  <Show when={assistantFooterText()}>
+                    {(footerText) => (
+                      <>
+                        <span>{footerText()}</span>
+                        <span class="assistant-meta-separator" aria-hidden="true">
+                          -
+                        </span>
+                      </>
+                    )}
+                  </Show>
                   <span>
                     {formatTime(messageCreatedAt(props.message))} · {turnDuration()}
                   </span>

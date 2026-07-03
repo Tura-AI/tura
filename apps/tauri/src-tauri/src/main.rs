@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use sysinfo::{ProcessRefreshKind, System, UpdateKind};
 use tauri::webview::PageLoadEvent;
 use tauri::Manager;
 use url::Url;
@@ -612,7 +613,115 @@ fn select_gateway_endpoint(
             }
         }
     }
+    if let Some(candidate) = same_home_gateway_process_endpoint(instance_home)
+        .filter(|candidate| endpoint_is_usable(candidate, false, my_root))
+    {
+        write_active_gateway_url(instance_home, &candidate)?;
+        return Ok(candidate);
+    }
     Ok(default_endpoint)
+}
+
+fn same_home_gateway_process_endpoint(instance_home: &Path) -> Option<GatewayEndpoint> {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessRefreshKind::new()
+            .with_cmd(UpdateKind::Always)
+            .with_cwd(UpdateKind::Always)
+            .with_environ(UpdateKind::Always)
+            .with_exe(UpdateKind::Always),
+    );
+    system.processes().values().find_map(|process| {
+        let snapshot = GatewayProcessSnapshot {
+            name: process.name().to_string(),
+            exe: process.exe().map(Path::to_path_buf),
+            cmd: process.cmd().to_vec(),
+            environ: process.environ().to_vec(),
+            cwd: process.cwd().map(Path::to_path_buf),
+        };
+        gateway_process_endpoint_from_snapshot(&snapshot, instance_home)
+    })
+}
+
+#[derive(Debug)]
+struct GatewayProcessSnapshot {
+    name: String,
+    exe: Option<PathBuf>,
+    cmd: Vec<String>,
+    environ: Vec<String>,
+    cwd: Option<PathBuf>,
+}
+
+fn gateway_process_endpoint_from_snapshot(
+    process: &GatewayProcessSnapshot,
+    instance_home: &Path,
+) -> Option<GatewayEndpoint> {
+    if !is_gateway_process(process) || !process_matches_instance_home(process, instance_home) {
+        return None;
+    }
+    gateway_process_port(process)
+        .map(|port| GatewayEndpoint {
+            host: "127.0.0.1".to_string(),
+            port,
+            explicit_port: Some(port),
+        })
+        .or_else(|| {
+            process_env_value(&process.environ, tura_path::TURA_GATEWAY_URL_ENV)
+                .map(|url| GatewayEndpoint::parse(&url))
+        })
+}
+
+fn is_gateway_process(process: &GatewayProcessSnapshot) -> bool {
+    process_binary_name_matches(&process.name)
+        || process.exe.as_deref().is_some_and(path_is_gateway_binary)
+        || process
+            .cmd
+            .first()
+            .map(Path::new)
+            .is_some_and(path_is_gateway_binary)
+}
+
+fn process_matches_instance_home(process: &GatewayProcessSnapshot, instance_home: &Path) -> bool {
+    process_env_value(&process.environ, "TURA_HOME")
+        .map(|home| comparable_path(Path::new(&home)) == comparable_path(instance_home))
+        .or_else(|| {
+            process
+                .cwd
+                .as_deref()
+                .map(|cwd| comparable_path(cwd) == comparable_path(instance_home))
+        })
+        .unwrap_or(false)
+}
+
+fn gateway_process_port(process: &GatewayProcessSnapshot) -> Option<u16> {
+    [tura_path::TURA_GATEWAY_PORT_ENV, "PORT"]
+        .into_iter()
+        .find_map(|key| process_env_value(&process.environ, key).and_then(|value| parse_port(&value)))
+}
+
+fn process_env_value(environ: &[String], key: &str) -> Option<String> {
+    environ.iter().find_map(|entry| {
+        let (entry_key, value) = entry.split_once('=')?;
+        entry_key
+            .eq_ignore_ascii_case(key)
+            .then(|| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn path_is_gateway_binary(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(process_binary_name_matches)
+}
+
+fn process_binary_name_matches(name: &str) -> bool {
+    let name = name.trim().trim_end_matches(".exe");
+    name.eq_ignore_ascii_case("tura_gateway")
+}
+
+fn parse_port(value: &str) -> Option<u16> {
+    value.trim().parse::<u16>().ok()
 }
 
 fn gateway_endpoint_candidates(
