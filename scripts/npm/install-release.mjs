@@ -104,6 +104,11 @@ function verifyInstall() {
   if (missingPackage.length > 0) {
     fail(`package is missing required config/assets: ${missingPackage.join(", ")}`);
   }
+  const missingRelease = missingReleaseFiles(packageRoot);
+  if (missingRelease.length > 0) {
+    fail(`release archive did not install required files: ${missingRelease.map((file) => path.relative(packageRoot, file)).join(", ")}`);
+  }
+}
 
 function markReleaseExecutablesRunnable() {
   if (process.platform === "win32") {
@@ -114,11 +119,6 @@ function markReleaseExecutablesRunnable() {
     if (existsSync(file)) {
       chmodSync(file, 0o755);
     }
-  }
-}
-  const missingRelease = missingReleaseFiles(packageRoot);
-  if (missingRelease.length > 0) {
-    fail(`release archive did not install required files: ${missingRelease.map((file) => path.relative(packageRoot, file)).join(", ")}`);
   }
 }
 
