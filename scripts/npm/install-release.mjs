@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { get } from "node:https";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,6 +7,8 @@ import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  executableName,
+  executableNames,
   missingPackageFiles,
   missingReleaseFiles,
   platformPackageName,
@@ -102,6 +104,18 @@ function verifyInstall() {
   if (missingPackage.length > 0) {
     fail(`package is missing required config/assets: ${missingPackage.join(", ")}`);
   }
+
+function markReleaseExecutablesRunnable() {
+  if (process.platform === "win32") {
+    return;
+  }
+  for (const name of executableNames) {
+    const file = path.join(releaseDir, executableName(name));
+    if (existsSync(file)) {
+      chmodSync(file, 0o755);
+    }
+  }
+}
   const missingRelease = missingReleaseFiles(packageRoot);
   if (missingRelease.length > 0) {
     fail(`release archive did not install required files: ${missingRelease.map((file) => path.relative(packageRoot, file)).join(", ")}`);
@@ -133,6 +147,7 @@ function installFromPlatformPackage() {
   }
 
   cpSync(path.join(platformRoot, "target", "release"), releaseDir, { recursive: true });
+  markReleaseExecutablesRunnable();
   verifyInstall();
   log(`release binaries installed from ${platformPackageName()}`);
   return true;
@@ -165,6 +180,7 @@ if (installFromPlatformPackage()) {
 const localArchive = localArchivePath();
 if (localArchive) {
   extractArchive(localArchive);
+  markReleaseExecutablesRunnable();
   verifyInstall();
   log(`release binaries installed from ${path.relative(packageRoot, localArchive)}`);
   process.exit(0);
@@ -177,6 +193,7 @@ try {
   log(`downloading ${url}`);
   await download(url, archivePath);
   extractArchive(archivePath);
+  markReleaseExecutablesRunnable();
   verifyInstall();
   log("release binaries installed");
 } finally {
