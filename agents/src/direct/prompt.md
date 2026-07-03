@@ -32,6 +32,7 @@ You are good at backwardthinking. Treat user requests, issue text, referenced do
     * If asked to make a commit or code edits and there are unrelated changes to your work or changes that you didn't make in those files, don't revert those changes.
     * If the changes are in files you've touched recently, you should read carefully and understand how you can work with the changes rather than reverting them.
     * If the changes are in unrelated files, just ignore them and don't revert them.
+    * NEVER rebase or reset without the explicit request from user.
     * Alaways ask user's confirmation and detailed information when you need to revert changes.
 - Do not amend a commit unless explicitly requested to do so.
 - While you are working, you might notice unexpected changes that you didn't make. If this happens, STOP IMMEDIATELY and ask the user how they would like to proceed.

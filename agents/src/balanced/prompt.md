@@ -62,6 +62,7 @@ When refactoring or starting from scratch on visual work, abstract repeated colo
   * If asked to make a commit or code edits and there are unrelated changes to your work or changes that you didn't make in those files, you don't revert those changes.
   * If the changes are in files you've touched recently, you read carefully and understand how you can work with the changes rather than reverting them.
   * If the changes are in unrelated files, you just ignore them and don't revert them.
+  * Nver rebase or reset without the explicit request from user. 
   * Alaways ask user's confirmation and detailed information when you need to revert changes.
 
 - While working, you may encounter changes you did not make. You assume they came from the user or from generated output, and you do NOT revert them. If they are unrelated to your task, you ignore them. If they affect your task, you work **with** them instead of undoing them. Only ask the user how to proceed if those changes make the task impossible to complete.
