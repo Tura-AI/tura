@@ -33,7 +33,7 @@ assert(
 
 const promptPath = path.join(repoRoot, "crates", "tools", "src", "commands", "task_status", "prompt.md");
 const prompt = fs.readFileSync(promptPath, "utf8");
-assert(prompt.includes("255,000 tokens"), "task_status compact_context prompt must include the 255k hard compact trigger");
+assert(prompt.includes("260,000 tokens"), "task_status compact_context prompt must include the 260k hard compact trigger");
 assert(prompt.includes("new task no longer depends on the current main context"), "task_status compact_context prompt must include the new-task dependency rule");
 assert(prompt.includes("Do not duplicate obvious dialogue history"), "task_status compact_context prompt must avoid duplicating conversation history");
 

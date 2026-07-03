@@ -12,6 +12,8 @@ export function defaultGatewayUrl(): string {
 }
 
 export function defaultGatewayPort(): string {
+  const fromEnv = process.env.TURA_GATEWAY_PORT?.trim();
+  if (fromEnv && /^\d+$/u.test(fromEnv)) return fromEnv;
   return currentBuildMode() === "release" ? RELEASE_GATEWAY_PORT : DEV_GATEWAY_PORT;
 }
 

@@ -94,7 +94,7 @@ pub enum PlanStatus {
 
 pub type TaskStatus = PlanStatus;
 
-pub const DEFAULT_CONTEXT_TOKEN_LIMIT: u64 = 255_000;
+pub const DEFAULT_CONTEXT_TOKEN_LIMIT: u64 = 260_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SessionLogCompactionPoint {
