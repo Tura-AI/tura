@@ -415,6 +415,8 @@ async function runRustCliExec(args: string[]): Promise<void> {
 function resolveRustCliBinary(): string | undefined {
   const executable = process.platform === "win32" ? "tura_exec.exe" : "tura_exec";
   const candidates: string[] = [];
+  const releaseBinDir = process.env.TURA_RELEASE_BIN_DIR;
+  if (releaseBinDir) candidates.push(join(releaseBinDir, executable));
   const execDir = dirname(process.execPath);
   candidates.push(join(execDir, executable));
   const repo = findRepoRootForExec();

@@ -24,19 +24,19 @@ jobs:
           - runner: ubuntu-latest
             package: tura-linux-x64
             install: sh scripts/install.sh
-            build: sh scripts/build-release.sh
+            build: sh scripts/build-release.sh --skip-tauri
           - runner: macos-13
             package: tura-darwin-x64
             install: sh scripts/install.sh
-            build: sh scripts/build-release.sh
+            build: sh scripts/build-release.sh --skip-tauri
           - runner: macos-14
             package: tura-darwin-arm64
             install: sh scripts/install.sh
-            build: sh scripts/build-release.sh
+            build: sh scripts/build-release.sh --skip-tauri
           - runner: windows-2022
             package: tura-win32-x64
             install: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1
-            build: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1
+            build: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -SkipTauri
 
     steps:
       - uses: actions/checkout@v4
@@ -87,8 +87,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           node scripts/npm/prepack.mjs
-          node scripts/npm/package-platform.mjs --pack
-          node scripts/npm/package-release.mjs
+          node scripts/npm/package-platform.mjs --pack --no-desktop
+          node scripts/npm/package-release.mjs --no-desktop
 
       - name: Verify npm install uses local platform package
         shell: pwsh
@@ -100,16 +100,56 @@ jobs:
           if (-not $platformPackage) { throw "Platform package tarball was not produced." }
           $mainPackJson = npm pack --json --pack-destination release/npm-main | ConvertFrom-Json
           $mainPackage = Join-Path $root (Join-Path "release/npm-main" $mainPackJson[0].filename)
+          $platformInstallDir = Join-Path $env:RUNNER_TEMP "tura-platform-package-check"
           $installDir = Join-Path $env:RUNNER_TEMP "tura-npm-install-check"
+          if (Test-Path -LiteralPath $platformInstallDir) { Remove-Item -LiteralPath $platformInstallDir -Recurse -Force }
           if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $platformInstallDir | Out-Null
           New-Item -ItemType Directory -Path $installDir | Out-Null
+          Push-Location $platformInstallDir
+          try {
+            npm init -y --silent | Out-Null
+            npm install --omit=optional $platformPackage.FullName
+            $platformPackageDir = Get-ChildItem -LiteralPath (Join-Path $platformInstallDir "node_modules") -Directory -Filter "tura-*" | Select-Object -First 1
+            if (-not $platformPackageDir) { throw "Installed platform package directory was not found." }
+          } finally {
+            Pop-Location
+          }
           Push-Location $installDir
           try {
             npm init -y --silent | Out-Null
-            npm install --silent $platformPackage.FullName | Out-Null
-            npm install --silent --omit=optional $mainPackage | Out-Null
-            npx tura --help | Select-Object -First 8
+            $env:TURA_NPM_PLATFORM_PACKAGE_DIR = $platformPackageDir.FullName
+            npm install --foreground-scripts --omit=optional $mainPackage
+            $mainPackageDir = Join-Path $installDir "node_modules/tura"
+            $releaseDir = Join-Path $mainPackageDir "target/release"
+            $releaseBinary = Join-Path $releaseDir (if ($IsWindows) { "tura.exe" } else { "tura" })
+            $rustCliBinary = Join-Path $releaseDir (if ($IsWindows) { "tura_exec.exe" } else { "tura_exec" })
+            $providerConfig = Join-Path $releaseDir "config/provider_config.json"
+            $guiIndex = Join-Path $releaseDir "tura_gui/index.html"
+            foreach ($requiredPath in @($releaseBinary, $rustCliBinary, $providerConfig, $guiIndex)) {
+              if (-not (Test-Path -LiteralPath $requiredPath)) { throw "Installed package is missing $requiredPath" }
+            }
+            if (-not $IsWindows) {
+              $mode = (Get-Item -LiteralPath $releaseBinary).UnixFileMode
+              if (-not ($mode -band [System.IO.UnixFileMode]::UserExecute)) { throw "Installed tura binary is not executable: $releaseBinary" }
+            }
+            $binName = if ($IsWindows) { "tura.cmd" } else { "tura" }
+            $turaBin = Join-Path $installDir (Join-Path "node_modules/.bin" $binName)
+            if (-not (Test-Path -LiteralPath $turaBin)) { throw "Installed tura bin was not found: $turaBin" }
+            $PSNativeCommandUseErrorActionPreference = $false
+            $helpOutput = & $turaBin exec --help 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              $helpOutput | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
+              throw "$turaBin exec --help failed with exit $LASTEXITCODE"
+            }
+            $helpText = $helpOutput -join "`n"
+            if (-not $helpText.Contains("Tura Rust CLI")) {
+              $helpOutput | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
+              throw "$turaBin exec --help did not return the Rust CLI help text."
+            }
+            $helpOutput | Select-Object -First 8 | ForEach-Object { Write-Host $_ }
           } finally {
+            Remove-Item Env:\TURA_NPM_PLATFORM_PACKAGE_DIR -ErrorAction SilentlyContinue
             Pop-Location
           }
 
@@ -156,6 +196,12 @@ jobs:
           }
           $packageDir = Get-ChildItem -LiteralPath release/npm-platform -Directory | Select-Object -First 1
           if (-not $packageDir) { throw "Platform package directory was not produced." }
+          $packageJson = Get-Content -LiteralPath (Join-Path $packageDir.FullName "package.json") -Raw | ConvertFrom-Json
+          npm view "$($packageJson.name)@$($packageJson.version)" version *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "$($packageJson.name)@$($packageJson.version) already exists on npm; skipping publish."
+            exit 0
+          }
           npm publish $packageDir.FullName --access public --provenance
 
   publish-main:
@@ -179,4 +225,9 @@ jobs:
             exit 1
           fi
           node scripts/npm/prepack.mjs
+          version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
+          if npm view "tura@${version}" version >/dev/null 2>&1; then
+            echo "tura@${version} already exists on npm; skipping publish."
+            exit 0
+          fi
           npm publish --access public --provenance

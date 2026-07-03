@@ -25,6 +25,7 @@ const args = process.argv.slice(2);
 const outIndex = args.indexOf("--out-dir");
 const outDir = outIndex >= 0 ? path.resolve(args[outIndex + 1] ?? "") : releaseOutputRoot(repoRoot);
 const binaryOnly = args.includes("--binary");
+const includeDesktop = !args.includes("--no-desktop");
 const archiveName = releaseArchiveName(packageJson.version);
 const archivePath = path.join(outDir, archiveName);
 
@@ -94,15 +95,17 @@ try {
     cpSync(source, path.join(stageRelease, fileName));
   }
 
-  const desktopGuiName = executableName("tura_gui");
-  const desktopGui = path.join(sourceRelease, desktopGuiName);
-  if (!existsSync(desktopGui)) {
-    fail(`missing desktop GUI binary: ${path.relative(repoRoot, desktopGui)}`);
+  if (includeDesktop) {
+    const desktopGuiName = executableName("tura_gui");
+    const desktopGui = path.join(sourceRelease, desktopGuiName);
+    if (!existsSync(desktopGui)) {
+      fail(`missing desktop GUI binary: ${path.relative(repoRoot, desktopGui)}`);
+    }
+    cpSync(desktopGui, path.join(stageRelease, desktopGuiName));
+    copyDirectory(firstExistingPath(bundleCandidates(repoRoot)), path.join(stageRelease, "bundle"), "Tauri bundle");
   }
-  cpSync(desktopGui, path.join(stageRelease, desktopGuiName));
 
   copyDirectory(firstExistingPath(guiDistCandidates(repoRoot)), path.join(stageRelease, "tura_gui"), "GUI dist");
-  copyDirectory(firstExistingPath(bundleCandidates(repoRoot)), path.join(stageRelease, "bundle"), "Tauri bundle");
 
   for (const [sourceRelative, releaseRelative] of releaseConfigFiles) {
     const source = path.join(repoRoot, sourceRelative);

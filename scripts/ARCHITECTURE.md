@@ -51,7 +51,19 @@ Important scripts:
   `tura-win32-x64`, then a local archive from `release/`, and finally a GitHub
   Release archive. The installed runtime layout is `target/release` with
   `config/provider_config.json`, backend binaries, TUI, GUI dist, and Tauri
-  bundle artifacts.
+  bundle artifacts. The npm release workflow builds CLI/backend/TUI and web GUI
+  artifacts with Tauri packaging skipped, so desktop installer failures do not
+  block publishing the platform npm packages used by `npm install tura`. Its
+  local install verifier stages the freshly packed platform tarball outside the
+  main install tree and points `TURA_NPM_PLATFORM_PACKAGE_DIR` at it, avoiding
+  npm registry lookups for optional platform packages before those packages are
+  published. The verifier checks the installed release files and executable bits,
+  then runs `tura exec --help` through the installed npm wrapper to prove the TUI
+  entry can dispatch to the bundled Rust CLI without starting an interactive
+  session. The wrapper passes `TURA_RELEASE_BIN_DIR` so the compiled TUI resolves
+  sibling Rust release binaries from the npm installation layout. Postinstall
+  also restores executable bits on copied release binaries because npm package
+  tarballs do not preserve native executable modes for ordinary package files.
 - `scripts/npm/package-platform.mjs`: stages the current OS release into a
   platform npm package: `tura-linux-x64`, `tura-darwin-x64`,
   `tura-darwin-arm64`, or `tura-win32-x64`.

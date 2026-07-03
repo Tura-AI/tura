@@ -1,5 +1,14 @@
 #!/usr/bin/env node
-import { cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { get } from "node:https";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,15 +16,21 @@ import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  executableName,
+  executableNames,
   missingPackageFiles,
   missingReleaseFiles,
   platformPackageName,
   releaseArchiveName,
   releaseOutputRoot,
-  releaseTag
+  releaseTag,
 } from "./release-artifacts.mjs";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const packageRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
 const packageJsonPath = path.join(packageRoot, "package.json");
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const releaseDir = path.join(packageRoot, "target", "release");
@@ -31,7 +46,11 @@ function fail(message) {
 }
 
 function run(command, args, cwd = packageRoot) {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit", windowsHide: false });
+  const result = spawnSync(command, args, {
+    cwd,
+    stdio: "inherit",
+    windowsHide: false,
+  });
   if (result.error) {
     fail(result.error.message);
   }
@@ -44,7 +63,10 @@ function releaseUrl() {
   if (process.env.TURA_NPM_RELEASE_URL) {
     return process.env.TURA_NPM_RELEASE_URL;
   }
-  const baseUrl = (process.env.TURA_NPM_RELEASE_BASE_URL || "https://github.com/Tura-AI/tura/releases/download").replace(/\/$/, "");
+  const baseUrl = (
+    process.env.TURA_NPM_RELEASE_BASE_URL ||
+    "https://github.com/Tura-AI/tura/releases/download"
+  ).replace(/\/$/, "");
   const tag = releaseTag(packageJson.version);
   return `${baseUrl}/${tag}/${releaseArchiveName(packageJson.version)}`;
 }
@@ -58,12 +80,18 @@ function download(url, destination, redirects = 0) {
           reject(new Error(`download redirect failed for ${url}`));
           return;
         }
-        download(new URL(response.headers.location, url).toString(), destination, redirects + 1).then(resolve, reject);
+        download(
+          new URL(response.headers.location, url).toString(),
+          destination,
+          redirects + 1,
+        ).then(resolve, reject);
         return;
       }
       if (response.statusCode !== 200) {
         response.resume();
-        reject(new Error(`download failed with HTTP ${response.statusCode}: ${url}`));
+        reject(
+          new Error(`download failed with HTTP ${response.statusCode}: ${url}`),
+        );
         return;
       }
       const file = createWriteStream(destination);
@@ -83,7 +111,7 @@ function extractArchive(archivePath) {
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        `Expand-Archive -LiteralPath '${archivePath.replaceAll("'", "''")}' -DestinationPath '${packageRoot.replaceAll("'", "''")}' -Force`
+        `Expand-Archive -LiteralPath '${archivePath.replaceAll("'", "''")}' -DestinationPath '${packageRoot.replaceAll("'", "''")}' -Force`,
       ]);
       return;
     }
@@ -100,11 +128,27 @@ function extractArchive(archivePath) {
 function verifyInstall() {
   const missingPackage = missingPackageFiles(packageRoot);
   if (missingPackage.length > 0) {
-    fail(`package is missing required config/assets: ${missingPackage.join(", ")}`);
+    fail(
+      `package is missing required config/assets: ${missingPackage.join(", ")}`,
+    );
   }
   const missingRelease = missingReleaseFiles(packageRoot);
   if (missingRelease.length > 0) {
-    fail(`release archive did not install required files: ${missingRelease.map((file) => path.relative(packageRoot, file)).join(", ")}`);
+    fail(
+      `release archive did not install required files: ${missingRelease.map((file) => path.relative(packageRoot, file)).join(", ")}`,
+    );
+  }
+}
+
+function markReleaseExecutablesRunnable() {
+  if (process.platform === "win32") {
+    return;
+  }
+  for (const name of executableNames) {
+    const file = path.join(releaseDir, executableName(name));
+    if (existsSync(file)) {
+      chmodSync(file, 0o755);
+    }
   }
 }
 
@@ -115,7 +159,9 @@ function resolvePlatformPackageRoot() {
 
   const packageName = platformPackageName();
   try {
-    return path.dirname(require.resolve(`${packageName}/package.json`, { paths: [packageRoot] }));
+    return path.dirname(
+      require.resolve(`${packageName}/package.json`, { paths: [packageRoot] }),
+    );
   } catch {
     return null;
   }
@@ -129,10 +175,16 @@ function installFromPlatformPackage() {
 
   const missingPlatform = missingReleaseFiles(platformRoot);
   if (missingPlatform.length > 0) {
-    fail(`platform package ${platformPackageName()} is incomplete: ${missingPlatform.map((file) => path.relative(platformRoot, file)).join(", ")}`);
+    fail(
+      `platform package ${platformPackageName()} is incomplete: ${missingPlatform.map((file) => path.relative(platformRoot, file)).join(", ")}`,
+    );
   }
 
-  cpSync(path.join(platformRoot, "target", "release"), releaseDir, { recursive: true });
+  mkdirSync(path.dirname(releaseDir), { recursive: true });
+  cpSync(path.join(platformRoot, "target", "release"), releaseDir, {
+    recursive: true,
+  });
+  markReleaseExecutablesRunnable();
   verifyInstall();
   log(`release binaries installed from ${platformPackageName()}`);
   return true;
@@ -142,11 +194,17 @@ function localArchivePath() {
   if (process.env.TURA_NPM_RELEASE_ARCHIVE) {
     return path.resolve(process.env.TURA_NPM_RELEASE_ARCHIVE);
   }
-  const candidate = path.join(releaseOutputRoot(packageRoot), releaseArchiveName(packageJson.version));
+  const candidate = path.join(
+    releaseOutputRoot(packageRoot),
+    releaseArchiveName(packageJson.version),
+  );
   return existsSync(candidate) ? candidate : null;
 }
 
-if (process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "1" || process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "true") {
+if (
+  process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "1" ||
+  process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "true"
+) {
   log("release download skipped by TURA_NPM_SKIP_RELEASE_DOWNLOAD");
   process.exit(0);
 }
@@ -165,18 +223,25 @@ if (installFromPlatformPackage()) {
 const localArchive = localArchivePath();
 if (localArchive) {
   extractArchive(localArchive);
+  markReleaseExecutablesRunnable();
   verifyInstall();
-  log(`release binaries installed from ${path.relative(packageRoot, localArchive)}`);
+  log(
+    `release binaries installed from ${path.relative(packageRoot, localArchive)}`,
+  );
   process.exit(0);
 }
 
 const tempRoot = mkdtempSync(path.join(tmpdir(), "tura-npm-release-"));
 try {
-  const archivePath = path.join(tempRoot, releaseArchiveName(packageJson.version));
+  const archivePath = path.join(
+    tempRoot,
+    releaseArchiveName(packageJson.version),
+  );
   const url = releaseUrl();
   log(`downloading ${url}`);
   await download(url, archivePath);
   extractArchive(archivePath);
+  markReleaseExecutablesRunnable();
   verifyInstall();
   log("release binaries installed");
 } finally {
