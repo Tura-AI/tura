@@ -100,16 +100,29 @@ jobs:
           if (-not $platformPackage) { throw "Platform package tarball was not produced." }
           $mainPackJson = npm pack --json --pack-destination release/npm-main | ConvertFrom-Json
           $mainPackage = Join-Path $root (Join-Path "release/npm-main" $mainPackJson[0].filename)
+          $platformInstallDir = Join-Path $env:RUNNER_TEMP "tura-platform-package-check"
           $installDir = Join-Path $env:RUNNER_TEMP "tura-npm-install-check"
+          if (Test-Path -LiteralPath $platformInstallDir) { Remove-Item -LiteralPath $platformInstallDir -Recurse -Force }
           if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $platformInstallDir | Out-Null
           New-Item -ItemType Directory -Path $installDir | Out-Null
-          Push-Location $installDir
+          Push-Location $platformInstallDir
           try {
             npm init -y --silent | Out-Null
             npm install --silent $platformPackage.FullName | Out-Null
+            $platformPackageDir = Get-ChildItem -LiteralPath (Join-Path $platformInstallDir "node_modules") -Directory -Filter "tura-*" | Select-Object -First 1
+            if (-not $platformPackageDir) { throw "Installed platform package directory was not found." }
+          } finally {
+            Pop-Location
+          }
+          Push-Location $installDir
+          try {
+            npm init -y --silent | Out-Null
+            $env:TURA_NPM_PLATFORM_PACKAGE_DIR = $platformPackageDir.FullName
             npm install --silent --omit=optional $mainPackage | Out-Null
             npx tura --help | Select-Object -First 8
           } finally {
+            Remove-Item Env:\TURA_NPM_PLATFORM_PACKAGE_DIR -ErrorAction SilentlyContinue
             Pop-Location
           }
 
