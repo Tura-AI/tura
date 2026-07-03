@@ -24,19 +24,19 @@ jobs:
           - runner: ubuntu-latest
             package: tura-linux-x64
             install: sh scripts/install.sh
-            build: sh scripts/build-release.sh
+            build: sh scripts/build-release.sh --skip-tauri
           - runner: macos-13
             package: tura-darwin-x64
             install: sh scripts/install.sh
-            build: sh scripts/build-release.sh
+            build: sh scripts/build-release.sh --skip-tauri
           - runner: macos-14
             package: tura-darwin-arm64
             install: sh scripts/install.sh
-            build: sh scripts/build-release.sh
+            build: sh scripts/build-release.sh --skip-tauri
           - runner: windows-2022
             package: tura-win32-x64
             install: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1
-            build: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1
+            build: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -SkipTauri
 
     steps:
       - uses: actions/checkout@v4
@@ -87,8 +87,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           node scripts/npm/prepack.mjs
-          node scripts/npm/package-platform.mjs --pack
-          node scripts/npm/package-release.mjs
+          node scripts/npm/package-platform.mjs --pack --no-desktop
+          node scripts/npm/package-release.mjs --no-desktop
 
       - name: Verify npm install uses local platform package
         shell: pwsh

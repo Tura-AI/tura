@@ -51,7 +51,9 @@ Important scripts:
   `tura-win32-x64`, then a local archive from `release/`, and finally a GitHub
   Release archive. The installed runtime layout is `target/release` with
   `config/provider_config.json`, backend binaries, TUI, GUI dist, and Tauri
-  bundle artifacts.
+  bundle artifacts. The npm release workflow builds CLI/backend/TUI and web GUI
+  artifacts with Tauri packaging skipped, so desktop installer failures do not
+  block publishing the platform npm packages used by `npm install tura`.
 - `scripts/npm/package-platform.mjs`: stages the current OS release into a
   platform npm package: `tura-linux-x64`, `tura-darwin-x64`,
   `tura-darwin-arm64`, or `tura-win32-x64`.

@@ -124,12 +124,18 @@ export function firstExistingPath(candidates) {
 export function requiredReleaseFiles(root, platform = process.platform) {
   const releaseDir = releaseRoot(root);
   const files = executableNames.map((name) => path.join(releaseDir, executableName(name, platform)));
-  files.push(path.join(releaseDir, executableName("tura_gui", platform)));
   files.push(path.join(releaseDir, "config", "provider_config.json"));
   const guiDist = firstExistingPath(guiDistCandidates(root));
   files.push(guiDist ? path.join(guiDist, "index.html") : path.join(releaseDir, "tura_gui", "index.html"));
-  files.push(firstExistingPath(bundleCandidates(root)) ?? path.join(releaseDir, "bundle"));
   return files;
+}
+
+export function requiredDesktopReleaseFiles(root, platform = process.platform) {
+  const releaseDir = releaseRoot(root);
+  return [
+    path.join(releaseDir, executableName("tura_gui", platform)),
+    firstExistingPath(bundleCandidates(root)) ?? path.join(releaseDir, "bundle")
+  ];
 }
 
 export function missingReleaseFiles(root, platform = process.platform) {
