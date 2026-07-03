@@ -1633,8 +1633,14 @@ pub(crate) fn session_db_pid_from_health(health: &serde_json::Value) -> Option<u
 
 pub(crate) fn session_db_lock_pid(home: &Path) -> Result<Option<u32>> {
     for lock in lock_files(home, "session-db")? {
-        let raw = std::fs::read_to_string(&lock)
-            .with_context(|| format!("read session_db lock {}", lock.display()))?;
+        let raw = match std::fs::read_to_string(&lock) {
+            Ok(raw) => raw,
+            Err(error) if is_transient_lock_read_error(&error) => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("read session_db lock {}", lock.display()));
+            }
+        };
         let mut pid = None;
         let mut kind = None;
         let mut build_kind = None;
@@ -1661,6 +1667,10 @@ pub(crate) fn session_db_lock_pid(home: &Path) -> Result<Option<u32>> {
         }
     }
     Ok(None)
+}
+
+fn is_transient_lock_read_error(error: &std::io::Error) -> bool {
+    cfg!(windows) && error.raw_os_error() == Some(33)
 }
 
 pub(crate) fn process_pids_by_name_and_cwd(binary: &str, cwd: &Path) -> Result<Vec<u32>> {

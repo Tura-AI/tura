@@ -586,15 +586,21 @@ try {
       & .\scripts\install.ps1
     }
   } else {
-    Write-Host "Install mode: check-only"
-    if ($SkipApps.IsPresent -and $Offline.IsPresent) {
-      & .\scripts\install.ps1 -CheckOnly -SkipApps -Offline
-    } elseif ($SkipApps.IsPresent) {
-      & .\scripts\install.ps1 -CheckOnly -SkipApps
-    } elseif ($Offline.IsPresent) {
-      & .\scripts\install.ps1 -CheckOnly -Offline
+    $needsCommandInstall = $SkipApps.IsPresent -and -not $Offline.IsPresent
+    if ($needsCommandInstall) {
+      Write-Host "Install mode: command dependency install"
+      & .\scripts\install.ps1 -SkipApps
     } else {
-      & .\scripts\install.ps1 -CheckOnly
+      Write-Host "Install mode: check-only"
+      if ($SkipApps.IsPresent -and $Offline.IsPresent) {
+        & .\scripts\install.ps1 -CheckOnly -SkipApps -Offline
+      } elseif ($SkipApps.IsPresent) {
+        & .\scripts\install.ps1 -CheckOnly -SkipApps
+      } elseif ($Offline.IsPresent) {
+        & .\scripts\install.ps1 -CheckOnly -Offline
+      } else {
+        & .\scripts\install.ps1 -CheckOnly
+      }
     }
   }
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
