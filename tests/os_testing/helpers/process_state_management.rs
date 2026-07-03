@@ -1638,7 +1638,7 @@ pub(crate) fn session_db_lock_pid(home: &Path) -> Result<Option<u32>> {
             Err(error) if is_transient_lock_read_error(&error) => continue,
             Err(error) => {
                 return Err(error)
-                    .with_context(|| format!("read session_db lock {}", lock.display()))
+                    .with_context(|| format!("read session_db lock {}", lock.display()));
             }
         };
         let mut pid = None;

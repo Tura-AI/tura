@@ -90,7 +90,8 @@ jobs:
 
             $target = $manualLabel
             if ($target -eq "" -or $target -eq "all") {
-              if ($selector.Contains("windows-2022")) { $target = "windows-2022" }
+              if ($runFull) { $target = "all" }
+              elseif ($selector.Contains("windows-2022")) { $target = "windows-2022" }
               elseif ($selector.Contains("windows-2025")) { $target = "windows-2025" }
               elseif ($selector.Contains("windows")) { $target = "windows" }
               elseif ($selector.Contains("ubuntu-latest") -or $selector.Contains("linux")) { $target = "ubuntu-latest" }
