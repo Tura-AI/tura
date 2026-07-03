@@ -282,6 +282,7 @@ export const en = {
   review: "Review",
   running: "Running",
   runtime: "Runtime",
+  runtimeStopped: "Runtime stopped.",
   rotate: "Rotate",
   runCommands: "Ran {count} commands",
   runningCommands: "Running {count} commands",

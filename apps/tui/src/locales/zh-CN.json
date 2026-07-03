@@ -177,6 +177,7 @@
   "router": "路由",
   "runRequiresPrompt": "run 需要提示文本",
   "runtime": "运行时",
+  "runtimeStopped": "Runtime 已停止。",
   "saved": "已保存",
   "selectModels": "上下选择  Enter 设置  /model provider/model 也可使用",
   "selectPersonas": "上下选择  Enter 应用  /persona <id> 也可使用",

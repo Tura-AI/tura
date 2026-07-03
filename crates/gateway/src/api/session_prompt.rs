@@ -580,6 +580,15 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         Ok(ForwardRunAgentResult::AppendedToActiveRuntime) => {
             session_store().update_session_status(&session_id, SessionStatusMano::Busy);
         }
+        Err(error) if is_runtime_stopped_error(&error) => {
+            session_store().update_session_status(&session_id, SessionStatusMano::Idle);
+            session_store().finish_todos(&session_id, false);
+            add_agent_fallback_message_with_metadata(
+                &session_id,
+                "Runtime stopped.".to_string(),
+                runtime_stopped_metadata(),
+            );
+        }
         Err(error) => {
             session_store().update_session_status(&session_id, SessionStatusMano::Error);
             session_store().finish_todos(&session_id, false);
@@ -640,6 +649,20 @@ fn forward_run_agent_to_router(
             "router rejected turn {turn_id} for session {session_id}: {error}"
         ))
     }
+}
+
+fn is_runtime_stopped_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("one-shot worker cancelled")
+        || lower.contains("runtime worker cancelled")
+        || lower.contains("runtime worker stopped")
+}
+
+fn runtime_stopped_metadata() -> Option<serde_json::Value> {
+    Some(serde_json::json!({
+        "kind": "runtime_status",
+        "code": "runtime_stopped",
+    }))
 }
 
 fn prompt_model_override(payload: &serde_json::Value) -> Option<String> {
@@ -1061,9 +1084,20 @@ fn json_looks_like_tool_payload(value: &serde_json::Value) -> bool {
 }
 
 fn add_agent_fallback_message(session_id: &str, content: String) {
-    if let Some(message) =
-        session_store().add_message(session_id, SessionMessageRole::Assistant, content)
-    {
+    add_agent_fallback_message_with_metadata(session_id, content, None);
+}
+
+fn add_agent_fallback_message_with_metadata(
+    session_id: &str,
+    content: String,
+    metadata: Option<serde_json::Value>,
+) {
+    if let Some(message) = session_store().add_message_with_metadata(
+        session_id,
+        SessionMessageRole::Assistant,
+        content,
+        metadata,
+    ) {
         session_store().push_event(GlobalEvent::MessageUpdated {
             properties: MessageUpdatedProperties {
                 session_id: session_id.to_string(),

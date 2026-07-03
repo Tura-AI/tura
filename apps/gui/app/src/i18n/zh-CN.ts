@@ -278,6 +278,7 @@ export const zhCN = {
   running: "运行中",
   rotate: "旋转",
   runtime: "运行时",
+  runtimeStopped: "Runtime 已停止。",
   runCommands: "已运行 {count} 条命令",
   runningCommands: "正在运行 {count} 条命令",
   search: "搜索",

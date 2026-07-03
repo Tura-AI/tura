@@ -34,8 +34,10 @@ test("TUI i18n dictionaries keep zh-CN and en keys in sync", () => {
 test("TUI language selection reads external locale files", () => {
   setLanguage("zh-CN");
   assert.equal(t("assistant"), "助手");
+  assert.equal(t("runtimeStopped"), "Runtime 已停止。");
   setLanguage("en");
   assert.equal(t("assistant"), "assistant");
+  assert.equal(t("runtimeStopped"), "Runtime stopped.");
   setLanguage(undefined);
 });
 
@@ -54,6 +56,38 @@ test("terminal width helpers count CJK and emoji as double-width", () => {
     "空闲".repeat(2),
   ]);
   assert.deepEqual(wrap("𠀀".repeat(12), 22), ["𠀀".repeat(10), "𠀀".repeat(2)]);
+});
+
+test("render localizes structured runtime stopped assistant messages", () => {
+  const session = { id: "sess-runtime-stopped", title: "Runtime", status: "idle" as const };
+  setLanguage("zh-CN");
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-runtime-stopped",
+        sessionID: "sess-runtime-stopped",
+        role: "assistant",
+        parts: [
+          {
+            id: "part-runtime-stopped",
+            type: "text",
+            text: "MANO failed while processing this prompt: router execution enqueue failed: runtime worker invocation failed: one-shot worker cancelled",
+            metadata: { kind: "runtime_status", code: "runtime_stopped" },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  const output = stripAnsi(withTerminalSize(72, 24, () => render(state, richCapabilities())));
+  assert.match(output, /Runtime 已停止。/);
+  assert.doesNotMatch(output, /MANO failed|one-shot worker cancelled/);
+  setLanguage(undefined);
 });
 
 test("terminal semantic text colors expose five intensity levels", () => {

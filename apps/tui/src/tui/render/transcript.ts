@@ -1,6 +1,6 @@
 import { displayMessages, type AppState } from "../reducer.js";
 import type { Message, MessagePart } from "../../types/session.js";
-import { messageText } from "../../types/session.js";
+import { messagePartText, messageText } from "../../types/session.js";
 import {
   activeCapabilities,
   richBlockBg,
@@ -381,7 +381,7 @@ function partDisplayRank(part: MessagePart): number {
 
 function partText(part: MessagePart): string {
   if (part.type !== "text" && part.type !== "message" && part.type) return "";
-  return part.text ?? part.content ?? "";
+  return messagePartText(part);
 }
 
 function richContentLine(content: string, cols: number, role = "assistant"): string {

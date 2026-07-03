@@ -177,6 +177,7 @@
   "router": "router",
   "runRequiresPrompt": "run requires a prompt",
   "runtime": "runtime",
+  "runtimeStopped": "Runtime stopped.",
   "saved": "saved",
   "selectModels": "Up/Down select  Enter set  /model provider/model also works.",
   "selectPersonas": "Up/Down select  Enter apply  /persona <id> also works.",

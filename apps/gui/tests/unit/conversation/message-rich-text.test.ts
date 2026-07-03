@@ -10,6 +10,8 @@ import {
   localPathQueryValue,
   mediaSource,
 } from "../../../app/src/conversation/message-rich-text-paths";
+import { setLanguage } from "../../../app/src/i18n";
+import { partText } from "../../../app/src/state/global-store";
 
 const richTextSource = readFileSync(
   resolve(import.meta.dir, "../../../app/src/conversation/message-rich-text.tsx"),
@@ -22,6 +24,26 @@ describe("message rich text media paths", () => {
     expect(mediaSource("shots/final image.png", "C:/repo with space")).toBe(
       "/file/media?path=shots%2Ffinal+image.png&directory=C%3A%2Frepo+with+space",
     );
+  });
+});
+
+describe("message text localization", () => {
+  test("localizes structured runtime stopped assistant parts", () => {
+    setLanguage("zh-CN");
+    expect(
+      partText({
+        text: "MANO failed while processing this prompt: one-shot worker cancelled",
+        metadata: { kind: "runtime_status", code: "runtime_stopped" },
+      }),
+    ).toBe("Runtime 已停止。");
+    setLanguage("en");
+    expect(
+      partText({
+        text: "MANO failed while processing this prompt: one-shot worker cancelled",
+        metadata: { kind: "runtime_status", code: "runtime_stopped" },
+      }),
+    ).toBe("Runtime stopped.");
+    setLanguage(undefined);
   });
 });
 

@@ -31,6 +31,7 @@ import type {
   VcsInfo,
   Workspace,
 } from "@tura/gateway-sdk";
+import { t } from "../i18n";
 import { draftStateDefaults } from "./drafts";
 
 export type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -233,8 +234,26 @@ export function messageCreatedAt(message: Message): number {
   return message.time?.created ?? message.created_at ?? 0;
 }
 
-export function partText(part: { text?: string | null; content?: string | null }): string {
+export function partText(part: {
+  text?: string | null;
+  content?: string | null;
+  metadata?: unknown;
+}): string {
+  if (isRuntimeStoppedPart(part)) {
+    return t("runtimeStopped");
+  }
   return part.text || part.content || "";
+}
+
+function isRuntimeStoppedPart(part: { metadata?: unknown }): boolean {
+  const metadata = recordValue(part.metadata);
+  return metadata.code === "runtime_stopped";
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 export function activeSession(state: AppState): Session | undefined {
