@@ -111,6 +111,9 @@ function Copy-ReleaseConfig {
   if (-not (Test-Path -LiteralPath $Source)) {
     throw "Provider config not found at $Source."
   }
+  New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+  Copy-Item -LiteralPath $Source -Destination (Join-Path $DestinationDir "provider_config.json") -Force
+}
 
 function Copy-ReleaseRuntimeFiles {
   $Specs = @(
@@ -146,9 +149,6 @@ function Copy-ReleaseRuntimeFiles {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     }
   }
-}
-  New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
-  Copy-Item -LiteralPath $Source -Destination (Join-Path $DestinationDir "provider_config.json") -Force
 }
 
 function Test-PathUnderRepo {
