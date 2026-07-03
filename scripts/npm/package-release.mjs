@@ -1,0 +1,108 @@
+#!/usr/bin/env node
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import {
+  bundleCandidates,
+  executableName,
+  executableNames,
+  firstExistingPath,
+  guiDistCandidates,
+  missingPackageFiles,
+  releaseArchiveName,
+  releaseConfigFiles,
+  releaseOutputRoot,
+  releaseRoot
+} from "./release-artifacts.mjs";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+const args = process.argv.slice(2);
+const outIndex = args.indexOf("--out-dir");
+const outDir = outIndex >= 0 ? path.resolve(args[outIndex + 1] ?? "") : releaseOutputRoot(repoRoot);
+const archiveName = releaseArchiveName(packageJson.version);
+const archivePath = path.join(outDir, archiveName);
+
+function fail(message) {
+  console.error(`[tura package-release] ${message}`);
+  process.exit(1);
+}
+
+function run(command, commandArgs, cwd = repoRoot) {
+  const result = spawnSync(command, commandArgs, { cwd, stdio: "inherit", windowsHide: false });
+  if (result.error) {
+    fail(result.error.message);
+  }
+  if ((result.status ?? 1) !== 0) {
+    fail(`${command} ${commandArgs.join(" ")} failed with exit ${result.status}`);
+  }
+}
+
+function copyDirectory(source, destination, label) {
+  if (!source || !existsSync(source)) {
+    fail(`missing release ${label}`);
+  }
+  rmSync(destination, { recursive: true, force: true });
+  cpSync(source, destination, { recursive: true });
+}
+
+const missingPackage = missingPackageFiles(repoRoot);
+if (missingPackage.length > 0) {
+  fail(`missing required package files: ${missingPackage.join(", ")}`);
+}
+
+const sourceRelease = releaseRoot(repoRoot);
+const stageRoot = mkdtempSync(path.join(tmpdir(), "tura-release-stage-"));
+try {
+  const stageRelease = path.join(stageRoot, "target", "release");
+  mkdirSync(stageRelease, { recursive: true });
+
+  for (const name of executableNames) {
+    const fileName = executableName(name);
+    const source = path.join(sourceRelease, fileName);
+    if (!existsSync(source)) {
+      fail(`missing release binary: ${path.relative(repoRoot, source)}`);
+    }
+    cpSync(source, path.join(stageRelease, fileName));
+  }
+
+  const desktopGuiName = executableName("tura_gui");
+  const desktopGui = path.join(sourceRelease, desktopGuiName);
+  if (!existsSync(desktopGui)) {
+    fail(`missing desktop GUI binary: ${path.relative(repoRoot, desktopGui)}`);
+  }
+  cpSync(desktopGui, path.join(stageRelease, desktopGuiName));
+
+  copyDirectory(firstExistingPath(guiDistCandidates(repoRoot)), path.join(stageRelease, "tura_gui"), "GUI dist");
+  copyDirectory(firstExistingPath(bundleCandidates(repoRoot)), path.join(stageRelease, "bundle"), "Tauri bundle");
+
+  for (const [sourceRelative, releaseRelative] of releaseConfigFiles) {
+    const source = path.join(repoRoot, sourceRelative);
+    const destination = path.join(stageRelease, releaseRelative);
+    if (!existsSync(source)) {
+      fail(`missing release config source: ${sourceRelative}`);
+    }
+    mkdirSync(path.dirname(destination), { recursive: true });
+    cpSync(source, destination);
+  }
+
+  mkdirSync(outDir, { recursive: true });
+  rmSync(archivePath, { force: true });
+  if (process.platform === "win32") {
+    run("powershell.exe", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      `Compress-Archive -Path '${path.join(stageRoot, "target").replaceAll("'", "''")}' -DestinationPath '${archivePath.replaceAll("'", "''")}' -Force`
+    ]);
+  } else {
+    run("tar", ["-czf", archivePath, "target"], stageRoot);
+  }
+
+  console.log(archivePath);
+} finally {
+  rmSync(stageRoot, { recursive: true, force: true });
+}
