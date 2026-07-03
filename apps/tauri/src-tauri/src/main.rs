@@ -696,7 +696,9 @@ fn process_matches_instance_home(process: &GatewayProcessSnapshot, instance_home
 fn gateway_process_port(process: &GatewayProcessSnapshot) -> Option<u16> {
     [tura_path::TURA_GATEWAY_PORT_ENV, "PORT"]
         .into_iter()
-        .find_map(|key| process_env_value(&process.environ, key).and_then(|value| parse_port(&value)))
+        .find_map(|key| {
+            process_env_value(&process.environ, key).and_then(|value| parse_port(&value))
+        })
 }
 
 fn process_env_value(environ: &[String], key: &str) -> Option<String> {
@@ -716,7 +718,11 @@ fn path_is_gateway_binary(path: &Path) -> bool {
 }
 
 fn process_binary_name_matches(name: &str) -> bool {
-    let name = name.trim().trim_end_matches(".exe");
+    let name = name.trim();
+    let name = name
+        .strip_suffix(".exe")
+        .or_else(|| name.strip_suffix(".EXE"))
+        .unwrap_or(name);
     name.eq_ignore_ascii_case("tura_gateway")
 }
 
@@ -1331,6 +1337,90 @@ mod tests {
     }
 
     #[test]
+    fn same_home_gateway_process_snapshot_provides_port_endpoint() {
+        let home = test_temp_dir("same-home-process-port");
+        let snapshot = gateway_process_snapshot(
+            "tura_gateway.exe",
+            Some(home.join("bin").join("tura_gateway.exe")),
+            vec![home
+                .join("bin")
+                .join("tura_gateway.exe")
+                .display()
+                .to_string()],
+            vec![
+                format!("TURA_HOME={}", home.display()),
+                "TURA_GATEWAY_PORT=4789".to_string(),
+            ],
+            Some(home.clone()),
+        );
+
+        let endpoint = gateway_process_endpoint_from_snapshot(&snapshot, &home)
+            .expect("same home gateway endpoint");
+
+        assert_eq!(endpoint.url(), "http://127.0.0.1:4789");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn same_home_gateway_process_snapshot_falls_back_to_gateway_url() {
+        let home = test_temp_dir("same-home-process-url");
+        let snapshot = gateway_process_snapshot(
+            "tura_gateway",
+            None,
+            vec!["tura_gateway".to_string()],
+            vec![
+                format!("TURA_HOME={}", home.display()),
+                "TURA_GATEWAY_URL=http://127.0.0.1:4790".to_string(),
+            ],
+            None,
+        );
+
+        let endpoint = gateway_process_endpoint_from_snapshot(&snapshot, &home)
+            .expect("same home gateway endpoint");
+
+        assert_eq!(endpoint.url(), "http://127.0.0.1:4790");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn same_home_gateway_process_snapshot_rejects_foreign_home() {
+        let home = test_temp_dir("same-home-process-local");
+        let foreign_home = test_temp_dir("same-home-process-foreign");
+        let snapshot = gateway_process_snapshot(
+            "tura_gateway",
+            None,
+            vec!["tura_gateway".to_string()],
+            vec![
+                format!("TURA_HOME={}", foreign_home.display()),
+                "TURA_GATEWAY_PORT=4791".to_string(),
+            ],
+            Some(foreign_home.clone()),
+        );
+
+        assert!(gateway_process_endpoint_from_snapshot(&snapshot, &home).is_none());
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(foreign_home);
+    }
+
+    #[test]
+    fn same_home_gateway_process_snapshot_rejects_non_gateway_binary() {
+        let home = test_temp_dir("same-home-process-other");
+        let snapshot = gateway_process_snapshot(
+            "not_gateway",
+            Some(home.join("not_gateway.exe")),
+            vec![home.join("not_gateway.exe").display().to_string()],
+            vec![
+                format!("TURA_HOME={}", home.display()),
+                "TURA_GATEWAY_PORT=4792".to_string(),
+            ],
+            Some(home.clone()),
+        );
+
+        assert!(gateway_process_endpoint_from_snapshot(&snapshot, &home).is_none());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn start_gateway_returns_connected_when_endpoint_is_reachable() {
         let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
         let home = test_temp_dir("start-gateway-connected-home");
@@ -1471,6 +1561,22 @@ mod tests {
                     std::env::remove_var(key);
                 }
             }
+        }
+    }
+
+    fn gateway_process_snapshot(
+        name: &str,
+        exe: Option<PathBuf>,
+        cmd: Vec<String>,
+        environ: Vec<String>,
+        cwd: Option<PathBuf>,
+    ) -> GatewayProcessSnapshot {
+        GatewayProcessSnapshot {
+            name: name.to_string(),
+            exe,
+            cmd,
+            environ,
+            cwd,
         }
     }
 
