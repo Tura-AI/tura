@@ -305,6 +305,35 @@ class SettingsGatewayHandler(BaseHTTPRequestHandler):
             self.server.auth[provider_id] = auth_status(provider_id, True, "oauth")
             self.server.records.append({"type": "oauth.callback", "provider_id": provider_id, "payload": payload})
             return self.send_json(True)
+        if path.endswith("/auth/validate"):
+            provider_id = path.split("/")[2]
+            self.server.records.append(
+                {
+                    "type": "auth.validate",
+                    "provider_id": provider_id,
+                    "payload": redact(payload),
+                    "token_env": payload.get("token_env"),
+                    "has_key": bool((payload.get("key") or "").strip()),
+                }
+            )
+            return self.send_json(
+                {
+                    "ok": True,
+                    "provider_id": provider_id,
+                    "code": "provider.validation.valid",
+                    "message": "credential validation passed",
+                    "level": "valid",
+                    "details": [
+                        {"code": "provider.validation.passed", "message": "credential validation passed"},
+                        {
+                            "code": "provider.remote.accepted",
+                            "message": "remote validation accepted credentials: mock",
+                            "value": "mock",
+                        },
+                    ],
+                    "status": self.server.auth.get(provider_id, auth_status(provider_id)),
+                }
+            )
         if path.endswith("/auth/logout"):
             provider_id = path.split("/")[2]
             self.server.auth[provider_id] = auth_status(provider_id)
@@ -664,9 +693,14 @@ async def run_flow():
         check(checks, "login-methods-visible", login_initial["loginMethodCount"] >= 1, login_initial)
 
         await page.get_by_placeholder("OPENAI_API_KEY").fill("sk-settings-full-e2e-token")
+        await page.locator(".provider-auth-state-row .provider-auth-validate").click()
+        await page.wait_for_function("() => document.body.innerText.includes('Validated')", timeout=10_000)
+        token_validated = await screenshot(page, "15-token-validated-before-save", results)
+        check(checks, "token-validated-before-save", "Validated" in token_validated["body"], token_validated)
+
         await page.locator(".login-method").filter(has_text="OpenAI API Key").get_by_role("button", name="Save").click()
         await page.wait_for_function("() => document.body.innerText.includes('Connected')", timeout=10_000)
-        token_saved = await screenshot(page, "15-token-saved", results)
+        token_saved = await screenshot(page, "16-token-saved", results)
         check(checks, "token-connected", "Connected" in token_saved["body"], token_saved)
 
         oauth_method = page.locator(".login-method").filter(has_text="OpenAI OAuth")
@@ -675,22 +709,22 @@ async def run_flow():
                 await oauth_method.locator("button").first.click()
             popup = await popup_info.value
             await popup.wait_for_load_state("domcontentloaded")
-            await popup.screenshot(path=str(OUT / "16-oauth-popup.png"), full_page=True)
+            await popup.screenshot(path=str(OUT / "17-oauth-popup.png"), full_page=True)
             await popup.close()
             await page.wait_for_function("() => document.body.innerText.includes('finish authorization')", timeout=10_000)
-            await screenshot(page, "17-oauth-authorize-started", results)
+            await screenshot(page, "18-oauth-authorize-started", results)
 
             await page.get_by_placeholder("Code / token").fill("oauth-code-settings-full-e2e")
             await oauth_method.locator("button").first.click()
             await page.wait_for_function("() => document.body.innerText.includes('Connected')", timeout=10_000)
-            oauth_done = await screenshot(page, "18-oauth-complete", results)
+            oauth_done = await screenshot(page, "19-oauth-complete", results)
             check(checks, "oauth-connected", "Connected" in oauth_done["body"], oauth_done)
 
         logout = page.locator(".provider-auth-logout").first
         if await logout.count() > 0 and await logout.is_enabled():
             await logout.click()
             await page.wait_for_function("() => document.body.innerText.includes('Logged out')", timeout=10_000)
-            logged_out = await screenshot(page, "19-logout", results)
+            logged_out = await screenshot(page, "20-logout", results)
             check(checks, "logout-notice", "Logged out" in logged_out["notice"], logged_out)
 
         provider_dialog = page.locator(".provider-auth-dialog")
@@ -738,6 +772,14 @@ async def run_flow():
     check(checks, "backend-config-save-called", "config.patch" in record_types, records["records"])
     if "auth.token" in record_types:
         check(checks, "backend-token-auth-called", True, records["records"])
+    validate_records = [item for item in records["records"] if item.get("type") == "auth.validate"]
+    check(checks, "backend-auth-validate-called", bool(validate_records), records["records"])
+    check(
+        checks,
+        "backend-auth-validate-used-draft-key",
+        any(item.get("provider_id") == "openai" and item.get("token_env") == "OPENAI_API_KEY" and item.get("has_key") for item in validate_records),
+        validate_records,
+    )
     if "oauth.authorize" in record_types or "oauth.callback" in record_types:
         check(checks, "backend-oauth-authorize-called", "oauth.authorize" in record_types, records["records"])
         check(checks, "backend-oauth-callback-called", "oauth.callback" in record_types, records["records"])

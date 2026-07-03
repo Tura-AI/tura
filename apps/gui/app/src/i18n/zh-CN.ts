@@ -1,6 +1,7 @@
 export const zhCN = {
   active: "当前",
   acceleration: "加速",
+  accelerationHint: "*1.5 to *2 speed, *2 to *3 cost",
   added: "新增",
   agent: "智能体",
   agentDescriptionBalanced: "平衡自我反思和直觉响应，进行验证和自我反思。",

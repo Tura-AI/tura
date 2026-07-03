@@ -109,7 +109,10 @@ function Harness() {
       </section>
       <section data-menu-case="start-condition" style={rowStyle}>
         <span>Start condition</span>
-        <PlanComposerControls startCondition={startCondition()} onStartCondition={setStartCondition} />
+        <PlanComposerControls
+          startCondition={startCondition()}
+          onStartCondition={setStartCondition}
+        />
       </section>
       <section data-menu-case="agent-menu" style={rowStyle}>
         <span>Agent model</span>

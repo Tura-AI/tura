@@ -62,4 +62,3 @@ export type PluginInfo = {
   enabled: boolean;
   skills: Skill[];
 };
-

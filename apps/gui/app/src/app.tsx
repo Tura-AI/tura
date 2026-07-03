@@ -343,7 +343,9 @@ export function App() {
       return next;
     });
     setState((previous) => {
-      const projects = previous.projects.filter((item) => !samePath(item.worktree, project.worktree));
+      const projects = previous.projects.filter(
+        (item) => !samePath(item.worktree, project.worktree),
+      );
       const sessions = previous.sessions.filter(
         (session) => !samePath(sessionDirectory(session), project.worktree),
       );

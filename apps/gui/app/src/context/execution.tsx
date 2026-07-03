@@ -11,10 +11,7 @@ export type ExecutionContextValue = {
 
 const ExecutionContext = createContext<ExecutionContextValue>();
 
-export function ExecutionProvider(props: {
-  state: Accessor<AppState>;
-  children: JSX.Element;
-}) {
+export function ExecutionProvider(props: { state: Accessor<AppState>; children: JSX.Element }) {
   const directory = createMemo(() => props.state().directory);
   const client = createMemo(
     () =>

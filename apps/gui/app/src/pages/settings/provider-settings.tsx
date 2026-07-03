@@ -15,7 +15,9 @@ import { openExternalUrl } from "../../utils/external-url";
 
 import {
   copyText,
+  providerAuthDraftKey,
   providerAuthDisplayState,
+  providerAuthMethodForValidation,
   type ProviderAuthDisplayState,
 } from "../../utils/settings";
 import { ReadonlyRow } from "./readonly-row";
@@ -192,7 +194,16 @@ export function ProviderAuthDialog(props: {
                 display={displayState()}
                 receipt={validationReceipt()}
                 saving={props.state.settingsSaving}
-                onValidate={() => props.onValidate(props.panel.providerId)}
+                onValidate={() =>
+                  props.onValidate(
+                    props.panel.providerId,
+                    providerAuthMethodForValidation(
+                      props.panel.providerId,
+                      methods(),
+                      props.state.authDrafts,
+                    ),
+                  )
+                }
               />
               <ReadonlyRow label={t("env")} value={item().env.join(", ") || "--"} />
               <ReadonlyRow label={t("capabilities")} value={providerCapabilityText(item())} />
@@ -262,7 +273,7 @@ function ProviderAuthMethods(props: {
                       class="secondary"
                       disabled={
                         props.state.settingsSaving ||
-                        !props.state.authDrafts[authDraftKey(provider().id, method)]?.trim()
+                        !props.state.authDrafts[providerAuthDraftKey(provider().id, method)]?.trim()
                       }
                       onClick={() => props.onSaveKey(provider().id, method)}
                     >
@@ -382,7 +393,10 @@ function ProtectedTokenInput(props: {
         placeholder={props.method.token_env ?? t("apiKey")}
         onFocus={(event) => event.currentTarget.select()}
         onInput={(event) =>
-          props.onAuthDraft(authDraftKey(props.providerId, props.method), event.currentTarget.value)
+          props.onAuthDraft(
+            providerAuthDraftKey(props.providerId, props.method),
+            event.currentTarget.value,
+          )
         }
       />
       <button
@@ -403,7 +417,7 @@ function tokenInputValue(
   status: AppState["providerAuthStatus"][string] | undefined,
   state: AppState,
 ): string {
-  const draft = state.authDrafts[authDraftKey(providerId, method)];
+  const draft = state.authDrafts[providerAuthDraftKey(providerId, method)];
   if (draft !== undefined) {
     return draft;
   }
@@ -421,10 +435,6 @@ function tokenInputValue(
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
-}
-
-function authDraftKey(providerId: string, method: ProviderAuthMethod): string {
-  return [providerId, method.token_env || method.login_env || method.kind].join("::");
 }
 
 const CAPABILITY_LABELS: Record<string, TextKey> = {

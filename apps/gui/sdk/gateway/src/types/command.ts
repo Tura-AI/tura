@@ -8,4 +8,3 @@ export type Command = {
   subtask: boolean;
   hints: string[];
 };
-

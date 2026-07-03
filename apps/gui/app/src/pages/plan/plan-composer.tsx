@@ -230,11 +230,13 @@ export function PlanComposerControls(props: {
   }
   let root: HTMLElement | undefined;
   const [open, setOpen] = createSignal(false);
-  const startConditions = createMemo<Array<{
-    id: StartCondition;
-    label: string;
-    icon: (props: { size?: number; strokeWidth?: number }) => JSX.Element;
-  }>>(() => [{ id: "user_action", label: t("runNow"), icon: Play }]);
+  const startConditions = createMemo<
+    Array<{
+      id: StartCondition;
+      label: string;
+      icon: (props: { size?: number; strokeWidth?: number }) => JSX.Element;
+    }>
+  >(() => [{ id: "user_action", label: t("runNow"), icon: Play }]);
   const selectedCondition = createMemo(
     () =>
       startConditions().find((condition) => condition.id === props.startCondition) ??

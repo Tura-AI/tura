@@ -36,4 +36,3 @@ export type TuraConfigUpdate = {
   provider: string;
   model: string;
 };
-

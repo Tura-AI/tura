@@ -83,7 +83,8 @@ async function tryConnectGatewayFromTauri(
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const payload = (await invoke("start_gateway", { gatewayUrl: baseUrl, gatewayUrlExplicit })) as
-      { status?: string; gatewayUrl?: string; gateway_url?: string } | undefined;
+      | { status?: string; gatewayUrl?: string; gateway_url?: string }
+      | undefined;
     const nextGatewayUrl = payload?.gatewayUrl ?? payload?.gateway_url;
     const notice = payload?.status === "connected" ? t("gatewayWaiting") : t("gatewayWaiting");
     setState((previous) => ({

@@ -43,4 +43,3 @@ export type FileOpenResponse = {
   path: string;
   opened: boolean;
 };
-

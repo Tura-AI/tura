@@ -91,7 +91,11 @@ export async function ensureGatewayAvailable(
       projectRoot,
       dev: Boolean(dev),
     });
-    const identity = await waitForSameRootGateway(startedUrl, projectRoot, GATEWAY_START_TIMEOUT_MS);
+    const identity = await waitForSameRootGateway(
+      startedUrl,
+      projectRoot,
+      GATEWAY_START_TIMEOUT_MS,
+    );
     if (identity) {
       writeActiveGatewayUrl(startedUrl, instanceHome);
       return startedUrl;

@@ -417,12 +417,7 @@ export function AgentAvatarCanvas(props: {
         (data[index] ?? 0) * 0.299 +
         (data[index + 1] ?? 0) * 0.587 +
         (data[index + 2] ?? 0) * 0.114;
-      const pixel = avatarPixelAfterThreshold(
-        gray,
-        originalAlpha,
-        settings().threshold,
-        darkTheme,
-      );
+      const pixel = avatarPixelAfterThreshold(gray, originalAlpha, settings().threshold, darkTheme);
       data[index] = pixel.value;
       data[index + 1] = pixel.value;
       data[index + 2] = pixel.value;

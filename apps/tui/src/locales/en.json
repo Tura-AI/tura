@@ -211,7 +211,7 @@
   "settingPersona": "Persona",
   "settingPersonaHint": "Up/Down select, Enter apply; Esc returns to settings top. This saves the workspace persona for new sessions.",
   "settingPriority": "Acceleration mode",
-  "settingPriorityHint": "Up/Down select, Enter apply; Esc returns to settings top. Depending on provider, accelerated routing may improve speed by *1.5 or *2 and may also raise cost by *1.5 or *2. See the provider page for exact terms.",
+  "settingPriorityHint": "*1.5 to *2 speed, *2 to *3 cost",
   "settingProvider": "Provider",
   "settingProviderAuthHint": "Up/Down select an auth action, Enter runs it; Esc returns to providers.",
   "settingProviderHint": "Up/Down select a provider, Enter opens OAuth or API key settings; Esc returns to settings top.",

@@ -134,7 +134,9 @@ export function shouldFetchSessionMessages(
 export function blankSessionState(state: AppState, workspace?: Project): AppState {
   const projects = workspace
     ? state.projects.some((project) => samePath(project.worktree, workspace.worktree))
-      ? state.projects.map((project) => (samePath(project.worktree, workspace.worktree) ? workspace : project))
+      ? state.projects.map((project) =>
+          samePath(project.worktree, workspace.worktree) ? workspace : project,
+        )
       : [workspace, ...state.projects]
     : state.projects;
   return {
@@ -178,9 +180,7 @@ export function normalizeThemeMode(value: string | null | undefined): ThemeMode 
 }
 
 export function normalizeCornerRadiusMode(value: string | null | undefined): CornerRadiusMode {
-  return value === "0px" || value === "2px" || value === "8px" || value === "9.6px"
-    ? value
-    : "8px";
+  return value === "0px" || value === "2px" || value === "8px" || value === "9.6px" ? value : "8px";
 }
 
 export function cornerRadiusScale(value: CornerRadiusMode): number {

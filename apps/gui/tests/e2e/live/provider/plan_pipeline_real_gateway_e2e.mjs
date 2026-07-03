@@ -352,9 +352,13 @@ async function main() {
     const boardText = await page.locator(".plan-board").innerText();
     const boardScreenshotPath = path.join(runRoot, "plan-board.png");
     await page.screenshot({ path: boardScreenshotPath, fullPage: true });
-    record("todo-board-shows-real-gateway-session", boardText.includes(`Charlie queued task ${runId}`), {
-      screenshotPath: boardScreenshotPath,
-    });
+    record(
+      "todo-board-shows-real-gateway-session",
+      boardText.includes(`Charlie queued task ${runId}`),
+      {
+        screenshotPath: boardScreenshotPath,
+      },
+    );
 
     await page.locator('[data-plan-mode="split"]').click();
     await page.waitForSelector(".plan-conversation-panel", { timeout: 10_000 });

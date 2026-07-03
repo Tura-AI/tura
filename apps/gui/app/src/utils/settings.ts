@@ -1,4 +1,4 @@
-import { GatewayError } from "@tura/gateway-sdk";
+import { GatewayError, type ProviderAuthMethod } from "@tura/gateway-sdk";
 import { t } from "../i18n";
 import { type AppState, type CornerRadiusMode, type ThemeMode } from "../state/global-store";
 export { copyText } from "./app-format";
@@ -204,6 +204,18 @@ export function providerAuthDisplayState(
 
 export function providerConfigured(state: AppState, providerId: string): boolean {
   return providerAuthDisplayState(state, providerId).configured;
+}
+
+export function providerAuthDraftKey(providerId: string, method: ProviderAuthMethod): string {
+  return [providerId, method.token_env || method.login_env || method.kind].join("::");
+}
+
+export function providerAuthMethodForValidation(
+  providerId: string,
+  methods: ProviderAuthMethod[],
+  authDrafts: Record<string, string>,
+): ProviderAuthMethod | undefined {
+  return methods.find((method) => authDrafts[providerAuthDraftKey(providerId, method)]?.trim());
 }
 
 export function providerIdFromAuthError(error: unknown, state: AppState): string | undefined {

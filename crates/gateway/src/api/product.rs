@@ -291,9 +291,7 @@ pub async fn patch_issue(
 
 pub fn patch_issue_value(issue_id: String, input: IssueInput) -> Option<Issue> {
     let mut issues = PRODUCT_STORE.issues.write();
-    let Some(issue) = issues.get_mut(&issue_id) else {
-        return None;
-    };
+    let issue = issues.get_mut(&issue_id)?;
     if let Some(title) = input.title.filter(|value| !value.trim().is_empty()) {
         issue.title = title;
     }

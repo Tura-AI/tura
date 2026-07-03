@@ -4,4 +4,3 @@ export type HealthResponse = {
   root?: string;
   dev_log_path?: string;
 };
-

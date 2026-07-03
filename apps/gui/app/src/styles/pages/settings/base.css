@@ -315,6 +315,12 @@
   accent-color: var(--accent);
 }
 
+.settings-toggle-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
 .settings-fields {
   gap: var(--space-3);
   padding: var(--space-4);

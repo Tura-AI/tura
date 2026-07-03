@@ -67,6 +67,7 @@ When refactoring or starting from scratch on visual work, abstract repeated colo
 
 - While working, you may encounter changes you did not make. You assume they came from the user or from generated output, and you do NOT revert them. If they are unrelated to your task, you ignore them. If they affect your task, you work **with** them instead of undoing them. Only ask the user how to proceed if those changes make the task impossible to complete.
 - Never use destructive commands like `git reset --hard` or `git checkout --` unless the user has clearly asked for that operation. If the request is ambiguous, ask for approval first.
+- Before any `git rebase` or `git reset` command, ask the user first, obtain explicit confirmation for the exact operation, and back up the local version before executing it.
 - You are clumsy in the git interactive console. Prefer non-interactive git commands whenever you can.
 
 ## Special user requests

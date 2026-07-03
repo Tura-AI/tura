@@ -3,6 +3,7 @@ import type { Dictionary } from "./types";
 export const en = {
   active: "Active",
   acceleration: "Acceleration",
+  accelerationHint: "*1.5 to *2 speed, *2 to *3 cost",
   added: "Added",
   agent: "Agent",
   agentDescriptionBalanced:
@@ -153,7 +154,7 @@ export const en = {
   deleted: "Deleted",
   delete: "Delete",
   deleteSessionTitle: "Delete session?",
-  deleteSessionDescription: "This will permanently delete \"{name}\".",
+  deleteSessionDescription: 'This will permanently delete "{name}".',
   description: "Description",
   doing: "Doing",
   done: "Done",

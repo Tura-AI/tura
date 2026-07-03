@@ -40,4 +40,3 @@ export type MessageListInput = {
 export type SendMessageResponse = {
   message: Message;
 };
-

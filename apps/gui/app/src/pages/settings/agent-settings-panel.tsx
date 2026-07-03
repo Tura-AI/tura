@@ -245,14 +245,17 @@ export function AgentSettingsPanel(props: {
           </div>
           <div class="field-row agent-priority-row">
             <span>{t("modelPriority")}</span>
-            <label class="settings-toggle-row">
-              <input
-                type="checkbox"
-                checked={priorityEnabled()}
-                onChange={(event) => setPriorityEnabled(event.currentTarget.checked)}
-              />
-              <span>{t("acceleration")}</span>
-            </label>
+            <div class="settings-toggle-field">
+              <label class="settings-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={priorityEnabled()}
+                  onChange={(event) => setPriorityEnabled(event.currentTarget.checked)}
+                />
+                <span>{t("acceleration")}</span>
+              </label>
+              <small class="settings-note">{t("accelerationHint")}</small>
+            </div>
           </div>
           <div class="field-row agent-capabilities-row">
             <span>{t("capabilities")}</span>

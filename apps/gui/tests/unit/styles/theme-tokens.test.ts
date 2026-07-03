@@ -19,7 +19,10 @@ function tokenValue(block: string, token: string): string {
     .split(/\r?\n/u)
     .map((item) => item.trim())
     .find((item) => item.startsWith(`${token}:`));
-  const value = line?.slice(token.length + 1).trim().replace(/;$/u, "");
+  const value = line
+    ?.slice(token.length + 1)
+    .trim()
+    .replace(/;$/u, "");
   expect(value).toBeDefined();
   return value!;
 }
