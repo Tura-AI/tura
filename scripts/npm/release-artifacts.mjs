@@ -26,6 +26,28 @@ export const releaseConfigFiles = [
   ["crates/provider/config/provider_config.json", "config/provider_config.json"]
 ];
 
+export const releaseRuntimeFiles = [
+  ["agents/src", "agents/src"],
+  ["personas/src", "personas/src"],
+  ["crates/runtime/src/runtime_prompt", "crates/runtime/src/runtime_prompt"],
+  ["crates/tools/src/commands", "crates/tools/src/commands"],
+  ["crates/tools/src/command_run/schema.json", "crates/tools/src/command_run/schema.json"],
+  ["commands/generate_media", "commands/generate_media"],
+  ["commands/read_media", "commands/read_media"],
+  ["commands/web_discover", "commands/web_discover"],
+  ["README.md", "README.md"],
+  ["scripts/ARCHITECTURE.md", "scripts/ARCHITECTURE.md"]
+];
+
+export const releaseRuntimeExcludedDirs = [
+  ".venv",
+  "tests",
+  "target",
+  "node_modules",
+  "__pycache__",
+  ".pytest_cache"
+];
+
 export const supportedPlatformPackages = [
   ["win32", "x64"],
   ["linux", "x64"],

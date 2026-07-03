@@ -3,6 +3,7 @@ param(
   [switch]$SkipGui,
   [switch]$SkipTauri,
   [switch]$BackendOnly,
+  [switch]$Binary,
   [switch]$SkipApps,
   [switch]$Help,
   [switch]$Clean
@@ -21,12 +22,15 @@ $BuildTauri = -not [bool]$SkipTauri -and -not [bool]$BackendOnly
 if ($Help) {
   Write-Host @"
 Usage:
-  scripts\build-release.ps1 [-BackendOnly] [-SkipTui] [-SkipGui] [-SkipTauri] [-Clean]
+  scripts\build-release.ps1 [-BackendOnly] [-Binary] [-SkipTui] [-SkipGui] [-SkipTauri] [-Clean]
 
 Builds release artifacts directly into target\release.
 By default this builds backend binaries, the web GUI dist, the compiled TUI,
 and the Tauri desktop bundle. Use -BackendOnly when a CI job only needs Rust
 release artifacts.
+By default release output includes runtime configs, prompts, markdown, command
+metadata, and command source files. Pass -Binary to keep only binaries and the
+minimal provider config.
 Use -SkipTui, -SkipGui, or -SkipTauri for targeted app skips.
 "@
   exit 0
@@ -107,6 +111,42 @@ function Copy-ReleaseConfig {
   if (-not (Test-Path -LiteralPath $Source)) {
     throw "Provider config not found at $Source."
   }
+
+function Copy-ReleaseRuntimeFiles {
+  $Specs = @(
+    @{ Source = "agents\src"; Destination = "agents\src" },
+    @{ Source = "personas\src"; Destination = "personas\src" },
+    @{ Source = "crates\runtime\src\runtime_prompt"; Destination = "crates\runtime\src\runtime_prompt" },
+    @{ Source = "crates\tools\src\commands"; Destination = "crates\tools\src\commands" },
+    @{ Source = "crates\tools\src\command_run\schema.json"; Destination = "crates\tools\src\command_run\schema.json" },
+    @{ Source = "commands\generate_media"; Destination = "commands\generate_media" },
+    @{ Source = "commands\read_media"; Destination = "commands\read_media" },
+    @{ Source = "commands\web_discover"; Destination = "commands\web_discover" },
+    @{ Source = "README.md"; Destination = "README.md" },
+    @{ Source = "scripts\ARCHITECTURE.md"; Destination = "scripts\ARCHITECTURE.md" }
+  )
+  $ExcludeDirs = @(".venv", "tests", "target", "node_modules", "__pycache__", ".pytest_cache")
+
+  foreach ($Spec in $Specs) {
+    $Source = Join-Path $RepoRoot $Spec.Source
+    $Destination = Join-Path $TargetDir $Spec.Destination
+    if (-not (Test-Path -LiteralPath $Source)) {
+      throw "Release runtime source not found: $($Spec.Source)"
+    }
+    Remove-Item -LiteralPath $Destination -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force | Out-Null
+    if (Test-Path -LiteralPath $Source -PathType Leaf) {
+      Copy-Item -LiteralPath $Source -Destination $Destination -Force
+      continue
+    }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force -Container
+    foreach ($Dir in $ExcludeDirs) {
+      Get-ChildItem -LiteralPath $Destination -Directory -Recurse -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -eq $Dir } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
   New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
   Copy-Item -LiteralPath $Source -Destination (Join-Path $DestinationDir "provider_config.json") -Force
 }
@@ -193,6 +233,9 @@ try {
 }
 
 Copy-ReleaseConfig
+if (-not $Binary) {
+  Copy-ReleaseRuntimeFiles
+}
 
 if ($BuildGui) {
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")
@@ -245,4 +288,5 @@ $Entries = @("tura_exec.exe", "tura_gateway.exe", "tura_router.exe", "tura_sessi
 if ($BuildTui) { $Entries = @("tura.exe") + $Entries }
 if ($BuildGui) { $Entries += "tura_gui/" }
 if ($BuildTauri) { $Entries += "tura_gui bundle" }
+if (-not $Binary) { $Entries += "runtime configs/prompts/commands" }
 Write-Host ("Entries: " + ($Entries -join ", "))

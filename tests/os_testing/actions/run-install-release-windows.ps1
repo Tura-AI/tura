@@ -1,5 +1,6 @@
 param(
-  [switch]$Full
+  [switch]$Full,
+  [switch]$Binary
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,7 +60,9 @@ try {
   $installArgs = @("-Full", "-SkipApps")
   if ($Full) { $installArgs = @("-Full") }
   Invoke-LoggedPowerShellScript "test-install" (Join-Path $RepoRoot "scripts\tests\scripts\test-install.ps1") $installArgs
-  Invoke-LoggedPowerShellScript "test-build-release" (Join-Path $RepoRoot "scripts\tests\scripts\test-build-release.ps1") @("-BackendOnly")
+  $releaseArgs = @("-BackendOnly")
+  if ($Binary) { $releaseArgs += "-Binary" }
+  Invoke-LoggedPowerShellScript "test-build-release" (Join-Path $RepoRoot "scripts\tests\scripts\test-build-release.ps1") $releaseArgs
 } finally {
   Pop-Location
 }

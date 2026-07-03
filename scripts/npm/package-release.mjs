@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -13,6 +13,8 @@ import {
   missingPackageFiles,
   releaseArchiveName,
   releaseConfigFiles,
+  releaseRuntimeExcludedDirs,
+  releaseRuntimeFiles,
   releaseOutputRoot,
   releaseRoot
 } from "./release-artifacts.mjs";
@@ -22,6 +24,7 @@ const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"),
 const args = process.argv.slice(2);
 const outIndex = args.indexOf("--out-dir");
 const outDir = outIndex >= 0 ? path.resolve(args[outIndex + 1] ?? "") : releaseOutputRoot(repoRoot);
+const binaryOnly = args.includes("--binary");
 const archiveName = releaseArchiveName(packageJson.version);
 const archivePath = path.join(outDir, archiveName);
 
@@ -46,6 +49,29 @@ function copyDirectory(source, destination, label) {
   }
   rmSync(destination, { recursive: true, force: true });
   cpSync(source, destination, { recursive: true });
+}
+
+function removeExcludedRuntimeDirs(root) {
+  if (!existsSync(root) || !statSync(root).isDirectory()) return;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const fullPath = path.join(root, entry.name);
+    if (!entry.isDirectory()) continue;
+    if (releaseRuntimeExcludedDirs.includes(entry.name)) {
+      rmSync(fullPath, { recursive: true, force: true });
+      continue;
+    }
+    removeExcludedRuntimeDirs(fullPath);
+  }
+}
+
+function copyRuntimePath(source, destination, label) {
+  if (!existsSync(source)) {
+    fail(`missing release runtime ${label}`);
+  }
+  rmSync(destination, { recursive: true, force: true });
+  mkdirSync(path.dirname(destination), { recursive: true });
+  cpSync(source, destination, { recursive: true });
+  removeExcludedRuntimeDirs(destination);
 }
 
 const missingPackage = missingPackageFiles(repoRoot);
@@ -86,6 +112,16 @@ try {
     }
     mkdirSync(path.dirname(destination), { recursive: true });
     cpSync(source, destination);
+  }
+
+  if (!binaryOnly) {
+    for (const [releaseRelative] of releaseRuntimeFiles) {
+      copyRuntimePath(
+        path.join(sourceRelease, releaseRelative),
+        path.join(stageRelease, releaseRelative),
+        releaseRelative
+      );
+    }
   }
 
   mkdirSync(outDir, { recursive: true });

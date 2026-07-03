@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,8 @@ import {
   platformPackageName,
   releaseArchiveName,
   releaseConfigFiles,
+  releaseRuntimeExcludedDirs,
+  releaseRuntimeFiles,
   releaseOutputRoot,
   releaseRoot
 } from "./release-artifacts.mjs";
@@ -23,6 +25,7 @@ const args = process.argv.slice(2);
 const outIndex = args.indexOf("--out-dir");
 const outDir = outIndex >= 0 ? path.resolve(args[outIndex + 1] ?? "") : path.join(releaseOutputRoot(repoRoot), "npm-platform");
 const pack = args.includes("--pack");
+const binaryOnly = args.includes("--binary");
 const platformName = platformPackageName();
 const packageDir = path.join(outDir, platformName);
 const sourceRelease = releaseRoot(repoRoot);
@@ -60,6 +63,29 @@ function copyDirectory(source, destination, label) {
   cpSync(source, destination, { recursive: true });
 }
 
+function removeExcludedRuntimeDirs(root) {
+  if (!existsSync(root) || !statSync(root).isDirectory()) return;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const fullPath = path.join(root, entry.name);
+    if (!entry.isDirectory()) continue;
+    if (releaseRuntimeExcludedDirs.includes(entry.name)) {
+      rmSync(fullPath, { recursive: true, force: true });
+      continue;
+    }
+    removeExcludedRuntimeDirs(fullPath);
+  }
+}
+
+function copyRuntimePath(source, destination, label) {
+  if (!existsSync(source)) {
+    fail(`missing release runtime ${label}`);
+  }
+  rmSync(destination, { recursive: true, force: true });
+  mkdirSync(path.dirname(destination), { recursive: true });
+  cpSync(source, destination, { recursive: true });
+  removeExcludedRuntimeDirs(destination);
+}
+
 const missingPackage = missingPackageFiles(repoRoot);
 if (missingPackage.length > 0) {
   fail(`missing required package files: ${missingPackage.join(", ")}`);
@@ -95,6 +121,16 @@ for (const [sourceRelative, releaseRelative] of releaseConfigFiles) {
   }
   mkdirSync(path.dirname(destination), { recursive: true });
   cpSync(source, destination);
+}
+
+if (!binaryOnly) {
+  for (const [releaseRelative] of releaseRuntimeFiles) {
+    copyRuntimePath(
+      path.join(sourceRelease, releaseRelative),
+      path.join(stageRelease, releaseRelative),
+      releaseRelative
+    );
+  }
 }
 
 writeFileSync(

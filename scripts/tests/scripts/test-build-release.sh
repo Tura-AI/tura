@@ -10,6 +10,7 @@ SKIP_TUI=0
 SKIP_GUI=0
 SKIP_TAURI=0
 BACKEND_ONLY=0
+BINARY=0
 RELEASE_PROBE="${TURA_RELEASE_PROBE:-release-v0.0.0-ci}"
 
 while [ "$#" -gt 0 ]; do
@@ -18,6 +19,7 @@ while [ "$#" -gt 0 ]; do
     --skip-gui) SKIP_GUI=1 ;;
     --skip-tauri) SKIP_TAURI=1 ;;
     --backend-only) BACKEND_ONLY=1 ;;
+    --binary) BINARY=1 ;;
     --skip-apps)
       echo "--skip-apps was removed for release builds because it was ambiguous. Use --backend-only, --skip-tui, --skip-gui, or --skip-tauri explicitly." >&2
       exit 2
@@ -90,6 +92,7 @@ if [ "$SKIP_TUI" -eq 1 ]; then build_args="$build_args --skip-tui"; fi
 if [ "$SKIP_GUI" -eq 1 ]; then build_args="$build_args --skip-gui"; fi
 if [ "$SKIP_TAURI" -eq 1 ]; then build_args="$build_args --skip-tauri"; fi
 if [ "$BACKEND_ONLY" -eq 1 ]; then build_args="$build_args --backend-only"; fi
+if [ "$BINARY" -eq 1 ]; then build_args="$build_args --binary"; fi
 sh "$REPO_ROOT/scripts/build-release.sh" $build_args
 
 step "Checking release artifacts"
@@ -105,6 +108,13 @@ do
   require_path "$TARGET_DIR/$name" "Missing release artifact: $name"
 done
 require_path "$TARGET_DIR/config/provider_config.json" "Missing release provider config."
+if [ "$BINARY" -eq 0 ]; then
+  require_path "$TARGET_DIR/agents/src/direct/prompt.md" "Missing release agent prompt."
+  require_path "$TARGET_DIR/personas/src/tura/prompt/persona.md" "Missing release persona prompt."
+  require_path "$TARGET_DIR/crates/runtime/src/runtime_prompt/debug/prompt.md" "Missing release runtime prompt."
+  require_path "$TARGET_DIR/crates/tools/src/commands/shell_command/schema.json" "Missing release tool command schema."
+  require_path "$TARGET_DIR/commands/read_media/prompt.md" "Missing release external command prompt."
+fi
 
 if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TUI" -eq 0 ]; then
   require_path "$TARGET_DIR/tura" "Missing release TUI executable."
