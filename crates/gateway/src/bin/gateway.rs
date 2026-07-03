@@ -32,28 +32,7 @@ fn main() {
         std::env::set_var("OPENAI_LOGIN", "oauth");
     }
 
-    let desired_port = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.trim().parse::<u16>().ok())
-        .unwrap_or_else(default_port_for_exe);
-
-    let gateway_lock = match gateway::process_lock::ProcessLock::acquire(
-        &tura_path::instance_home(),
-        "gateway",
-        mode_for_exe(),
-        Some(desired_port),
-    ) {
-        Ok(lock) => lock,
-        Err(error) => {
-            if gateway_root_on_port(desired_port).as_deref() == Some(my_root().as_str()) {
-                write_active_gateway_url(desired_port);
-                println!("✅ Gateway for this home is already running on http://127.0.0.1:{desired_port}");
-                return;
-            }
-            eprintln!("gateway ownership lock refused startup: {error:#}");
-            std::process::exit(1);
-        }
-    };
+    let desired_port = desired_port_for_exe();
 
     let port = match select_listen_port(desired_port) {
         PortDecision::Bind(port) => port,
@@ -64,12 +43,30 @@ fn main() {
         }
         PortDecision::Unavailable(port) => {
             eprintln!("gateway port {port} is occupied by a foreign process; set PORT to an explicit free port or stop the foreign process");
-            drop(gateway_lock);
+            std::process::exit(1);
+        }
+    };
+
+    let gateway_lock = match gateway::process_lock::ProcessLock::acquire(
+        &tura_path::instance_home(),
+        "gateway",
+        mode_for_exe(),
+        Some(port),
+    ) {
+        Ok(lock) => lock,
+        Err(error) => {
+            if gateway_root_on_port(port).as_deref() == Some(my_root().as_str()) {
+                write_active_gateway_url(port);
+                println!("✅ Gateway for this home is already running on http://127.0.0.1:{port}");
+                return;
+            }
+            eprintln!("gateway ownership lock refused startup: {error:#}");
             std::process::exit(1);
         }
     };
     // Keep the resolved port visible to children (runtime workers, callbacks).
     std::env::set_var("PORT", port.to_string());
+    std::env::set_var(tura_path::TURA_GATEWAY_PORT_ENV, port.to_string());
 
     if let Err(error) = gateway::router_process::start_global_router_process() {
         eprintln!("gateway failed to start persistent router: {error:#}");
@@ -144,6 +141,37 @@ fn default_port_for_exe() -> u16 {
     tura_path::default_gateway_port_for_build_kind(mode_for_exe())
 }
 
+#[derive(Clone, Copy)]
+struct PortPreference {
+    port: u16,
+    explicit: bool,
+}
+
+fn desired_port_for_exe() -> PortPreference {
+    if let Some(port) = env_port("PORT") {
+        return PortPreference {
+            port,
+            explicit: true,
+        };
+    }
+    if let Some(port) = env_port(tura_path::TURA_GATEWAY_PORT_ENV) {
+        return PortPreference {
+            port,
+            explicit: false,
+        };
+    }
+    PortPreference {
+        port: default_port_for_exe(),
+        explicit: false,
+    }
+}
+
+fn env_port(key: &str) -> Option<u16> {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+}
+
 fn mode_for_exe() -> &'static str {
     tura_path::build_kind()
 }
@@ -162,14 +190,27 @@ enum PortDecision {
 /// Prefer the fixed (per-package) port. If it is occupied by our own
 /// directory's gateway, report it as already-running. If it is occupied by a
 /// foreign process, fail instead of silently floating to another port.
-fn select_listen_port(desired_port: u16) -> PortDecision {
-    if port_is_free(desired_port) {
-        return PortDecision::Bind(desired_port);
+fn select_listen_port(desired: PortPreference) -> PortDecision {
+    if port_is_free(desired.port) {
+        return PortDecision::Bind(desired.port);
     }
-    if gateway_root_on_port(desired_port).as_deref() == Some(my_root().as_str()) {
-        return PortDecision::AlreadyOwned(desired_port);
+    if gateway_root_on_port(desired.port).as_deref() == Some(my_root().as_str()) {
+        return PortDecision::AlreadyOwned(desired.port);
     }
-    PortDecision::Unavailable(desired_port)
+    if desired.explicit {
+        return PortDecision::Unavailable(desired.port);
+    }
+    fallback_ports(desired.port)
+        .into_iter()
+        .find(|port| port_is_free(*port))
+        .map(PortDecision::Bind)
+        .unwrap_or(PortDecision::Unavailable(desired.port))
+}
+
+fn fallback_ports(desired_port: u16) -> Vec<u16> {
+    (1..=100)
+        .filter_map(|offset| desired_port.checked_add(offset))
+        .collect()
 }
 
 fn port_is_free(port: u16) -> bool {
@@ -364,7 +405,11 @@ fn run_session_log_command() {
 
 #[cfg(test)]
 mod tests {
-    use super::find_release_root_from;
+    use super::{
+        desired_port_for_exe, find_release_root_from, select_listen_port, PortDecision,
+        PortPreference,
+    };
+    use std::net::TcpListener;
 
     #[test]
     fn release_root_skips_target_release_config_without_runtime_tools() {
@@ -402,5 +447,88 @@ mod tests {
             find_release_root_from(&target_release.join("tura_gateway.exe")),
             Some(root.to_path_buf())
         );
+    }
+
+    #[test]
+    fn port_env_prefers_explicit_port_then_non_explicit_gateway_port() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let env = TestEnv::set([("PORT", "4311"), (tura_path::TURA_GATEWAY_PORT_ENV, "4312")]);
+        let desired = desired_port_for_exe();
+        assert_eq!(desired.port, 4311);
+        assert!(desired.explicit);
+        drop(env);
+
+        let env = TestEnv::set([("PORT", ""), (tura_path::TURA_GATEWAY_PORT_ENV, "4312")]);
+        let desired = desired_port_for_exe();
+        assert_eq!(desired.port, 4312);
+        assert!(!desired.explicit);
+        drop(env);
+    }
+
+    #[test]
+    fn non_explicit_occupied_port_falls_back_to_free_loopback_port() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind occupied port");
+        let occupied = listener.local_addr().expect("local addr").port();
+
+        let decision = select_listen_port(PortPreference {
+            port: occupied,
+            explicit: false,
+        });
+
+        match decision {
+            PortDecision::Bind(port) => assert_ne!(port, occupied),
+            _ => panic!("expected fallback bind decision"),
+        }
+    }
+
+    #[test]
+    fn explicit_occupied_port_is_unavailable() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind occupied port");
+        let occupied = listener.local_addr().expect("local addr").port();
+
+        let decision = select_listen_port(PortPreference {
+            port: occupied,
+            explicit: true,
+        });
+
+        match decision {
+            PortDecision::Unavailable(port) => assert_eq!(port, occupied),
+            _ => panic!("expected unavailable decision"),
+        }
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct TestEnv {
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl TestEnv {
+        fn set<const N: usize>(values: [(&'static str, &str); N]) -> Self {
+            let previous = values
+                .iter()
+                .map(|(key, _)| (*key, std::env::var_os(key)))
+                .collect::<Vec<_>>();
+            for (key, value) in values {
+                if value.is_empty() {
+                    std::env::remove_var(key);
+                } else {
+                    std::env::set_var(key, value);
+                }
+            }
+            Self { previous }
+        }
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..).rev() {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
     }
 }
