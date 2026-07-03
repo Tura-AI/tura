@@ -122,10 +122,12 @@ async def main() -> None:
                 has_text=re.compile("加速|Acceleration")
             )
             await expect(priority_row).to_be_visible()
-            priority_checkbox = priority_row.locator('input[type="checkbox"]')
-            if not await priority_checkbox.is_checked():
-                await priority_checkbox.check()
-            await expect(priority_checkbox).to_be_checked()
+            priority_control = priority_row.locator(".settings-priority-segmented")
+            await expect(priority_control).to_be_visible()
+            await expect(priority_control.get_by_role("radio", name=re.compile("关闭|Off"))).to_be_visible()
+            priority_button = priority_control.get_by_role("radio", name="Priority")
+            await priority_button.click()
+            await expect(priority_button).to_have_attribute("aria-checked", "true")
 
             await page.get_by_role("button", name=re.compile("保存|Save")).click()
             await expect(page.get_by_text(re.compile("已保存|Saved"))).to_be_visible()

@@ -55,7 +55,7 @@ fn main() {
     ) {
         Ok(lock) => lock,
         Err(error) => {
-            if gateway_root_on_port(port).as_deref() == Some(my_root().as_str()) {
+            if gateway_identity_on_port(port).is_some_and(|identity| identity.matches_instance()) {
                 write_active_gateway_url(port);
                 println!("✅ Gateway for this home is already running on http://127.0.0.1:{port}");
                 return;
@@ -194,7 +194,7 @@ fn select_listen_port(desired: PortPreference) -> PortDecision {
     if port_is_free(desired.port) {
         return PortDecision::Bind(desired.port);
     }
-    if gateway_root_on_port(desired.port).as_deref() == Some(my_root().as_str()) {
+    if gateway_identity_on_port(desired.port).is_some_and(|identity| identity.matches_instance()) {
         return PortDecision::AlreadyOwned(desired.port);
     }
     if desired.explicit {
@@ -223,6 +223,10 @@ fn my_root() -> String {
     tura_path::canonical_root().to_string_lossy().to_string()
 }
 
+fn my_home() -> String {
+    tura_path::instance_home().to_string_lossy().to_string()
+}
+
 fn write_active_gateway_url(port: u16) {
     let url = format!("http://127.0.0.1:{port}");
     if let Err(error) =
@@ -232,9 +236,40 @@ fn write_active_gateway_url(port: u16) {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct GatewayIdentity {
+    root: String,
+    home: String,
+}
+
+impl GatewayIdentity {
+    fn matches_instance(&self) -> bool {
+        if !self.home.trim().is_empty() {
+            return same_path(&self.home, &my_home());
+        }
+        same_path(&self.root, &my_root())
+    }
+}
+
+fn same_path(left: &str, right: &str) -> bool {
+    let left = comparable_path(Path::new(left));
+    let right = comparable_path(Path::new(right));
+    !left.is_empty() && left == right
+}
+
+fn comparable_path(path: &Path) -> String {
+    let text = tura_path::normalize_path(path).to_string_lossy().to_string();
+    let text = text.trim_end_matches(['\\', '/']).to_string();
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text
+    }
+}
+
 /// Probe `/global/health` on a loopback port and return the gateway's reported
-/// `root`, or `None` if the port is not a healthy tura_gateway.
-fn gateway_root_on_port(port: u16) -> Option<String> {
+/// identity, or `None` if the port is not a healthy tura_gateway.
+fn gateway_identity_on_port(port: u16) -> Option<GatewayIdentity> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(400)).ok()?;
     stream
@@ -254,11 +289,17 @@ fn gateway_root_on_port(port: u16) -> Option<String> {
     }
     let body = response.split("\r\n\r\n").nth(1)?;
     let value: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
-    value
+    let root = value
         .get("root")
         .and_then(serde_json::Value::as_str)
-        .filter(|root| !root.is_empty())
-        .map(str::to_string)
+        .unwrap_or_default()
+        .to_string();
+    let home = value
+        .get("home")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    Some(GatewayIdentity { root, home })
 }
 
 fn configure_release_runtime_env() {

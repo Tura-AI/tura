@@ -298,45 +298,21 @@
   gap: var(--space-2);
 }
 
-.settings-toggle-row {
-  display: inline-flex;
+.settings-priority-field {
+  display: grid;
   gap: var(--space-2);
-  align-items: center;
-  width: max-content;
-  min-height: 38px;
-  color: var(--ink);
-  font-size: var(--font-ui);
-}
-
-.settings-toggle-copy {
-  display: inline-flex;
   min-width: 0;
-  gap: var(--space-1);
-  align-items: baseline;
-  white-space: nowrap;
 }
 
-.settings-inline-note {
+.settings-priority-segmented {
+  max-width: 260px;
+}
+
+.settings-priority-note {
   color: var(--muted);
   font-size: var(--font-small);
   font-weight: 430;
-}
-
-.settings-toggle-row input {
-  width: 16px;
-  min-height: 16px;
-  padding: 0;
-  accent-color: var(--accent);
-}
-
-.settings-toggle-field {
-  display: grid;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.agent-priority-row {
-  grid-template-columns: minmax(0, 1fr);
+  line-height: 1.45;
 }
 
 .settings-fields {

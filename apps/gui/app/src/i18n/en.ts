@@ -3,7 +3,7 @@ import type { Dictionary } from "./types";
 export const en = {
   active: "Active",
   acceleration: "Acceleration",
-  accelerationHint: "(Faster speed, higher cost)",
+  accelerationHint: "Priority requests a faster service tier and may cost more.",
   added: "Added",
   agent: "Agent",
   agentDescriptionBalanced:

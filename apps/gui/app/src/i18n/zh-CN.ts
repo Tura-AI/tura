@@ -1,7 +1,7 @@
 export const zhCN = {
   active: "当前",
   acceleration: "加速",
-  accelerationHint: "（更快速度，更高费用）",
+  accelerationHint: "Priority 会优先请求更快的服务层级，可能产生更高费用。",
   added: "新增",
   agent: "智能体",
   agentDescriptionBalanced: "平衡自我反思和直觉响应，进行验证和自我反思。",

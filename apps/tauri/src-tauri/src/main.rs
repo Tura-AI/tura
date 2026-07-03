@@ -233,7 +233,7 @@ fn start_gateway_with_launcher(
     let instance_home = instance_home_for_runtime_root(&my_root);
     let endpoint =
         select_gateway_endpoint(gateway_url, gateway_url_explicit, &my_root, &instance_home)?;
-    if endpoint_is_usable(&endpoint, gateway_url_explicit, &my_root) {
+    if endpoint_is_usable(&endpoint, gateway_url_explicit, &my_root, &instance_home) {
         return connected_gateway_response(&instance_home, &endpoint, "connected");
     }
     if gateway_url_explicit {
@@ -243,7 +243,7 @@ fn start_gateway_with_launcher(
         ));
     }
     let launched = launcher(&endpoint, &my_root, &instance_home)?;
-    if endpoint_is_usable(&launched, false, &my_root) {
+    if endpoint_is_usable(&launched, false, &my_root, &instance_home) {
         return connected_gateway_response(&instance_home, &launched, "connected");
     }
     Err(format!(
@@ -267,11 +267,16 @@ fn connected_gateway_response(
     })
 }
 
-fn endpoint_is_usable(endpoint: &GatewayEndpoint, explicit: bool, my_root: &Path) -> bool {
-    let Some(root) = gateway_identity(endpoint) else {
+fn endpoint_is_usable(
+    endpoint: &GatewayEndpoint,
+    explicit: bool,
+    my_root: &Path,
+    instance_home: &Path,
+) -> bool {
+    let Some(identity) = gateway_identity(endpoint) else {
         return false;
     };
-    explicit || same_root(&root, my_root)
+    explicit || gateway_identity_matches_instance(&identity, my_root, instance_home)
 }
 
 fn launch_gateway_process(
@@ -606,15 +611,15 @@ fn select_gateway_endpoint(
     }
     let candidates = gateway_endpoint_candidates(requested_url, instance_home, &default_endpoint);
     for candidate in candidates {
-        if let Some(root) = gateway_identity(&candidate) {
-            if same_root(&root, my_root) {
+        if let Some(identity) = gateway_identity(&candidate) {
+            if gateway_identity_matches_instance(&identity, my_root, instance_home) {
                 write_active_gateway_url(instance_home, &candidate)?;
                 return Ok(candidate);
             }
         }
     }
     if let Some(candidate) = same_home_gateway_process_endpoint(instance_home)
-        .filter(|candidate| endpoint_is_usable(candidate, false, my_root))
+        .filter(|candidate| endpoint_is_usable(candidate, false, my_root, instance_home))
     {
         write_active_gateway_url(instance_home, &candidate)?;
         return Ok(candidate);
@@ -769,9 +774,15 @@ fn write_active_gateway_url(
         .map_err(|error| format!("failed to write active gateway URL: {error}"))
 }
 
-/// Probe `/global/health`; on a healthy gateway return its reported `root`,
+#[derive(Debug, Clone, Default)]
+struct GatewayIdentity {
+    root: String,
+    home: String,
+}
+
+/// Probe `/global/health`; on a healthy gateway return its reported identity,
 /// otherwise `None`.
-fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<String> {
+fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<GatewayIdentity> {
     endpoint.socket_addrs().into_iter().find_map(|addr| {
         let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(350)).ok()?;
         let _ = stream.set_read_timeout(Some(Duration::from_millis(900)));
@@ -786,19 +797,37 @@ fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<String> {
         if !response.starts_with("HTTP/1.1 200") || !response.contains("\"healthy\":true") {
             return None;
         }
-        let root = response
+        let identity = response
             .split("\r\n\r\n")
             .nth(1)
             .and_then(|body| serde_json::from_str::<serde_json::Value>(body.trim()).ok())
-            .and_then(|value| {
-                value
+            .map(|value| {
+                let root = value
                     .get("root")
                     .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
+                    .unwrap_or_default()
+                    .to_string();
+                let home = value
+                    .get("home")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                GatewayIdentity { root, home }
             })
             .unwrap_or_default();
-        Some(root)
+        Some(identity)
     })
+}
+
+fn gateway_identity_matches_instance(
+    identity: &GatewayIdentity,
+    my_root: &Path,
+    instance_home: &Path,
+) -> bool {
+    if !identity.home.trim().is_empty() {
+        return same_root(&identity.home, instance_home);
+    }
+    same_root(&identity.root, my_root)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1273,6 +1302,50 @@ mod tests {
         assert_eq!(selected.url(), format!("http://127.0.0.1:{port}"));
         drop(env);
         let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn default_gateway_endpoint_reuses_same_home_active_gateway_with_different_project_root() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let home = test_temp_dir("default-endpoint-same-home-active");
+        let project_root = test_temp_dir("default-endpoint-current-root");
+        let other_root = test_temp_dir("default-endpoint-other-root");
+        let env = TestEnv::set([(tura_path::TURA_GATEWAY_URL_ENV, "")]);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        tura_path::write_active_gateway_url_for_home(&home, &format!("http://127.0.0.1:{port}"))
+            .expect("write active gateway url");
+        let home_text = home.to_string_lossy().to_string();
+        let other_root_text = other_root.to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health check");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{},\"home\":{}}}",
+                        serde_json::to_string(&other_root_text).expect("json root"),
+                        serde_json::to_string(&home_text).expect("json home")
+                    )
+                    .as_bytes(),
+                )
+                .expect("write health response");
+        });
+
+        let selected = select_gateway_endpoint(
+            "http://127.0.0.1:4126",
+            false,
+            &project_root,
+            &home,
+        )
+        .expect("select endpoint");
+
+        assert_eq!(selected.url(), format!("http://127.0.0.1:{port}"));
+        drop(env);
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(project_root);
+        let _ = fs::remove_dir_all(other_root);
     }
 
     #[test]

@@ -253,18 +253,33 @@ export function AgentSettingsPanel(props: {
             />
           </div>
           <div class="field-row agent-priority-row">
-            <div class="settings-toggle-field">
-              <label class="settings-toggle-row">
-                <input
-                  type="checkbox"
-                  checked={priorityEnabled()}
-                  onChange={(event) => setPriorityEnabled(event.currentTarget.checked)}
-                />
-                <span class="settings-toggle-copy">
-                  {t("acceleration")}
-                  <small class="settings-inline-note">{t("accelerationHint")}</small>
-                </span>
-              </label>
+            <span>{t("acceleration")}</span>
+            <div class="settings-priority-field">
+              <div
+                class="segmented two settings-priority-segmented"
+                role="radiogroup"
+                aria-label={t("acceleration")}
+              >
+                <button
+                  type="button"
+                  class={classNames(!priorityEnabled() && "selected")}
+                  role="radio"
+                  aria-checked={!priorityEnabled()}
+                  onClick={() => setPriorityEnabled(false)}
+                >
+                  {t("disabled")}
+                </button>
+                <button
+                  type="button"
+                  class={classNames(priorityEnabled() && "selected")}
+                  role="radio"
+                  aria-checked={priorityEnabled()}
+                  onClick={() => setPriorityEnabled(true)}
+                >
+                  {t("modelPriority")}
+                </button>
+              </div>
+              <small class="settings-priority-note">{t("accelerationHint")}</small>
             </div>
           </div>
           <div class="field-row agent-capabilities-row">

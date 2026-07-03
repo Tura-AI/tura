@@ -63,6 +63,10 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
         normalize_path(&project_root)
     );
     assert_eq!(
+        normalize_path(&health_body.home),
+        normalize_path(temp.path())
+    );
+    assert_eq!(
         health_body.dev_log_path.as_deref().map(normalize_slashes),
         Some(normalize_path(temp.path().join("logs")))
     );

@@ -20,6 +20,7 @@ const GATEWAY_START_TIMEOUT_MS = 20_000;
 
 interface GatewayIdentity {
   root: string;
+  home?: string;
   version?: string;
 }
 
@@ -71,7 +72,7 @@ export async function ensureGatewayAvailable(
       for (const candidate of candidates) {
         tick();
         const identity = await gatewayIdentityWithProbeTimeout(candidate);
-        if (identity && (explicit || sameRoot(identity.root, projectRoot))) {
+        if (identity && gatewayMatchesInstance(identity, instanceHome, projectRoot, Boolean(explicit))) {
           connectedUrl = candidate;
           return;
         }
@@ -91,8 +92,9 @@ export async function ensureGatewayAvailable(
       projectRoot,
       dev: Boolean(dev),
     });
-    const identity = await waitForSameRootGateway(
+    const identity = await waitForSameHomeGateway(
       startedUrl,
+      instanceHome,
       projectRoot,
       GATEWAY_START_TIMEOUT_MS,
     );
@@ -135,6 +137,7 @@ async function gatewayIdentityWithProbeTimeout(
       if (body.healthy !== true) return null;
       return {
         root: typeof body.root === "string" ? body.root : "",
+        home: typeof body.home === "string" ? body.home : undefined,
         version: typeof body.version === "string" ? body.version : undefined,
       };
     } finally {
@@ -145,15 +148,18 @@ async function gatewayIdentityWithProbeTimeout(
   }
 }
 
-async function waitForSameRootGateway(
+async function waitForSameHomeGateway(
   gatewayUrl: string,
+  instanceHome: string,
   projectRoot: string,
   timeoutMs: number,
 ): Promise<GatewayIdentity | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const identity = await gatewayIdentityWithProbeTimeout(gatewayUrl);
-    if (identity && sameRoot(identity.root, projectRoot)) return identity;
+    if (identity && gatewayMatchesInstance(identity, instanceHome, projectRoot, false)) {
+      return identity;
+    }
     await delay(HEALTH_POLL_INTERVAL_MS);
   }
   return null;
@@ -182,7 +188,9 @@ async function launchGatewayProcess(request: GatewayLaunchRequest): Promise<stri
     const activeUrl = readActiveGatewayUrl(request.instanceHome);
     const candidateUrl = activeUrl ? stripTrailingSlash(activeUrl) : targetUrl;
     const identity = await gatewayIdentityWithProbeTimeout(candidateUrl);
-    if (identity && sameRoot(identity.root, request.projectRoot)) return candidateUrl;
+    if (identity && gatewayMatchesInstance(identity, request.instanceHome, request.projectRoot, false)) {
+      return candidateUrl;
+    }
     await delay(HEALTH_POLL_INTERVAL_MS);
   }
   stopUnreadyChild(child);
@@ -236,7 +244,18 @@ function stopUnreadyChild(child: ChildProcess): void {
   }
 }
 
-function sameRoot(left: string, right: string): boolean {
+function gatewayMatchesInstance(
+  identity: GatewayIdentity,
+  instanceHome: string,
+  projectRoot: string,
+  explicit: boolean,
+): boolean {
+  if (explicit) return true;
+  if (identity.home) return samePath(identity.home, instanceHome);
+  return samePath(identity.root, projectRoot);
+}
+
+function samePath(left: string, right: string): boolean {
   if (!left.trim() || !right.trim()) return false;
   return comparablePath(left) === comparablePath(right);
 }

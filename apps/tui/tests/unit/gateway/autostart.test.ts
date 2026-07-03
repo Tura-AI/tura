@@ -113,6 +113,53 @@ test("ensureGatewayAvailable rejects foreign active gateway and starts same-root
   }
 });
 
+test("ensureGatewayAvailable reuses same-home active gateway even when project root differs", async () => {
+  const home = mkdtempSync(join(tmpdir(), "tura-tui-same-home-gateway-"));
+  const projectRoot = mkdtempSync(join(tmpdir(), "tura-tui-current-project-root-"));
+  const otherRoot = mkdtempSync(join(tmpdir(), "tura-tui-other-project-root-"));
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ healthy: true, root: otherRoot, home }));
+  });
+  await listen(server);
+  const previousHome = process.env.TURA_HOME;
+  const previousRoot = process.env.TURA_PROJECT_ROOT;
+  const previousUrl = process.env.TURA_GATEWAY_URL;
+  let restoreLauncher: (() => void) | undefined;
+  try {
+    const address = server.address() as AddressInfo;
+    const url = `http://127.0.0.1:${address.port}`;
+    process.env.TURA_HOME = home;
+    process.env.TURA_PROJECT_ROOT = projectRoot;
+    delete process.env.TURA_GATEWAY_URL;
+    mkdirSync(join(home, ".tura"), { recursive: true });
+    writeFileSync(join(home, ".tura", "gateway-active.env"), `TURA_GATEWAY_URL=${url}\n`);
+    let launches = 0;
+    restoreLauncher = _setGatewayLauncherForTest(async () => {
+      launches += 1;
+      return "http://127.0.0.1:65530";
+    });
+
+    assert.equal(
+      await ensureGatewayAvailable("http://127.0.0.1:65530", plainCapabilities(), false, false),
+      url,
+    );
+    assert.equal(launches, 0);
+  } finally {
+    restoreLauncher?.();
+    if (previousHome === undefined) delete process.env.TURA_HOME;
+    else process.env.TURA_HOME = previousHome;
+    if (previousRoot === undefined) delete process.env.TURA_PROJECT_ROOT;
+    else process.env.TURA_PROJECT_ROOT = previousRoot;
+    if (previousUrl === undefined) delete process.env.TURA_GATEWAY_URL;
+    else process.env.TURA_GATEWAY_URL = previousUrl;
+    await close(server);
+    rmSync(home, { recursive: true, force: true });
+    rmSync(projectRoot, { recursive: true, force: true });
+    rmSync(otherRoot, { recursive: true, force: true });
+  }
+});
+
 function listen(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
