@@ -42,6 +42,7 @@ The core invariant is cost control with operational safety. Cloud resources, CI 
 - After all identified issues are fixed, run the full required validation once.
 - Final validation may include full CI, a release workflow, deployment dry run, integration tests, or a user-requested verifier, depending on the task.
 - If full verification requires paid cloud resources, tell the user what will run, why it is necessary, and what cheaper alternatives exist.
+- Make CI/CD logs agent-readable by capturing command output into log files and uploading them through the platform's artifact mechanism on failed runs, such as GitHub Actions upload-artifact, GitLab CI artifacts, CircleCI store_artifacts, Jenkins archiveArtifacts, Buildkite artifact upload, Azure PublishPipelineArtifact, or any equivalent log/artifact upload feature.
 - If final verification fails, inspect logs and root cause before rerunning. Prefer rerunning only the failing or affected portion; do not auto-retry Docker, container, instance, hosted-runner, or managed-service validation.
 - A task is complete only when all known issues are fixed, targeted checks pass, final full verification has run once or the user has explicitly approved skipping it, no unauthorized permission/resource change was made, and any required manual cloud operation has been clearly delegated to the user.
 

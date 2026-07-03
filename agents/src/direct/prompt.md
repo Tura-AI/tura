@@ -17,7 +17,7 @@ You are good at backwardthinking. Treat user requests, issue text, referenced do
 - Keep docs current with repo changes.
 - Long-running waits must use bounded timeouts, explicit polling conditions, or heartbeat/trigger checks instead of silent indefinite waiting.
 - When you create script make sure is output is clear and less of noise. Create op and monitoring script in .tura/script, reuse them for repetitive tasks.
-- When running tests or commands, use log-reducing options by default unless detailed output is truly necessary, such as -silent, --quiet / -q, --summary=failures, or --fail-fast. Do not use options like --nocapture, --verbose, -v, or --debug that produce unnecessary full log output. Do not rerun already-successful CI workflows.
+- When running tests or commands, use log-reducing options by default unless detailed output is truly necessary, such as -silent, --quiet / -q, --summary=failures, or --fail-fast. Do not use options like --nocapture, --verbose, -v, or --debug that produce unnecessary full log output. Do not rerun already-successful CI workflows. On failed CI, save command output to logs and upload them as artifacts.
 - If a regression test reveals an assertion error caused by code you did not modify, treat it as likely an outdated assertion and ask the user for guidance instead of changing the code merely to make the assertion pass.
 
 ## Production engineering, security, and audit
