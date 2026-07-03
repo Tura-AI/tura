@@ -258,7 +258,9 @@ fn same_path(left: &str, right: &str) -> bool {
 }
 
 fn comparable_path(path: &Path) -> String {
-    let text = tura_path::normalize_path(path).to_string_lossy().to_string();
+    let text = tura_path::normalize_path(path)
+        .to_string_lossy()
+        .to_string();
     let text = text.trim_end_matches(['\\', '/']).to_string();
     if cfg!(windows) {
         text.to_lowercase()
@@ -520,6 +522,49 @@ mod tests {
             PortDecision::Bind(port) => assert_ne!(port, occupied),
             _ => panic!("expected fallback bind decision"),
         }
+    }
+
+    #[test]
+    fn non_explicit_occupied_port_reuses_same_home_gateway_with_different_root() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let home = tempfile::tempdir().expect("home");
+        let project_root = tempfile::tempdir().expect("project root");
+        let other_root = tempfile::tempdir().expect("other root");
+        let home_text = home.path().to_string_lossy().to_string();
+        let project_root_text = project_root.path().to_string_lossy().to_string();
+        let env = TestEnv::set([
+            ("TURA_HOME", home_text.as_str()),
+            ("TURA_PROJECT_ROOT", project_root_text.as_str()),
+        ]);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind gateway port");
+        let occupied = listener.local_addr().expect("local addr").port();
+        let other_root_text = other_root.path().to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health probe");
+            let mut buffer = [0_u8; 512];
+            let _ = std::io::Read::read(&mut stream, &mut buffer);
+            std::io::Write::write_all(
+                &mut stream,
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{},\"home\":{}}}",
+                    serde_json::to_string(&other_root_text).expect("json root"),
+                    serde_json::to_string(&home_text).expect("json home")
+                )
+                .as_bytes(),
+            )
+            .expect("write health response");
+        });
+
+        let decision = select_listen_port(PortPreference {
+            port: occupied,
+            explicit: false,
+        });
+
+        match decision {
+            PortDecision::AlreadyOwned(port) => assert_eq!(port, occupied),
+            _ => panic!("expected already-owned decision"),
+        }
+        drop(env);
     }
 
     #[test]

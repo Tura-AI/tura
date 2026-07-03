@@ -308,7 +308,7 @@ fn launch_gateway_process(
         let candidate = tura_path::read_active_gateway_url_for_home(instance_home)
             .map(|url| GatewayEndpoint::parse(&url))
             .unwrap_or_else(|| target.clone());
-        if endpoint_is_usable(&candidate, false, my_root) {
+        if endpoint_is_usable(&candidate, false, my_root, instance_home) {
             return Ok(candidate);
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -1333,13 +1333,9 @@ mod tests {
                 .expect("write health response");
         });
 
-        let selected = select_gateway_endpoint(
-            "http://127.0.0.1:4126",
-            false,
-            &project_root,
-            &home,
-        )
-        .expect("select endpoint");
+        let selected =
+            select_gateway_endpoint("http://127.0.0.1:4126", false, &project_root, &home)
+                .expect("select endpoint");
 
         assert_eq!(selected.url(), format!("http://127.0.0.1:{port}"));
         drop(env);
