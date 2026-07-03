@@ -119,7 +119,7 @@ jobs:
           try {
             npm init -y --silent | Out-Null
             $env:TURA_NPM_PLATFORM_PACKAGE_DIR = $platformPackageDir.FullName
-            npm install --foreground-scripts --omit=optional $mainPackage | Out-Null
+            npm install --foreground-scripts --omit=optional $mainPackage
             $binName = if ($IsWindows) { "tura.cmd" } else { "tura" }
             $turaBin = Join-Path $installDir (Join-Path "node_modules/.bin" $binName)
             if (-not (Test-Path -LiteralPath $turaBin)) { throw "Installed tura bin was not found: $turaBin" }
