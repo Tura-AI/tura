@@ -120,7 +120,18 @@ jobs:
             npm init -y --silent | Out-Null
             $env:TURA_NPM_PLATFORM_PACKAGE_DIR = $platformPackageDir.FullName
             npm install --silent --omit=optional $mainPackage | Out-Null
-            npx tura --help | Select-Object -First 8
+            $PSNativeCommandUseErrorActionPreference = $false
+            $helpOutput = npx tura exec --help 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              $helpOutput | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
+              throw "npx tura exec --help failed with exit $LASTEXITCODE"
+            }
+            $helpText = $helpOutput -join "`n"
+            if (-not $helpText.Contains("Tura Rust CLI")) {
+              $helpOutput | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
+              throw "npx tura exec --help did not return the Rust CLI help text."
+            }
+            $helpOutput | Select-Object -First 8 | ForEach-Object { Write-Host $_ }
           } finally {
             Remove-Item Env:\TURA_NPM_PLATFORM_PACKAGE_DIR -ErrorAction SilentlyContinue
             Pop-Location
