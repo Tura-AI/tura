@@ -80,4 +80,4 @@ if (packageJson.publishConfig?.access !== "public") {
   process.exit(1);
 }
 
-console.log("npm package metadata looks ready.");
+console.error("npm package metadata looks ready.");
