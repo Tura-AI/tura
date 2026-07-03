@@ -397,10 +397,20 @@ fn find_release_root_from(path: &Path) -> Option<PathBuf> {
     } else {
         path.parent().unwrap_or(path)
     };
+    if let Some(source_root) = start
+        .ancestors()
+        .find(|candidate| source_checkout_root(candidate))
+    {
+        return Some(source_root.to_path_buf());
+    }
     start
         .ancestors()
         .find(|candidate| release_root_has_runtime_sources(candidate))
         .map(Path::to_path_buf)
+}
+
+fn source_checkout_root(candidate: &Path) -> bool {
+    candidate.join("Cargo.toml").is_file() && candidate.join("crates").join("gateway").is_dir()
 }
 
 fn release_root_has_runtime_sources(candidate: &Path) -> bool {
@@ -485,6 +495,20 @@ mod tests {
             "{}",
         )
         .expect("release provider config");
+
+        assert_eq!(
+            find_release_root_from(&target_release.join("tura_gateway.exe")),
+            Some(root.to_path_buf())
+        );
+    }
+
+    #[test]
+    fn release_root_prefers_source_checkout_over_target_release_runtime_copy() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        let target_release = root.join("target").join("release");
+        create_source_checkout_root(root);
+        create_release_runtime_root(&target_release);
 
         assert_eq!(
             find_release_root_from(&target_release.join("tura_gateway.exe")),
@@ -584,6 +608,50 @@ mod tests {
     }
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn create_source_checkout_root(root: &std::path::Path) {
+        std::fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        std::fs::create_dir_all(root.join("personas").join("src")).expect("personas dir");
+        std::fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        std::fs::create_dir_all(root.join("crates").join("gateway")).expect("gateway crate dir");
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("cargo toml");
+        std::fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
+    }
+
+    fn create_release_runtime_root(root: &std::path::Path) {
+        std::fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        std::fs::create_dir_all(root.join("personas").join("src")).expect("personas dir");
+        std::fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        std::fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
+    }
 
     struct TestEnv {
         previous: Vec<(&'static str, Option<std::ffi::OsString>)>,

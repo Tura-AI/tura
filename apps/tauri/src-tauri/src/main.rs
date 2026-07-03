@@ -479,14 +479,17 @@ fn default_browser_command(url: &str) -> Command {
 }
 
 fn is_runtime_root(candidate: &Path) -> bool {
-    (candidate.join("agents").join("src").is_dir()
-        && candidate.join("personas").join("src").is_dir())
+    is_source_checkout_root(candidate)
+        || (candidate.join("agents").join("src").is_dir()
+            && candidate.join("personas").join("src").is_dir())
         || candidate
             .join("config")
             .join("provider_config.json")
             .exists()
-        || (candidate.join("Cargo.toml").exists()
-            && candidate.join("crates").join("gateway").is_dir())
+}
+
+fn is_source_checkout_root(candidate: &Path) -> bool {
+    candidate.join("Cargo.toml").exists() && candidate.join("crates").join("gateway").is_dir()
 }
 
 fn instance_home_for_runtime_root(runtime_root: &Path) -> PathBuf {
@@ -501,11 +504,21 @@ fn instance_home_for_runtime_root(runtime_root: &Path) -> PathBuf {
 fn current_runtime_root() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
     let start = exe.parent().unwrap_or_else(|| Path::new("."));
+    runtime_root_from_start(start)
+}
+
+fn runtime_root_from_start(start: &Path) -> PathBuf {
+    if let Some(source_root) = start
+        .ancestors()
+        .find(|candidate| is_source_checkout_root(candidate))
+    {
+        return normalize_path(source_root);
+    }
     start
         .ancestors()
         .find(|candidate| is_runtime_root(candidate))
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| start.to_path_buf())
+        .map(normalize_path)
+        .unwrap_or_else(|| normalize_path(start))
 }
 
 fn current_project_root() -> PathBuf {
@@ -931,6 +944,21 @@ mod tests {
 
         drop(env);
         let _ = fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    fn runtime_root_prefers_source_checkout_over_target_release_runtime_copy() {
+        let root = test_temp_dir("runtime-root-source-checkout");
+        let target_release = root.join("target").join("release");
+        create_source_checkout_root(&root);
+        create_release_runtime_root(&target_release);
+
+        assert_eq!(
+            runtime_root_from_start(&target_release),
+            normalize_path(&root)
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1660,5 +1688,53 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    fn create_source_checkout_root(root: &Path) {
+        fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        fs::create_dir_all(root.join("personas").join("src")).expect("personas dir");
+        fs::create_dir_all(root.join("crates").join("gateway")).expect("gateway crate dir");
+        fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        fs::create_dir_all(root.join("config")).expect("config dir");
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("cargo toml");
+        fs::write(root.join("config").join("provider_config.json"), "{}").expect("provider config");
+        fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
+    }
+
+    fn create_release_runtime_root(root: &Path) {
+        fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        fs::create_dir_all(root.join("personas").join("src")).expect("personas dir");
+        fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        fs::create_dir_all(root.join("config")).expect("config dir");
+        fs::write(root.join("config").join("provider_config.json"), "{}").expect("provider config");
+        fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
     }
 }
