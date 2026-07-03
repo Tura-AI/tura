@@ -315,15 +315,21 @@ fn find_release_root_from(path: &Path) -> Option<PathBuf> {
     };
     start
         .ancestors()
-        .find(|candidate| {
-            candidate.join("agents").join("src").is_dir()
-                || candidate.join("personas").join("src").is_dir()
-                || candidate
-                    .join("config")
-                    .join("provider_config.json")
-                    .exists()
-        })
+        .find(|candidate| release_root_has_runtime_sources(candidate))
         .map(Path::to_path_buf)
+}
+
+fn release_root_has_runtime_sources(candidate: &Path) -> bool {
+    candidate
+        .join("crates")
+        .join("tools")
+        .join("src")
+        .join("command_run")
+        .join("schema.json")
+        .is_file()
+        && (candidate.join("agents").join("src").is_dir()
+            || candidate.join("personas").join("src").is_dir()
+            || candidate.join("Cargo.toml").is_file())
 }
 
 fn run_session_log_command() {
@@ -353,5 +359,48 @@ fn run_session_log_command() {
             eprintln!("session-log session_db command failed: {error:#}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_release_root_from;
+
+    #[test]
+    fn release_root_skips_target_release_config_without_runtime_tools() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        let target_release = root.join("target").join("release");
+
+        std::fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        std::fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("cargo toml");
+        std::fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
+
+        std::fs::create_dir_all(target_release.join("config")).expect("release config dir");
+        std::fs::write(
+            target_release.join("config").join("provider_config.json"),
+            "{}",
+        )
+        .expect("release provider config");
+
+        assert_eq!(
+            find_release_root_from(&target_release.join("tura_gateway.exe")),
+            Some(root.to_path_buf())
+        );
     }
 }
