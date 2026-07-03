@@ -144,11 +144,6 @@
   box-shadow: 0 0 0 3px rgba(242, 212, 107, 0.24);
 }
 
-.provider-auth-validate {
-  min-height: 30px;
-  padding-inline: var(--space-3);
-}
-
 .provider-auth-receipt {
   display: grid;
   grid-template-columns: minmax(120px, 0.38fr) minmax(0, 1fr) auto;

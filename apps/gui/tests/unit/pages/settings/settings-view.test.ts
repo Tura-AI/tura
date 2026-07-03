@@ -4,11 +4,7 @@ import type { SdkProvider } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import { mainTabEntries } from "../../../../app/src/pages/settings/main-tabs";
 import { providerDomains } from "../../../../app/src/pages/settings/provider-domain";
-import {
-  configDraftToPatch,
-  providerAuthDraftKey,
-  providerAuthMethodForValidation,
-} from "../../../../app/src/utils/settings";
+import { configDraftToPatch } from "../../../../app/src/utils/settings";
 
 const settingsViewSource = readFileSync(
   resolve(import.meta.dir, "../../../../app/src/pages/settings/settings-view.tsx"),
@@ -174,34 +170,5 @@ describe("settings config patches", () => {
     expect(settingsViewSource).toContain("value={props.state.cornerRadius}");
     expect(appShellSource).toContain("cornerRadiusScale(state().cornerRadius)");
     expect(appShellSource).toContain('"--corner-radius-scale"');
-  });
-});
-
-describe("provider auth validation", () => {
-  test("uses the draft key method when the top validate action is clicked", () => {
-    const apiMethod = {
-      type: "api",
-      kind: "api_key",
-      login: "api",
-      label: "OpenRouter API key",
-      token_env: "OPENROUTER_API_KEY",
-      available: true,
-      supports_refresh: false,
-    };
-    const oauthMethod = {
-      type: "oauth",
-      kind: "oauth_pkce",
-      login: "oauth",
-      label: "OAuth",
-      token_env: "OPENROUTER_OAUTH_TOKEN",
-      available: true,
-      supports_refresh: false,
-    };
-
-    expect(
-      providerAuthMethodForValidation("openrouter", [oauthMethod, apiMethod], {
-        [providerAuthDraftKey("openrouter", apiMethod)]: "sk-or-test",
-      }),
-    ).toBe(apiMethod);
   });
 });

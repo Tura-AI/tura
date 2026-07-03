@@ -17,7 +17,6 @@ import {
   copyText,
   providerAuthDraftKey,
   providerAuthDisplayState,
-  providerAuthMethodForValidation,
   type ProviderAuthDisplayState,
 } from "../../utils/settings";
 import { ReadonlyRow } from "./readonly-row";
@@ -59,8 +58,6 @@ function providerHasOauthLogin(state: AppState, providerId: string): boolean {
 function ProviderAuthStatusRow(props: {
   display: ProviderAuthDisplayState;
   receipt?: ProviderAuthActionResponse;
-  saving: boolean;
-  onValidate: () => void;
 }) {
   return (
     <div class="provider-auth-status-block">
@@ -70,14 +67,6 @@ function ProviderAuthStatusRow(props: {
           <span class={classNames("provider-auth-state-dot", props.display.level)} />
           {props.display.label}
         </code>
-        <button
-          type="button"
-          class="secondary provider-auth-validate"
-          disabled={props.saving}
-          onClick={props.onValidate}
-        >
-          {t("validate")}
-        </button>
       </div>
       <Show when={props.receipt}>
         {(receipt) => (
@@ -148,7 +137,6 @@ export function ProviderAuthDialog(props: {
   onAuthDraft: (providerId: string, value: string) => void;
   onAuthCode: (providerId: string, value: string) => void;
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
-  onValidate: (providerId: string, method?: ProviderAuthMethod) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
   onCompleteLogin: (providerId: string, code?: string, methodIndex?: number) => void;
   onLogout: (providerId: string) => void;
@@ -190,21 +178,7 @@ export function ProviderAuthDialog(props: {
         <Show when={provider()}>
           {(item) => (
             <div class="settings-fields provider-auth-info">
-              <ProviderAuthStatusRow
-                display={displayState()}
-                receipt={validationReceipt()}
-                saving={props.state.settingsSaving}
-                onValidate={() =>
-                  props.onValidate(
-                    props.panel.providerId,
-                    providerAuthMethodForValidation(
-                      props.panel.providerId,
-                      methods(),
-                      props.state.authDrafts,
-                    ),
-                  )
-                }
-              />
+              <ProviderAuthStatusRow display={displayState()} receipt={validationReceipt()} />
               <ReadonlyRow label={t("env")} value={item().env.join(", ") || "--"} />
               <ReadonlyRow label={t("capabilities")} value={providerCapabilityText(item())} />
             </div>
@@ -218,7 +192,6 @@ export function ProviderAuthDialog(props: {
           onAuthDraft={props.onAuthDraft}
           onAuthCode={props.onAuthCode}
           onSaveKey={props.onSaveKey}
-          onValidate={props.onValidate}
           onStartLogin={props.onStartLogin}
           onCompleteLogin={props.onCompleteLogin}
           onLogout={props.onLogout}
@@ -236,7 +209,6 @@ function ProviderAuthMethods(props: {
   onAuthDraft: (providerId: string, value: string) => void;
   onAuthCode: (providerId: string, value: string) => void;
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
-  onValidate: (providerId: string, method?: ProviderAuthMethod) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
   onCompleteLogin: (providerId: string, code?: string, methodIndex?: number) => void;
   onLogout?: (providerId: string) => void;
@@ -252,13 +224,6 @@ function ProviderAuthMethods(props: {
                   <span>{method.label}</span>
                   <small>{method.token_env ?? method.login_env ?? method.kind}</small>
                 </div>
-                <button
-                  class="secondary provider-auth-validate"
-                  disabled={props.state.settingsSaving}
-                  onClick={() => props.onValidate(provider().id, method)}
-                >
-                  {t("validate")}
-                </button>
                 <Show when={methodUsesTokenInput(method)}>
                   <div class="login-method-controls">
                     <ProtectedTokenInput

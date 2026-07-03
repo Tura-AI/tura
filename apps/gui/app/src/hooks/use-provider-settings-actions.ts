@@ -392,7 +392,6 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
     saveRuntimeSettings,
     updateModelTier,
     saveProviderKey,
-    validateProvider,
     startProviderLogin,
     completeProviderLogin,
     logoutProvider,

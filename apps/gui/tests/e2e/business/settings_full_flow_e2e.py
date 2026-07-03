@@ -693,11 +693,6 @@ async def run_flow():
         check(checks, "login-methods-visible", login_initial["loginMethodCount"] >= 1, login_initial)
 
         await page.get_by_placeholder("OPENAI_API_KEY").fill("sk-settings-full-e2e-token")
-        await page.locator(".provider-auth-state-row .provider-auth-validate").click()
-        await page.wait_for_function("() => document.body.innerText.includes('Validated')", timeout=10_000)
-        token_validated = await screenshot(page, "15-token-validated-before-save", results)
-        check(checks, "token-validated-before-save", "Validated" in token_validated["body"], token_validated)
-
         await page.locator(".login-method").filter(has_text="OpenAI API Key").get_by_role("button", name="Save").click()
         await page.wait_for_function("() => document.body.innerText.includes('Connected')", timeout=10_000)
         token_saved = await screenshot(page, "16-token-saved", results)
@@ -772,14 +767,6 @@ async def run_flow():
     check(checks, "backend-config-save-called", "config.patch" in record_types, records["records"])
     if "auth.token" in record_types:
         check(checks, "backend-token-auth-called", True, records["records"])
-    validate_records = [item for item in records["records"] if item.get("type") == "auth.validate"]
-    check(checks, "backend-auth-validate-called", bool(validate_records), records["records"])
-    check(
-        checks,
-        "backend-auth-validate-used-draft-key",
-        any(item.get("provider_id") == "openai" and item.get("token_env") == "OPENAI_API_KEY" and item.get("has_key") for item in validate_records),
-        validate_records,
-    )
     if "oauth.authorize" in record_types or "oauth.callback" in record_types:
         check(checks, "backend-oauth-authorize-called", "oauth.authorize" in record_types, records["records"])
         check(checks, "backend-oauth-callback-called", "oauth.callback" in record_types, records["records"])
