@@ -8,7 +8,8 @@
     "app/src/**/*.ts",
     "app/src/**/*.tsx",
     "app/vite.config.ts",
-    "sdk/gateway/src/**/*.ts"
+    "sdk/gateway/src/**/*.ts",
+    "../tui/src/agent-runtime-config.ts"
   ],
   "exclude": [
     "app/dist",

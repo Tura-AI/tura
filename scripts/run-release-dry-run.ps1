@@ -5,11 +5,16 @@ param(
   [switch]$SkipGui,
   [switch]$SkipTauri,
   [switch]$BackendOnly,
+  [switch]$SkipApps,
   [switch]$Clean,
   [int]$Parallelism = 4
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($SkipApps) {
+  throw "-SkipApps was removed for release builds because it was ambiguous. Use -BackendOnly, -SkipTui, -SkipGui, or -SkipTauri explicitly."
+}
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir ".."))

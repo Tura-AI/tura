@@ -326,7 +326,10 @@ async function inputLoop(
   });
 }
 
-function startGatewayShutdownWatcher(gatewayUrl: string, onShutdown: () => void): ReturnType<typeof setInterval> {
+function startGatewayShutdownWatcher(
+  gatewayUrl: string,
+  onShutdown: () => void,
+): ReturnType<typeof setInterval> {
   let consecutiveFailures = 0;
   let probing = false;
   return setInterval(() => {

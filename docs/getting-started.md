@@ -7,8 +7,9 @@ clients, and CI-style checks.
 ## Install Dependencies
 
 Install user-local dependency tools and package-owned dependencies first. This
-does not build binaries: it installs `uv`, `bun`, command-local Python `.venv`
-directories, and Bun workspaces in place.
+does not build binaries: it installs `uv`, ensures Python 3.12 is available to
+`uv`, installs `bun`, command-local Python `.venv` directories, and Bun
+workspaces in place.
 
 ```powershell
 .\scripts\install.ps1
@@ -88,21 +89,21 @@ Per-run command tool shell overrides are available as CLI commands and flags.
 ```powershell
 tura bash "Inspect the workspace using bash command tools"
 tura zsh "Inspect shell startup files with zsh command tools"
-tura shll "Use the system shell_command surface"
+tura shel "Use the system shell_command surface"
 tura exec --zsh "Run through the Rust CLI front with zsh command tools"
 ```
 
 ```bash
 tura bash "Inspect the workspace using bash command tools"
 tura zsh "Inspect shell startup files with zsh command tools"
-tura shll "Use the system shell_command surface"
+tura shel "Use the system shell_command surface"
 tura exec --zsh "Run through the Rust CLI front with zsh command tools"
 ```
 
 ## Start Clients
 
-Start the TUI, GUI, or desktop shell. Each auto-starts or attaches to its own
-`tura_gateway` on port 4126.
+Start `tura_gateway` first, then launch the TUI, GUI, or desktop shell. Clients
+only connect to an existing gateway; they fail if gateway is not already running.
 
 ```powershell
 .\scripts\start.ps1 -Tui --help

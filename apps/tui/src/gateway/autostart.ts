@@ -1,49 +1,39 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { createServer } from "node:net";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TerminalCapabilities } from "../tui/capabilities.js";
 import { TUI_DRAW_INTERVAL_MS } from "../tui/frame-rate.js";
 import { iconAnimationFrame } from "../tui/render/busy-animation.js";
 import { t } from "../i18n.js";
-import { defaultGatewayUrl, readActiveGatewayUrl, writeActiveGatewayUrl } from "./active-url.js";
+import {
+  currentBuildMode,
+  defaultGatewayUrl,
+  readActiveGatewayUrl,
+  writeActiveGatewayUrl,
+} from "./active-url.js";
 
-// Tracks only a just-spawned gateway during startup so a failed startup can be
-// cleaned up. Normal TUI exit deliberately leaves gateway alive for the OS tray.
-let ownedGatewayProcess: ChildProcess | undefined;
+type StartupStep = "checking";
 
-function releaseOwnedGatewayReference(): void {
-  ownedGatewayProcess = undefined;
-}
-
-/** For testing only: inject a process as the owned gateway. */
-export function _setOwnedGatewayForTest(child: ChildProcess | undefined): void {
-  ownedGatewayProcess = child;
-}
-
-/** For testing only: release the owned gateway reference without killing it. */
-export function _releaseOwnedGatewayForTest(): void {
-  releaseOwnedGatewayReference();
-}
-
-type StartupStep = "checking" | "starting" | "waiting";
-
-const HEALTH_TIMEOUT_MS = 20_000;
 const HEALTH_POLL_INTERVAL_MS = 500;
-
-const gatewayBinaryName = process.platform === "win32" ? "tura_gateway.exe" : "tura_gateway";
+const GATEWAY_START_TIMEOUT_MS = 20_000;
 
 interface GatewayIdentity {
   root: string;
+  home?: string;
   version?: string;
 }
 
-interface GatewayStartupState {
-  exitCode?: number | null;
-  exitSignal?: string | null;
-  spawnError?: unknown;
+interface GatewayLaunchRequest {
+  targetUrl: string;
+  instanceHome: string;
+  projectRoot: string;
+  dev: boolean;
 }
+
+type GatewayLauncher = (request: GatewayLaunchRequest) => Promise<string>;
+
+let gatewayLauncher: GatewayLauncher = launchGatewayProcess;
 
 function gatewayCandidates(
   requestedUrl: string,
@@ -58,162 +48,78 @@ function gatewayCandidates(
   return [...new Set(candidates.map(stripTrailingSlash))];
 }
 
-/**
- * Ensure a gateway this package can use is running, and return the URL to talk
- * to it on.
- *
- * Behaviour:
- *  - Explicit URLs are trusted as-is.
- *  - Otherwise, reuse a healthy project active URL first.
- *  - If active is stale, try this build's fixed default port.
- *  - If nothing is listening, start our own gateway on that fixed port.
- */
+/** Ensure a same-home gateway is running, starting one when non-explicit lookup misses. */
 export async function ensureGatewayAvailable(
   gatewayUrl: string,
   capabilities: TerminalCapabilities,
-  _dev?: boolean,
+  dev?: boolean,
   explicit?: boolean,
 ): Promise<string> {
   const desiredUrl = stripTrailingSlash(gatewayUrl);
-  const myRoot = packageRoot();
-  const resolved = resolveGatewayBinary(myRoot);
-  const binary = resolved.binary;
-  const instanceHome = process.env.TURA_HOME?.trim() ? canonical(process.env.TURA_HOME) : myRoot;
-  const mode = gatewayMode(binary);
+  const instanceHome = process.env.TURA_HOME?.trim()
+    ? canonical(process.env.TURA_HOME)
+    : packageRoot();
+  const projectRoot = packageRoot();
   const targetUrl = explicit ? desiredUrl : stripTrailingSlash(defaultGatewayUrl());
-  for (const candidate of gatewayCandidates(
-    desiredUrl,
-    targetUrl,
-    instanceHome,
-    Boolean(explicit),
-  )) {
-    const candidateIdentity = await gatewayIdentityWithProbeTimeout(candidate);
-    if (candidateIdentity && (explicit || isOwnGateway(candidateIdentity, myRoot))) {
-      writeActiveGatewayUrl(candidate, instanceHome);
-      return candidate;
-    }
-    if (!candidateIdentity && candidate !== targetUrl && !(await canBindGatewayUrl(candidate))) {
-      await terminateGatewayFromLock(instanceHome, mode, candidate);
-    }
+  const candidates = gatewayCandidates(desiredUrl, targetUrl, instanceHome, Boolean(explicit));
+
+  let connectedUrl: string | undefined;
+  await runWithSpinner({
+    step: "checking",
+    text: t("gatewayWaiting"),
+    capabilities,
+    run: async (tick) => {
+      for (const candidate of candidates) {
+        tick();
+        const identity = await gatewayIdentityWithProbeTimeout(candidate);
+        if (identity && gatewayMatchesInstance(identity, instanceHome, projectRoot, Boolean(explicit))) {
+          connectedUrl = candidate;
+          return;
+        }
+      }
+    },
+  });
+
+  if (connectedUrl) {
+    writeActiveGatewayUrl(connectedUrl, instanceHome);
+    return connectedUrl;
   }
 
-  let identity = await gatewayIdentityWithProbeTimeout(targetUrl);
-  // An explicitly chosen URL (flag / TURA_GATEWAY_URL) is trusted as-is: if a
-  // Tura gateway answers there, reuse it regardless of its reported root. The
-  // root identity check only guards reuse of the default auto-discovered port.
-  if (identity && (explicit || isOwnGateway(identity, myRoot))) {
-    writeActiveGatewayUrl(targetUrl, instanceHome);
-    return targetUrl;
-  }
-
-  if (!identity && !(await canBindGatewayUrl(targetUrl))) {
-    identity = await waitForGatewayIdentity(targetUrl, HEALTH_TIMEOUT_MS);
-    if (identity && (explicit || isOwnGateway(identity, myRoot))) {
-      writeActiveGatewayUrl(targetUrl, instanceHome);
-      return targetUrl;
-    }
-    await terminateGatewayFromLock(instanceHome, mode, targetUrl);
-    identity = await waitForGatewayIdentity(targetUrl, HEALTH_POLL_INTERVAL_MS);
-    if (identity && (explicit || isOwnGateway(identity, myRoot))) {
-      writeActiveGatewayUrl(targetUrl, instanceHome);
-      return targetUrl;
-    }
-  }
-
-  if (identity || !(await canBindGatewayUrl(targetUrl))) {
-    throw new Error(
-      `gateway URL ${targetUrl} is occupied by a foreign process; set --gateway-url/TURA_GATEWAY_URL to an explicit Tura gateway or stop the foreign process`,
-    );
-  }
-
-  if (!binary) {
-    throw new Error(t("gatewayMissingBinary"));
-  }
-
-  const launchBinary = binary;
-  const port = portOf(targetUrl);
-  const spawnPort = port || process.env.PORT;
-  const startupState: GatewayStartupState = {};
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    startupState.exitCode = undefined;
-    startupState.exitSignal = undefined;
-    startupState.spawnError = undefined;
-    await runWithSpinner({
-      step: "starting",
-      text: t("gatewayStarting"),
-      capabilities,
-      run: async () => {
-        const child = spawn(launchBinary, [], {
-          cwd: myRoot,
-          // Gateway is a persistent front now: closing this TUI must not close
-          // the shared gateway process or its OS tray menu.
-          detached: true,
-          stdio: ["ignore", "ignore", "ignore"],
-          windowsHide: true,
-          env: {
-            ...process.env,
-            ...(spawnPort ? { PORT: spawnPort } : {}),
-            TURA_HOME: instanceHome,
-            TURA_PROJECT_ROOT: myRoot,
-            TURA_GATEWAY_URL: targetUrl,
-          },
-        });
-        child.on("error", (error) => {
-          startupState.spawnError = error;
-        });
-        child.on("exit", (code, signal) => {
-          startupState.exitCode = code;
-          startupState.exitSignal = signal;
-        });
-        // unref so the event loop can exit normally even while gateway is alive.
-        child.unref();
-        ownedGatewayProcess = child;
-      },
+  if (!explicit) {
+    const startedUrl = await gatewayLauncher({
+      targetUrl,
+      instanceHome,
+      projectRoot,
+      dev: Boolean(dev),
     });
-
-    if (await waitForGateway(targetUrl, capabilities, startupState, instanceHome, mode)) {
-      writeActiveGatewayUrl(targetUrl, instanceHome);
-      return targetUrl;
+    const identity = await waitForSameHomeGateway(
+      startedUrl,
+      instanceHome,
+      projectRoot,
+      GATEWAY_START_TIMEOUT_MS,
+    );
+    if (identity) {
+      writeActiveGatewayUrl(startedUrl, instanceHome);
+      return startedUrl;
     }
+    throw new Error(t("gatewayStartTimeout"));
   }
-  throw new Error(t("gatewayStartTimeout"));
-}
 
-interface ResolvedGateway {
-  /** Path to an existing gateway binary, when one was found. */
-  binary?: string;
-}
-
-function resolveGatewayBinary(myRoot: string): ResolvedGateway {
-  const candidates: string[] = [];
-  const override = process.env.TURA_GATEWAY_BIN;
-  if (override) candidates.push(override);
-  const profile = currentBuildMode();
-  const execDir = dirname(process.execPath);
-  const repo = findRepoRoot();
-  candidates.push(join(execDir, gatewayBinaryName));
-  candidates.push(join(myRoot, gatewayBinaryName));
-  candidates.push(
-    join(repo, "target", profile === "release" ? "release" : "debug", gatewayBinaryName),
+  throw new Error(
+    `Gateway is not running at ${candidates.join(", ")}. Explicit gateway URLs are only connected, not auto-started.`,
   );
-
-  for (const candidate of candidates) {
-    if (candidate && existsSync(candidate)) return { binary: candidate };
-  }
-  return {};
 }
 
-async function waitForGatewayIdentity(
-  gatewayUrl: string,
-  timeoutMs: number,
-): Promise<GatewayIdentity | null> {
-  const deadline = Date.now() + timeoutMs;
-  do {
-    const identity = await gatewayIdentityWithProbeTimeout(gatewayUrl);
-    if (identity) return identity;
-    await delay(HEALTH_POLL_INTERVAL_MS);
-  } while (Date.now() < deadline);
-  return null;
+export async function _gatewayProbeForTest(gatewayUrl: string): Promise<boolean> {
+  return Boolean(await gatewayIdentityWithProbeTimeout(stripTrailingSlash(gatewayUrl)));
+}
+
+export function _setGatewayLauncherForTest(launcher: GatewayLauncher): () => void {
+  const previous = gatewayLauncher;
+  gatewayLauncher = launcher;
+  return () => {
+    gatewayLauncher = previous;
+  };
 }
 
 async function gatewayIdentityWithProbeTimeout(
@@ -222,43 +128,151 @@ async function gatewayIdentityWithProbeTimeout(
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), HEALTH_POLL_INTERVAL_MS);
-    const response = await fetch(`${stripTrailingSlash(gatewayUrl)}/global/health`, {
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!response.ok) return null;
-    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    return {
-      root: typeof body.root === "string" ? body.root : "",
-      version: typeof body.version === "string" ? body.version : undefined,
-    };
+    try {
+      const response = await fetch(`${stripTrailingSlash(gatewayUrl)}/global/health`, {
+        signal: controller.signal,
+      });
+      if (!response.ok) return null;
+      const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      if (body.healthy !== true) return null;
+      return {
+        root: typeof body.root === "string" ? body.root : "",
+        home: typeof body.home === "string" ? body.home : undefined,
+        version: typeof body.version === "string" ? body.version : undefined,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
   } catch {
     return null;
   }
 }
 
-function isOwnGateway(identity: GatewayIdentity, myRoot: string): boolean {
-  // Older gateways report no root; assume the fixed port belongs to us.
-  if (!identity.root) return true;
-  return sameRoot(identity.root, myRoot);
+async function waitForSameHomeGateway(
+  gatewayUrl: string,
+  instanceHome: string,
+  projectRoot: string,
+  timeoutMs: number,
+): Promise<GatewayIdentity | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const identity = await gatewayIdentityWithProbeTimeout(gatewayUrl);
+    if (identity && gatewayMatchesInstance(identity, instanceHome, projectRoot, false)) {
+      return identity;
+    }
+    await delay(HEALTH_POLL_INTERVAL_MS);
+  }
+  return null;
+}
+
+async function launchGatewayProcess(request: GatewayLaunchRequest): Promise<string> {
+  const executable = resolveGatewayBinary(request.dev);
+  if (!executable) throw new Error(t("gatewayMissingBinary"));
+  const targetUrl = stripTrailingSlash(request.targetUrl);
+  let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  const child = spawn(executable, [], {
+    detached: true,
+    env: gatewayProcessEnv(request),
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.once("exit", (code, signal) => {
+    exited = { code, signal };
+  });
+  child.unref();
+  const deadline = Date.now() + GATEWAY_START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (exited) {
+      throw new Error(`Gateway exited before becoming healthy (${exitDescription(exited)}).`);
+    }
+    const activeUrl = readActiveGatewayUrl(request.instanceHome);
+    const candidateUrl = activeUrl ? stripTrailingSlash(activeUrl) : targetUrl;
+    const identity = await gatewayIdentityWithProbeTimeout(candidateUrl);
+    if (identity && gatewayMatchesInstance(identity, request.instanceHome, request.projectRoot, false)) {
+      return candidateUrl;
+    }
+    await delay(HEALTH_POLL_INTERVAL_MS);
+  }
+  stopUnreadyChild(child);
+  throw new Error(t("gatewayStartTimeout"));
+}
+
+function gatewayProcessEnv(request: GatewayLaunchRequest): NodeJS.ProcessEnv {
+  const port = portFromGatewayUrl(request.targetUrl);
+  return {
+    ...process.env,
+    TURA_HOME: request.instanceHome,
+    TURA_PROJECT_ROOT: request.projectRoot,
+    TURA_GATEWAY_PORT: port ?? process.env.TURA_GATEWAY_PORT,
+  };
+}
+
+function resolveGatewayBinary(dev: boolean): string | undefined {
+  const executable = process.platform === "win32" ? "tura_gateway.exe" : "tura_gateway";
+  const fromEnv = process.env.TURA_GATEWAY_BIN || process.env.TURA_GATEWAY_EXE;
+  const repo = packageRoot();
+  const mode = dev || currentBuildMode() === "dev" ? "debug" : "release";
+  const candidates = [
+    fromEnv,
+    join(dirname(process.execPath), executable),
+    join(repo, "target", mode, executable),
+    join(repo, "target", "release", executable),
+    join(repo, "target", "debug", executable),
+    join(repo, "bin", executable),
+  ].filter((value): value is string => Boolean(value));
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function portFromGatewayUrl(gatewayUrl: string): string | undefined {
+  try {
+    const parsed = new URL(gatewayUrl);
+    return parsed.port || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function exitDescription(exit: { code: number | null; signal: NodeJS.Signals | null }): string {
+  return exit.signal ? `signal ${exit.signal}` : `exit code ${exit.code ?? 1}`;
+}
+
+function stopUnreadyChild(child: ChildProcess): void {
+  try {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+  } catch {
+    // Best effort: the gateway may have already detached or exited.
+  }
+}
+
+function gatewayMatchesInstance(
+  identity: GatewayIdentity,
+  instanceHome: string,
+  projectRoot: string,
+  explicit: boolean,
+): boolean {
+  if (explicit) return true;
+  if (identity.home) return samePath(identity.home, instanceHome);
+  return samePath(identity.root, projectRoot);
+}
+
+function samePath(left: string, right: string): boolean {
+  if (!left.trim() || !right.trim()) return false;
+  return comparablePath(left) === comparablePath(right);
+}
+
+function comparablePath(value: string): string {
+  const normalized = canonical(value).replace(/[\\/]+$/u, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 function packageRoot(): string {
   const fromEnv = process.env.TURA_PROJECT_ROOT;
   if (fromEnv && existsSync(fromEnv)) return canonical(fromEnv);
   return canonical(findRepoRoot());
-}
-
-function sameRoot(left: string, right: string): boolean {
-  return normalizeRoot(left) === normalizeRoot(right);
-}
-
-function normalizeRoot(value: string): string {
-  // Strip the Windows verbatim prefix the gateway's canonicalize() may emit.
-  let normalized = canonical(value).replace(/^\\\\\?\\(UNC\\)?/u, (_m, unc) => (unc ? "\\\\" : ""));
-  normalized = normalized.replace(/[\\/]+$/u, "");
-  if (process.platform === "win32") normalized = normalized.toLowerCase();
-  return normalized;
 }
 
 function canonical(value: string): string {
@@ -269,228 +283,6 @@ function canonical(value: string): string {
   }
 }
 
-async function waitForGateway(
-  gatewayUrl: string,
-  capabilities: TerminalCapabilities,
-  startupState?: GatewayStartupState,
-  instanceHome?: string,
-  mode?: "dev" | "release",
-): Promise<boolean> {
-  let becameHealthy = false;
-  await runWithSpinner({
-    step: "waiting",
-    text: t("gatewayWaiting"),
-    capabilities,
-    run: async (tick) => {
-      const deadline = Date.now() + HEALTH_TIMEOUT_MS;
-      while (Date.now() < deadline) {
-        if (startupState?.spawnError) {
-          throw startupState.spawnError instanceof Error
-            ? startupState.spawnError
-            : new Error(String(startupState.spawnError));
-        }
-        if (startupState && startupState.exitCode !== undefined) {
-          const detail = startupState.exitSignal
-            ? `by signal ${startupState.exitSignal}`
-            : `exit code ${startupState.exitCode ?? "unknown"}`;
-          throw new Error(`${t("gatewayStartTimeout")} (${detail})`);
-        }
-        if (await healthOk(gatewayUrl)) {
-          becameHealthy = true;
-          return;
-        }
-        tick();
-        await delay(TUI_DRAW_INTERVAL_MS);
-      }
-      const killed =
-        instanceHome && mode
-          ? await terminateGatewayFromLock(instanceHome, mode, gatewayUrl)
-          : false;
-      const killedOwned = await forceKillOwnedGateway();
-      if (!killed && !killedOwned) {
-        throw new Error(`${t("gatewayStartTimeout")} (failed to kill unhealthy gateway)`);
-      }
-    },
-  });
-  return becameHealthy;
-}
-
-async function healthOk(gatewayUrl: string): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), HEALTH_POLL_INTERVAL_MS);
-    const response = await fetch(`${gatewayUrl.replace(/\/+$/u, "")}/global/health`, {
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-interface GatewayLockRecord {
-  pid?: number;
-  processStartTime?: number;
-  kind?: string;
-  mode?: string;
-  port?: string;
-  root?: string;
-}
-
-async function terminateGatewayFromLock(
-  instanceHome: string,
-  mode: "dev" | "release",
-  gatewayUrl: string,
-): Promise<boolean> {
-  const port = portOf(gatewayUrl);
-  if (!port) return false;
-  const record = readGatewayLock(instanceHome, mode);
-  if (!record?.pid || !record.processStartTime) return false;
-  if (record.kind !== "gateway" || record.mode !== mode || record.port !== port) return false;
-  if (!record.root || !sameRoot(record.root, instanceHome)) return false;
-  const currentStart = await processStartTime(record.pid);
-  if (currentStart === undefined || currentStart !== record.processStartTime) return false;
-  killProcessTree(record.pid);
-  await waitForProcessExit(record.pid, 5_000);
-  return !isProcessAlive(record.pid);
-}
-
-function readGatewayLock(
-  instanceHome: string,
-  mode: "dev" | "release",
-): GatewayLockRecord | undefined {
-  const path = join(instanceHome, ".tura", "locks", `gateway-${mode}.lock`);
-  let raw = "";
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
-  const record: GatewayLockRecord = {};
-  for (const line of raw.split(/\r?\n/u)) {
-    const index = line.indexOf("=");
-    if (index < 0) continue;
-    const key = line.slice(0, index).trim();
-    const value = line.slice(index + 1).trim();
-    if (key === "pid") record.pid = Number(value);
-    else if (key === "process_start_time") record.processStartTime = Number(value);
-    else if (key === "kind") record.kind = value;
-    else if (key === "mode") record.mode = value;
-    else if (key === "port") record.port = value;
-    else if (key === "root") record.root = value;
-  }
-  return record;
-}
-
-function killProcessTree(pid: number): void {
-  if (process.platform === "win32") {
-    spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
-    return;
-  }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  setTimeout(() => {
-    if (isProcessAlive(pid)) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already exited.
-      }
-    }
-  }, 2_000).unref();
-}
-
-async function forceKillOwnedGateway(): Promise<boolean> {
-  const proc = ownedGatewayProcess;
-  const pid = proc?.pid;
-  releaseOwnedGatewayReference();
-  if (!pid) return false;
-  killProcessTree(pid);
-  await waitForProcessExit(pid, 5_000);
-  return !isProcessAlive(pid);
-}
-
-async function waitForProcessExit(pid: number, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline && isProcessAlive(pid)) {
-    await delay(100);
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function processStartTime(pid: number): Promise<number | undefined> {
-  if (process.platform === "win32") {
-    return processStartTimeWindows(pid);
-  }
-  return processStartTimeUnix(pid);
-}
-
-async function processStartTimeWindows(pid: number): Promise<number | undefined> {
-  const script = `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; if ($p) { ([DateTimeOffset]$p.CreationDate).ToUnixTimeSeconds() }`;
-  const output = await collectProcessOutput("powershell", ["-NoProfile", "-Command", script]);
-  const startTime = Number(output.trim());
-  return Number.isFinite(startTime) ? startTime : undefined;
-}
-
-async function processStartTimeUnix(pid: number): Promise<number | undefined> {
-  const output = await collectProcessOutput("ps", ["-o", "lstart=", "-p", String(pid)]);
-  const date = Date.parse(output.trim());
-  return Number.isFinite(date) ? Math.floor(date / 1000) : undefined;
-}
-
-function collectProcessOutput(command: string, args: string[]): Promise<string> {
-  return new Promise((resolveOutput) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
-    let output = "";
-    child.stdout?.on("data", (chunk: Buffer) => {
-      output += chunk.toString("utf8");
-    });
-    child.on("error", () => resolveOutput(""));
-    child.on("exit", () => resolveOutput(output));
-  });
-}
-
-function gatewayMode(binary: string | undefined): "dev" | "release" {
-  if (!binary) return currentBuildMode();
-  const normalized = binary.replace(/\\/g, "/").toLowerCase();
-  if (normalized.includes("/target/debug/")) return "dev";
-  if (normalized.includes("/target/release/")) return "release";
-  return currentBuildMode();
-}
-
-function currentBuildMode(): "dev" | "release" {
-  if (process.env.TURA_BUILD_KIND === "release") return "release";
-  const normalized = process.execPath.replace(/\\/g, "/").toLowerCase();
-  return normalized.includes("/target/release/") ? "release" : "dev";
-}
-
-async function canBindGatewayUrl(gatewayUrl: string): Promise<boolean> {
-  const port = Number(portOf(gatewayUrl));
-  if (!Number.isInteger(port) || port <= 0) return true;
-  return new Promise((resolveBind) => {
-    const server = createServer();
-    server.unref();
-    server.once("error", () => resolveBind(false));
-    server.listen(port, "127.0.0.1", () => {
-      server.close(() => resolveBind(true));
-    });
-  });
-}
-
-export const _canBindGatewayUrlForTest = canBindGatewayUrl;
-
 async function runWithSpinner(options: {
   step: StartupStep;
   text: string;
@@ -499,7 +291,7 @@ async function runWithSpinner(options: {
 }): Promise<void> {
   let frame = 0;
   const frames = options.capabilities.unicode
-    ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "⠋", "⠙", "⠹", "⠸", "⠼"]
+    ? [".", "..", "..."]
     : ["|", "/", "-", "\\", "-", "/"];
   const draw = () => {
     if (!process.stdout.isTTY) return;
@@ -533,39 +325,40 @@ function findRepoRoot(): string {
     dirname(fileURLToPath(import.meta.url)),
   ];
   for (const start of starts) {
-    let current = resolve(start);
-    for (let depth = 0; depth < 8; depth += 1) {
-      if (isRuntimeRoot(current)) return current;
-      const parent = dirname(current);
-      if (parent === current) break;
-      current = parent;
-    }
+    const sourceRoot = findAncestor(start, isSourceCheckoutRoot);
+    if (sourceRoot) return sourceRoot;
+  }
+  for (const start of starts) {
+    const runtimeRoot = findAncestor(start, isRuntimeRoot);
+    if (runtimeRoot) return runtimeRoot;
   }
   return process.cwd();
 }
 
+function findAncestor(start: string, predicate: (candidate: string) => boolean): string | undefined {
+  let current = resolve(start);
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (predicate(current)) return current;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return undefined;
+}
+
+function isSourceCheckoutRoot(candidate: string): boolean {
+  return existsSync(join(candidate, "Cargo.toml")) && existsSync(join(candidate, "crates", "gateway"));
+}
+
 function isRuntimeRoot(candidate: string): boolean {
   return (
-    (existsSync(join(candidate, "Cargo.toml")) &&
-      existsSync(join(candidate, "crates", "gateway"))) ||
+    isSourceCheckoutRoot(candidate) ||
     (existsSync(join(candidate, "agents", "src")) &&
       existsSync(join(candidate, "personas", "src"))) ||
     existsSync(join(candidate, "config", "provider_config.json"))
   );
 }
 
-function portOf(gatewayUrl: string): string | undefined {
-  try {
-    return new URL(gatewayUrl).port || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/u, "");
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }

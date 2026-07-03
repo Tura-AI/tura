@@ -32,28 +32,7 @@ fn main() {
         std::env::set_var("OPENAI_LOGIN", "oauth");
     }
 
-    let desired_port = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.trim().parse::<u16>().ok())
-        .unwrap_or_else(default_port_for_exe);
-
-    let gateway_lock = match gateway::process_lock::ProcessLock::acquire(
-        &tura_path::instance_home(),
-        "gateway",
-        mode_for_exe(),
-        Some(desired_port),
-    ) {
-        Ok(lock) => lock,
-        Err(error) => {
-            if gateway_root_on_port(desired_port).as_deref() == Some(my_root().as_str()) {
-                write_active_gateway_url(desired_port);
-                println!("✅ Gateway for this home is already running on http://127.0.0.1:{desired_port}");
-                return;
-            }
-            eprintln!("gateway ownership lock refused startup: {error:#}");
-            std::process::exit(1);
-        }
-    };
+    let desired_port = desired_port_for_exe();
 
     let port = match select_listen_port(desired_port) {
         PortDecision::Bind(port) => port,
@@ -64,12 +43,30 @@ fn main() {
         }
         PortDecision::Unavailable(port) => {
             eprintln!("gateway port {port} is occupied by a foreign process; set PORT to an explicit free port or stop the foreign process");
-            drop(gateway_lock);
+            std::process::exit(1);
+        }
+    };
+
+    let gateway_lock = match gateway::process_lock::ProcessLock::acquire(
+        &tura_path::instance_home(),
+        "gateway",
+        mode_for_exe(),
+        Some(port),
+    ) {
+        Ok(lock) => lock,
+        Err(error) => {
+            if gateway_identity_on_port(port).is_some_and(|identity| identity.matches_instance()) {
+                write_active_gateway_url(port);
+                println!("✅ Gateway for this home is already running on http://127.0.0.1:{port}");
+                return;
+            }
+            eprintln!("gateway ownership lock refused startup: {error:#}");
             std::process::exit(1);
         }
     };
     // Keep the resolved port visible to children (runtime workers, callbacks).
     std::env::set_var("PORT", port.to_string());
+    std::env::set_var(tura_path::TURA_GATEWAY_PORT_ENV, port.to_string());
 
     if let Err(error) = gateway::router_process::start_global_router_process() {
         eprintln!("gateway failed to start persistent router: {error:#}");
@@ -144,6 +141,37 @@ fn default_port_for_exe() -> u16 {
     tura_path::default_gateway_port_for_build_kind(mode_for_exe())
 }
 
+#[derive(Clone, Copy)]
+struct PortPreference {
+    port: u16,
+    explicit: bool,
+}
+
+fn desired_port_for_exe() -> PortPreference {
+    if let Some(port) = env_port("PORT") {
+        return PortPreference {
+            port,
+            explicit: true,
+        };
+    }
+    if let Some(port) = env_port(tura_path::TURA_GATEWAY_PORT_ENV) {
+        return PortPreference {
+            port,
+            explicit: false,
+        };
+    }
+    PortPreference {
+        port: default_port_for_exe(),
+        explicit: false,
+    }
+}
+
+fn env_port(key: &str) -> Option<u16> {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+}
+
 fn mode_for_exe() -> &'static str {
     tura_path::build_kind()
 }
@@ -162,14 +190,27 @@ enum PortDecision {
 /// Prefer the fixed (per-package) port. If it is occupied by our own
 /// directory's gateway, report it as already-running. If it is occupied by a
 /// foreign process, fail instead of silently floating to another port.
-fn select_listen_port(desired_port: u16) -> PortDecision {
-    if port_is_free(desired_port) {
-        return PortDecision::Bind(desired_port);
+fn select_listen_port(desired: PortPreference) -> PortDecision {
+    if port_is_free(desired.port) {
+        return PortDecision::Bind(desired.port);
     }
-    if gateway_root_on_port(desired_port).as_deref() == Some(my_root().as_str()) {
-        return PortDecision::AlreadyOwned(desired_port);
+    if gateway_identity_on_port(desired.port).is_some_and(|identity| identity.matches_instance()) {
+        return PortDecision::AlreadyOwned(desired.port);
     }
-    PortDecision::Unavailable(desired_port)
+    if desired.explicit {
+        return PortDecision::Unavailable(desired.port);
+    }
+    fallback_ports(desired.port)
+        .into_iter()
+        .find(|port| port_is_free(*port))
+        .map(PortDecision::Bind)
+        .unwrap_or(PortDecision::Unavailable(desired.port))
+}
+
+fn fallback_ports(desired_port: u16) -> Vec<u16> {
+    (1..=100)
+        .filter_map(|offset| desired_port.checked_add(offset))
+        .collect()
 }
 
 fn port_is_free(port: u16) -> bool {
@@ -182,6 +223,10 @@ fn my_root() -> String {
     tura_path::canonical_root().to_string_lossy().to_string()
 }
 
+fn my_home() -> String {
+    tura_path::instance_home().to_string_lossy().to_string()
+}
+
 fn write_active_gateway_url(port: u16) {
     let url = format!("http://127.0.0.1:{port}");
     if let Err(error) =
@@ -191,9 +236,42 @@ fn write_active_gateway_url(port: u16) {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct GatewayIdentity {
+    root: String,
+    home: String,
+}
+
+impl GatewayIdentity {
+    fn matches_instance(&self) -> bool {
+        if !self.home.trim().is_empty() {
+            return same_path(&self.home, &my_home());
+        }
+        same_path(&self.root, &my_root())
+    }
+}
+
+fn same_path(left: &str, right: &str) -> bool {
+    let left = comparable_path(Path::new(left));
+    let right = comparable_path(Path::new(right));
+    !left.is_empty() && left == right
+}
+
+fn comparable_path(path: &Path) -> String {
+    let text = tura_path::normalize_path(path)
+        .to_string_lossy()
+        .to_string();
+    let text = text.trim_end_matches(['\\', '/']).to_string();
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text
+    }
+}
+
 /// Probe `/global/health` on a loopback port and return the gateway's reported
-/// `root`, or `None` if the port is not a healthy tura_gateway.
-fn gateway_root_on_port(port: u16) -> Option<String> {
+/// identity, or `None` if the port is not a healthy tura_gateway.
+fn gateway_identity_on_port(port: u16) -> Option<GatewayIdentity> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(400)).ok()?;
     stream
@@ -213,11 +291,17 @@ fn gateway_root_on_port(port: u16) -> Option<String> {
     }
     let body = response.split("\r\n\r\n").nth(1)?;
     let value: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
-    value
+    let root = value
         .get("root")
         .and_then(serde_json::Value::as_str)
-        .filter(|root| !root.is_empty())
-        .map(str::to_string)
+        .unwrap_or_default()
+        .to_string();
+    let home = value
+        .get("home")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    Some(GatewayIdentity { root, home })
 }
 
 fn configure_release_runtime_env() {
@@ -313,17 +397,33 @@ fn find_release_root_from(path: &Path) -> Option<PathBuf> {
     } else {
         path.parent().unwrap_or(path)
     };
+    if let Some(source_root) = start
+        .ancestors()
+        .find(|candidate| source_checkout_root(candidate))
+    {
+        return Some(source_root.to_path_buf());
+    }
     start
         .ancestors()
-        .find(|candidate| {
-            candidate.join("agents").join("src").is_dir()
-                || candidate.join("personas").join("src").is_dir()
-                || candidate
-                    .join("config")
-                    .join("provider_config.json")
-                    .exists()
-        })
+        .find(|candidate| release_root_has_runtime_sources(candidate))
         .map(Path::to_path_buf)
+}
+
+fn source_checkout_root(candidate: &Path) -> bool {
+    candidate.join("Cargo.toml").is_file() && candidate.join("crates").join("gateway").is_dir()
+}
+
+fn release_root_has_runtime_sources(candidate: &Path) -> bool {
+    candidate
+        .join("crates")
+        .join("tools")
+        .join("src")
+        .join("command_run")
+        .join("schema.json")
+        .is_file()
+        && (candidate.join("agents").join("src").is_dir()
+            || candidate.join("personas").join("src").is_dir()
+            || candidate.join("Cargo.toml").is_file())
 }
 
 fn run_session_log_command() {
@@ -352,6 +452,237 @@ fn run_session_log_command() {
         Err(error) => {
             eprintln!("session-log session_db command failed: {error:#}");
             std::process::exit(1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        desired_port_for_exe, find_release_root_from, select_listen_port, PortDecision,
+        PortPreference,
+    };
+    use std::net::TcpListener;
+
+    #[test]
+    fn release_root_skips_target_release_config_without_runtime_tools() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        let target_release = root.join("target").join("release");
+
+        std::fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        std::fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("cargo toml");
+        std::fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
+
+        std::fs::create_dir_all(target_release.join("config")).expect("release config dir");
+        std::fs::write(
+            target_release.join("config").join("provider_config.json"),
+            "{}",
+        )
+        .expect("release provider config");
+
+        assert_eq!(
+            find_release_root_from(&target_release.join("tura_gateway.exe")),
+            Some(root.to_path_buf())
+        );
+    }
+
+    #[test]
+    fn release_root_prefers_source_checkout_over_target_release_runtime_copy() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        let target_release = root.join("target").join("release");
+        create_source_checkout_root(root);
+        create_release_runtime_root(&target_release);
+
+        assert_eq!(
+            find_release_root_from(&target_release.join("tura_gateway.exe")),
+            Some(root.to_path_buf())
+        );
+    }
+
+    #[test]
+    fn port_env_prefers_explicit_port_then_non_explicit_gateway_port() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let env = TestEnv::set([("PORT", "4311"), (tura_path::TURA_GATEWAY_PORT_ENV, "4312")]);
+        let desired = desired_port_for_exe();
+        assert_eq!(desired.port, 4311);
+        assert!(desired.explicit);
+        drop(env);
+
+        let env = TestEnv::set([("PORT", ""), (tura_path::TURA_GATEWAY_PORT_ENV, "4312")]);
+        let desired = desired_port_for_exe();
+        assert_eq!(desired.port, 4312);
+        assert!(!desired.explicit);
+        drop(env);
+    }
+
+    #[test]
+    fn non_explicit_occupied_port_falls_back_to_free_loopback_port() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind occupied port");
+        let occupied = listener.local_addr().expect("local addr").port();
+
+        let decision = select_listen_port(PortPreference {
+            port: occupied,
+            explicit: false,
+        });
+
+        match decision {
+            PortDecision::Bind(port) => assert_ne!(port, occupied),
+            _ => panic!("expected fallback bind decision"),
+        }
+    }
+
+    #[test]
+    fn non_explicit_occupied_port_reuses_same_home_gateway_with_different_root() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let home = tempfile::tempdir().expect("home");
+        let project_root = tempfile::tempdir().expect("project root");
+        let other_root = tempfile::tempdir().expect("other root");
+        let home_text = home.path().to_string_lossy().to_string();
+        let project_root_text = project_root.path().to_string_lossy().to_string();
+        let env = TestEnv::set([
+            ("TURA_HOME", home_text.as_str()),
+            ("TURA_PROJECT_ROOT", project_root_text.as_str()),
+        ]);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind gateway port");
+        let occupied = listener.local_addr().expect("local addr").port();
+        let other_root_text = other_root.path().to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health probe");
+            let mut buffer = [0_u8; 512];
+            let _ = std::io::Read::read(&mut stream, &mut buffer);
+            std::io::Write::write_all(
+                &mut stream,
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{},\"home\":{}}}",
+                    serde_json::to_string(&other_root_text).expect("json root"),
+                    serde_json::to_string(&home_text).expect("json home")
+                )
+                .as_bytes(),
+            )
+            .expect("write health response");
+        });
+
+        let decision = select_listen_port(PortPreference {
+            port: occupied,
+            explicit: false,
+        });
+
+        match decision {
+            PortDecision::AlreadyOwned(port) => assert_eq!(port, occupied),
+            _ => panic!("expected already-owned decision"),
+        }
+        drop(env);
+    }
+
+    #[test]
+    fn explicit_occupied_port_is_unavailable() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind occupied port");
+        let occupied = listener.local_addr().expect("local addr").port();
+
+        let decision = select_listen_port(PortPreference {
+            port: occupied,
+            explicit: true,
+        });
+
+        match decision {
+            PortDecision::Unavailable(port) => assert_eq!(port, occupied),
+            _ => panic!("expected unavailable decision"),
+        }
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn create_source_checkout_root(root: &std::path::Path) {
+        std::fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        std::fs::create_dir_all(root.join("personas").join("src")).expect("personas dir");
+        std::fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        std::fs::create_dir_all(root.join("crates").join("gateway")).expect("gateway crate dir");
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("cargo toml");
+        std::fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
+    }
+
+    fn create_release_runtime_root(root: &std::path::Path) {
+        std::fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        std::fs::create_dir_all(root.join("personas").join("src")).expect("personas dir");
+        std::fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        std::fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
+    }
+
+    struct TestEnv {
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl TestEnv {
+        fn set<const N: usize>(values: [(&'static str, &str); N]) -> Self {
+            let previous = values
+                .iter()
+                .map(|(key, _)| (*key, std::env::var_os(key)))
+                .collect::<Vec<_>>();
+            for (key, value) in values {
+                if value.is_empty() {
+                    std::env::remove_var(key);
+                } else {
+                    std::env::set_var(key, value);
+                }
+            }
+            Self { previous }
+        }
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..).rev() {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
         }
     }
 }

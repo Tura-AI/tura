@@ -13,6 +13,8 @@ import {
   configDraftToPatch,
   configToDraft,
   draftToRecord,
+  providerAuthDraftKey,
+  providerAuthMethodForValidation,
   providerIdFromAuthError,
   recordToDraft,
 } from "../utils/settings";
@@ -209,13 +211,22 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
       error: undefined,
     }));
     try {
-      const draftKey = method ? providerAuthDraftKey(providerId, method) : undefined;
+      const validationMethod =
+        method ??
+        providerAuthMethodForValidation(
+          providerId,
+          state().providerAuthMethods[providerId] ?? [],
+          state().authDrafts,
+        );
+      const draftKey = validationMethod
+        ? providerAuthDraftKey(providerId, validationMethod)
+        : undefined;
       const draftKeyValue = draftKey ? state().authDrafts[draftKey]?.trim() : undefined;
       const result = await rootClient().providerAuthValidate(providerId, {
-        type: method?.type,
-        kind: method?.kind,
-        login: method?.login,
-        token_env: method?.token_env,
+        type: validationMethod?.type,
+        kind: validationMethod?.kind,
+        login: validationMethod?.login,
+        token_env: validationMethod?.token_env,
         key: draftKeyValue || undefined,
         access: draftKeyValue || undefined,
       });
@@ -381,7 +392,6 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
     saveRuntimeSettings,
     updateModelTier,
     saveProviderKey,
-    validateProvider,
     startProviderLogin,
     completeProviderLogin,
     logoutProvider,
@@ -395,8 +405,4 @@ function stringField(record: Record<string, unknown>, key: string): string | und
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function providerAuthDraftKey(providerId: string, method: ProviderAuthMethod): string {
-  return [providerId, method.token_env || method.login_env || method.kind].join("::");
 }

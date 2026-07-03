@@ -91,7 +91,7 @@ pub(crate) fn run_via_router(
     let session_log = router_session_log(&response);
     if config.log {
         if let Some(session_log) = session_log.as_ref() {
-            write_turn_log_stderr(&session_log, router_turn_started_at_ms(&response))?;
+            write_turn_log_stderr(session_log, router_turn_started_at_ms(&response))?;
         }
     }
     if config.json {

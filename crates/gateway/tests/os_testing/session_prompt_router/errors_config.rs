@@ -157,6 +157,201 @@ async fn gateway_prompt_business_flow_records_router_transport_error_without_db_
 }
 
 #[tokio::test]
+async fn gateway_prompt_business_flow_reports_runtime_stop_without_mano_failure() -> Result<()> {
+    let _guard = ENV_LOCK.lock().await;
+    let root = tempfile::tempdir().context("temp root")?;
+    let home = root.path().join("home");
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+    let _env = EnvGuard::new(&home, &workspace);
+    let service = ServiceThread::start()?;
+    let router = FakeRouter::start(
+        &home,
+        vec![RouterReply::RawLine(
+            json!({
+                "ok": false,
+                "error": "router execution enqueue failed: runtime worker invocation failed: one-shot worker cancelled"
+            })
+            .to_string(),
+        )],
+    )?;
+
+    let session = session_store().create_session(
+        Some(workspace.to_string_lossy().to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    let response = prompt_async(
+        Path(session.id.clone()),
+        Json(json!({
+            "message_id": "runtime-stop-message",
+            "parts": [
+                {
+                    "id": "runtime-stop-turn",
+                    "type": "text",
+                    "text": "Stop while this prompt is running"
+                }
+            ]
+        })),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
+
+    let request = router.next_request(Duration::from_secs(10))?;
+    assert_eq!(request["method"], "execution.enqueue_turn");
+    assert_eq!(request["payload"]["turn_id"], "runtime-stop-turn");
+
+    wait_until(Duration::from_secs(10), || {
+        session_store()
+            .get_session(&session.id)
+            .is_some_and(|session| session.status == SessionStatus::Idle)
+    })?;
+    let messages = session_store().get_messages(&session.id);
+    assert!(messages.iter().any(|message| {
+        message.role == MessageRole::Assistant
+            && message.parts.iter().any(|part| {
+                part.text.as_deref() == Some("Runtime stopped.")
+                    && part
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.get("code"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("runtime_stopped")
+            })
+    }));
+    assert!(
+        !messages.iter().any(|message| {
+            message.role == MessageRole::Assistant
+                && message.parts.iter().any(|part| {
+                    let text = part.text.as_deref().unwrap_or_default();
+                    text.contains("MANO failed") || text.contains("one-shot worker cancelled")
+                })
+        }),
+        "runtime stop must not expose internal worker cancellation text"
+    );
+
+    drop(router);
+    drop(service);
+    Ok(())
+}
+
+#[tokio::test]
+async fn gateway_prompt_business_flow_appends_prompt_when_router_reports_active_turn() -> Result<()>
+{
+    let _guard = ENV_LOCK.lock().await;
+    let root = tempfile::tempdir().context("temp root")?;
+    let home = root.path().join("home");
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+    let _env = EnvGuard::new(&home, &workspace);
+    let service = ServiceThread::start()?;
+    let router = FakeRouter::start(
+        &home,
+        vec![
+            RouterReply::Payload(json!({
+                "ok": false,
+                "code": "session_active_turn",
+                "session_id": "filled below by assertion only",
+                "turn_id": "router-active-turn",
+                "error": "session already has an active turn"
+            })),
+            RouterReply::Payload(json!({
+                "ok": true,
+                "commands": ["append this to the running runtime"]
+            })),
+        ],
+    )?;
+
+    let session = session_store().create_session(
+        Some(workspace.to_string_lossy().to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    let response = prompt_async(
+        Path(session.id.clone()),
+        Json(json!({
+            "message_id": "router-active-message",
+            "parts": [
+                {
+                    "id": "router-active-turn",
+                    "type": "text",
+                    "text": "append this to the running runtime"
+                }
+            ]
+        })),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
+
+    let enqueue = router.next_request(Duration::from_secs(10))?;
+    assert_eq!(enqueue["kind"], "call");
+    assert_eq!(enqueue["method"], "execution.enqueue_turn");
+    assert_eq!(enqueue["payload"]["turn_id"], "router-active-turn");
+    assert_eq!(enqueue["payload"]["session_id"], session.id);
+
+    let append = router.next_request(Duration::from_secs(10))?;
+    assert_eq!(append["kind"], "call");
+    assert_eq!(append["method"], "session.append_user_command");
+    assert_eq!(append["payload"]["session_id"], session.id);
+    assert_eq!(append["payload"]["root_session_id"], session.id);
+    assert_eq!(
+        append["payload"]["command"],
+        "append this to the running runtime"
+    );
+
+    wait_until(Duration::from_secs(10), || {
+        session_store()
+            .get_session(&session.id)
+            .is_some_and(|session| session.status == SessionStatus::Busy)
+    })?;
+    let messages = session_store().get_messages(&session.id);
+    assert!(
+        messages.iter().any(|message| {
+            message.id == "router-active-message" && message.role == MessageRole::User
+        }),
+        "active-turn fallback should preserve the submitted user prompt"
+    );
+    assert!(
+        !messages.iter().any(|message| {
+            message.role == MessageRole::Assistant
+                && message.parts.iter().any(|part| {
+                    part.text
+                        .as_deref()
+                        .unwrap_or_default()
+                        .contains("MANO failed while processing this prompt")
+                })
+        }),
+        "active-turn fallback must append to runtime instead of surfacing a MANO failure"
+    );
+    assert_eq!(
+        session_store().take_user_commands_for_session(&session.id),
+        vec!["append this to the running runtime".to_string()]
+    );
+
+    drop(router);
+    drop(service);
+    Ok(())
+}
+
+#[tokio::test]
 async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router_payload(
 ) -> Result<()> {
     let _guard = ENV_LOCK.lock().await;

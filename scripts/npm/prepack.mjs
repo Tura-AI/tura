@@ -24,7 +24,11 @@ const requiredFiles = [
   "apps/gui/sdk/gateway/package.json",
   "apps/tauri/package.json",
   "apps/tauri/bun.lock",
-  "npm/tura.mjs"
+  "npm/tura.mjs",
+  "scripts/npm/release-artifacts.mjs",
+  "scripts/npm/install-release.mjs",
+  "scripts/npm/package-platform.mjs",
+  "scripts/npm/package-release.mjs"
 ];
 
 const missing = requiredFiles.filter((file) => !existsSync(path.join(repoRoot, file)));
@@ -38,6 +42,11 @@ if (packageJson.private === true) {
   process.exit(1);
 }
 
+if (packageJson.name !== "tura") {
+  console.error("npm package check failed; root package name must be tura.");
+  process.exit(1);
+}
+
 if (packageJson.license !== "AGPL-3.0-or-later") {
   console.error("npm package check failed; license must be AGPL-3.0-or-later.");
   process.exit(1);
@@ -45,6 +54,29 @@ if (packageJson.license !== "AGPL-3.0-or-later") {
 
 if (!packageJson.bin?.tura) {
   console.error("npm package check failed; bin.tura is required.");
+  process.exit(1);
+}
+
+const expectedPlatformPackages = ["tura-darwin-arm64", "tura-darwin-x64", "tura-linux-x64", "tura-win32-x64"];
+for (const packageName of expectedPlatformPackages) {
+  if (packageJson.optionalDependencies?.[packageName] !== packageJson.version) {
+    console.error(`npm package check failed; optional dependency ${packageName} must match version ${packageJson.version}.`);
+    process.exit(1);
+  }
+}
+
+if (!Array.isArray(packageJson.keywords) || packageJson.keywords.length === 0) {
+  console.error("npm package check failed; keywords are required.");
+  process.exit(1);
+}
+
+if (!packageJson.repository?.url || !packageJson.homepage || !packageJson.bugs?.url) {
+  console.error("npm package check failed; repository, homepage, and bugs URLs are required.");
+  process.exit(1);
+}
+
+if (packageJson.publishConfig?.access !== "public") {
+  console.error("npm package check failed; publishConfig.access must be public.");
   process.exit(1);
 }
 

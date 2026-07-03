@@ -15,6 +15,7 @@ import { openExternalUrl } from "../../utils/external-url";
 
 import {
   copyText,
+  providerAuthDraftKey,
   providerAuthDisplayState,
   type ProviderAuthDisplayState,
 } from "../../utils/settings";
@@ -57,8 +58,6 @@ function providerHasOauthLogin(state: AppState, providerId: string): boolean {
 function ProviderAuthStatusRow(props: {
   display: ProviderAuthDisplayState;
   receipt?: ProviderAuthActionResponse;
-  saving: boolean;
-  onValidate: () => void;
 }) {
   return (
     <div class="provider-auth-status-block">
@@ -68,14 +67,6 @@ function ProviderAuthStatusRow(props: {
           <span class={classNames("provider-auth-state-dot", props.display.level)} />
           {props.display.label}
         </code>
-        <button
-          type="button"
-          class="secondary provider-auth-validate"
-          disabled={props.saving}
-          onClick={props.onValidate}
-        >
-          {t("validate")}
-        </button>
       </div>
       <Show when={props.receipt}>
         {(receipt) => (
@@ -146,7 +137,6 @@ export function ProviderAuthDialog(props: {
   onAuthDraft: (providerId: string, value: string) => void;
   onAuthCode: (providerId: string, value: string) => void;
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
-  onValidate: (providerId: string, method?: ProviderAuthMethod) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
   onCompleteLogin: (providerId: string, code?: string, methodIndex?: number) => void;
   onLogout: (providerId: string) => void;
@@ -188,12 +178,7 @@ export function ProviderAuthDialog(props: {
         <Show when={provider()}>
           {(item) => (
             <div class="settings-fields provider-auth-info">
-              <ProviderAuthStatusRow
-                display={displayState()}
-                receipt={validationReceipt()}
-                saving={props.state.settingsSaving}
-                onValidate={() => props.onValidate(props.panel.providerId)}
-              />
+              <ProviderAuthStatusRow display={displayState()} receipt={validationReceipt()} />
               <ReadonlyRow label={t("env")} value={item().env.join(", ") || "--"} />
               <ReadonlyRow label={t("capabilities")} value={providerCapabilityText(item())} />
             </div>
@@ -207,7 +192,6 @@ export function ProviderAuthDialog(props: {
           onAuthDraft={props.onAuthDraft}
           onAuthCode={props.onAuthCode}
           onSaveKey={props.onSaveKey}
-          onValidate={props.onValidate}
           onStartLogin={props.onStartLogin}
           onCompleteLogin={props.onCompleteLogin}
           onLogout={props.onLogout}
@@ -225,7 +209,6 @@ function ProviderAuthMethods(props: {
   onAuthDraft: (providerId: string, value: string) => void;
   onAuthCode: (providerId: string, value: string) => void;
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
-  onValidate: (providerId: string, method?: ProviderAuthMethod) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
   onCompleteLogin: (providerId: string, code?: string, methodIndex?: number) => void;
   onLogout?: (providerId: string) => void;
@@ -241,13 +224,6 @@ function ProviderAuthMethods(props: {
                   <span>{method.label}</span>
                   <small>{method.token_env ?? method.login_env ?? method.kind}</small>
                 </div>
-                <button
-                  class="secondary provider-auth-validate"
-                  disabled={props.state.settingsSaving}
-                  onClick={() => props.onValidate(provider().id, method)}
-                >
-                  {t("validate")}
-                </button>
                 <Show when={methodUsesTokenInput(method)}>
                   <div class="login-method-controls">
                     <ProtectedTokenInput
@@ -262,7 +238,7 @@ function ProviderAuthMethods(props: {
                       class="secondary"
                       disabled={
                         props.state.settingsSaving ||
-                        !props.state.authDrafts[authDraftKey(provider().id, method)]?.trim()
+                        !props.state.authDrafts[providerAuthDraftKey(provider().id, method)]?.trim()
                       }
                       onClick={() => props.onSaveKey(provider().id, method)}
                     >
@@ -382,7 +358,10 @@ function ProtectedTokenInput(props: {
         placeholder={props.method.token_env ?? t("apiKey")}
         onFocus={(event) => event.currentTarget.select()}
         onInput={(event) =>
-          props.onAuthDraft(authDraftKey(props.providerId, props.method), event.currentTarget.value)
+          props.onAuthDraft(
+            providerAuthDraftKey(props.providerId, props.method),
+            event.currentTarget.value,
+          )
         }
       />
       <button
@@ -403,7 +382,7 @@ function tokenInputValue(
   status: AppState["providerAuthStatus"][string] | undefined,
   state: AppState,
 ): string {
-  const draft = state.authDrafts[authDraftKey(providerId, method)];
+  const draft = state.authDrafts[providerAuthDraftKey(providerId, method)];
   if (draft !== undefined) {
     return draft;
   }
@@ -421,10 +400,6 @@ function tokenInputValue(
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
-}
-
-function authDraftKey(providerId: string, method: ProviderAuthMethod): string {
-  return [providerId, method.token_env || method.login_env || method.kind].join("::");
 }
 
 const CAPABILITY_LABELS: Record<string, TextKey> = {
@@ -474,6 +449,7 @@ const CAPABILITY_LABELS: Record<string, TextKey> = {
   "llm.tool_call": "capabilityLlmToolCall",
   "llm.vision": "capabilityLlmVision",
   "mail.send": "capabilityMailSend",
+  "media.generation": "capabilityMediaGeneration",
   "maps.directions": "capabilityMapsDirections",
   "maps.geocoding": "capabilityMapsGeocoding",
   "maps.place_search": "capabilityMapsPlaceSearch",

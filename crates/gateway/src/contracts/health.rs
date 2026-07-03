@@ -8,6 +8,10 @@ pub struct HealthResponse {
     /// Lets clients tell whether a reachable gateway belongs to their own package.
     #[serde(default)]
     pub root: String,
+    /// Canonical instance home this gateway owns. TUI/GUI use this as the
+    /// lifecycle identity so different frontends share one session database.
+    #[serde(default)]
+    pub home: String,
     /// Directory of the running gateway executable.
     #[serde(default)]
     pub exe_dir: String,
@@ -22,6 +26,7 @@ impl Default for HealthResponse {
             healthy: true,
             version: env!("CARGO_PKG_VERSION").to_string(),
             root: String::new(),
+            home: String::new(),
             exe_dir: String::new(),
             dev_log_path: None,
         }

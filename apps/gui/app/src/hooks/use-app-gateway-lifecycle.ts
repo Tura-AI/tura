@@ -45,6 +45,7 @@ export function useAppGatewayLifecycle(options: {
   state: Accessor<AppState>;
   setState: Setter<AppState>;
   gatewayUrl: Accessor<string>;
+  gatewayUrlExplicit: boolean;
   rootClient: Accessor<GatewayClient>;
   forceNewSession: boolean;
   disableGatewayAutostart?: boolean;
@@ -55,6 +56,7 @@ export function useAppGatewayLifecycle(options: {
     state,
     setState,
     gatewayUrl,
+    gatewayUrlExplicit,
     rootClient,
     forceNewSession,
     disableGatewayAutostart,
@@ -122,10 +124,11 @@ export function useAppGatewayLifecycle(options: {
       gatewayStartupNotice: previous.gatewayStartupNotice,
     }));
     if (!disableGatewayAutostart) {
-      const started = await tryStartGateway(gatewayUrl(), setState);
-      if (started) {
-        await waitForGatewayHealth(gatewayUrl(), GATEWAY_HEALTH_TIMEOUT_MS, setState);
+      const connected = await tryStartGateway(gatewayUrl(), gatewayUrlExplicit, setState);
+      if (!connected) {
+        throw new DOMException("Gateway is not running.", "TimeoutError");
       }
+      await waitForGatewayHealth(gatewayUrl(), GATEWAY_HEALTH_TIMEOUT_MS, setState);
     }
     const client = rootClient();
     try {

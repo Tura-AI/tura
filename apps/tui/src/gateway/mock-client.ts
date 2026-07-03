@@ -294,8 +294,7 @@ export class MockGatewayClient {
         summary: {
           id: "thoughtful",
           name: "Thoughtful",
-          description:
-            "Reflects on each step and stays steady across long-running tasks.",
+          description: "Reflects on each step and stays steady across long-running tasks.",
           source: "static",
           path: "mock://agents/thoughtful",
           aliases: ["planning"],
@@ -304,8 +303,7 @@ export class MockGatewayClient {
         },
         config: {
           agent_name: "thoughtful",
-          description:
-            "Reflects on each step and stays steady across long-running tasks.",
+          description: "Reflects on each step and stays steady across long-running tasks.",
         },
       },
       {

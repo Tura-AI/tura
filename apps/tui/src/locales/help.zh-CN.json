@@ -5,7 +5,7 @@
       "tura [OPTIONS]                         打开交互式 TUI",
       "tura [OPTIONS] exec [PROMPT...]        运行 Rust CLI 前门",
       "tura [OPTIONS] run [PROMPT...]         运行非交互提示",
-      "tura [OPTIONS] bash|zsh|shll [PROMPT...]",
+      "tura [OPTIONS] bash|zsh|shel [PROMPT...]",
       "tura [OPTIONS] <command> --help        显示命令帮助"
     ],
     "commands": [
@@ -13,7 +13,7 @@
       { "name": "exec", "summary": "转发到 Rust CLI 前门（tura_exec）" },
       { "name": "bash", "summary": "以 bash 覆盖本次命令工具入口" },
       { "name": "zsh", "summary": "以 zsh 覆盖本次命令工具入口" },
-      { "name": "shll", "summary": "以 shell_command 覆盖本次命令工具入口" },
+      { "name": "shel", "summary": "以 shell_command 覆盖本次命令工具入口" },
       { "name": "resume", "summary": "显示已有会话或追加后续提示" },
       { "name": "session", "summary": "列出或显示会话" },
       { "name": "config", "summary": "读取或更新工作区会话配置" },
@@ -24,14 +24,10 @@
       { "name": "file", "summary": "列出、读取、打开或定位工作区文件" },
       { "name": "command", "summary": "列出或执行网关命令" },
       { "name": "inspect", "summary": "显示网关服务、路径和会话" },
-      { "name": "gateway", "summary": "直接调用任意网关 HTTP 端点" },
+      { "name": "gateway", "summary": "发送原始网关 CLI 协议请求" },
       { "name": "completion", "summary": "为 bash、zsh 或 fish 生成 shell 补全" }
     ],
     "options": [
-      {
-        "flags": "--gateway-url URL",
-        "summary": "网关基础 URL；默认 TURA_GATEWAY_URL、项目 active URL，然后 dev 4125 / release 4126"
-      },
       { "flags": "--cwd PATH", "summary": "发送给网关的工作区目录" },
       { "flags": "--initial-session ID", "summary": "打开交互式 TUI 时直接进入指定会话" },
       { "flags": "--json", "summary": "支持时输出 JSON" },
@@ -48,7 +44,7 @@
           "tura run \"Inspect the workspace and summarize the architecture\"",
           "tura exec \"Inspect the workspace using the Rust CLI front\"",
           "tura zsh \"Inspect shell startup files with zsh semantics\"",
-          "tura run --shll \"Use the system shell_command surface\"",
+          "tura run --shel \"Use the system shell_command surface\"",
           "tura run --model openai/gpt-5 --output ndjson \"Fix the failing test\"",
           "tura session list --json",
           "tura provider list --json"
@@ -60,7 +56,7 @@
     "title": "运行提示",
     "usage": [
       "tura [OPTIONS] run [PROMPT...] [RUN_OPTIONS]",
-      "tura [OPTIONS] bash|zsh|shll [PROMPT...] [RUN_OPTIONS]"
+      "tura [OPTIONS] bash|zsh|shel [PROMPT...] [RUN_OPTIONS]"
     ],
     "options": [
       { "flags": "--session ID", "summary": "把提示追加到已有会话" },
@@ -69,9 +65,9 @@
       { "flags": "-a, --agent-id ID", "summary": "本次请求的智能体 ID" },
       { "flags": "--session-type TYPE", "summary": "传给网关的会话类型" },
       { "flags": "--model-variant LEVEL", "summary": "推理/模型规格覆盖" },
-      { "flags": "--model-acceleration", "summary": "启用优先/加速路由" },
-      { "flags": "--no-model-acceleration", "summary": "禁用优先/加速路由" },
-      { "flags": "--bash, --zsh, --shll", "summary": "覆盖本次提示使用的命令运行 shell 入口" },
+      { "flags": "--model-acceleration", "summary": "启用优先模式路由" },
+      { "flags": "--no-model-acceleration", "summary": "禁用优先模式路由" },
+      { "flags": "--bash, --zsh, --shel", "summary": "覆盖本次提示使用的命令运行 shell 入口" },
       { "flags": "--output text|json|ndjson", "summary": "输出格式" },
       { "flags": "--stream, --no-stream", "summary": "流式监听网关事件或轮询完成" },
       { "flags": "--timeout SEC", "summary": "轮次中止前的超时秒数（默认 600）" },
@@ -196,14 +192,15 @@
     ]
   },
   "gateway": {
-    "title": "原始网关 HTTP",
+    "title": "原始网关 CLI 协议",
     "usage": [
-      "tura [OPTIONS] gateway GET /global/health",
-      "tura [OPTIONS] gateway POST /command --data '{\"command\":\"name\",\"args\":[]}'",
-      "tura [OPTIONS] gateway PATCH /session/SESSION_ID --data '{\"name\":\"New name\"}'"
+      "tura [OPTIONS] gateway global.health",
+      "tura [OPTIONS] gateway command.execute --data '{\"command\":\"name\",\"args\":[]}'",
+      "tura [OPTIONS] gateway session.update --params '{\"sessionID\":\"SESSION_ID\"}' --data '{\"name\":\"New name\"}'"
     ],
     "options": [
-      { "flags": "-d, --data JSON", "summary": "POST、PATCH、PUT 和 DELETE 的 JSON 请求体" }
+      { "flags": "--params JSON", "summary": "作为 CLI 协议 params 发送的 JSON 对象" },
+      { "flags": "-d, --data JSON", "summary": "通过 CLI 协议发送的 JSON payload" }
     ]
   }
 }

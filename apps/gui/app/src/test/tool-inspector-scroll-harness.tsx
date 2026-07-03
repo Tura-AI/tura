@@ -49,11 +49,9 @@ function Harness() {
           command_id: index === 0 ? commandId : `${partId}:call_1:${index}`,
           command_type: "shell_command",
           command_line:
-            index === 1
-              ? '{"command":"queued command 1","timeout_ms":300000}'
-              : index === 0
-                ? "run long command"
-                : `queued command ${index}`,
+            index === 1 || index === 0
+              ? `{"command":"${index === 0 ? "run long command" : "queued command 1"}","timeout_ms":300000}`
+              : `queued command ${index}`,
           step: index + 1,
         })),
       },
@@ -64,7 +62,9 @@ function Harness() {
             command_type: "shell_command",
             command_line: "run long command",
             step: 1,
-            success: true,
+            success: false,
+            duration_ms: 195_000,
+            exit_code: 7,
             output: output(),
           },
         ],

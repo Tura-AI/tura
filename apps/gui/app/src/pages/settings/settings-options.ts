@@ -3,6 +3,7 @@ import { currentLanguage, LANGUAGE_OPTIONS, t, type TextKey } from "../../i18n";
 import { DEFAULT_CODE_FONT } from "../../config/defaults";
 import type { CornerRadiusMode, ThemeMode } from "../../state/global-store";
 import type { AppearanceOption } from "./appearance-select";
+export { AGENT_REASONING_LEVELS as AGENT_REASONING_EFFORTS } from "../../../../../tui/src/agent-runtime-config";
 
 export const THEME_OPTIONS: Array<{
   id: ThemeMode;
@@ -50,12 +51,12 @@ const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {
   communication: "domainCommunication",
   infrastructure: "domainInfrastructure",
   llm: "domainLlm",
+  media_generation: "domainMediaGeneration",
   other: "domainOther",
   productivity: "domainProductivity",
   search: "domainSearch",
 };
 export const DEFAULT_MODEL_TIERS = ["thinking", "fast"] as const;
-export const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
 export const DEFAULT_MODEL_TIER_CONFIG_TIERS = ["thinking", "fast"];
 export { LANGUAGE_OPTIONS };
 

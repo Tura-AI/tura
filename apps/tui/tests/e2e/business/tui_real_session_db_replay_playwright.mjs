@@ -8,8 +8,6 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 
-import { cleanupRepoTuraProcesses } from "./cleanup_repo_tura_processes.mjs";
-
 const repoRoot =
   process.env.REPO_ROOT || path.resolve(import.meta.dirname, "..", "..", "..", "..", "..");
 const appRoot = path.join(repoRoot, "apps", "tui");
@@ -367,63 +365,41 @@ async function waitForUrl(url, child, timeoutMs = 60_000) {
 }
 
 async function startGateway(port) {
+  const stdout = fs.openSync(path.join(logsDir, "gateway.stdout.log"), "a");
+  const stderr = fs.openSync(path.join(logsDir, "gateway.stderr.log"), "a");
   const child = spawn(path.join(debugDir, `tura_gateway${exeSuffix}`), [], {
     cwd: workspace,
     env: testEnv({
       PORT: String(port),
       TURA_GATEWAY_PORT: String(port),
       TURA_GATEWAY_URL: `http://127.0.0.1:${port}`,
-      TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF: "1",
     }),
-    stdio: ["pipe", "pipe", "pipe"],
+    detached: true,
+    stdio: ["ignore", stdout, stderr],
     windowsHide: true,
   });
-  pipeLog(child.stdout, path.join(logsDir, "gateway.stdout.log"));
-  pipeLog(child.stderr, path.join(logsDir, "gateway.stderr.log"));
+  child.unref();
   const url = `http://127.0.0.1:${port}`;
   await waitForUrl(`${url}/global/health`, child);
   return { child, url };
 }
 
 async function startWebTerminal(gatewayUrl, port) {
+  const stdout = fs.openSync(path.join(logsDir, "web-terminal.stdout.log"), "a");
+  const stderr = fs.openSync(path.join(logsDir, "web-terminal.stderr.log"), "a");
   const child = spawn(process.execPath, [path.join(appRoot, "scripts", "web-terminal.mjs")], {
     cwd: appRoot,
     env: testEnv({
       PORT: String(port),
       TURA_GATEWAY_URL: gatewayUrl,
     }),
-    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+    stdio: ["ignore", stdout, stderr],
     windowsHide: true,
   });
-  pipeLog(child.stdout, path.join(logsDir, "web-terminal.stdout.log"));
-  pipeLog(child.stderr, path.join(logsDir, "web-terminal.stderr.log"));
+  child.unref();
   await waitForUrl(`http://127.0.0.1:${port}/`, child, 30_000);
   return { child, url: `http://127.0.0.1:${port}` };
-}
-
-function pipeLog(stream, file) {
-  stream?.pipe(fs.createWriteStream(file));
-}
-
-async function stopGateway(gateway) {
-  if (!gateway?.child || gateway.child.exitCode !== null || gateway.child.killed) return;
-  gateway.child.stdin?.end();
-  await Promise.race([
-    new Promise((resolve) => gateway.child.once("exit", resolve)),
-    delay(15_000),
-  ]);
-  await stopProcess(gateway.child);
-}
-
-async function stopProcess(child) {
-  if (!child || child.exitCode !== null || child.killed) return;
-  if (process.platform === "win32" && child.pid) {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true });
-    return;
-  }
-  child.kill("SIGTERM");
-  await Promise.race([new Promise((resolve) => child.once("exit", resolve)), delay(2_000)]);
-  if (child.exitCode === null) child.kill("SIGKILL");
 }
 
 async function terminalBufferSnapshot(page) {
@@ -543,9 +519,6 @@ async function main() {
     process.exitCode = 1;
   } finally {
     await browser?.close().catch(() => undefined);
-    await stopProcess(web?.child);
-    await stopGateway(gateway);
-    cleanupRepoTuraProcesses();
   }
 }
 

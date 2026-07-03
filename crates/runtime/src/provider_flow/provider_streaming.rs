@@ -21,15 +21,19 @@ use crate::provider_flow::streamed_command_run::{
 use crate::provider_flow::usage::usage_report_from_metrics;
 use crate::state_machine::runtime_management::{RuntimeCallResultStatus, RuntimeManagement};
 
+pub(crate) struct RuntimeStreamingInput {
+    pub(crate) messages: Vec<serde_json::Value>,
+    pub(crate) options: tura_llm_rust::CallOptions,
+    pub(crate) session_directory: PathBuf,
+    pub(crate) allowed_command_run_commands: Option<BTreeSet<String>>,
+    pub(crate) require_startup_task_state: bool,
+}
+
 pub(crate) async fn call_runtime_streaming(
     runtime: &mut RuntimeManagement,
     route_config: &tura_llm_rust::RouteConfig,
     tura_config: &Arc<tura_llm_rust::TuraConfig>,
-    messages: Vec<serde_json::Value>,
-    options: tura_llm_rust::CallOptions,
-    session_directory: PathBuf,
-    allowed_command_run_commands: Option<BTreeSet<String>>,
-    require_startup_task_state: bool,
+    input: RuntimeStreamingInput,
 ) -> Result<(), String> {
     let started_at = Utc::now();
     let timeout_duration = runtime_timeout(runtime);
@@ -87,8 +91,8 @@ pub(crate) async fn call_runtime_streaming(
     let gateway_call_id = streamed_command_run_call_id(&gateway_runtime_id);
     let command_task = spawn_streamed_command_run_task(SpawnStreamedCommandRunTask {
         stream_rx,
-        session_directory,
-        allowed_command_run_commands,
+        session_directory: input.session_directory,
+        allowed_command_run_commands: input.allowed_command_run_commands,
         session_id: gateway_session_id,
         runtime_id: gateway_runtime_id.clone(),
         provider: gateway_provider,
@@ -96,14 +100,19 @@ pub(crate) async fn call_runtime_streaming(
         started_at,
         state: command_state.clone(),
         runtime_status: runtime.session_sync_status(),
-        require_startup_task_state,
+        require_startup_task_state: input.require_startup_task_state,
     });
 
     let route_config_for_task = route_config.clone();
     let tura_config_for_task = Arc::clone(tura_config);
     let provider_task = tokio::spawn(async move {
         route_config_for_task
-            .run_with_stream_events(tura_config_for_task.as_ref(), messages, options, Some(sink))
+            .run_with_stream_events(
+                tura_config_for_task.as_ref(),
+                input.messages,
+                input.options,
+                Some(sink),
+            )
             .await
     });
     tokio::pin!(provider_task);

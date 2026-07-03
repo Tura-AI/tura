@@ -7,9 +7,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
-
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
 
@@ -91,36 +88,17 @@ def wait_for_gui(process: subprocess.Popen | None) -> None:
     raise TimeoutError(f"Timed out waiting for {GUI_URL}")
 
 
-def stop_process_tree(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    if sys.platform.startswith("win"):
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
-
-
 def main() -> int:
     failures: list[tuple[str, int]] = []
     for script in LOCAL_E2E:
         path = GUI / "tests" / "e2e" / "business" / script
         print(f"[gui:e2e] {script}", flush=True)
         env = os.environ.copy()
-        gui_process: subprocess.Popen | None = None
-        try:
-            if script in SHARED_GUI_E2E:
-                gui_process = start_gui_server()
-                wait_for_gui(gui_process)
-                env["TURA_GUI_URL"] = GUI_URL
-            result = subprocess.run([sys.executable, str(path)], cwd=ROOT, env=env, check=False)
-        finally:
-            stop_process_tree(gui_process)
-            cleanup_repo_tura_processes()
+        if script in SHARED_GUI_E2E:
+            gui_process = start_gui_server()
+            wait_for_gui(gui_process)
+            env["TURA_GUI_URL"] = GUI_URL
+        result = subprocess.run([sys.executable, str(path)], cwd=ROOT, env=env, check=False)
         if result.returncode != 0:
             failures.append((script, result.returncode))
             break

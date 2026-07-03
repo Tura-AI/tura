@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$AuditIgnores = @("RUSTSEC-2026-0194", "RUSTSEC-2026-0195")
 
 # CI smell gate only: layout, formatting, dependency policy, spelling, and TUI
 # formatting. Rust crate clippy/tests run in xtask/scripts/run-ci-crate-tests.*.
@@ -98,12 +99,24 @@ Invoke-Checked $Npm @("--prefix", "apps/tui", "run", "format:check")
 
 if (-not $SkipAudit) {
   Write-Step "Auditing Rust dependencies"
-  Invoke-Checked "cargo" @("audit")
+  # quick-xml is pulled through tauri -> plist 1.9.0, and plist has no release
+  # on crates.io that permits quick-xml >= 0.41.0 yet. Remove these ignores
+  # once plist/tauri exposes a patched dependency path.
+  $auditArgs = @("audit")
+  foreach ($advisory in $AuditIgnores) {
+    $auditArgs += @("--ignore", $advisory)
+  }
+  Invoke-Checked "cargo" $auditArgs
 }
 
 if (-not $SkipDeny) {
   Write-Step "Checking Rust dependency policy"
-  Invoke-Checked "cargo" @("deny", "check", "--config", $DenyConfig)
+  Invoke-Checked "cargo" @(
+    "deny", "check",
+    "--config", $DenyConfig,
+    "-A", "license-not-encountered",
+    "-A", "advisory-not-detected"
+  )
 }
 
 if (-not $SkipTypos) {

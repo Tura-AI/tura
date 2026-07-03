@@ -13,8 +13,6 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright
 
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
 OUT = ROOT / "target" / "gui-media-render-playwright"
@@ -168,34 +166,6 @@ def start_gui() -> subprocess.Popen | None:
         stdin=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
-
-
-def stop(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    try:
-        if process.stdin:
-            process.stdin.close()
-    except Exception:
-        pass
-    try:
-        process.wait(timeout=5)
-        return
-    except Exception:
-        pass
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
 
 
 def prepare_media() -> tuple[Path, list[str]]:
@@ -357,10 +327,7 @@ async def main() -> None:
         print(f"media render path playwright passed: {metrics}")
         print(f"screenshot: {screenshot}")
     finally:
-        stop(gui)
-        media_server.shutdown()
-        media_server.server_close()
-        cleanup_repo_tura_processes()
+        pass
 
 
 if __name__ == "__main__":

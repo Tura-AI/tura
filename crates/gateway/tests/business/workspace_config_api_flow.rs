@@ -51,6 +51,7 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
         ("HOME", home.as_os_str()),
         ("APPDATA", appdata.as_os_str()),
         ("LOCALAPPDATA", local_appdata.as_os_str()),
+        ("TURA_HOME", home.as_os_str()),
         ("TURA_PROJECT_ROOT", project_root.as_os_str()),
         ("LOG_PATH", temp.path().join("logs").as_os_str()),
     ]);
@@ -62,6 +63,7 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
         normalize_path(&health_body.root),
         normalize_path(&project_root)
     );
+    assert_eq!(normalize_path(&health_body.home), normalize_path(&home));
     assert_eq!(
         health_body.dev_log_path.as_deref().map(normalize_slashes),
         Some(normalize_path(temp.path().join("logs")))

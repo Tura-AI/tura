@@ -37,7 +37,6 @@ export function AppShell(props: { view: AppShellViewModel }) {
     saveAgent,
     deleteAgent,
     saveProviderKey,
-    validateProvider,
     startProviderLogin,
     completeProviderLogin,
     logoutProvider,
@@ -396,7 +395,6 @@ export function AppShell(props: { view: AppShellViewModel }) {
             panel={panel()}
             setState={setState}
             onSaveKey={saveProviderKey}
-            onValidate={validateProvider}
             onStartLogin={startProviderLogin}
             onCompleteLogin={completeProviderLogin}
             onLogout={logoutProvider}

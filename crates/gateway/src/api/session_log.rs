@@ -11,24 +11,26 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use serde_json::Value;
 
 pub async fn session_log_workspaces() -> impl IntoResponse {
+    match session_log_workspaces_value().await {
+        Ok(payload) => Json(payload).into_response(),
+        Err((status, error)) => {
+            (status, Json(serde_json::json!({ "error": error }))).into_response()
+        }
+    }
+}
+
+pub async fn session_log_workspaces_value() -> Result<Value, (StatusCode, String)> {
     match tokio::task::spawn_blocking(|| {
         SessionDbClient::discover().and_then(|client| client.list_workspaces())
     })
     .await
     {
-        Ok(Ok(workspaces)) => Json(serde_json::json!({ "workspaces": workspaces })).into_response(),
-        Ok(Err(err)) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        )
-            .into_response(),
+        Ok(Ok(workspaces)) => Ok(serde_json::json!({ "workspaces": workspaces })),
+        Ok(Err(err)) => Err((StatusCode::BAD_GATEWAY, err.to_string())),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.to_string())),
     }
 }
 
@@ -41,27 +43,31 @@ pub async fn session_log_sessions(
         .or_else(|| encoded_header(&headers, "x-opencode-directory"))
         .or_else(|| global_store().get_current_directory())
         .unwrap_or_default();
-    let page = params.page;
-    let page_size = params.page_size;
+    match session_log_sessions_value(Some(workspace), params.page, params.page_size).await {
+        Ok(payload) => Json(payload).into_response(),
+        Err((status, error)) => {
+            (status, Json(serde_json::json!({ "error": error }))).into_response()
+        }
+    }
+}
+
+pub async fn session_log_sessions_value(
+    workspace: Option<String>,
+    page: u64,
+    page_size: u64,
+) -> Result<Value, (StatusCode, String)> {
+    let workspace = workspace
+        .or_else(|| global_store().get_current_directory())
+        .unwrap_or_default();
     match tokio::task::spawn_blocking(move || {
         SessionDbClient::discover()
             .and_then(|client| client.list_session_summaries(workspace, page, page_size))
     })
     .await
     {
-        Ok(Ok((page, sessions))) => {
-            Json(serde_json::json!({ "page": page, "sessions": sessions })).into_response()
-        }
-        Ok(Err(err)) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        )
-            .into_response(),
+        Ok(Ok((page, sessions))) => Ok(serde_json::json!({ "page": page, "sessions": sessions })),
+        Ok(Err(err)) => Err((StatusCode::BAD_GATEWAY, err.to_string())),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.to_string())),
     }
 }
 
@@ -69,27 +75,28 @@ pub async fn session_log_records(
     Path(session_id): Path<String>,
     Query(params): Query<SessionLogRecordsParams>,
 ) -> impl IntoResponse {
-    let page = params.page;
-    let page_size = params.page_size;
+    match session_log_records_value(session_id, params.page, params.page_size).await {
+        Ok(payload) => Json(payload).into_response(),
+        Err((status, error)) => {
+            (status, Json(serde_json::json!({ "error": error }))).into_response()
+        }
+    }
+}
+
+pub async fn session_log_records_value(
+    session_id: String,
+    page: u64,
+    page_size: u64,
+) -> Result<Value, (StatusCode, String)> {
     match tokio::task::spawn_blocking(move || {
         SessionDbClient::discover()
             .and_then(|client| client.list_session_records(session_id, page, page_size))
     })
     .await
     {
-        Ok(Ok((page, records))) => {
-            Json(serde_json::json!({ "page": page, "records": records })).into_response()
-        }
-        Ok(Err(err)) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        )
-            .into_response(),
+        Ok(Ok((page, records))) => Ok(serde_json::json!({ "page": page, "records": records })),
+        Ok(Err(err)) => Err((StatusCode::BAD_GATEWAY, err.to_string())),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, err.to_string())),
     }
 }
 

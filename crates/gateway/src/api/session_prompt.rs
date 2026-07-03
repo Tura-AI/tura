@@ -4,11 +4,21 @@ pub async fn prompt_async(
     Path(session_id): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    match prompt_async_value(session_id, payload).await {
+        Ok(()) => StatusCode::NO_CONTENT,
+        Err((status, _error)) => status,
+    }
+}
+
+pub async fn prompt_async_value(
+    session_id: String,
+    payload: serde_json::Value,
+) -> Result<(), (StatusCode, String)> {
     session_store().clear_cancelled(&session_id);
     let content = prompt_text(&payload).unwrap_or_else(|| "Prompt submitted".to_string());
     let session = session_store().get_session(&session_id);
     if session.is_none() {
-        return StatusCode::NOT_FOUND;
+        return Err((StatusCode::NOT_FOUND, "session not found".to_string()));
     }
     if session
         .as_ref()
@@ -26,7 +36,7 @@ pub async fn prompt_async(
             Some(metadata),
         );
         append_user_command_for_runtime(&session_id, content);
-        return StatusCode::NO_CONTENT;
+        return Ok(());
     }
     let user_message = session_store().add_message_with_parts(
         &session_id,
@@ -69,7 +79,7 @@ pub async fn prompt_async(
             );
         }
     });
-    StatusCode::NO_CONTENT
+    Ok(())
 }
 
 pub fn start_task_scheduler() {
@@ -452,6 +462,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                 })
             })
         })
+        .or(agent_runtime_settings.acceleration_enabled)
         .or_else(|| {
             session
                 .as_ref()
@@ -526,6 +537,11 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
     );
     let turn_id =
         first_prompt_part_id(&payload).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let runtime_metadata = agent_runtime_message_metadata(
+        model_override.clone(),
+        reasoning_effort.clone(),
+        acceleration_enabled,
+    );
     let body = serde_json::json!({
         "session_id": session_id,
         "directory": directory,
@@ -546,10 +562,13 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
     }
 
     match result {
-        Ok(()) => {
+        Ok(ForwardRunAgentResult::Dispatched) => {
             session_store().update_session_status(&session_id, SessionStatusMano::Idle);
             session_store().finish_todos(&session_id, true);
             if let Some(message) = final_agent_message(&session_id, before_count) {
+                let message = session_store()
+                    .merge_message_metadata(&session_id, &message.id, runtime_metadata.clone())
+                    .unwrap_or(message);
                 session_store().push_event(GlobalEvent::MessageUpdated {
                     properties: MessageUpdatedProperties {
                         session_id: session_id.clone(),
@@ -557,6 +576,18 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                     },
                 });
             }
+        }
+        Ok(ForwardRunAgentResult::AppendedToActiveRuntime) => {
+            session_store().update_session_status(&session_id, SessionStatusMano::Busy);
+        }
+        Err(error) if is_runtime_stopped_error(&error) => {
+            session_store().update_session_status(&session_id, SessionStatusMano::Idle);
+            session_store().finish_todos(&session_id, false);
+            add_agent_fallback_message_with_metadata(
+                &session_id,
+                "Runtime stopped.".to_string(),
+                runtime_stopped_metadata(),
+            );
         }
         Err(error) => {
             session_store().update_session_status(&session_id, SessionStatusMano::Error);
@@ -571,11 +602,17 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
 
 /// Submit through the gateway-owned persistent router instead of spawning a
 /// runtime worker directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForwardRunAgentResult {
+    Dispatched,
+    AppendedToActiveRuntime,
+}
+
 fn forward_run_agent_to_router(
     turn_id: &str,
     session_id: &str,
     body: &serde_json::Value,
-) -> Result<(), String> {
+) -> Result<ForwardRunAgentResult, String> {
     let value = crate::router_client::RouterClient::global()
         .enqueue_turn(crate::router_client::EnqueueTurnRequest {
             turn_id: turn_id.to_string(),
@@ -590,8 +627,19 @@ fn forward_run_agent_to_router(
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(true)
     {
-        Ok(())
+        Ok(ForwardRunAgentResult::Dispatched)
     } else {
+        if value.get("code").and_then(serde_json::Value::as_str) == Some("session_active_turn") {
+            let command = body
+                .get("prompt")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("Prompt submitted")
+                .to_string();
+            crate::api::session::append_user_command_for_runtime(session_id, command);
+            return Ok(ForwardRunAgentResult::AppendedToActiveRuntime);
+        }
         let error = value
             .get("error")
             .and_then(serde_json::Value::as_str)
@@ -601,6 +649,20 @@ fn forward_run_agent_to_router(
             "router rejected turn {turn_id} for session {session_id}: {error}"
         ))
     }
+}
+
+fn is_runtime_stopped_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("one-shot worker cancelled")
+        || lower.contains("runtime worker cancelled")
+        || lower.contains("runtime worker stopped")
+}
+
+fn runtime_stopped_metadata() -> Option<serde_json::Value> {
+    Some(serde_json::json!({
+        "kind": "runtime_status",
+        "code": "runtime_stopped",
+    }))
 }
 
 fn prompt_model_override(payload: &serde_json::Value) -> Option<String> {
@@ -723,6 +785,7 @@ fn non_empty_string(value: Option<String>) -> Option<String> {
 #[derive(Default)]
 struct AgentRuntimeSettings {
     reasoning_effort: Option<String>,
+    acceleration_enabled: Option<bool>,
 }
 
 fn agent_runtime_settings(agent_id: &str, directory: Option<&str>) -> Option<AgentRuntimeSettings> {
@@ -747,6 +810,10 @@ fn agent_runtime_settings(agent_id: &str, directory: Option<&str>) -> Option<Age
                 "model_variant",
             ],
         ),
+        acceleration_enabled: provider_bool(
+            provider,
+            &["model_acceleration_enabled", "accelerated"],
+        ),
     })
 }
 
@@ -761,6 +828,21 @@ fn provider_string(
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("default"))
         .map(ToString::to_string)
         .next()
+}
+
+fn provider_bool(
+    provider: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<bool> {
+    keys.iter().find_map(|key| match provider.get(*key)? {
+        serde_json::Value::Bool(value) => Some(*value),
+        serde_json::Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    })
 }
 
 fn prompt_agent_override(payload: &serde_json::Value) -> Option<String> {
@@ -805,7 +887,7 @@ pub(super) fn prompt_command_run_shell(payload: &serde_json::Value) -> Option<St
     match value {
         "bash" => Some("bash".to_string()),
         "zsh" => Some("zsh".to_string()),
-        "shll" | "shell_command" => Some("shell_command".to_string()),
+        "shel" | "shell_command" => Some("shell_command".to_string()),
         _ => None,
     }
 }
@@ -833,6 +915,21 @@ fn normalize_model_override(value: String) -> Option<String> {
         other => other,
     };
     Some(format!("{provider}/{model}"))
+}
+
+fn agent_runtime_message_metadata(
+    model: Option<String>,
+    reasoning_effort: Option<String>,
+    acceleration_enabled: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "runtime": {
+            "model": model,
+            "reasoning_level": reasoning_effort,
+            "priority": acceleration_enabled,
+            "model_acceleration_enabled": acceleration_enabled,
+        }
+    })
 }
 
 pub(super) fn final_agent_message(
@@ -987,9 +1084,20 @@ fn json_looks_like_tool_payload(value: &serde_json::Value) -> bool {
 }
 
 fn add_agent_fallback_message(session_id: &str, content: String) {
-    if let Some(message) =
-        session_store().add_message(session_id, SessionMessageRole::Assistant, content)
-    {
+    add_agent_fallback_message_with_metadata(session_id, content, None);
+}
+
+fn add_agent_fallback_message_with_metadata(
+    session_id: &str,
+    content: String,
+    metadata: Option<serde_json::Value>,
+) {
+    if let Some(message) = session_store().add_message_with_metadata(
+        session_id,
+        SessionMessageRole::Assistant,
+        content,
+        metadata,
+    ) {
         session_store().push_event(GlobalEvent::MessageUpdated {
             properties: MessageUpdatedProperties {
                 session_id: session_id.to_string(),
@@ -1056,6 +1164,7 @@ mod tests {
             .expect("agent runtime settings");
 
         assert_eq!(settings.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(settings.acceleration_enabled, Some(true));
     }
 
     #[test]

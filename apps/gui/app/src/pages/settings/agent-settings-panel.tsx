@@ -12,6 +12,14 @@ import { AgentIcon } from "../../components/agent-icon";
 import { t, type TextKey } from "../../i18n";
 import { classNames } from "../../state/format";
 import {
+  agentRuntimeConfig,
+  applyAgentRuntimeConfig,
+  modelPairText,
+  parseProviderModel,
+  normalizeAgentReasoningLevel,
+  type AgentReasoningLevel,
+} from "../../../../../tui/src/agent-runtime-config";
+import {
   agentDescription,
   agentDisplayName,
   visibleConfigurableAgents,
@@ -39,7 +47,7 @@ export function AgentSettingsPanel(props: {
   const [selectedProvider, setSelectedProvider] = createSignal("");
   const [selectedModel, setSelectedModel] = createSignal("");
   const [selectedReasoningEffort, setSelectedReasoningEffort] =
-    createSignal<(typeof AGENT_REASONING_EFFORTS)[number]>("high");
+    createSignal<AgentReasoningLevel>("high");
   const [priorityEnabled, setPriorityEnabled] = createSignal(false);
   const [loadingAgent, setLoadingAgent] = createSignal(false);
   const [agentQuery, setAgentQuery] = createSignal("");
@@ -105,11 +113,12 @@ export function AgentSettingsPanel(props: {
     setLoadingAgent(true);
     const stored = await props.onGetAgent(agent.name);
     setStoredAgent(stored);
-    const currentModel = agentCurrentModel(agent, stored);
+    const currentModel = agentRuntimeConfig(agent, stored).currentModel;
     setSelectedProvider(currentModel?.provider ?? "");
     setSelectedModel(currentModel?.model ?? "");
-    setSelectedReasoningEffort(normalizeReasoningEffort(agentReasoningEffort(agent, stored)));
-    setPriorityEnabled(agentPriorityEnabled(agent, stored));
+    const runtime = agentRuntimeConfig(agent, stored);
+    setSelectedReasoningEffort(runtime.reasoningLevel);
+    setPriorityEnabled(runtime.priorityEnabled);
     setLoadingAgent(false);
   }
 
@@ -244,15 +253,34 @@ export function AgentSettingsPanel(props: {
             />
           </div>
           <div class="field-row agent-priority-row">
-            <span>{t("modelPriority")}</span>
-            <label class="settings-toggle-row">
-              <input
-                type="checkbox"
-                checked={priorityEnabled()}
-                onChange={(event) => setPriorityEnabled(event.currentTarget.checked)}
-              />
-              <span>{t("acceleration")}</span>
-            </label>
+            <span>{t("acceleration")}</span>
+            <div class="settings-priority-field">
+              <div
+                class="segmented two settings-priority-segmented"
+                role="radiogroup"
+                aria-label={t("acceleration")}
+              >
+                <button
+                  type="button"
+                  class={classNames(!priorityEnabled() && "selected")}
+                  role="radio"
+                  aria-checked={!priorityEnabled()}
+                  onClick={() => setPriorityEnabled(false)}
+                >
+                  {t("disabled")}
+                </button>
+                <button
+                  type="button"
+                  class={classNames(priorityEnabled() && "selected")}
+                  role="radio"
+                  aria-checked={priorityEnabled()}
+                  onClick={() => setPriorityEnabled(true)}
+                >
+                  {t("modelPriority")}
+                </button>
+              </div>
+              <small class="settings-priority-note">{t("accelerationHint")}</small>
+            </div>
           </div>
           <div class="field-row agent-capabilities-row">
             <span>{t("capabilities")}</span>
@@ -288,15 +316,7 @@ export function AgentSettingsPanel(props: {
 }
 
 function agentDefaultModelTier(agent?: Agent, stored?: StoredAgent): string {
-  return (
-    readProviderString(stored?.config.provider, ["default_model_tier"]) ??
-    readLegacyDefaultTier(stored?.config.provider) ??
-    readProviderString(agent?.options?.provider, ["default_model_tier"]) ??
-    readLegacyDefaultTier(agent?.options?.provider) ??
-    readProviderString(agent?.options, ["default_model_tier"]) ??
-    readLegacyDefaultTier(agent?.options) ??
-    "thinking"
-  );
+  return agentRuntimeConfig(agent, stored).defaultModelTier;
 }
 
 function normalizeDefaultModelTier(
@@ -305,32 +325,11 @@ function normalizeDefaultModelTier(
   return canonicalDefaultModelTier(value);
 }
 
-function readLegacyDefaultTier(value: unknown): string | undefined {
-  const legacy = readProviderString(value, ["tura_llm_name"]);
-  return legacy?.includes("/") ? undefined : legacy;
-}
-
-function agentCurrentModel(
-  agent?: Agent,
-  stored?: StoredAgent,
-): Pick<TuraConfigModelPair, "provider" | "model"> | undefined {
-  return (
-    providerModelPair(readProviderString(stored?.config.provider, ["current_model"])) ??
-    providerModelPair(readProviderString(agent?.options?.provider, ["current_model"])) ??
-    providerModelPair(readProviderString(agent?.options, ["current_model"])) ??
-    providerModelPair(readProviderString(stored?.config.provider, ["tura_llm_name"])) ??
-    providerModelPair(readProviderString(agent?.options?.provider, ["tura_llm_name"])) ??
-    (agent?.model?.providerID && agent.model.modelID
-      ? { provider: agent.model.providerID, model: agent.model.modelID }
-      : undefined)
-  );
-}
-
 function currentAgentModelOption(
   agent?: Agent,
   stored?: StoredAgent,
 ): TuraConfigModelPair | undefined {
-  const current = agentCurrentModel(agent, stored);
+  const current = agentRuntimeConfig(agent, stored).currentModel;
   return current
     ? {
         ...current,
@@ -343,50 +342,11 @@ function currentAgentModelOption(
 function providerModelPair(
   value: string | undefined,
 ): Pick<TuraConfigModelPair, "provider" | "model"> | undefined {
-  if (!value?.includes("/")) {
-    return undefined;
-  }
-  const [provider, ...modelParts] = value.split("/");
-  const model = modelParts.join("/");
-  return provider && model ? { provider, model } : undefined;
+  return parseProviderModel(value);
 }
 
-function agentReasoningEffort(agent?: Agent, stored?: StoredAgent): string {
-  return (
-    readProviderString(stored?.config.provider, [
-      "model_reasoning_effort",
-      "reasoning_effort",
-      "model_variant",
-    ]) ??
-    readProviderString(agent?.options?.provider, [
-      "model_reasoning_effort",
-      "reasoning_effort",
-      "model_variant",
-    ]) ??
-    "high"
-  );
-}
-
-function agentPriorityEnabled(agent?: Agent, stored?: StoredAgent): boolean {
-  return (
-    readProviderBoolean(stored?.config.provider, ["model_acceleration_enabled"]) ??
-    readProviderBoolean(agent?.options?.provider, ["model_acceleration_enabled"]) ??
-    readProviderBoolean(agent?.options, ["model_acceleration_enabled"]) ??
-    readServiceTierPriority(stored?.config.provider) ??
-    readServiceTierPriority(agent?.options?.provider) ??
-    readServiceTierPriority(agent?.options) ??
-    false
-  );
-}
-
-function normalizeReasoningEffort(
-  value: string | undefined,
-): (typeof AGENT_REASONING_EFFORTS)[number] {
-  return value === "medium" || value === "high" || value === "xhigh" || value === "highest"
-    ? value === "highest"
-      ? "xhigh"
-      : value
-    : "high";
+function normalizeReasoningEffort(value: string | undefined): AgentReasoningLevel {
+  return normalizeAgentReasoningLevel(value);
 }
 
 function reasoningEffortLabel(value: string): string {
@@ -399,42 +359,6 @@ function reasoningEffortLabel(value: string): string {
   return labels[value] ? t(labels[value]) : value;
 }
 
-function readProviderString(value: unknown, keys: string[]): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  for (const key of keys) {
-    const field = record[key];
-    if (typeof field === "string" && field.trim()) {
-      return field.trim();
-    }
-  }
-  return undefined;
-}
-
-function readProviderBoolean(value: unknown, keys: string[]): boolean | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  for (const key of keys) {
-    const field = record[key];
-    if (typeof field === "boolean") {
-      return field;
-    }
-  }
-  return undefined;
-}
-
-function readServiceTierPriority(value: unknown): boolean | undefined {
-  const serviceTier = readProviderString(value, ["service_tier"]);
-  if (!serviceTier) {
-    return undefined;
-  }
-  return serviceTier === "priority";
-}
-
 function agentConfigWithProviderSettings(
   config: AgentConfig,
   settings: {
@@ -444,22 +368,12 @@ function agentConfigWithProviderSettings(
     priorityEnabled: boolean;
   },
 ): AgentConfig {
-  const provider =
-    config.provider && typeof config.provider === "object" && !Array.isArray(config.provider)
-      ? { ...(config.provider as Record<string, unknown>) }
-      : {};
-  return {
-    ...config,
-    provider: {
-      ...provider,
-      default_model_tier: settings.defaultModelTier,
-      tura_llm_name: settings.defaultModelTier,
-      ...(settings.currentModel ? { current_model: settings.currentModel } : {}),
-      model_reasoning_effort: settings.reasoningEffort,
-      model_acceleration_enabled: settings.priorityEnabled,
-      service_tier: settings.priorityEnabled ? "priority" : "auto",
-    },
-  };
+  return applyAgentRuntimeConfig(config, {
+    defaultModelTier: settings.defaultModelTier,
+    currentModel: settings.currentModel,
+    reasoningLevel: settings.reasoningEffort,
+    priorityEnabled: settings.priorityEnabled,
+  });
 }
 
 function capabilitiesForAgent(agent?: Agent, stored?: StoredAgent): string[] {
@@ -534,9 +448,9 @@ function allModelOptions(
 }
 
 function agentModelDisplayText(agent: Agent, modelConfig: TuraConfigResponse | undefined): string {
-  const current = agentCurrentModel(agent);
+  const current = agentRuntimeConfig(agent).currentModel;
   if (current) {
-    return modelOptionValue(current);
+    return modelPairText(current) ?? "";
   }
   const tier = normalizeDefaultModelTier(agentDefaultModelTier(agent));
   return modelForTier(modelConfig, tier);

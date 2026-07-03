@@ -1,4 +1,5 @@
 import type { JsonObject } from "./common.js";
+import { t } from "../i18n.js";
 
 export type SessionStatusValue = "idle" | "busy" | "error";
 
@@ -173,9 +174,23 @@ export function partSessionID(part: MessagePart): string {
 export function messageText(message: Message): string {
   return (message.parts ?? [])
     .filter((part) => part.type === "text" || part.type === "message" || !part.type)
-    .map((part) => part.text ?? part.content ?? "")
+    .map(messagePartText)
     .filter(Boolean)
     .join("");
+}
+
+export function messagePartText(part: MessagePart): string {
+  if (isRuntimeStoppedPart(part)) return t("runtimeStopped");
+  return part.text ?? part.content ?? "";
+}
+
+function isRuntimeStoppedPart(part: MessagePart): boolean {
+  const metadata = objectValue(part.metadata);
+  return metadata.code === "runtime_stopped";
+}
+
+function objectValue(value: unknown): JsonObject {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : {};
 }
 
 export function messageSortValue(message: Message): number {

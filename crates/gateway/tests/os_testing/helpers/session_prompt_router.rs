@@ -33,6 +33,7 @@ impl EnvGuard {
             "TURA_PROJECT_ROOT",
             "TURA_CWD",
             "TURA_SESSION_DB_PROBE_TIMEOUT_MS",
+            "TURA_GATEWAY_ALLOW_IN_PROCESS_FAKE_ROUTER",
         ];
         let previous = keys
             .iter()
@@ -44,6 +45,7 @@ impl EnvGuard {
         std::env::set_var("TURA_PROJECT_ROOT", workspace);
         std::env::set_var("TURA_CWD", workspace);
         std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "20");
+        std::env::set_var("TURA_GATEWAY_ALLOW_IN_PROCESS_FAKE_ROUTER", "1");
         Self { previous }
     }
 }
@@ -117,6 +119,8 @@ impl FakeRouter {
             serde_json::to_string(&json!({
                 "addr": addr.to_string(),
                 "version": tura_path::instance_version(),
+                "pid": std::process::id(),
+                "process_start_time": current_process_start_time(std::process::id()),
             }))?,
         )?;
         let (tx, rx) = mpsc::channel();
@@ -182,6 +186,14 @@ impl Drop for FakeRouter {
     }
 }
 
+pub(crate) fn current_process_start_time(pid: u32) -> Option<u64> {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes();
+    system
+        .process(sysinfo::Pid::from_u32(pid))
+        .map(sysinfo::Process::start_time)
+}
+
 pub(crate) fn handle_router_connection(
     stream: TcpStream,
     received: &mpsc::Sender<Value>,
@@ -199,7 +211,9 @@ pub(crate) fn handle_router_connection(
             "ok": true,
             "request_id": request.get("request_id").cloned().unwrap_or(Value::Null),
             "payload": {
-                "status": "ok"
+                "status": "ok",
+                "pid": std::process::id(),
+                "process_start_time": current_process_start_time(std::process::id())
             }
         });
         writer.write_all(serde_json::to_string(&response)?.as_bytes())?;

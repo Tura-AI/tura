@@ -1989,16 +1989,28 @@ pub(crate) fn ensure_backend_binaries(repo: &Path) -> Result<()> {
         ("gateway", "tura_gateway"),
     ] {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-        let status = Command::new(cargo)
+        let output = Command::new(cargo)
             .current_dir(repo)
             .args(["build", "-p", package, "--bin", binary])
-            .status()
+            .output()
             .with_context(|| format!("build {package}::{binary}"))?;
-        if !status.success() {
-            bail!("cargo build -p {package} --bin {binary} failed with {status}");
+        if !output.status.success() {
+            bail!(
+                "cargo build -p {package} --bin {binary} failed with {}\nstdout tail:\n{}\nstderr tail:\n{}",
+                output.status,
+                text_tail(&output.stdout, 80),
+                text_tail(&output.stderr, 80)
+            );
         }
     }
     Ok(())
+}
+
+pub(crate) fn text_tail(bytes: &[u8], max_lines: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].join("\n")
 }
 
 pub(crate) fn debug_bin(repo: &Path, binary: &str) -> PathBuf {

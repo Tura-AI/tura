@@ -14,6 +14,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir ".."))
 $CommandsDir = Join-Path $RepoRoot "commands"
+$CommandPythonVersion = "3.12"
 
 if ($Help) {
   Write-Host @"
@@ -28,8 +29,8 @@ under commands/*, and installs JavaScript workspaces in their own directories.
 Options:
   -SkipCommands  skip commands/*/install.* scripts
   -SkipApps      skip JavaScript installs for apps/tui, apps/gui, and apps/tauri
-  -SkipUv        do not install or verify uv
-  -SkipBun       do not install or verify bun
+  -SkipUv        do not install or verify uv; requires -SkipCommands
+  -SkipBun       do not install or verify bun; requires -SkipApps for Bun workspaces
   -CheckOnly     verify expected tools/environments without installing
   -Offline       pass offline/cache-only flags where supported
   -Help          show this help
@@ -43,6 +44,15 @@ function Write-Step {
   Write-Host "==> $Message"
 }
 
+function Test-InstallOptionContracts {
+  if ($SkipUv -and -not $SkipCommands) {
+    throw "-SkipUv was supplied, but command installers require uv. Remove -SkipUv or also pass -SkipCommands."
+  }
+  if ($SkipBun -and -not $SkipApps) {
+    throw "-SkipBun was supplied, but JavaScript workspace installs require bun. Remove -SkipBun or pass -SkipApps."
+  }
+}
+
 function Test-IsWindows {
   return ($IsWindows -or $env:OS -eq "Windows_NT")
 }
@@ -51,16 +61,33 @@ function Test-IsMacOS {
   return ($IsMacOS -eq $true)
 }
 
+function Get-PathEnvironmentName {
+  if (Test-IsWindows) {
+    return "Path"
+  }
+  return "PATH"
+}
+
+function Get-ProcessPathValue {
+  return [Environment]::GetEnvironmentVariable((Get-PathEnvironmentName), "Process")
+}
+
+function Set-ProcessPathValue {
+  param([string]$Value)
+  [Environment]::SetEnvironmentVariable((Get-PathEnvironmentName), $Value, "Process")
+}
+
 function Add-PathEntry {
   param([string]$PathEntry)
   if (-not $PathEntry -or -not (Test-Path -LiteralPath $PathEntry)) {
     return
   }
-  $entries = @($env:Path -split [IO.Path]::PathSeparator | Where-Object { $_ -and $_.Trim() })
+  $currentPath = Get-ProcessPathValue
+  $entries = @($currentPath -split [IO.Path]::PathSeparator | Where-Object { $_ -and $_.Trim() })
   $trimChars = [char[]]@('\', '/')
   $present = $entries | Where-Object { $_.TrimEnd($trimChars) -ieq $PathEntry.TrimEnd($trimChars) }
   if (-not $present) {
-    $env:Path = "$PathEntry$([IO.Path]::PathSeparator)$env:Path"
+    Set-ProcessPathValue "$PathEntry$([IO.Path]::PathSeparator)$currentPath"
   }
   if ($env:GITHUB_PATH) {
     $trimChars = [char[]]@('\', '/')
@@ -77,9 +104,9 @@ function Add-PathEntry {
 }
 
 function Add-UserToolPaths {
-  Add-PathEntry (Join-Path $HOME ".local\bin")
-  Add-PathEntry (Join-Path $HOME ".cargo\bin")
-  Add-PathEntry (Join-Path $HOME ".bun\bin")
+  Add-PathEntry (Join-Path (Join-Path $HOME ".local") "bin")
+  Add-PathEntry (Join-Path (Join-Path $HOME ".cargo") "bin")
+  Add-PathEntry (Join-Path (Join-Path $HOME ".bun") "bin")
 }
 
 function Add-ShellToolPaths {
@@ -128,8 +155,40 @@ function Resolve-ExistingCommand {
   return $null
 }
 
+function Get-CurrentPowerShellPath {
+  $processPath = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
+  if ($processPath -and (Test-Path -LiteralPath $processPath)) {
+    return (Resolve-Path -LiteralPath $processPath).ProviderPath
+  }
+
+  $fallbackName = if ($PSVersionTable.PSEdition -eq "Desktop") { "powershell.exe" } else { "pwsh.exe" }
+  $fallbackPath = Join-Path $PSHOME $fallbackName
+  if (Test-Path -LiteralPath $fallbackPath) {
+    return (Resolve-Path -LiteralPath $fallbackPath).ProviderPath
+  }
+
+  return $null
+}
+
 function Find-PowerShellTool {
+  $currentPowerShell = Get-CurrentPowerShellPath
+  if ($currentPowerShell) {
+    return $currentPowerShell
+  }
   Resolve-ExistingCommand @("pwsh", "powershell.exe", "powershell")
+}
+
+function Invoke-PowerShellScriptFile {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments = @()
+  )
+
+  $powerShell = Find-PowerShellTool
+  if (-not $powerShell) {
+    throw "PowerShell was not found, so $FilePath cannot be run."
+  }
+  & $powerShell -NoProfile -ExecutionPolicy Bypass -File $FilePath @Arguments
 }
 
 function Find-BashTool {
@@ -482,19 +541,22 @@ function Invoke-DownloadedInstaller {
   Write-Step "Installing $Name into the current user's tool directory"
   Invoke-WebRequest -Uri $uri -OutFile $tempPath -UseBasicParsing
 
+  $installerExitCode = 0
   if (Test-IsWindows) {
     & $tempPath
+    $installerExitCode = $LASTEXITCODE
   } else {
     $sh = Get-Command "sh" -ErrorAction SilentlyContinue
     if (-not $sh) {
       throw "sh was not found; cannot run $Name installer."
     }
     & $sh.Source $tempPath
-  }
-  if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+    $installerExitCode = $LASTEXITCODE
   }
   Add-UserToolPaths
+  if ($installerExitCode -ne 0 -and -not (Test-CommandAvailable $Name)) {
+    exit $installerExitCode
+  }
 }
 
 function Ensure-Uv {
@@ -517,7 +579,49 @@ function Ensure-Uv {
   Write-DetectedVersion "uv" (Get-CommandOutputLine "uv" @("--version"))
 }
 
+function Test-UvPythonAvailable {
+  $findArgs = @("python", "find", $CommandPythonVersion)
+  if ($Offline) {
+    $findArgs += "--offline"
+  }
+  & uv @findArgs > $null 2>&1
+  return $LASTEXITCODE -eq 0
+}
+
+function Ensure-CommandPython {
+  if ($SkipCommands) {
+    Write-Host "Skipping command Python setup."
+    return
+  }
+  if ($SkipUv) {
+    Write-Host "Skipping command Python setup."
+    return
+  }
+  if (Test-UvPythonAvailable) {
+    Write-DetectedVersion "python" (Get-CommandOutputLine "uv" @("python", "find", $CommandPythonVersion, "--show-version"))
+    return
+  }
+  if ($CheckOnly) {
+    throw "Python $CommandPythonVersion was not found by uv. Run .\scripts\install.ps1 without -CheckOnly so uv can install it, or install Python $CommandPythonVersion manually."
+  }
+  if ($Offline) {
+    throw "Python $CommandPythonVersion was not found in uv's cache or on PATH, and -Offline was supplied. Rerun without -Offline or install/cache Python $CommandPythonVersion first."
+  }
+
+  Write-Step "Installing Python $CommandPythonVersion for command virtual environments"
+  & uv python install $CommandPythonVersion
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  if (-not (Test-UvPythonAvailable)) {
+    throw "uv installed Python $CommandPythonVersion, but it is still not discoverable. Check uv's Python install directory and PATH, then rerun."
+  }
+  Write-DetectedVersion "python" (Get-CommandOutputLine "uv" @("python", "find", $CommandPythonVersion, "--show-version"))
+}
+
 function Ensure-Bun {
+  if ($SkipApps) {
+    Write-Host "Skipping bun setup."
+    return
+  }
   if ($SkipBun) {
     Write-Host "Skipping bun setup."
     return
@@ -537,6 +641,19 @@ function Ensure-Bun {
   Write-DetectedVersion "bun" (Get-CommandOutputLine "bun" @("--version"))
 }
 
+function Ensure-BunForWorkspace {
+  param([string]$Directory)
+  if ($SkipBun) {
+    throw "-SkipBun was supplied, but JavaScript workspace install requires bun for $Directory. Remove -SkipBun or pass -SkipApps."
+  }
+  Add-UserToolPaths
+  if (Test-CommandAvailable "bun") {
+    Write-DetectedVersion "bun" (Get-CommandOutputLine "bun" @("--version"))
+    return
+  }
+  Ensure-Bun
+}
+
 function Invoke-CommandInstallers {
   if ($SkipCommands -or -not (Test-Path -LiteralPath $CommandsDir)) {
     return
@@ -552,10 +669,10 @@ function Invoke-CommandInstallers {
 
     Write-Step "Installing command dependencies: $($commandDir.Name)"
     if (Test-Path -LiteralPath $psInstaller) {
-      $installerArgs = @{}
-      if ($CheckOnly.IsPresent) { $installerArgs.CheckOnly = $true }
-      if ($Offline.IsPresent) { $installerArgs.Offline = $true }
-      & $psInstaller @installerArgs
+      $installerArgs = @()
+      if ($CheckOnly.IsPresent) { $installerArgs += "-CheckOnly" }
+      if ($Offline.IsPresent) { $installerArgs += "-Offline" }
+      Invoke-PowerShellScriptFile -FilePath $psInstaller -Arguments $installerArgs
     } elseif (Test-CommandAvailable "sh") {
       $shArgs = @()
       if ($CheckOnly) { $shArgs += "--check-only" }
@@ -585,7 +702,7 @@ function Invoke-JsWorkspaceInstall {
   Push-Location $Directory
   try {
     if (Test-Path -LiteralPath "bun.lock") {
-      Ensure-Bun
+      Ensure-BunForWorkspace $Directory
       $bunArgs = @("install", "--frozen-lockfile")
       if ($Offline) {
         $bunArgs += "--offline"
@@ -602,7 +719,7 @@ function Invoke-JsWorkspaceInstall {
       }
       & $npm.Source @npmArgs
     } else {
-      Ensure-Bun
+      Ensure-BunForWorkspace $Directory
       $bunArgs = @("install")
       if ($Offline) {
         $bunArgs += "--offline"
@@ -617,12 +734,14 @@ function Invoke-JsWorkspaceInstall {
   }
 }
 
+Test-InstallOptionContracts
 Set-Location $RepoRoot
 
 Write-Step "Checking root dependency installers"
 Ensure-ShellToolCoverage
 Ensure-GitTool
 Ensure-Uv
+Ensure-CommandPython
 Ensure-Bun
 
 Invoke-CommandInstallers

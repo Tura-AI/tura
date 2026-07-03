@@ -13,9 +13,9 @@ use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, 
 const MAX_TRAY_SESSIONS: usize = 12;
 const SESSION_TITLE_MAX_CHARS: usize = 24;
 const SESSION_WORKSPACE_MAX_CHARS: usize = 18;
-const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const OPEN_GUI_ID: &str = "action:open-gui";
-const OPEN_TUI_ID: &str = "action:open-tui";
+const KILL_BACKGROUND_PROCESSES_ID: &str = "action:kill-background-processes";
 const QUIT_ID: &str = "action:quit";
 
 #[derive(Debug, Clone)]
@@ -43,13 +43,23 @@ struct ActiveSessionItem {
 struct TraySnapshot {
     active_sessions: Vec<ActiveSessionItem>,
     last_workspace: Option<String>,
+    session_process_directory: Option<String>,
+    background_process_count: usize,
     language: TrayLanguage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrayMenuEntry {
+    id: Option<String>,
+    label: Option<String>,
+    enabled: bool,
 }
 
 pub struct GatewayTrayApp {
     port: u16,
     event_loop: EventLoop<TrayUserEvent>,
     menu: Menu,
+    menu_handle: TrayMenuHandle,
     tray_icon: TrayIcon,
     snapshot: TraySnapshot,
     session_actions: HashMap<String, ActiveSessionItem>,
@@ -90,7 +100,7 @@ impl GatewayTrayApp {
 
         let menu = Menu::new();
         let snapshot = read_snapshot();
-        let session_actions = rebuild_menu(&menu, &snapshot)?;
+        let (menu_handle, session_actions) = rebuild_menu(&menu, &snapshot)?;
         let tray_icon = TrayIconBuilder::new()
             .with_tooltip("Tura Gateway")
             .with_icon(load_tura_icon()?)
@@ -103,6 +113,7 @@ impl GatewayTrayApp {
             port,
             event_loop,
             menu,
+            menu_handle,
             tray_icon,
             snapshot,
             session_actions,
@@ -114,6 +125,7 @@ impl GatewayTrayApp {
             port,
             event_loop,
             menu,
+            menu_handle,
             tray_icon,
             snapshot,
             session_actions,
@@ -121,7 +133,8 @@ impl GatewayTrayApp {
         let mut state = GatewayTrayState {
             port,
             menu,
-            tray_icon,
+            menu_handle,
+            _tray_icon: tray_icon,
             snapshot,
             session_actions,
             launched_clients: Vec::new(),
@@ -153,7 +166,8 @@ impl GatewayTrayApp {
 struct GatewayTrayState {
     port: u16,
     menu: Menu,
-    tray_icon: TrayIcon,
+    menu_handle: TrayMenuHandle,
+    _tray_icon: TrayIcon,
     snapshot: TraySnapshot,
     session_actions: HashMap<String, ActiveSessionItem>,
     launched_clients: Vec<Child>,
@@ -173,11 +187,10 @@ impl GatewayTrayState {
         if snapshots_equal(&self.snapshot, &snapshot) {
             return;
         }
-        match rebuild_menu(&self.menu, &snapshot) {
+        match refresh_menu(&self.menu, &mut self.menu_handle, &snapshot) {
             Ok(actions) => {
                 self.snapshot = snapshot;
                 self.session_actions = actions;
-                self.tray_icon.set_menu(Some(Box::new(self.menu.clone())));
             }
             Err(error) => tracing::warn!(error = %error, "failed to refresh gateway tray menu"),
         }
@@ -189,8 +202,8 @@ impl GatewayTrayState {
             self.launch_gui(self.snapshot.last_workspace.clone(), None);
             return false;
         }
-        if id == OPEN_TUI_ID {
-            self.launch_tui(self.snapshot.last_workspace.clone(), None);
+        if id == KILL_BACKGROUND_PROCESSES_ID {
+            self.kill_background_processes();
             return false;
         }
         if id == QUIT_ID {
@@ -214,17 +227,17 @@ impl GatewayTrayState {
         }
     }
 
-    fn launch_tui(&mut self, workspace: Option<String>, session_id: Option<String>) {
-        self.reap_finished_clients();
-        match open_tui(self.port, workspace.as_deref(), session_id.as_deref()) {
-            Ok(child) => self.launched_clients.push(child),
-            Err(error) => tracing::warn!(error = %error, "failed to open Tura TUI from tray"),
-        }
-    }
-
     fn reap_finished_clients(&mut self) {
         self.launched_clients
             .retain_mut(|child| !matches!(child.try_wait(), Ok(Some(_))));
+    }
+
+    fn kill_background_processes(&mut self) {
+        let Some(directory) = self.snapshot.session_process_directory.clone() else {
+            return;
+        };
+        stop_all_session_processes(Path::new(&directory));
+        self.refresh();
     }
 
     fn shutdown_clients(&mut self) {
@@ -237,49 +250,140 @@ impl GatewayTrayState {
 fn rebuild_menu(
     menu: &Menu,
     snapshot: &TraySnapshot,
+) -> Result<(TrayMenuHandle, HashMap<String, ActiveSessionItem>)> {
+    let handle = replace_menu(menu, menu_model(snapshot))?;
+    Ok((handle, session_actions(snapshot)))
+}
+
+struct TrayMenuHandle {
+    model: Vec<TrayMenuEntry>,
+    items: Vec<Option<MenuItem>>,
+}
+
+fn refresh_menu(
+    menu: &Menu,
+    handle: &mut TrayMenuHandle,
+    snapshot: &TraySnapshot,
 ) -> Result<HashMap<String, ActiveSessionItem>> {
+    let model = menu_model(snapshot);
+    if same_menu_structure(&handle.model, &model) {
+        update_menu_items(handle, model);
+    } else {
+        *handle = replace_menu(menu, model)?;
+    }
+    Ok(session_actions(snapshot))
+}
+
+fn replace_menu(menu: &Menu, model: Vec<TrayMenuEntry>) -> Result<TrayMenuHandle> {
     while !menu.items().is_empty() {
         let _ = menu.remove_at(0);
     }
 
-    let mut session_actions = HashMap::new();
-    if snapshot.active_sessions.is_empty() {
-        menu.append(&MenuItem::with_id(
-            "status:no-active-sessions",
-            tray_text(snapshot.language, TrayText::NoActiveSessions),
-            false,
-            None,
-        ))?;
-    } else {
-        for session in &snapshot.active_sessions {
-            let id = format!("session:{}", session.session_id);
-            let item = MenuItem::with_id(MenuId::new(&id), &session.label, true, None);
-            menu.append(&item)?;
-            session_actions.insert(id, session.clone());
+    let mut items = Vec::with_capacity(model.len());
+    for entry in &model {
+        match (entry.id.as_deref(), entry.label.as_deref()) {
+            (Some(id), Some(label)) => {
+                let item = MenuItem::with_id(MenuId::new(id), label, entry.enabled, None);
+                menu.append(&item)?;
+                items.push(Some(item));
+            }
+            (None, None) => {
+                menu.append(&PredefinedMenuItem::separator())?;
+                items.push(None);
+            }
+            _ => {}
         }
     }
+    Ok(TrayMenuHandle { model, items })
+}
 
-    menu.append(&PredefinedMenuItem::separator())?;
-    menu.append(&MenuItem::with_id(
-        OPEN_GUI_ID,
-        tray_text(snapshot.language, TrayText::OpenGui),
-        true,
-        None,
-    ))?;
-    menu.append(&MenuItem::with_id(
-        OPEN_TUI_ID,
-        tray_text(snapshot.language, TrayText::OpenTui),
-        snapshot.last_workspace.is_some(),
-        None,
-    ))?;
-    menu.append(&PredefinedMenuItem::separator())?;
-    menu.append(&MenuItem::with_id(
-        QUIT_ID,
-        tray_text(snapshot.language, TrayText::Quit),
-        true,
-        None,
-    ))?;
-    Ok(session_actions)
+fn same_menu_structure(left: &[TrayMenuEntry], right: &[TrayMenuEntry]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.id == right.id && left.label.is_some() == right.label.is_some()
+        })
+}
+
+fn update_menu_items(handle: &mut TrayMenuHandle, model: Vec<TrayMenuEntry>) {
+    for ((old, new), item) in handle.model.iter().zip(&model).zip(&handle.items) {
+        let Some(item) = item else {
+            continue;
+        };
+        if old.label != new.label {
+            if let Some(label) = new.label.as_deref() {
+                item.set_text(label);
+            }
+        }
+        if old.enabled != new.enabled {
+            item.set_enabled(new.enabled);
+        }
+    }
+    handle.model = model;
+}
+
+fn session_actions(snapshot: &TraySnapshot) -> HashMap<String, ActiveSessionItem> {
+    snapshot
+        .active_sessions
+        .iter()
+        .map(|session| (format!("session:{}", session.session_id), session.clone()))
+        .collect()
+}
+
+fn menu_model(snapshot: &TraySnapshot) -> Vec<TrayMenuEntry> {
+    let mut entries = Vec::new();
+    if snapshot.active_sessions.is_empty() {
+        entries.push(TrayMenuEntry {
+            id: Some("status:no-active-sessions".to_string()),
+            label: Some(tray_text(snapshot.language, TrayText::NoActiveSessions).to_string()),
+            enabled: false,
+        });
+    } else {
+        entries.extend(
+            snapshot
+                .active_sessions
+                .iter()
+                .map(|session| TrayMenuEntry {
+                    id: Some(format!("session:{}", session.session_id)),
+                    label: Some(session.label.clone()),
+                    enabled: true,
+                }),
+        );
+    }
+
+    entries.push(separator_entry());
+    entries.push(TrayMenuEntry {
+        id: Some(OPEN_GUI_ID.to_string()),
+        label: Some(tray_text(snapshot.language, TrayText::OpenGui).to_string()),
+        enabled: true,
+    });
+    entries.push(TrayMenuEntry {
+        id: Some("status:background-processes".to_string()),
+        label: Some(background_process_count_label(
+            snapshot.language,
+            snapshot.background_process_count,
+        )),
+        enabled: false,
+    });
+    entries.push(TrayMenuEntry {
+        id: Some(KILL_BACKGROUND_PROCESSES_ID.to_string()),
+        label: Some(tray_text(snapshot.language, TrayText::KillBackgroundProcesses).to_string()),
+        enabled: snapshot.background_process_count > 0,
+    });
+    entries.push(separator_entry());
+    entries.push(TrayMenuEntry {
+        id: Some(QUIT_ID.to_string()),
+        label: Some(tray_text(snapshot.language, TrayText::Quit).to_string()),
+        enabled: true,
+    });
+    entries
+}
+
+fn separator_entry() -> TrayMenuEntry {
+    TrayMenuEntry {
+        id: None,
+        label: None,
+        enabled: false,
+    }
 }
 
 fn read_snapshot() -> TraySnapshot {
@@ -299,11 +403,35 @@ fn read_snapshot() -> TraySnapshot {
         .map(|workspace| workspace.directory.clone());
     let language = read_tray_language(last_workspace.as_deref());
     let active_sessions = active_sessions(&client, &workspaces, language);
+    let session_process_directory = session_process_directory(last_workspace.as_deref());
+    let background_process_count = session_process_directory
+        .as_deref()
+        .map(|directory| {
+            crate::session::process_snapshot::collect_runtime_shell_process_snapshot(Path::new(
+                directory,
+            ))
+            .processes
+            .len()
+        })
+        .unwrap_or(0);
     TraySnapshot {
         active_sessions,
         last_workspace,
+        session_process_directory,
+        background_process_count,
         language,
     }
+}
+
+fn session_process_directory(last_workspace: Option<&str>) -> Option<String> {
+    crate::mock::global_store()
+        .get_current_directory()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            last_workspace
+                .filter(|value| !value.trim().is_empty())
+                .map(ToString::to_string)
+        })
 }
 
 fn active_sessions(
@@ -381,7 +509,7 @@ fn truncate_label(value: &str, max_chars: usize) -> String {
 enum TrayText {
     NoActiveSessions,
     OpenGui,
-    OpenTui,
+    KillBackgroundProcesses,
     Quit,
     Session,
 }
@@ -390,14 +518,21 @@ fn tray_text(language: TrayLanguage, text: TrayText) -> &'static str {
     match (language, text) {
         (TrayLanguage::ZhCN, TrayText::NoActiveSessions) => "无活动会话",
         (TrayLanguage::ZhCN, TrayText::OpenGui) => "打开 GUI",
-        (TrayLanguage::ZhCN, TrayText::OpenTui) => "打开 TUI",
+        (TrayLanguage::ZhCN, TrayText::KillBackgroundProcesses) => "杀死所有后台进程",
         (TrayLanguage::ZhCN, TrayText::Quit) => "退出",
         (TrayLanguage::ZhCN, TrayText::Session) => "会话",
         (TrayLanguage::En, TrayText::NoActiveSessions) => "No active sessions",
         (TrayLanguage::En, TrayText::OpenGui) => "Open GUI",
-        (TrayLanguage::En, TrayText::OpenTui) => "Open TUI",
+        (TrayLanguage::En, TrayText::KillBackgroundProcesses) => "Kill all background processes",
         (TrayLanguage::En, TrayText::Quit) => "Quit",
         (TrayLanguage::En, TrayText::Session) => "Session",
+    }
+}
+
+fn background_process_count_label(language: TrayLanguage, count: usize) -> String {
+    match language {
+        TrayLanguage::ZhCN => format!("后台进程：{count}"),
+        TrayLanguage::En => format!("Background processes: {count}"),
     }
 }
 
@@ -450,6 +585,8 @@ fn is_left_click_release(event: &TrayIconEvent) -> bool {
 
 fn snapshots_equal(left: &TraySnapshot, right: &TraySnapshot) -> bool {
     left.last_workspace == right.last_workspace
+        && left.session_process_directory == right.session_process_directory
+        && left.background_process_count == right.background_process_count
         && left.language == right.language
         && left.active_sessions.len() == right.active_sessions.len()
         && left
@@ -534,136 +671,6 @@ fn resolve_gui_binary() -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.exists())
 }
 
-fn open_tui(port: u16, workspace: Option<&str>, session_id: Option<&str>) -> Result<Child> {
-    let workspace = workspace
-        .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let gateway_url = format!("http://127.0.0.1:{port}");
-    let command = tui_command(&gateway_url, &workspace, session_id);
-    open_terminal(&workspace, &gateway_url, &command)
-}
-
-fn tui_command(gateway_url: &str, workspace: &Path, session_id: Option<&str>) -> String {
-    let mut args = vec![
-        "--gateway-url".to_string(),
-        gateway_url.to_string(),
-        "--cwd".to_string(),
-        workspace.to_string_lossy().to_string(),
-    ];
-    if let Some(session_id) = session_id.filter(|value| !value.trim().is_empty()) {
-        args.push("--initial-session".to_string());
-        args.push(session_id.to_string());
-    }
-    let command = resolve_tui_command();
-    shell_command_line(&command, &args)
-}
-
-fn resolve_tui_command() -> Vec<String> {
-    if let Some(path) = std::env::var_os("TURA_TUI_BIN") {
-        return vec![path.to_string_lossy().to_string()];
-    }
-    let root = std::env::var_os("TURA_PROJECT_ROOT")
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."));
-    let built_tui = root.join("apps").join("tui").join("dist").join("index.js");
-    if built_tui.exists() {
-        return vec!["node".to_string(), built_tui.to_string_lossy().to_string()];
-    }
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .unwrap_or_default();
-    let binary_name = if cfg!(windows) { "tura.cmd" } else { "tura" };
-    let packaged = exe_dir.join(binary_name);
-    if packaged.exists() {
-        return vec![packaged.to_string_lossy().to_string()];
-    }
-    vec!["tura".to_string()]
-}
-
-fn open_terminal(workspace: &Path, gateway_url: &str, command: &str) -> Result<Child> {
-    #[cfg(windows)]
-    {
-        let script = format!(
-            "$env:TURA_GATEWAY_URL={}; Set-Location -LiteralPath {}; {}",
-            powershell_quote(gateway_url),
-            powershell_quote(workspace.to_string_lossy()),
-            command
-        );
-        let mut process = Command::new("powershell.exe");
-        process.args(["-NoProfile", "-NoExit", "-Command", &script]);
-        spawn_detached(process)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let script = format!(
-            "cd {} && TURA_GATEWAY_URL={} {}",
-            sh_quote(&workspace.to_string_lossy()),
-            sh_quote(gateway_url),
-            command
-        );
-        let mut process = Command::new("osascript");
-        process.args([
-            "-e",
-            &format!(
-                "tell application \"Terminal\" to do script {}",
-                apple_script_quote(&script)
-            ),
-        ]);
-        return spawn_detached(process);
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let script = format!(
-            "cd {} && TURA_GATEWAY_URL={} exec {}",
-            sh_quote(&workspace.to_string_lossy()),
-            sh_quote(gateway_url),
-            command
-        );
-        for candidate in linux_terminal_commands(&script) {
-            if spawn_detached(candidate).is_ok() {
-                return Ok(());
-            }
-        }
-        Err(anyhow!("no supported terminal emulator found for Tura TUI"))
-    }
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn linux_terminal_commands(script: &str) -> Vec<Command> {
-    let mut commands = Vec::new();
-    let mut x_terminal = Command::new("x-terminal-emulator");
-    x_terminal.args(["-e", "sh", "-lc", script]);
-    commands.push(x_terminal);
-    let mut gnome = Command::new("gnome-terminal");
-    gnome.args(["--", "sh", "-lc", script]);
-    commands.push(gnome);
-    let mut konsole = Command::new("konsole");
-    konsole.args(["-e", "sh", "-lc", script]);
-    commands.push(konsole);
-    let mut xterm = Command::new("xterm");
-    xterm.args(["-e", "sh", "-lc", script]);
-    commands.push(xterm);
-    commands
-}
-
-fn shell_command_line(command: &[String], args: &[String]) -> String {
-    command
-        .iter()
-        .chain(args)
-        .map(|value| {
-            if cfg!(windows) {
-                powershell_quote(value)
-            } else {
-                sh_quote(value)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn spawn_detached(mut command: Command) -> Result<Child> {
     command
         .stdin(Stdio::null())
@@ -684,6 +691,23 @@ fn terminate_tracked_clients(children: &mut Vec<Child>) {
             Err(error) => {
                 tracing::warn!(error = %error, "failed to inspect launched gateway client")
             }
+        }
+    }
+}
+
+fn stop_all_session_processes(session_directory: &Path) {
+    let snapshot =
+        crate::session::process_snapshot::collect_runtime_shell_process_snapshot(session_directory);
+    for process in snapshot.processes {
+        if let Err(error) = crate::session::process_snapshot::stop_runtime_shell_process(
+            session_directory,
+            process.pid,
+        ) {
+            tracing::warn!(
+                pid = process.pid,
+                error,
+                "failed to stop session background process"
+            );
         }
     }
 }
@@ -733,30 +757,20 @@ fn is_gateway_client_process(process: &sysinfo::Process, gateway_url: &str) -> b
     })
 }
 
-fn sh_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn powershell_quote(value: impl AsRef<str>) -> String {
-    format!("'{}'", value.as_ref().replace('\'', "''"))
-}
-
-#[cfg(target_os = "macos")]
-fn apple_script_quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        gui_args, is_active_session, load_tura_icon, parse_tray_language, session_label,
-        tray_enabled, tray_text, tui_command, TrayLanguage, TrayText,
+        gui_args, is_active_session, load_tura_icon, menu_model, parse_tray_language,
+        same_menu_structure, session_label, tray_enabled, tray_text, ActiveSessionItem,
+        TrayLanguage, TraySnapshot, TrayText,
     };
     use serde_json::json;
     use session_log::SessionSummary;
     use std::ffi::OsString;
-    use std::path::Path;
+    use std::process::{Child, Command, Stdio};
     use std::sync::Mutex;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -774,6 +788,159 @@ mod tests {
             message_count: 1,
             task_management: json!({}),
         }
+    }
+
+    #[test]
+    fn tray_menu_contract_shows_background_processes_and_removes_tui_entry() {
+        let snapshot = TraySnapshot {
+            active_sessions: Vec::new(),
+            last_workspace: Some("C:\\repo".to_string()),
+            session_process_directory: Some("C:\\repo".to_string()),
+            background_process_count: 0,
+            language: TrayLanguage::En,
+        };
+
+        let labels = menu_model(&snapshot)
+            .into_iter()
+            .filter_map(|entry| entry.label)
+            .collect::<Vec<_>>();
+
+        assert!(
+            labels
+                .iter()
+                .any(|label| label == "Background processes: 0"),
+            "tray menu should always expose the background process count: {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|label| label == "Kill all background processes"),
+            "tray menu should expose a kill-all action even when there are no active sessions: {labels:?}"
+        );
+        assert!(
+            labels.iter().all(|label| label != "Open TUI"),
+            "tray menu should no longer expose the Open TUI action: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn tray_menu_enables_kill_all_when_background_processes_exist() {
+        let snapshot = TraySnapshot {
+            active_sessions: Vec::new(),
+            last_workspace: Some("C:\\repo".to_string()),
+            session_process_directory: Some("C:\\repo".to_string()),
+            background_process_count: 3,
+            language: TrayLanguage::En,
+        };
+
+        let entries = menu_model(&snapshot);
+        assert!(entries.iter().any(|entry| {
+            entry.label.as_deref() == Some("Background processes: 3") && !entry.enabled
+        }));
+        assert!(entries.iter().any(|entry| {
+            entry.label.as_deref() == Some("Kill all background processes") && entry.enabled
+        }));
+    }
+
+    #[test]
+    fn tray_kill_all_background_processes_stops_session_processes() -> anyhow::Result<()> {
+        let workspace = tempfile::tempdir()?;
+        let mut child = spawn_long_running_child(workspace.path(), true)?;
+        wait_until(Duration::from_secs(8), || {
+            let snapshot = crate::session::process_snapshot::collect_session_process_snapshot(
+                workspace.path(),
+            );
+            snapshot
+                .processes
+                .iter()
+                .any(|process| process.pid == child.id())
+                .then_some(())
+                .ok_or_else(|| anyhow::anyhow!("child process not visible yet"))
+        })?;
+
+        super::stop_all_session_processes(workspace.path());
+
+        wait_until(Duration::from_secs(8), || match child.try_wait()? {
+            Some(_status) => Ok(()),
+            None => Err(anyhow::anyhow!("child process still running")),
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn tray_kill_all_background_processes_ignores_unmarked_native_processes() -> anyhow::Result<()>
+    {
+        let workspace = tempfile::tempdir()?;
+        let mut child = spawn_long_running_child(workspace.path(), false)?;
+        wait_until(Duration::from_secs(8), || {
+            let snapshot = crate::session::process_snapshot::collect_session_process_snapshot(
+                workspace.path(),
+            );
+            snapshot
+                .processes
+                .iter()
+                .any(|process| process.pid == child.id())
+                .then_some(())
+                .ok_or_else(|| anyhow::anyhow!("native process not visible yet"))
+        })?;
+
+        super::stop_all_session_processes(workspace.path());
+
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(
+            child.try_wait()?.is_none(),
+            "tray kill-all must not stop unmarked Tura native/background processes"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok(())
+    }
+
+    #[test]
+    fn tray_refreshes_background_process_status_every_second() {
+        assert_eq!(super::REFRESH_INTERVAL, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn tray_menu_refresh_keeps_structure_for_text_and_enabled_changes() {
+        let inactive = TraySnapshot {
+            active_sessions: Vec::new(),
+            last_workspace: Some("C:\\repo".to_string()),
+            session_process_directory: Some("C:\\repo".to_string()),
+            background_process_count: 0,
+            language: TrayLanguage::En,
+        };
+        let active = TraySnapshot {
+            background_process_count: 2,
+            ..inactive.clone()
+        };
+
+        assert!(
+            same_menu_structure(&menu_model(&inactive), &menu_model(&active)),
+            "count and enabled-state refreshes should update existing tray menu items in place"
+        );
+    }
+
+    #[test]
+    fn tray_menu_refresh_rebuilds_only_when_dynamic_session_shape_changes() {
+        let empty = TraySnapshot {
+            active_sessions: Vec::new(),
+            last_workspace: Some("C:\\repo".to_string()),
+            session_process_directory: Some("C:\\repo".to_string()),
+            background_process_count: 0,
+            language: TrayLanguage::En,
+        };
+        let with_session = TraySnapshot {
+            active_sessions: vec![ActiveSessionItem {
+                session_id: "session-1".to_string(),
+                workspace: "C:\\repo".to_string(),
+                label: "Build tray - repo".to_string(),
+            }],
+            ..empty.clone()
+        };
+
+        assert!(
+            !same_menu_structure(&menu_model(&empty), &menu_model(&with_session)),
+            "adding or removing session actions changes the tray menu structure"
+        );
     }
 
     #[test]
@@ -870,27 +1037,58 @@ mod tests {
         assert!(label.chars().count() <= 46);
     }
 
-    #[test]
-    fn tray_tui_action_includes_gateway_workspace_and_session() {
-        let command = tui_command(
-            "http://127.0.0.1:4126",
-            Path::new("C:\\repo with spaces"),
-            Some("session-123"),
-        );
-
-        assert!(command.contains("--gateway-url"));
-        assert!(command.contains("http://127.0.0.1:4126"));
-        assert!(command.contains("--cwd"));
-        assert!(command.contains("repo with spaces"));
-        assert!(command.contains("--initial-session"));
-        assert!(command.contains("session-123"));
-    }
-
     fn restore_env_var(name: &str, value: Option<OsString>) {
         if let Some(value) = value {
             std::env::set_var(name, value);
         } else {
             std::env::remove_var(name);
         }
+    }
+
+    fn spawn_long_running_child(
+        workspace: &std::path::Path,
+        runtime_shell_process: bool,
+    ) -> anyhow::Result<Child> {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Set-Content -Path tray-child-ready.txt -Value $PID; Start-Sleep -Seconds 60",
+            ]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "echo $$ > tray-child-ready.txt; sleep 60"]);
+            command
+        };
+        if runtime_shell_process {
+            command.env("TURA_BACKGROUND_PROCESS_KIND", "runtime_shell");
+        }
+        command
+            .current_dir(workspace)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(Into::into)
+    }
+
+    fn wait_until<T>(
+        timeout: Duration,
+        mut attempt: impl FnMut() -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let started = Instant::now();
+        let mut last_error = None;
+        while started.elapsed() < timeout {
+            match attempt() {
+                Ok(value) => return Ok(value),
+                Err(error) => last_error = Some(error),
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("condition timed out")))
     }
 }

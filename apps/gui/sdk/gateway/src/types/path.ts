@@ -5,4 +5,3 @@ export type PathResponse = {
   worktree: string;
   directory: string;
 };
-

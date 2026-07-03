@@ -12,6 +12,8 @@ export function defaultGatewayUrl(): string {
 }
 
 export function defaultGatewayPort(): string {
+  const fromEnv = process.env.TURA_GATEWAY_PORT?.trim();
+  if (fromEnv && /^\d+$/u.test(fromEnv)) return fromEnv;
   return currentBuildMode() === "release" ? RELEASE_GATEWAY_PORT : DEV_GATEWAY_PORT;
 }
 
@@ -65,21 +67,34 @@ function findRuntimeRoot(): string {
     dirname(fileURLToPath(import.meta.url)),
   ];
   for (const start of starts) {
-    let current = resolve(start);
-    for (let depth = 0; depth < 8; depth += 1) {
-      if (isRuntimeRoot(current)) return current;
-      const parent = dirname(current);
-      if (parent === current) break;
-      current = parent;
-    }
+    const sourceRoot = findAncestor(start, isSourceCheckoutRoot);
+    if (sourceRoot) return sourceRoot;
+  }
+  for (const start of starts) {
+    const runtimeRoot = findAncestor(start, isRuntimeRoot);
+    if (runtimeRoot) return runtimeRoot;
   }
   return process.cwd();
 }
 
+function findAncestor(start: string, predicate: (candidate: string) => boolean): string | undefined {
+  let current = resolve(start);
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (predicate(current)) return current;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return undefined;
+}
+
+function isSourceCheckoutRoot(candidate: string): boolean {
+  return existsSync(join(candidate, "Cargo.toml")) && existsSync(join(candidate, "crates", "gateway"));
+}
+
 function isRuntimeRoot(candidate: string): boolean {
   return (
-    (existsSync(join(candidate, "Cargo.toml")) &&
-      existsSync(join(candidate, "crates", "gateway"))) ||
+    isSourceCheckoutRoot(candidate) ||
     (existsSync(join(candidate, "agents", "src")) &&
       existsSync(join(candidate, "personas", "src"))) ||
     existsSync(join(candidate, "config", "provider_config.json"))

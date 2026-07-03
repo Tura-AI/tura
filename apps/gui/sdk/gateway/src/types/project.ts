@@ -18,4 +18,3 @@ export type Project = {
 export type CurrentProjectResponse = {
   project?: Project | null;
 };
-

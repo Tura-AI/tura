@@ -2,6 +2,10 @@ use crate::contracts::{ServiceHealth, ServiceStatusResponse};
 use axum::Json;
 
 pub async fn get_service_status() -> Json<ServiceStatusResponse> {
+    Json(service_status_value())
+}
+
+pub fn service_status_value() -> ServiceStatusResponse {
     let session_directory = crate::mock::global_store()
         .get_current_directory()
         .or_else(|| {
@@ -62,5 +66,5 @@ pub async fn get_service_status() -> Json<ServiceStatusResponse> {
         }
     }
 
-    Json(response)
+    response
 }

@@ -3,43 +3,55 @@ use crate::contracts::{BadRequestError, UpsertPersonaRequest};
 use axum::{extract::Path, http::StatusCode, Json};
 
 pub async fn list_personas() -> Json<Vec<tura_persona::store::StoredPersona>> {
-    Json(tura_persona::store::discover_personas(
-        &registry::project_root(),
-    ))
+    Json(list_personas_value())
+}
+
+pub fn list_personas_value() -> Vec<tura_persona::store::StoredPersona> {
+    tura_persona::store::discover_personas(&registry::project_root())
 }
 
 pub async fn get_persona(
     Path(persona_id): Path<String>,
 ) -> Result<Json<tura_persona::store::StoredPersona>, (StatusCode, Json<BadRequestError>)> {
-    let root = registry::project_root();
-    tura_persona::store::load_persona(&root, &persona_id)
+    get_persona_value(persona_id)
         .map(Json)
-        .ok_or_else(|| {
-            api_error(
-                StatusCode::NOT_FOUND,
-                format!("persona `{persona_id}` not found"),
-            )
-        })
+        .map_err(|(status, error)| api_error(status, error))
+}
+
+pub fn get_persona_value(
+    persona_id: String,
+) -> Result<tura_persona::store::StoredPersona, (StatusCode, String)> {
+    let root = registry::project_root();
+    tura_persona::store::load_persona(&root, &persona_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("persona `{persona_id}` not found"),
+        )
+    })
 }
 
 pub async fn create_persona(
     Json(payload): Json<UpsertPersonaRequest>,
 ) -> Result<Json<tura_persona::store::StoredPersona>, (StatusCode, Json<BadRequestError>)> {
+    create_persona_value(payload).map(Json).map_err(|err| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            format!("failed to create persona: {err}"),
+        )
+    })
+}
+
+pub fn create_persona_value(
+    payload: UpsertPersonaRequest,
+) -> Result<tura_persona::store::StoredPersona, String> {
     upsert_persona_in_store(None, payload)
-        .map(Json)
-        .map_err(|err| {
-            api_error(
-                StatusCode::BAD_REQUEST,
-                format!("failed to create persona: {err}"),
-            )
-        })
 }
 
 pub async fn update_persona(
     Path(persona_id): Path<String>,
     Json(payload): Json<UpsertPersonaRequest>,
 ) -> Result<Json<tura_persona::store::StoredPersona>, (StatusCode, Json<BadRequestError>)> {
-    upsert_persona_in_store(Some(persona_id), payload)
+    update_persona_value(persona_id, payload)
         .map(Json)
         .map_err(|err| {
             api_error(
@@ -49,12 +61,23 @@ pub async fn update_persona(
         })
 }
 
+pub fn update_persona_value(
+    persona_id: String,
+    payload: UpsertPersonaRequest,
+) -> Result<tura_persona::store::StoredPersona, String> {
+    upsert_persona_in_store(Some(persona_id), payload)
+}
+
 pub async fn delete_persona(
     Path(persona_id): Path<String>,
 ) -> Result<Json<bool>, (StatusCode, Json<BadRequestError>)> {
-    tura_persona::store::delete_dynamic_persona(&registry::project_root(), &persona_id)
+    delete_persona_value(persona_id)
         .map(Json)
         .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))
+}
+
+pub fn delete_persona_value(persona_id: String) -> Result<bool, String> {
+    tura_persona::store::delete_dynamic_persona(&registry::project_root(), &persona_id)
 }
 
 fn api_error(status: StatusCode, error: String) -> (StatusCode, Json<BadRequestError>) {

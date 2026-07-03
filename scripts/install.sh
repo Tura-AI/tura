@@ -6,6 +6,7 @@ export PATH
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 COMMANDS_DIR="$REPO_ROOT/commands"
+COMMAND_PYTHON_VERSION=3.12
 
 SKIP_COMMANDS=0
 SKIP_APPS=0
@@ -13,6 +14,7 @@ SKIP_UV=0
 SKIP_BUN=0
 CHECK_ONLY=0
 OFFLINE=0
+APT_UPDATED=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -35,8 +37,8 @@ under commands/*, and installs JavaScript workspaces in their own directories.
 Options:
   --skip-commands  skip commands/*/install.* scripts
   --skip-apps      skip JavaScript installs for apps/tui, apps/gui, and apps/tauri
-  --skip-uv        do not install or verify uv
-  --skip-bun       do not install or verify bun
+  --skip-uv        do not install or verify uv; requires --skip-commands
+  --skip-bun       do not install or verify bun; requires --skip-apps for Bun workspaces
   --check-only     verify expected tools/environments without installing
   --offline        pass offline/cache-only flags where supported
   -h, --help       show this help
@@ -118,13 +120,33 @@ run_as_root() {
   fi
 }
 
+apt_install() {
+  if [ "$APT_UPDATED" -eq 0 ]; then
+    run_as_root apt-get update
+    APT_UPDATED=1
+  fi
+  # shellcheck disable=SC2086
+  run_as_root apt-get install -y $*
+}
+
+validate_option_contracts() {
+  if [ "$SKIP_UV" -eq 1 ] && [ "$SKIP_COMMANDS" -eq 0 ]; then
+    echo "--skip-uv was supplied, but command installers require uv. Remove --skip-uv or also pass --skip-commands." >&2
+    exit 1
+  fi
+  if [ "$SKIP_BUN" -eq 1 ] && [ "$SKIP_APPS" -eq 0 ]; then
+    echo "--skip-bun was supplied, but JavaScript workspace installs require bun. Remove --skip-bun or pass --skip-apps." >&2
+    exit 1
+  fi
+}
+
 ensure_windows_shell_tools() {
   [ "$CHECK_ONLY" -eq 1 ] && return
 
   missing_packages=""
   find_bash >/dev/null 2>&1 || missing_packages="$missing_packages bash"
   find_zsh >/dev/null 2>&1 || missing_packages="$missing_packages zsh"
-  [ -n "$missing_packages" ] || return
+  [ -n "$missing_packages" ] || return 0
   if [ "$OFFLINE" -eq 1 ]; then
     echo "Shell tools are missing ($missing_packages) and --offline was supplied. Install MSYS2 bash/zsh manually, then rerun." >&2
     exit 1
@@ -162,7 +184,7 @@ ensure_unix_shell_tools() {
   missing_packages=""
   find_bash >/dev/null 2>&1 || missing_packages="$missing_packages bash"
   find_zsh >/dev/null 2>&1 || missing_packages="$missing_packages zsh"
-  [ -n "$missing_packages" ] || return
+  [ -n "$missing_packages" ] || return 0
   if [ "$OFFLINE" -eq 1 ]; then
     echo "Shell tools are missing ($missing_packages) and --offline was supplied. Install them manually, then rerun." >&2
     exit 1
@@ -178,8 +200,7 @@ ensure_unix_shell_tools() {
       ;;
     *)
       if have apt-get; then
-        # shellcheck disable=SC2086
-        run_as_root apt-get install -y $missing_packages
+        apt_install $missing_packages
       elif have dnf; then
         # shellcheck disable=SC2086
         run_as_root dnf install -y $missing_packages
@@ -314,7 +335,7 @@ ensure_git() {
       ;;
     *)
       if have apt-get; then
-        run_as_root apt-get install -y git
+        apt_install git
       elif have dnf; then
         run_as_root dnf install -y git
       elif have yum; then
@@ -335,6 +356,98 @@ ensure_git() {
   git_path=$(find_git || true)
   [ -n "$git_path" ] || { echo "git was installed but is still not discoverable. Add Git to PATH and rerun." >&2; exit 1; }
   print_version git "$git_path" --version
+}
+
+ensure_download_tool() {
+  if have curl || have wget; then
+    return
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "curl or wget was not found. Run scripts/install.sh without --check-only or install curl/wget manually." >&2
+    exit 1
+  fi
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "curl or wget was not found and --offline was supplied. Install curl/wget manually, then rerun." >&2
+    exit 1
+  fi
+
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  step "Installing download tool"
+  case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*)
+      pacman_path=$(find_msys2_pacman || true)
+      [ -n "$pacman_path" ] || { echo "curl/wget was not found and MSYS2 pacman is unavailable. Install curl or wget manually, then rerun." >&2; exit 1; }
+      "$pacman_path" -Sy --noconfirm --needed curl
+      ;;
+    Darwin)
+      have brew || { echo "Homebrew was not found. Install curl or wget manually, then rerun." >&2; exit 1; }
+      brew install curl
+      ;;
+    *)
+      if have apt-get; then
+        apt_install curl
+      elif have dnf; then
+        run_as_root dnf install -y curl
+      elif have yum; then
+        run_as_root yum install -y curl
+      elif have pacman; then
+        run_as_root pacman -Sy --noconfirm --needed curl
+      elif have apk; then
+        run_as_root apk add curl
+      elif have zypper; then
+        run_as_root zypper --non-interactive install curl
+      else
+        echo "No supported package manager was found to install curl. Install curl or wget manually, then rerun." >&2
+        exit 1
+      fi
+      ;;
+  esac
+  have curl || have wget || { echo "curl/wget was installed but is still not discoverable. Add it to PATH and rerun." >&2; exit 1; }
+}
+
+ensure_archive_tool() {
+  have unzip && return
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "unzip was not found. Run scripts/install.sh without --check-only or install unzip manually." >&2
+    exit 1
+  fi
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "unzip was not found and --offline was supplied. Install unzip manually, then rerun." >&2
+    exit 1
+  fi
+
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  step "Installing archive tool"
+  case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*)
+      pacman_path=$(find_msys2_pacman || true)
+      [ -n "$pacman_path" ] || { echo "unzip was not found and MSYS2 pacman is unavailable. Install unzip manually, then rerun." >&2; exit 1; }
+      "$pacman_path" -Sy --noconfirm --needed unzip
+      ;;
+    Darwin)
+      have brew || { echo "Homebrew was not found. Install unzip manually, then rerun." >&2; exit 1; }
+      brew install unzip
+      ;;
+    *)
+      if have apt-get; then
+        apt_install unzip
+      elif have dnf; then
+        run_as_root dnf install -y unzip
+      elif have yum; then
+        run_as_root yum install -y unzip
+      elif have pacman; then
+        run_as_root pacman -Sy --noconfirm --needed unzip
+      elif have apk; then
+        run_as_root apk add unzip
+      elif have zypper; then
+        run_as_root zypper --non-interactive install unzip
+      else
+        echo "No supported package manager was found to install unzip. Install unzip manually, then rerun." >&2
+        exit 1
+      fi
+      ;;
+  esac
+  have unzip || { echo "unzip was installed but is still not discoverable. Add it to PATH and rerun." >&2; exit 1; }
 }
 
 add_user_tool_paths() {
@@ -418,8 +531,49 @@ ensure_uv() {
   print_version uv uv --version
 }
 
+uv_python_available() {
+  if [ "$OFFLINE" -eq 1 ]; then
+    uv python find "$COMMAND_PYTHON_VERSION" --offline >/dev/null 2>&1
+  else
+    uv python find "$COMMAND_PYTHON_VERSION" >/dev/null 2>&1
+  fi
+}
+
+ensure_command_python() {
+  if [ "$SKIP_COMMANDS" -eq 1 ]; then
+    echo "Skipping command Python setup."
+    return
+  fi
+  if [ "$SKIP_UV" -eq 1 ]; then
+    echo "Skipping command Python setup."
+    return
+  fi
+  if uv_python_available; then
+    print_version python uv python find "$COMMAND_PYTHON_VERSION" --show-version
+    return
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "Python $COMMAND_PYTHON_VERSION was not found by uv. Run scripts/install.sh without --check-only so uv can install it, or install Python $COMMAND_PYTHON_VERSION manually." >&2
+    exit 1
+  fi
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "Python $COMMAND_PYTHON_VERSION was not found in uv's cache or on PATH, and --offline was supplied. Rerun without --offline or install/cache Python $COMMAND_PYTHON_VERSION first." >&2
+    exit 1
+  fi
+
+  step "Installing Python $COMMAND_PYTHON_VERSION for command virtual environments"
+  uv python install "$COMMAND_PYTHON_VERSION"
+  uv_python_available || { echo "uv installed Python $COMMAND_PYTHON_VERSION, but it is still not discoverable. Check uv's Python install directory and PATH, then rerun." >&2; exit 1; }
+  print_version python uv python find "$COMMAND_PYTHON_VERSION" --show-version
+}
+
 ensure_bun() {
+  if [ "$SKIP_APPS" -eq 1 ]; then
+    echo "Skipping bun setup."
+    return
+  fi
   [ "$SKIP_BUN" -eq 1 ] && { echo "Skipping bun setup."; return; }
+  ensure_archive_tool
   add_user_tool_paths
   if have bun; then
     print_version bun bun --version
@@ -433,6 +587,20 @@ ensure_bun() {
   install_from_script bun "https://bun.sh/install" "https://bun.sh/install.ps1"
   have bun || { echo "bun was installed but is still not on PATH. Add $HOME/.bun/bin to PATH." >&2; exit 1; }
   print_version bun bun --version
+}
+
+ensure_bun_for_workspace() {
+  workspace_dir=$1
+  if [ "$SKIP_BUN" -eq 1 ]; then
+    echo "--skip-bun was supplied, but JavaScript workspace install requires bun for $workspace_dir. Remove --skip-bun or pass --skip-apps." >&2
+    exit 1
+  fi
+  add_user_tool_paths
+  if have bun; then
+    print_version bun bun --version
+    return
+  fi
+  ensure_bun
 }
 
 run_command_installers() {
@@ -459,7 +627,7 @@ run_command_installers() {
       [ "$CHECK_ONLY" -eq 1 ] && ps_args="$ps_args -CheckOnly"
       [ "$OFFLINE" -eq 1 ] && ps_args="$ps_args -Offline"
       # shellcheck disable=SC2086
-      pwsh -NoProfile -File "$ps_installer" $ps_args
+      pwsh -NoProfile -ExecutionPolicy Bypass -File "$ps_installer" $ps_args
     else
       echo "No runnable installer found for $name." >&2
       exit 1
@@ -479,7 +647,7 @@ install_js_workspace() {
 
   step "Installing JavaScript workspace: $workspace_dir"
   if [ -f "$workspace_dir/bun.lock" ]; then
-    ensure_bun
+    ensure_bun_for_workspace "$workspace_dir"
     bun_args="install --frozen-lockfile"
     [ "$OFFLINE" -eq 1 ] && bun_args="$bun_args --offline"
     # shellcheck disable=SC2086
@@ -491,7 +659,7 @@ install_js_workspace() {
     # shellcheck disable=SC2086
     (cd "$workspace_dir" && npm $npm_args)
   else
-    ensure_bun
+    ensure_bun_for_workspace "$workspace_dir"
     bun_args="install"
     [ "$OFFLINE" -eq 1 ] && bun_args="$bun_args --offline"
     # shellcheck disable=SC2086
@@ -499,12 +667,15 @@ install_js_workspace() {
   fi
 }
 
+validate_option_contracts
 cd "$REPO_ROOT"
 
 step "Checking root dependency installers"
 ensure_shell_tool_coverage
 ensure_git
+ensure_download_tool
 ensure_uv
+ensure_command_python
 ensure_bun
 run_command_installers
 

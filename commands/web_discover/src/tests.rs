@@ -218,6 +218,7 @@ fn site_filter_does_not_reject_image_results() {
         vec![result],
         &WebDiscoverArgs {
             kind: "image".to_string(),
+            asset_type: None,
             query: "site:wikipedia.org 唐玄奘 画像".to_string(),
             include_regex: None,
             exclude_regex: None,
@@ -284,13 +285,20 @@ fn parse_cli_args_accepts_command_name_aliases_and_bounds() {
 }
 
 #[test]
-fn parse_cli_args_treats_first_media_kind_as_type() {
+fn parse_cli_args_treats_first_kind_word_as_type() {
     let args = parse_args_text(r#"video "launch keynote" -n 0"#).expect("parse media kind");
 
     assert_eq!(args.kind, "video");
+    assert_eq!(args.asset_type, None);
     assert_eq!(args.query, "launch keynote");
     assert_eq!(args.max_results, 1);
     assert_eq!(args.min_size, DEFAULT_MIN_SIZE);
+
+    let asset = parse_args_text(r#"asset 3d "compact ship" --download-dir assets"#)
+        .expect("parse asset kind");
+    assert_eq!(asset.kind, "asset");
+    assert_eq!(asset.asset_type.as_deref(), Some("3d"));
+    assert_eq!(asset.query, "compact ship");
 }
 
 #[test]
@@ -430,6 +438,7 @@ fn normalize_kind_covers_internal_canonical_values_only() {
     assert_eq!(normalize_kind("photos"), "image");
     assert_eq!(normalize_kind("movies"), "video");
     assert_eq!(normalize_kind("music"), "audio");
+    assert_eq!(normalize_kind("assets"), "asset");
     assert_eq!(normalize_kind("bundles"), "bundles");
     assert_eq!(normalize_kind("custom_type"), "custom_type");
 }
@@ -462,6 +471,7 @@ fn normalized_search_query_preserves_query_text() {
 fn filter_results_applies_include_exclude_site_and_limit() {
     let args = WebDiscoverArgs {
         kind: "website".to_string(),
+        asset_type: None,
         query: "site:example.com rust".to_string(),
         include_regex: Some("Rust|Tokio".to_string()),
         exclude_regex: Some("draft".to_string()),
@@ -502,6 +512,7 @@ fn filter_results_applies_include_exclude_site_and_limit() {
 fn filter_results_returns_regex_errors_with_field_context() {
     let args = WebDiscoverArgs {
         kind: "website".to_string(),
+        asset_type: None,
         query: "rust".to_string(),
         include_regex: Some("(".to_string()),
         exclude_regex: None,
@@ -521,6 +532,7 @@ fn filter_results_returns_regex_errors_with_field_context() {
 fn filter_results_reports_exclude_regex_errors_with_field_context() {
     let args = WebDiscoverArgs {
         kind: "website".to_string(),
+        asset_type: None,
         query: "rust".to_string(),
         include_regex: None,
         exclude_regex: Some("[".to_string()),
@@ -540,6 +552,7 @@ fn filter_results_reports_exclude_regex_errors_with_field_context() {
 fn filter_results_applies_site_filter_only_to_website_results() {
     let image_args = WebDiscoverArgs {
         kind: "image".to_string(),
+        asset_type: None,
         query: "site:official.example profile".to_string(),
         include_regex: None,
         exclude_regex: None,
@@ -551,6 +564,7 @@ fn filter_results_applies_site_filter_only_to_website_results() {
     };
     let video_args = WebDiscoverArgs {
         kind: "video".to_string(),
+        asset_type: None,
         query: "site:official.example concert".to_string(),
         include_regex: None,
         exclude_regex: None,
@@ -585,6 +599,7 @@ fn filter_results_applies_site_filter_only_to_website_results() {
 fn bing_image_include_regex_uses_url_context_not_query_title() {
     let args = WebDiscoverArgs {
         kind: "image".to_string(),
+        asset_type: None,
         query: "site:official.example profile".to_string(),
         include_regex: Some("official\\.example".to_string()),
         exclude_regex: None,
@@ -835,6 +850,7 @@ fn file_helpers_resolve_relative_absolute_and_unique_downloads() {
     let session_dir = temp.path();
     let args = WebDiscoverArgs {
         kind: "image".to_string(),
+        asset_type: None,
         query: "minji".to_string(),
         include_regex: None,
         exclude_regex: None,
@@ -1289,6 +1305,7 @@ fn file_helpers_resolve_download_scopes_and_unique_names() {
     let dir = tempfile::tempdir().expect("tempdir");
     let args = WebDiscoverArgs {
         kind: "image".to_string(),
+        asset_type: None,
         query: "sample query".to_string(),
         include_regex: None,
         exclude_regex: None,

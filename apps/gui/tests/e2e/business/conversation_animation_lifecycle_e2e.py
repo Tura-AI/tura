@@ -72,20 +72,6 @@ def start_server() -> subprocess.Popen | None:
     )
 
 
-def stop(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
-
-
 def animation_times_moved_forward(before: dict, after: dict) -> bool:
     before_times = before.get("animationTimes", {})
     after_times = after.get("animationTimes", {})
@@ -412,7 +398,7 @@ async def main() -> None:
             await page.screenshot(path=str(OUT / "conversation-animation-lifecycle.png"), full_page=True)
             await browser.close()
     finally:
-        stop(process)
+        pass
 
     failures = [check for check in checks if not check["ok"]]
     (OUT / "summary.json").write_text(

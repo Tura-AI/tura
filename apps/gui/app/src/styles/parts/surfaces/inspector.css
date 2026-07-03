@@ -286,6 +286,11 @@ body.resizing-inspector * {
   font-size: var(--font-small);
 }
 
+.inspector-command-timing,
+.inspector-exit-code {
+  font-variant-numeric: tabular-nums;
+}
+
 .diff-add {
   background: var(--diff-add);
 }

@@ -72,20 +72,6 @@ def start_server() -> subprocess.Popen | None:
     )
 
 
-def stop(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
-
-
 async def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     process = start_server()
@@ -170,6 +156,46 @@ async def main() -> None:
                 }
             )
 
+            footer = await page.evaluate(
+                r"""
+                () => {
+                  const root = document.querySelector('.inspector-status');
+                  const timing = root?.querySelector('.inspector-command-timing');
+                  const exitCode = root?.querySelector('.inspector-exit-code');
+                  const timingRect = timing?.getBoundingClientRect();
+                  const exitRect = exitCode?.getBoundingClientRect();
+                  return {
+                    text: root?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+                    timing: timing?.textContent?.trim() ?? '',
+                    exitCode: exitCode?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+                    timingLeft: timingRect?.left ?? 0,
+                    exitLeft: exitRect?.left ?? 0,
+                  };
+                }
+                """
+            )
+            checks.append(
+                {
+                    "name": "footer-shows-command-runtime-before-exit-code",
+                    "ok": footer["timing"] == "3m15s/5m" and footer["timingLeft"] < footer["exitLeft"],
+                    "value": footer,
+                }
+            )
+            checks.append(
+                {
+                    "name": "footer-shows-real-exit-code",
+                    "ok": footer["exitCode"] in {"Exit code: 7", "退出码: 7"},
+                    "value": footer,
+                }
+            )
+            checks.append(
+                {
+                    "name": "footer-removes-duplicated-short-status-text",
+                    "ok": all(value not in footer["text"] for value in ["Completed", "Failed", "Running", "Background service", "已完成", "失败", "运行中", "后台服务"]),
+                    "value": footer,
+                }
+            )
+
             before = await page.evaluate(
                 """
                 () => {
@@ -218,7 +244,7 @@ async def main() -> None:
             checks.append({"name": "no-console-errors", "ok": not page_errors, "errors": page_errors})
             await browser.close()
     finally:
-        stop(process)
+        pass
 
     failures = [check for check in checks if not check["ok"]]
     OUT.mkdir(parents=True, exist_ok=True)

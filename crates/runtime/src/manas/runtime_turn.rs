@@ -19,8 +19,8 @@ use super::tool_catalog::{
     tool_schema_name,
 };
 
-const FORCE_COMPACT_CONTEXT_TOKEN_CAP: u64 = 255_000;
-const PROMPT_INJECTION_CONTEXT_TOKEN_CAP: u64 = 220_000;
+const FORCE_COMPACT_CONTEXT_TOKEN_CAP: u64 = 260_000;
+const PROMPT_INJECTION_CONTEXT_TOKEN_CAP: u64 = 240_000;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_turn(
@@ -576,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_limits_use_distinct_caps_for_large_models() {
+    fn compact_limits_use_requested_caps_for_large_models() {
         let _guard = crate::manas::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(|err| err.into_inner());
@@ -586,11 +586,11 @@ mod tests {
 
         assert_eq!(
             compact_prompt_injection_limit_tokens(&settings, &provider),
-            PROMPT_INJECTION_CONTEXT_TOKEN_CAP
+            240_000
         );
         assert_eq!(
             force_compact_context_limit_tokens(&settings, &provider),
-            FORCE_COMPACT_CONTEXT_TOKEN_CAP
+            260_000
         );
     }
 
@@ -728,11 +728,11 @@ mod tests {
         assert_eq!(model_context_window_tokens(&settings, &provider), 1_050_000);
         assert_eq!(
             compact_prompt_injection_limit_tokens(&settings, &provider),
-            PROMPT_INJECTION_CONTEXT_TOKEN_CAP
+            240_000
         );
         assert_eq!(
             force_compact_context_limit_tokens(&settings, &provider),
-            FORCE_COMPACT_CONTEXT_TOKEN_CAP
+            260_000
         );
     }
 

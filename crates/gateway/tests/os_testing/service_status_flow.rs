@@ -221,7 +221,12 @@ struct EnvGuard {
 
 impl EnvGuard {
     fn new(home: &Path) -> Self {
-        let keys = ["TURA_HOME", "SESSION_LOG_DB_ROOT", "TURA_DB_ROOT"];
+        let keys = [
+            "TURA_HOME",
+            "SESSION_LOG_DB_ROOT",
+            "TURA_DB_ROOT",
+            "TURA_GATEWAY_ALLOW_IN_PROCESS_FAKE_ROUTER",
+        ];
         let previous = keys
             .iter()
             .map(|key| (*key, std::env::var_os(key)))
@@ -229,6 +234,7 @@ impl EnvGuard {
         std::env::set_var("TURA_HOME", home);
         std::env::remove_var("SESSION_LOG_DB_ROOT");
         std::env::remove_var("TURA_DB_ROOT");
+        std::env::set_var("TURA_GATEWAY_ALLOW_IN_PROCESS_FAKE_ROUTER", "1");
         Self { previous }
     }
 }

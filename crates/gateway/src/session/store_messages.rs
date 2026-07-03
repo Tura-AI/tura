@@ -474,6 +474,24 @@ impl SessionStore {
         self.add_message_internal(session_id, role, content, metadata, None, None)
     }
 
+    pub fn merge_message_metadata(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        metadata: serde_json::Value,
+    ) -> Option<Message> {
+        let mut messages = self.messages.write();
+        let message = messages
+            .get_mut(session_id)?
+            .iter_mut()
+            .find(|message| message.id == message_id)?;
+        for part in &mut message.parts {
+            part.metadata = merge_part_metadata(part.metadata.take(), Some(metadata.clone()));
+        }
+        message.updated_at = Utc::now().timestamp_millis();
+        Some(message.clone())
+    }
+
     fn add_message_internal(
         &self,
         session_id: &str,

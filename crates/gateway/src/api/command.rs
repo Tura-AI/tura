@@ -6,19 +6,25 @@ use tura_router::registry::command::{
 };
 
 pub async fn list_commands() -> Json<Vec<Command>> {
+    Json(list_commands_value())
+}
+
+pub fn list_commands_value() -> Vec<Command> {
     let directory = global_store().get_current_directory();
-    Json(
-        CommandRegistry
-            .list(directory.as_deref())
-            .into_iter()
-            .map(command_from_router)
-            .collect(),
-    )
+    CommandRegistry
+        .list(directory.as_deref())
+        .into_iter()
+        .map(command_from_router)
+        .collect()
 }
 
 pub async fn execute_command(
     Json(payload): Json<ExecuteCommandRequest>,
 ) -> Json<ExecuteCommandResponse> {
+    Json(execute_command_value(payload))
+}
+
+pub fn execute_command_value(payload: ExecuteCommandRequest) -> ExecuteCommandResponse {
     let directory = global_store().get_current_directory();
     let response = CommandRegistry.execute(
         directory.as_deref(),
@@ -27,9 +33,9 @@ pub async fn execute_command(
             args: payload.args,
         },
     );
-    Json(ExecuteCommandResponse {
+    ExecuteCommandResponse {
         output: response.output,
-    })
+    }
 }
 
 fn command_from_router(command: CommandSpec) -> Command {

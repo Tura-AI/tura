@@ -76,6 +76,17 @@ else
   echo "pwsh not found; skipping PowerShell syntax checks on this runner."
 fi
 
+step "Checking install option conflict diagnostics"
+if sh "$REPO_ROOT/scripts/install.sh" --skip-uv --skip-apps --skip-bun 2>"${TMPDIR:-/tmp}/tura-skipuv-conflict.err"; then
+  echo "install unexpectedly succeeded with --skip-uv and command installers enabled" >&2
+  exit 1
+fi
+if ! grep -q "command installers require uv" "${TMPDIR:-/tmp}/tura-skipuv-conflict.err"; then
+  echo "expected --skip-uv conflict message was not found" >&2
+  cat "${TMPDIR:-/tmp}/tura-skipuv-conflict.err" >&2
+  exit 1
+fi
+
 step "Running root dependency installer"
 install_args=""
 [ "$FULL" -eq 0 ] && install_args="$install_args --check-only"

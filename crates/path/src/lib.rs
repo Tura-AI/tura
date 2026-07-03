@@ -22,6 +22,7 @@ pub const DEBUG_GATEWAY_PORT: u16 = 4125;
 pub const RELEASE_GATEWAY_PORT: u16 = 4126;
 pub const ACTIVE_GATEWAY_ENV_FILE: &str = "gateway-active.env";
 pub const TURA_GATEWAY_URL_ENV: &str = "TURA_GATEWAY_URL";
+pub const TURA_GATEWAY_PORT_ENV: &str = "TURA_GATEWAY_PORT";
 
 // ---------------------------------------------------------------------------
 // Repo / project root

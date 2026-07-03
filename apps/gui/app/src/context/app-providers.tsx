@@ -8,13 +8,12 @@ import type { AppState } from "../state/global-store";
 export function AppProviders(props: {
   state: Accessor<AppState>;
   setState: Setter<AppState>;
-  gatewayUrl: Accessor<string>;
   children: JSX.Element;
 }) {
   return (
     <GlobalGatewayProvider state={props.state} setState={props.setState}>
       <WorkspaceProvider state={props.state}>
-        <ExecutionProvider state={props.state} gatewayUrl={props.gatewayUrl}>
+        <ExecutionProvider state={props.state}>
           <NavigationProvider state={props.state}>{props.children}</NavigationProvider>
         </ExecutionProvider>
       </WorkspaceProvider>

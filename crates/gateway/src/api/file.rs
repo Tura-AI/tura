@@ -19,11 +19,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // ============================================================================
 
 pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileInfo>> {
+    Json(list_files_value(params))
+}
+
+pub fn list_files_value(params: ListFilesQuery) -> Vec<FileInfo> {
     let Some(root) = workspace_root(params.directory) else {
-        return Json(Vec::new());
+        return Vec::new();
     };
     let Some(full_path) = safe_join(&root, params.path.as_deref().unwrap_or_default()) else {
-        return Json(Vec::new());
+        return Vec::new();
     };
 
     let git_statuses = git_status_snapshot(&root, params.path.as_deref().unwrap_or_default());
@@ -88,7 +92,7 @@ pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileIn
         },
     );
 
-    Json(entries)
+    entries
 }
 
 struct GitStatusSnapshot {
@@ -194,6 +198,12 @@ fn normalize_git_path(path: &str) -> String {
 pub async fn get_file_content(
     Query(params): Query<FileContentQuery>,
 ) -> Result<Json<FileContentResponse>, (StatusCode, String)> {
+    get_file_content_value(params).map(Json)
+}
+
+pub fn get_file_content_value(
+    params: FileContentQuery,
+) -> Result<FileContentResponse, (StatusCode, String)> {
     let root = workspace_root(params.directory).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
@@ -218,27 +228,27 @@ pub async fn get_file_content(
     })?;
 
     if let Some(mime_type) = media_mime_type(&path) {
-        return Ok(Json(FileContentResponse {
+        return Ok(FileContentResponse {
             content_type: "media".to_string(),
             content: base64::engine::general_purpose::STANDARD.encode(bytes),
             encoding: Some("base64".to_string()),
             mime_type: Some(mime_type.to_string()),
-        }));
+        });
     }
 
     match String::from_utf8(bytes) {
-        Ok(content) => Ok(Json(FileContentResponse {
+        Ok(content) => Ok(FileContentResponse {
             content_type: "text".to_string(),
             content,
             encoding: None,
             mime_type: None,
-        })),
-        Err(_) => Ok(Json(FileContentResponse {
+        }),
+        Err(_) => Ok(FileContentResponse {
             content_type: "binary".to_string(),
             content: String::new(),
             encoding: None,
             mime_type: None,
-        })),
+        }),
     }
 }
 
@@ -343,6 +353,10 @@ pub async fn save_input_file(
 pub async fn open_file(
     Query(params): Query<FileContentQuery>,
 ) -> Result<Json<FileOpenResponse>, (StatusCode, String)> {
+    open_file_value(params).map(Json)
+}
+
+pub fn open_file_value(params: FileContentQuery) -> Result<FileOpenResponse, (StatusCode, String)> {
     let (root, path) = resolve_workspace_file_path(params.directory, &params.path, "file open")?;
     if !path.exists() {
         return Err((StatusCode::NOT_FOUND, "File was not found".to_string()));
@@ -355,15 +369,21 @@ pub async fn open_file(
         )
     })?;
 
-    Ok(Json(FileOpenResponse {
+    Ok(FileOpenResponse {
         path: relative_display_path(&root, &path),
         opened: true,
-    }))
+    })
 }
 
 pub async fn open_file_location(
     Query(params): Query<FileContentQuery>,
 ) -> Result<Json<FileOpenResponse>, (StatusCode, String)> {
+    open_file_location_value(params).map(Json)
+}
+
+pub fn open_file_location_value(
+    params: FileContentQuery,
+) -> Result<FileOpenResponse, (StatusCode, String)> {
     let (root, path) =
         resolve_workspace_file_path(params.directory, &params.path, "file location open")?;
     if !path.exists() {
@@ -377,10 +397,10 @@ pub async fn open_file_location(
         )
     })?;
 
-    Ok(Json(FileOpenResponse {
+    Ok(FileOpenResponse {
         path: relative_display_path(&root, &path),
         opened: true,
-    }))
+    })
 }
 
 fn resolve_workspace_file_path(

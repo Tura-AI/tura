@@ -3,6 +3,8 @@ param(
   [switch]$SkipGui,
   [switch]$SkipTauri,
   [switch]$BackendOnly,
+  [switch]$Binary,
+  [switch]$SkipApps,
   [switch]$Help,
   [switch]$Clean
 )
@@ -20,14 +22,22 @@ $BuildTauri = -not [bool]$SkipTauri -and -not [bool]$BackendOnly
 if ($Help) {
   Write-Host @"
 Usage:
-  scripts\build-release.ps1 [-BackendOnly] [-SkipTui] [-SkipGui] [-SkipTauri] [-Clean]
+  scripts\build-release.ps1 [-BackendOnly] [-Binary] [-SkipTui] [-SkipGui] [-SkipTauri] [-Clean]
 
 Builds release artifacts directly into target\release.
 By default this builds backend binaries, the web GUI dist, the compiled TUI,
 and the Tauri desktop bundle. Use -BackendOnly when a CI job only needs Rust
 release artifacts.
+By default release output includes runtime configs, prompts, markdown, command
+metadata, and command source files. Pass -Binary to keep only binaries and the
+minimal provider config.
+Use -SkipTui, -SkipGui, or -SkipTauri for targeted app skips.
 "@
   exit 0
+}
+
+if ($SkipApps) {
+  throw "-SkipApps was removed for release builds because it was ambiguous. Use -BackendOnly, -SkipTui, -SkipGui, or -SkipTauri explicitly."
 }
 
 function Require-Command {
@@ -95,6 +105,52 @@ function Copy-GuiDist {
   Copy-Item -Path (Join-Path $Source "*") -Destination $Destination -Recurse -Force
 }
 
+function Copy-ReleaseConfig {
+  $Source = Join-Path $RepoRoot "crates\provider\config\provider_config.json"
+  $DestinationDir = Join-Path $TargetDir "config"
+  if (-not (Test-Path -LiteralPath $Source)) {
+    throw "Provider config not found at $Source."
+  }
+  New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+  Copy-Item -LiteralPath $Source -Destination (Join-Path $DestinationDir "provider_config.json") -Force
+}
+
+function Copy-ReleaseRuntimeFiles {
+  $Specs = @(
+    @{ Source = "agents\src"; Destination = "agents\src" },
+    @{ Source = "personas\src"; Destination = "personas\src" },
+    @{ Source = "crates\runtime\src\runtime_prompt"; Destination = "crates\runtime\src\runtime_prompt" },
+    @{ Source = "crates\tools\src\commands"; Destination = "crates\tools\src\commands" },
+    @{ Source = "crates\tools\src\command_run\schema.json"; Destination = "crates\tools\src\command_run\schema.json" },
+    @{ Source = "commands\generate_media"; Destination = "commands\generate_media" },
+    @{ Source = "commands\read_media"; Destination = "commands\read_media" },
+    @{ Source = "commands\web_discover"; Destination = "commands\web_discover" },
+    @{ Source = "README.md"; Destination = "README.md" },
+    @{ Source = "scripts\ARCHITECTURE.md"; Destination = "scripts\ARCHITECTURE.md" }
+  )
+  $ExcludeDirs = @(".venv", "tests", "target", "node_modules", "__pycache__", ".pytest_cache")
+
+  foreach ($Spec in $Specs) {
+    $Source = Join-Path $RepoRoot $Spec.Source
+    $Destination = Join-Path $TargetDir $Spec.Destination
+    if (-not (Test-Path -LiteralPath $Source)) {
+      throw "Release runtime source not found: $($Spec.Source)"
+    }
+    Remove-Item -LiteralPath $Destination -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force | Out-Null
+    if (Test-Path -LiteralPath $Source -PathType Leaf) {
+      Copy-Item -LiteralPath $Source -Destination $Destination -Force
+      continue
+    }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force -Container
+    foreach ($Dir in $ExcludeDirs) {
+      Get-ChildItem -LiteralPath $Destination -Directory -Recurse -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -eq $Dir } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 function Test-PathUnderRepo {
   param([string]$Path)
   $Full = [System.IO.Path]::GetFullPath($Path)
@@ -146,6 +202,11 @@ Require-Command "cargo" "Install Rust, then rerun this script."
 if ($BuildTui -or $BuildGui -or $BuildTauri) {
   Require-Command "bun" "Install Bun, then rerun this script or pass -BackendOnly."
 }
+if ($BackendOnly) {
+  Write-Host "Building backend release artifacts only (-BackendOnly was specified)."
+} else {
+  Write-Host "Building full release artifacts: backend processes, GUI dist, TUI executable, and Tauri desktop bundle."
+}
 
 if ($IsWindows -or $env:OS -eq "Windows_NT") {
   Add-RustFlag "-C link-arg=/DEBUG:NONE"
@@ -171,9 +232,20 @@ try {
   $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
 }
 
+Copy-ReleaseConfig
+if (-not $Binary) {
+  Copy-ReleaseRuntimeFiles
+}
+
 if ($BuildGui) {
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")
-  Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\gui")
+  $PreviousTuraBuildKind = $env:TURA_BUILD_KIND
+  $env:TURA_BUILD_KIND = "release"
+  try {
+    Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\gui")
+  } finally {
+    $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
+  }
   Copy-GuiDist
 }
 
@@ -190,13 +262,25 @@ if ($BuildTui) {
   if ($IsWindows -or $env:OS -eq "Windows_NT") {
     $bunArgs = @("build", "--compile", "--windows-icon", $IconPath, "--outfile", (Join-Path $TargetDir "tura.exe"), "apps\tui\src\index.ts")
   }
-  Invoke-Checked "bun" $bunArgs
+  $PreviousTuraBuildKind = $env:TURA_BUILD_KIND
+  $env:TURA_BUILD_KIND = "release"
+  try {
+    Invoke-Checked "bun" $bunArgs
+  } finally {
+    $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
+  }
 }
 
 if ($BuildTauri) {
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\tauri") @("node_modules\@tauri-apps\cli\package.json")
-  Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\tauri")
+  $PreviousTuraBuildKind = $env:TURA_BUILD_KIND
+  $env:TURA_BUILD_KIND = "release"
+  try {
+    Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\tauri")
+  } finally {
+    $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
+  }
 }
 
 Write-Host "Release artifacts ready in $TargetDir"
@@ -204,4 +288,5 @@ $Entries = @("tura_exec.exe", "tura_gateway.exe", "tura_router.exe", "tura_sessi
 if ($BuildTui) { $Entries = @("tura.exe") + $Entries }
 if ($BuildGui) { $Entries += "tura_gui/" }
 if ($BuildTauri) { $Entries += "tura_gui bundle" }
+if (-not $Binary) { $Entries += "runtime configs/prompts/commands" }
 Write-Host ("Entries: " + ($Entries -join ", "))

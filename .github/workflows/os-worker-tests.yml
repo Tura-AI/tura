@@ -5,26 +5,177 @@ on:
     branches:
       - "codex/**"
   workflow_dispatch:
+    inputs:
+      suite:
+        description: "OS test suite to run"
+        required: true
+        default: "full"
+        type: choice
+        options:
+          - full
+          - install-release
+          - backend-os
+          - tui-gateway
+      label:
+        description: "Runner label to target"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - ubuntu-latest
+          - macos-latest
+          - windows
+          - windows-2022
+          - windows-2025
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  select:
+    name: Select OS test matrix
+    runs-on: ubuntu-latest
+    outputs:
+      install_matrix: ${{ steps.select.outputs.install_matrix }}
+      install_count: ${{ steps.select.outputs.install_count }}
+      backend_matrix: ${{ steps.select.outputs.backend_matrix }}
+      backend_count: ${{ steps.select.outputs.backend_count }}
+      tui_matrix: ${{ steps.select.outputs.tui_matrix }}
+      tui_count: ${{ steps.select.outputs.tui_count }}
+    steps:
+      - id: select
+        shell: pwsh
+        env:
+          OS_TEST_SUITE: ${{ inputs.suite }}
+          OS_TEST_LABEL: ${{ inputs.label }}
+          OS_TEST_REF_NAME: ${{ github.ref_name }}
+          OS_TEST_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $installRows = @(
+            [ordered]@{ label = "ubuntu-latest"; runner = "ubuntu-latest"; install_release_script = "tests/os_testing/actions/run-install-release-ubuntu-latest.sh"; os_script = "tests/os_testing/actions/run-ubuntu-latest.sh" },
+            [ordered]@{ label = "macos-latest"; runner = "macos-latest"; install_release_script = "tests/os_testing/actions/run-install-release-macos-latest.sh"; os_script = "tests/os_testing/actions/run-macos-latest.sh" },
+            [ordered]@{ label = "windows-2022"; runner = "windows-2022"; install_release_script = "tests/os_testing/actions/run-install-release-windows-2022.ps1"; os_script = "tests/os_testing/actions/run-windows-2022.ps1" },
+            [ordered]@{ label = "windows-2025"; runner = "windows-2025"; install_release_script = "tests/os_testing/actions/run-install-release-windows-2025.ps1"; os_script = "tests/os_testing/actions/run-windows-2025.ps1" }
+          )
+          $backendRows = @(
+            [ordered]@{ label = "ubuntu-latest"; runner = "ubuntu-latest"; os_script = "tests/os_testing/actions/run-ubuntu-latest.sh" },
+            [ordered]@{ label = "macos-latest"; runner = "macos-latest"; os_script = "tests/os_testing/actions/run-macos-latest.sh" },
+            [ordered]@{ label = "windows-2022"; runner = "windows-2022"; os_script = "tests/os_testing/actions/run-windows-2022.ps1" },
+            [ordered]@{ label = "windows-2025"; runner = "windows-2025"; os_script = "tests/os_testing/actions/run-windows-2025.ps1" }
+          )
+          $tuiRows = @(
+            [ordered]@{ label = "ubuntu-latest"; runner = "ubuntu-latest" },
+            [ordered]@{ label = "macos-latest"; runner = "macos-latest" },
+            [ordered]@{ label = "windows-2022"; runner = "windows-2022" },
+            [ordered]@{ label = "windows-2025"; runner = "windows-2025" }
+          )
+
+          $manualSuite = [string]$env:OS_TEST_SUITE
+          $manualLabel = [string]$env:OS_TEST_LABEL
+          if (-not $manualLabel) { $manualLabel = "all" }
+          $manualSuite = $manualSuite.ToLowerInvariant()
+          $manualLabel = $manualLabel.ToLowerInvariant()
+          $selector = "$($env:OS_TEST_REF_NAME) $($env:OS_TEST_COMMIT_MESSAGE)".ToLowerInvariant()
+
+          $runFull = ($manualSuite -eq "full") -or $selector.Contains("os-full")
+          $runInstall = $runFull -or ($manualSuite -eq "install-release") -or $selector.Contains("os-install") -or $selector.Contains("install-release")
+          $runBackend = $runFull -or ($manualSuite -eq "backend-os") -or $selector.Contains("os-backend") -or $selector.Contains("backend-os")
+          $runTui = $runFull -or ($manualSuite -eq "tui-gateway") -or $selector.Contains("os-tui") -or $selector.Contains("tui-gateway")
+
+          function Select-Rows {
+            param([object[]]$Rows)
+
+            $target = $manualLabel
+            if ($target -eq "" -or $target -eq "all") {
+              if ($selector.Contains("windows-2022")) { $target = "windows-2022" }
+              elseif ($selector.Contains("windows-2025")) { $target = "windows-2025" }
+              elseif ($selector.Contains("windows")) { $target = "windows" }
+              elseif ($selector.Contains("ubuntu-latest") -or $selector.Contains("linux")) { $target = "ubuntu-latest" }
+              elseif ($selector.Contains("macos-latest") -or $selector.Contains("macos")) { $target = "macos-latest" }
+              else { $target = "all" }
+            }
+
+            if ($target -eq "all") { return @($Rows) }
+            if ($target -eq "windows") { return @($Rows | Where-Object { $_.label.StartsWith("windows-") }) }
+            return @($Rows | Where-Object { $_.label -eq $target })
+          }
+
+          [object[]]$install = if ($runInstall) { @(Select-Rows -Rows $installRows) } else { @() }
+          [object[]]$backend = if ($runBackend) { @(Select-Rows -Rows $backendRows) } else { @() }
+          [object[]]$tui = if ($runTui) { @(Select-Rows -Rows $tuiRows) } else { @() }
+
+          "install_matrix=$(@{ include = @($install) } | ConvertTo-Json -Compress -Depth 8)" >> $env:GITHUB_OUTPUT
+          "install_count=$($install.Count)" >> $env:GITHUB_OUTPUT
+          "backend_matrix=$(@{ include = @($backend) } | ConvertTo-Json -Compress -Depth 8)" >> $env:GITHUB_OUTPUT
+          "backend_count=$($backend.Count)" >> $env:GITHUB_OUTPUT
+          "tui_matrix=$(@{ include = @($tui) } | ConvertTo-Json -Compress -Depth 8)" >> $env:GITHUB_OUTPUT
+          "tui_count=$($tui.Count)" >> $env:GITHUB_OUTPUT
+
+          Write-Host "Selected install-release rows: $($install.Count)"
+          Write-Host "Selected backend-os rows: $($backend.Count)"
+          Write-Host "Selected tui-gateway rows: $($tui.Count)"
+
+  install-release:
+    name: Install Release ${{ matrix.label }}
+    needs: select
+    if: needs.select.outputs.install_count != '0'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.select.outputs.install_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: install-release-${{ matrix.label }}
+          cache-on-failure: true
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/tui/package-lock.json
+      - name: Install Linux release dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            pkg-config \
+            wget
+      - name: Run install script tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./${{ matrix.install_release_script }}
+      - name: Run install and release script tests (Linux)
+        if: runner.os == 'Linux'
+        run: sh ./${{ matrix.install_release_script }}
+      - name: Run install and release script tests (macOS)
+        if: runner.os == 'macOS'
+        run: sh ./${{ matrix.install_release_script }}
+
   backend-os:
     name: Backend OS ${{ matrix.label }}
+    needs: select
+    if: needs.select.outputs.backend_count != '0'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - label: ubuntu-latest
-            runner: ubuntu-latest
-          - label: macos-latest
-            runner: macos-latest
-          - label: windows-2022
-            runner: windows-2022
-          - label: windows-2025
-            runner: windows-2025
+      matrix: ${{ fromJson(needs.select.outputs.backend_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - name: Rust toolchain
@@ -51,26 +202,22 @@ jobs:
       - name: Run backend OS tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./xtask/scripts/run-backend-os-tests.ps1 -TimeoutSeconds 900
-      - name: Run backend OS tests (Unix)
-        if: runner.os != 'Windows'
-        run: sh ./xtask/scripts/run-backend-os-tests.sh --timeout-seconds 360
+        run: ./${{ matrix.os_script }} -TimeoutSeconds 900
+      - name: Run backend OS tests (Linux)
+        if: runner.os == 'Linux'
+        run: sh ./${{ matrix.os_script }} --timeout-seconds 360
+      - name: Run backend OS tests (macOS)
+        if: runner.os == 'macOS'
+        run: sh ./${{ matrix.os_script }} --timeout-seconds 360
 
   tui-gateway:
     name: TUI Gateway Lifecycle ${{ matrix.label }}
+    needs: select
+    if: needs.select.outputs.tui_count != '0'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - label: ubuntu-latest
-            runner: ubuntu-latest
-          - label: macos-latest
-            runner: macos-latest
-          - label: windows-2022
-            runner: windows-2022
-          - label: windows-2025
-            runner: windows-2025
+      matrix: ${{ fromJson(needs.select.outputs.tui_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - name: Node setup

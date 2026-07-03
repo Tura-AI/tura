@@ -469,7 +469,10 @@ export function Composer(props: {
             activateControlAction();
           }}
         >
-          <Show when={actionState().kind === "stop"} fallback={<ArrowUp size={16} strokeWidth={1.8} />}>
+          <Show
+            when={actionState().kind === "stop"}
+            fallback={<ArrowUp size={16} strokeWidth={1.8} />}
+          >
             <Square size={14} strokeWidth={2.1} />
           </Show>
         </button>

@@ -35,7 +35,10 @@ const config = {
   measuredSessionCount: intEnv("TURA_FULL_CHAIN_FRONTEND_MEASURED_SESSIONS", 2),
   backgroundReadConcurrency: nonNegativeIntEnv("TURA_FULL_CHAIN_FRONTEND_READ_CONCURRENCY", 8),
   backgroundReadRequests: nonNegativeIntEnv("TURA_FULL_CHAIN_FRONTEND_READ_REQUESTS", 120),
-  ensureGuiBuild: boolEnv("TURA_FULL_CHAIN_GUI_ENSURE_BUILD", boolEnv("TURA_FULL_CHAIN_ENSURE_BUILDS", false)),
+  ensureGuiBuild: boolEnv(
+    "TURA_FULL_CHAIN_GUI_ENSURE_BUILD",
+    boolEnv("TURA_FULL_CHAIN_ENSURE_BUILDS", false),
+  ),
 };
 
 const localProcesses = [];
@@ -58,15 +61,21 @@ async function main() {
     const pressure = startGatewayReadPressure(backend, targets);
     const replays = [];
     for (const [index, target] of targets.entries()) {
-      const targetMarker = marker(target.workspaceIndex, target.taskIndex, backend.config.turnsPerSession - 1);
-      replays.push(await measureGuiOpen({
-        guiUrl: gui.url,
-        gatewayUrl: proxy.url,
-        target,
-        targetMarker,
-        outDir: backend.runRoot,
-        index,
-      }));
+      const targetMarker = marker(
+        target.workspaceIndex,
+        target.taskIndex,
+        backend.config.turnsPerSession - 1,
+      );
+      replays.push(
+        await measureGuiOpen({
+          guiUrl: gui.url,
+          gatewayUrl: proxy.url,
+          target,
+          targetMarker,
+          outDir: backend.runRoot,
+          index,
+        }),
+      );
     }
     const pressureSummary = await pressure.stop();
     const frontendChecks = checkFrontendReplays(replays, proxy);
@@ -92,9 +101,11 @@ async function main() {
     assert.equal(frontendChecks.ok, true, frontendChecks.message);
     completedOk = true;
   } catch (error) {
-    const failureDiagnostics = await backend.collectFailureDiagnostics().catch((diagnosticError) => ({
-      error: String(diagnosticError?.stack || diagnosticError?.message || diagnosticError),
-    }));
+    const failureDiagnostics = await backend
+      .collectFailureDiagnostics()
+      .catch((diagnosticError) => ({
+        error: String(diagnosticError?.stack || diagnosticError?.message || diagnosticError),
+      }));
     const summary = backend.summaryBase({
       ok: false,
       owner: "gui",
@@ -105,7 +116,9 @@ async function main() {
       failureDiagnostics,
       error: error instanceof Error ? error.stack || error.message : String(error),
     });
-    await fsp.writeFile(backend.summaryPath, JSON.stringify(summary, null, 2)).catch(() => undefined);
+    await fsp
+      .writeFile(backend.summaryPath, JSON.stringify(summary, null, 2))
+      .catch(() => undefined);
     console.error(JSON.stringify(summary, null, 2));
     process.exitCode = 1;
   } finally {
@@ -163,15 +176,23 @@ function runChecked(command, args, options = {}) {
 }
 
 async function startGuiStaticServer(port, logsDir) {
-  const child = spawn(nodeBin, ["-e", STATIC_GUI_SERVER_SCRIPT, path.join(guiAppRoot, "dist"), String(port)], {
-    cwd: repoRoot,
-    env: { ...process.env },
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  const child = spawn(
+    nodeBin,
+    ["-e", STATIC_GUI_SERVER_SCRIPT, path.join(guiAppRoot, "dist"), String(port)],
+    {
+      cwd: repoRoot,
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  );
   localProcesses.push(child);
-  child.stdout.pipe(fs.createWriteStream(path.join(logsDir, "gui-static.stdout.log"), { flags: "a" }));
-  child.stderr.pipe(fs.createWriteStream(path.join(logsDir, "gui-static.stderr.log"), { flags: "a" }));
+  child.stdout.pipe(
+    fs.createWriteStream(path.join(logsDir, "gui-static.stdout.log"), { flags: "a" }),
+  );
+  child.stderr.pipe(
+    fs.createWriteStream(path.join(logsDir, "gui-static.stderr.log"), { flags: "a" }),
+  );
   const url = `http://127.0.0.1:${port}`;
   await waitForHtml(url, child, "<title>Tura</title>", 10_000);
   return { child, url };
@@ -217,7 +238,8 @@ async function waitForHtml(url, child, text, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`${url} exited before readiness: ${child.exitCode}`);
+    if (child.exitCode !== null)
+      throw new Error(`${url} exited before readiness: ${child.exitCode}`);
     try {
       const response = await fetch(url);
       const body = await response.text();
@@ -296,7 +318,10 @@ async function startRecordingProxy(upstreamUrl) {
       record.error = String(error?.stack || error?.message || error);
       record.endedAt = Date.now();
       record.elapsedMs = record.endedAt - startedAt;
-      res.writeHead(502, { "content-type": "application/json", "access-control-allow-origin": "*" });
+      res.writeHead(502, {
+        "content-type": "application/json",
+        "access-control-allow-origin": "*",
+      });
       res.end(JSON.stringify({ error: record.error }));
     }
   });
@@ -308,13 +333,17 @@ async function startRecordingProxy(upstreamUrl) {
     url: `http://127.0.0.1:${port}`,
     records,
     messageReads(sessionId) {
-      return records.filter((record) => decodeURIComponent(record.path) === `/session/${sessionId}/message`);
+      return records.filter(
+        (record) => decodeURIComponent(record.path) === `/session/${sessionId}/message`,
+      );
     },
     summary() {
       return {
         url: `http://127.0.0.1:${port}`,
         totalRequests: records.length,
-        messageReads: records.filter((record) => /\/session\/[^/]+\/message$/u.test(decodeURIComponent(record.path))).length,
+        messageReads: records.filter((record) =>
+          /\/session\/[^/]+\/message$/u.test(decodeURIComponent(record.path)),
+        ).length,
         errors: records.filter((record) => record.error).slice(0, 10),
       };
     },
@@ -388,7 +417,13 @@ function startGatewayReadPressure(backend, targets) {
     async stop() {
       stopped = true;
       await Promise.race([done, delay(5_000)]);
-      return { concurrency, maxRequests, completed, sampleMs: samples, errors: errors.slice(0, 10) };
+      return {
+        concurrency,
+        maxRequests,
+        completed,
+        sampleMs: samples,
+        errors: errors.slice(0, 10),
+      };
     },
   };
 }
@@ -417,7 +452,9 @@ async function measureGuiOpen({ guiUrl, gatewayUrl, target, targetMarker, outDir
       { waitUntil: "domcontentloaded", timeout: config.openBudgetMs },
     );
     await page.waitForFunction(
-      () => !document.body.innerText.includes("启动失败") && !document.body.innerText.includes("startup failed"),
+      () =>
+        !document.body.innerText.includes("启动失败") &&
+        !document.body.innerText.includes("startup failed"),
       undefined,
       { timeout: 5_000 },
     );
@@ -440,8 +477,12 @@ async function measureGuiOpen({ guiUrl, gatewayUrl, target, targetMarker, outDir
         virtualCount: Number(space?.getAttribute("data-virtual-count") || 0),
         mountedCount: Number(space?.getAttribute("data-mounted-count") || 0),
         renderReady: space?.getAttribute("data-render-ready") === "true",
-        mountedMessages: document.querySelectorAll("[data-message-id], .message, .transcript-virtual-row").length,
-        errorText: [...document.querySelectorAll(".error-strip")].map((item) => item.textContent?.trim()).filter(Boolean),
+        mountedMessages: document.querySelectorAll(
+          "[data-message-id], .message, .transcript-virtual-row",
+        ).length,
+        errorText: [...document.querySelectorAll(".error-strip")]
+          .map((item) => item.textContent?.trim())
+          .filter(Boolean),
       };
     });
     const screenshotPath = path.join(outDir, `gui-open-session-${index + 1}.png`);
@@ -511,12 +552,17 @@ function checkFrontendReplays(replays, proxy) {
   const failures = [];
   for (const replay of replays) {
     attachReadMetrics(replay, proxy);
-    if (!replay.read) failures.push(`GUI did not record a session message read for ${replay.sessionId}`);
+    if (!replay.read)
+      failures.push(`GUI did not record a session message read for ${replay.sessionId}`);
     if (!replay.metrics.renderReady || replay.metrics.virtualCount <= 0) {
-      failures.push(`GUI transcript was not render-ready for ${replay.sessionId}: ${JSON.stringify(replay.metrics)}`);
+      failures.push(
+        `GUI transcript was not render-ready for ${replay.sessionId}: ${JSON.stringify(replay.metrics)}`,
+      );
     }
     if (replay.browserErrors.length > 0 || replay.metrics.errorText.length > 0) {
-      failures.push(`GUI browser errors for ${replay.sessionId}: ${JSON.stringify([...replay.browserErrors, ...replay.metrics.errorText])}`);
+      failures.push(
+        `GUI browser errors for ${replay.sessionId}: ${JSON.stringify([...replay.browserErrors, ...replay.metrics.errorText])}`,
+      );
     }
   }
   const average = averageReplayMetrics(replays);
@@ -585,13 +631,20 @@ function attachReadMetrics(replay, proxy) {
 function averageReplayMetrics(replays) {
   return {
     totalOpenMs: round(mean(replays.map((replay) => replay.totalOpenMs))),
-    readMs: round(mean(replays.map((replay) => replay.read?.elapsedMs ?? Number.NaN).filter(Number.isFinite))),
-    renderMs: round(mean(replays.map((replay) => replay.renderMs ?? Number.NaN).filter(Number.isFinite))),
+    readMs: round(
+      mean(replays.map((replay) => replay.read?.elapsedMs ?? Number.NaN).filter(Number.isFinite)),
+    ),
+    renderMs: round(
+      mean(replays.map((replay) => replay.renderMs ?? Number.NaN).filter(Number.isFinite)),
+    ),
     frameCount: round(mean(replays.map((replay) => replay.frame?.frameCount ?? 0))),
     avgFps: round(mean(replays.map((replay) => replay.frame?.avgFps ?? 0))),
     minFps: round(Math.min(...replays.map((replay) => replay.frame?.minFps ?? 0))),
     maxFrameGapMs: round(Math.max(...replays.map((replay) => replay.frame?.maxFrameGapMs ?? 0))),
-    longFrameCount: replays.reduce((total, replay) => total + (replay.frame?.longFrameCount ?? 0), 0),
+    longFrameCount: replays.reduce(
+      (total, replay) => total + (replay.frame?.longFrameCount ?? 0),
+      0,
+    ),
   };
 }
 

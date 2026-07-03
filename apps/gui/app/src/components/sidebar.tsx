@@ -185,9 +185,7 @@ export function WorkspaceTree(props: {
                       >
                         <Plus size={14} strokeWidth={1.8} />
                       </button>
-                      <WorkspaceMenu
-                        onDeleteWorkspace={() => props.onDeleteWorkspace(project)}
-                      />
+                      <WorkspaceMenu onDeleteWorkspace={() => props.onDeleteWorkspace(project)} />
                     </div>
                   </div>
                   <Show when={showChildren()}>

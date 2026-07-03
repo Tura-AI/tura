@@ -199,6 +199,8 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         false,
     );
 
+    session_store().update_session_status(&idle.id, StoreSessionStatus::Busy);
+
     let _ = update_session_task_management(
         Path(idle.id.clone()),
         Json(UpdateSessionTaskManagementRequest {
@@ -222,6 +224,7 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         }),
     )
     .await;
+    session_store().update_session_status(&idle.id, StoreSessionStatus::Idle);
     let _ = update_session_task_management(
         Path(done.id.clone()),
         Json(UpdateSessionTaskManagementRequest {

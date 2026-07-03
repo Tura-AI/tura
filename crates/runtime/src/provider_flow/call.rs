@@ -9,7 +9,7 @@ use crate::profile_timings;
 use crate::provider_flow::checkpointing;
 use crate::provider_flow::errors::{finish_runtime_failure, runtime_timeout};
 use crate::provider_flow::provider_response::apply_provider_response;
-use crate::provider_flow::provider_streaming::call_runtime_streaming;
+use crate::provider_flow::provider_streaming::{call_runtime_streaming, RuntimeStreamingInput};
 pub use crate::provider_flow::request_options::route_by_name;
 use crate::provider_flow::request_options::{
     normalize_provider_messages, parallel_tool_calls_enabled, prompt_cache_key,
@@ -180,11 +180,13 @@ pub async fn call_runtime(
             &mut runtime,
             route_config,
             &tura_config,
-            provider_messages,
-            call_options,
-            input.session_directory.clone(),
-            input.allowed_command_run_commands.clone(),
-            input.require_startup_task_state,
+            RuntimeStreamingInput {
+                messages: provider_messages,
+                options: call_options,
+                session_directory: input.session_directory.clone(),
+                allowed_command_run_commands: input.allowed_command_run_commands.clone(),
+                require_startup_task_state: input.require_startup_task_state,
+            },
         )
         .await
     } else {

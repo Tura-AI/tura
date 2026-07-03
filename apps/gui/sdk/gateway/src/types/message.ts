@@ -28,6 +28,7 @@ export type Message = {
   cost?: number;
   providerID?: string;
   modelID?: string;
+  metadata?: unknown;
   tokens?: unknown;
 };
 
@@ -40,4 +41,3 @@ export type MessageListInput = {
 export type SendMessageResponse = {
   message: Message;
 };
-

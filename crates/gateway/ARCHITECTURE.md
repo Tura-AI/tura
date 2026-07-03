@@ -114,7 +114,11 @@ ignored and leave the gateway alive when the front exits. The gateway owns the
 desktop tray/menu lifecycle: a tray left click launches the packaged `tura_gui`
 desktop app with gateway/workspace/session arguments, while the context menu
 keeps short localized labels and delegates GUI items to the same desktop entry
-instead of opening the browser-served web GUI. The Tauri shell owns the GUI
+instead of opening the browser-served web GUI. The tray's background-process
+count and kill-all action are limited to runtime-created shell command processes
+marked with `TURA_BACKGROUND_PROCESS_KIND=runtime_shell`; gateway, router,
+session_db, runtime workers, and other native Tura owners are not tray-managed
+background processes. The Tauri shell owns the GUI
 single-instance boundary, so any duplicate tray, session, or direct executable
 launch is intercepted by the running `tura_gui` process, navigates with the new
 arguments, unminimizes the main window, and focuses it instead of creating a
@@ -489,6 +493,11 @@ must reconcile by refreshing gateway state.
 User messages appended through gateway message APIs are also appended to the
 session-management log so runtime context and hydration can keep follow-up
 constraints.
+
+If `POST /session/{sessionID}/prompt_async` starts as a normal prompt but the
+router reports `session_active_turn` for that session, gateway must treat the
+prompt as a follow-up command and forward it through `session.append_user_command`
+instead of surfacing a MANO failure.
 
 Pending follow-up controls are currently projected from `task_management` and
 `/session/{sessionID}/todo`. The current source of truth is the enriched

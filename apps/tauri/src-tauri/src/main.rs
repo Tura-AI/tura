@@ -3,17 +3,16 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use sysinfo::{ProcessRefreshKind, System, UpdateKind};
 use tauri::webview::PageLoadEvent;
 use tauri::Manager;
 use url::Url;
 
-const GATEWAY_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
-const GATEWAY_HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const GATEWAY_BUILD_KIND: &str = "release";
 
 #[derive(Debug, Serialize)]
@@ -33,12 +32,12 @@ struct NativeInputFile {
     mime_type: Option<&'static str>,
 }
 
-static OWNED_GATEWAY: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static PENDING_MAIN_WINDOW_ARGS: OnceLock<Mutex<Option<Vec<String>>>> = OnceLock::new();
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            remember_gateway_url_from_args(&args);
             restore_main_window_from_args(app, args);
         }))
         .on_page_load(|webview, payload| {
@@ -48,6 +47,8 @@ fn main() {
         })
         .setup(|app| {
             let args = std::env::args().skip(1).collect::<Vec<_>>();
+            remember_gateway_url_from_args(&args);
+            remember_active_gateway_url_if_unset();
             queue_main_window_restore(args.clone());
             restore_main_window_from_args(app.handle(), args);
             Ok(())
@@ -138,6 +139,36 @@ fn gui_startup_url_from_args(mut base_url: Url, args: Vec<String>) -> Option<Url
     Some(base_url)
 }
 
+fn remember_gateway_url_from_args(args: &[String]) {
+    if let Some(params) = GuiStartupParams::parse(args.to_vec()) {
+        remember_gateway_url(&params.gateway_url);
+    }
+}
+
+fn remember_active_gateway_url_if_unset() {
+    if std::env::var(tura_path::TURA_GATEWAY_URL_ENV)
+        .ok()
+        .and_then(|value| non_empty_gateway_url(&value))
+        .is_some()
+    {
+        return;
+    }
+    let my_root = current_project_root();
+    let instance_home = instance_home_for_runtime_root(&my_root);
+    if let Some(url) = tura_path::read_active_gateway_url_for_home(&instance_home) {
+        remember_gateway_url(&url);
+    }
+}
+
+fn remember_gateway_url(gateway_url: &str) {
+    if let Some(url) = non_empty_gateway_url(gateway_url) {
+        std::env::set_var(
+            tura_path::TURA_GATEWAY_URL_ENV,
+            GatewayEndpoint::parse(&url).url(),
+        );
+    }
+}
+
 fn is_gui_startup_base_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "tauri" | "asset" | "file")
 }
@@ -182,69 +213,149 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
-    let my_root = current_runtime_root();
+fn start_gateway(
+    gateway_url: String,
+    gateway_url_explicit: Option<bool>,
+) -> Result<StartGatewayResponse, String> {
+    start_gateway_with_launcher(
+        &gateway_url,
+        gateway_url_explicit.unwrap_or(false),
+        launch_gateway_process,
+    )
+}
+
+fn start_gateway_with_launcher(
+    gateway_url: &str,
+    gateway_url_explicit: bool,
+    launcher: impl Fn(&GatewayEndpoint, &Path, &Path) -> Result<GatewayEndpoint, String>,
+) -> Result<StartGatewayResponse, String> {
+    let my_root = current_project_root();
     let instance_home = instance_home_for_runtime_root(&my_root);
-    let endpoint = select_gateway_endpoint(&gateway_url, &my_root, &instance_home)?;
-    // Only reuse a reachable gateway if it belongs to *this* package directory.
-    // A gateway from another route (dev bin / release) on the same port must not
-    // be hijacked — we start our own on a free port instead.
-    if let Some(root) = gateway_identity(&endpoint) {
-        if root.is_empty() || same_root(&root, &my_root) {
-            write_active_gateway_url(&instance_home, &endpoint)?;
-            return Ok(StartGatewayResponse {
-                ok: true,
-                status: "connected",
-                gateway_path: None,
-                gateway_url: Some(endpoint.url()),
-            });
-        }
+    let endpoint =
+        select_gateway_endpoint(gateway_url, gateway_url_explicit, &my_root, &instance_home)?;
+    if endpoint_is_usable(&endpoint, gateway_url_explicit, &my_root, &instance_home) {
+        return connected_gateway_response(&instance_home, &endpoint, "connected");
     }
-    if !gateway_port_available(&endpoint) {
-        terminate_gateway_from_lock(&instance_home, &endpoint)?;
-    }
-    if !gateway_port_available(&endpoint) {
+    if gateway_url_explicit {
         return Err(format!(
-            "gateway port {} is occupied by a foreign process",
-            endpoint.port
+            "explicit gateway is not running at {}; start that gateway or remove the explicit URL",
+            endpoint.url()
         ));
     }
+    let launched = launcher(&endpoint, &my_root, &instance_home)?;
+    if endpoint_is_usable(&launched, false, &my_root, &instance_home) {
+        return connected_gateway_response(&instance_home, &launched, "connected");
+    }
+    Err(format!(
+        "gateway did not become healthy for this home at {}",
+        launched.url()
+    ))
+}
 
-    let gateway = gateway_binary_path().ok_or_else(|| "gateway binary not found".to_string())?;
-    let runtime_root = runtime_root_for_gateway(&gateway);
-    let instance_home = instance_home_for_runtime_root(&runtime_root);
+fn connected_gateway_response(
+    instance_home: &Path,
+    endpoint: &GatewayEndpoint,
+    status: &'static str,
+) -> Result<StartGatewayResponse, String> {
+    write_active_gateway_url(instance_home, endpoint)?;
+    remember_gateway_url(&endpoint.url());
+    Ok(StartGatewayResponse {
+        ok: true,
+        status,
+        gateway_path: None,
+        gateway_url: Some(endpoint.url()),
+    })
+}
 
-    for attempt in 0..2 {
-        let child = spawn_gateway_child(&gateway, &runtime_root, &instance_home, &endpoint)?;
-        *owned_gateway()
-            .lock()
-            .map_err(|_| "gateway child lock poisoned".to_string())? = Some(child);
-        if wait_for_gateway_health(&endpoint, GATEWAY_HEALTH_TIMEOUT) {
-            write_active_gateway_url(&instance_home, &endpoint)?;
-            return Ok(StartGatewayResponse {
-                ok: true,
-                status: "connected",
-                gateway_path: Some(gateway.display().to_string()),
-                gateway_url: Some(endpoint.url()),
-            });
-        }
-        let killed_by_lock = terminate_gateway_from_lock(&instance_home, &endpoint)?;
-        let killed_owned_child = force_kill_owned_gateway();
-        if !killed_by_lock && !killed_owned_child {
+fn endpoint_is_usable(
+    endpoint: &GatewayEndpoint,
+    explicit: bool,
+    my_root: &Path,
+    instance_home: &Path,
+) -> bool {
+    let Some(identity) = gateway_identity(endpoint) else {
+        return false;
+    };
+    explicit || gateway_identity_matches_instance(&identity, my_root, instance_home)
+}
+
+fn launch_gateway_process(
+    target: &GatewayEndpoint,
+    my_root: &Path,
+    instance_home: &Path,
+) -> Result<GatewayEndpoint, String> {
+    let executable = resolve_gateway_binary(my_root)?;
+    let mut command = Command::new(&executable);
+    configure_gateway_runtime_command(&mut command, my_root, instance_home, target)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null());
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("failed to start gateway {}: {err}", executable.display()))?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|err| format!("failed to inspect gateway startup: {err}"))?
+        {
             return Err(format!(
-                "gateway did not become healthy after {} seconds and could not be killed",
-                GATEWAY_HEALTH_TIMEOUT.as_secs()
+                "gateway exited before becoming healthy: {}",
+                status
             ));
         }
-        if attempt == 0 {
-            continue;
+        let candidate = tura_path::read_active_gateway_url_for_home(instance_home)
+            .map(|url| GatewayEndpoint::parse(&url))
+            .unwrap_or_else(|| target.clone());
+        if endpoint_is_usable(&candidate, false, my_root, instance_home) {
+            return Ok(candidate);
         }
+        std::thread::sleep(Duration::from_millis(500));
     }
-
+    let _ = child.kill();
     Err(format!(
-        "gateway did not become healthy after {} seconds",
-        GATEWAY_HEALTH_TIMEOUT.as_secs()
+        "gateway did not become healthy after startup at {}",
+        target.url()
     ))
+}
+
+fn configure_gateway_runtime_command<'a>(
+    command: &'a mut Command,
+    runtime_root: &Path,
+    instance_home: &Path,
+    target: &GatewayEndpoint,
+) -> &'a mut Command {
+    command
+        .current_dir(runtime_root)
+        .env("TURA_HOME", instance_home)
+        .env("TURA_PROJECT_ROOT", runtime_root)
+        .env(tura_path::TURA_GATEWAY_PORT_ENV, target.port.to_string());
+    if let Some(provider_config) = provider_config_for_runtime_root(runtime_root) {
+        command.env("TURA_PROVIDER_CONFIG", provider_config);
+    }
+    if let Some(env_path) = env_path_for_runtime_root(runtime_root) {
+        command.env("TURA_ENV_PATH", env_path);
+    }
+    command
+}
+
+fn provider_config_for_runtime_root(runtime_root: &Path) -> Option<PathBuf> {
+    [
+        runtime_root.join("config").join("provider_config.json"),
+        runtime_root
+            .join("crates")
+            .join("provider")
+            .join("config")
+            .join("provider_config.json"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn env_path_for_runtime_root(runtime_root: &Path) -> Option<PathBuf> {
+    let path = runtime_root.join(".env");
+    path.is_file().then_some(path)
 }
 
 #[tauri::command]
@@ -329,38 +440,6 @@ fn mime_type_for_path(path: &Path) -> Option<&'static str> {
     }
 }
 
-fn spawn_gateway_child(
-    gateway: &Path,
-    runtime_root: &Path,
-    instance_home: &Path,
-    endpoint: &GatewayEndpoint,
-) -> Result<Child, String> {
-    let mut command = Command::new(gateway);
-    command
-        .current_dir(runtime_root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .env("TURA_HOME", instance_home)
-        .env("TURA_PROJECT_ROOT", runtime_root)
-        .env("TURA_GATEWAY_URL", endpoint.url())
-        .env(
-            "TURA_PROVIDER_CONFIG",
-            provider_config_path_for_runtime_root(runtime_root),
-        )
-        .env("TURA_ENV_PATH", runtime_root.join(".env"))
-        .env("PORT", endpoint.port.to_string());
-    tura_path::process_hardening::hide_child_console_window_and_detach(&mut command);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    command
-        .spawn()
-        .map_err(|err| format!("failed to start gateway {}: {err}", gateway.display()))
-}
-
 fn open_url_in_default_browser(url: &str) -> Result<(), String> {
     let mut command = default_browser_command(url);
     tura_path::process_hardening::hide_child_console_window(&mut command);
@@ -399,89 +478,18 @@ fn default_browser_command(url: &str) -> Command {
     }
 }
 
-fn owned_gateway() -> &'static Mutex<Option<Child>> {
-    OWNED_GATEWAY.get_or_init(|| Mutex::new(None))
-}
-
-fn force_kill_owned_gateway() -> bool {
-    let child = owned_gateway()
-        .lock()
-        .ok()
-        .and_then(|mut guard| guard.take());
-    let Some(mut child) = child else {
-        return false;
-    };
-    match child.try_wait() {
-        Ok(Some(_)) => true,
-        Ok(None) => {
-            let killed = child.kill().is_ok();
-            let _ = child.wait();
-            killed
-        }
-        Err(_) => false,
-    }
-}
-
-fn gateway_binary_path() -> Option<PathBuf> {
-    let gateway_name = if cfg!(windows) {
-        "tura_gateway.exe"
-    } else {
-        "tura_gateway"
-    };
-    let exe = std::env::current_exe().ok()?;
-    let exe_dir = exe.parent()?;
-    let parent = exe_dir.parent().unwrap_or(exe_dir);
-    let mut candidates = vec![
-        exe_dir.join(gateway_name),
-        exe_dir.join("bin").join(gateway_name),
-        parent.join("bin").join(gateway_name),
-        parent.join("release").join("bin").join(gateway_name),
-    ];
-    if let Some(root) = exe_dir
-        .ancestors()
-        .find(|candidate| is_runtime_root(candidate))
-    {
-        candidates.push(root.join("bin").join(gateway_name));
-        candidates.push(root.join("target").join("release").join(gateway_name));
-    }
-    candidates.into_iter().find(|path| path.exists())
-}
-
-fn runtime_root_for_gateway(gateway: &Path) -> PathBuf {
-    let gateway_dir = gateway.parent().unwrap_or_else(|| Path::new("."));
-    gateway_dir
-        .ancestors()
-        .find(|candidate| is_runtime_root(candidate))
-        .unwrap_or(gateway_dir)
-        .to_path_buf()
-}
-
 fn is_runtime_root(candidate: &Path) -> bool {
-    (candidate.join("agents").join("src").is_dir()
-        && candidate.join("personas").join("src").is_dir())
+    is_source_checkout_root(candidate)
+        || (candidate.join("agents").join("src").is_dir()
+            && candidate.join("personas").join("src").is_dir())
         || candidate
             .join("config")
             .join("provider_config.json")
             .exists()
-        || (candidate.join("Cargo.toml").exists()
-            && candidate.join("crates").join("gateway").is_dir())
 }
 
-fn provider_config_path_for_runtime_root(runtime_root: &Path) -> PathBuf {
-    let packaged = runtime_root.join("config").join("provider_config.json");
-    if packaged.exists() {
-        return packaged;
-    }
-
-    let workspace = runtime_root
-        .join("crates")
-        .join("provider")
-        .join("config")
-        .join("provider_config.json");
-    if workspace.exists() {
-        return workspace;
-    }
-    packaged
+fn is_source_checkout_root(candidate: &Path) -> bool {
+    candidate.join("Cargo.toml").exists() && candidate.join("crates").join("gateway").is_dir()
 }
 
 fn instance_home_for_runtime_root(runtime_root: &Path) -> PathBuf {
@@ -496,11 +504,29 @@ fn instance_home_for_runtime_root(runtime_root: &Path) -> PathBuf {
 fn current_runtime_root() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
     let start = exe.parent().unwrap_or_else(|| Path::new("."));
+    runtime_root_from_start(start)
+}
+
+fn runtime_root_from_start(start: &Path) -> PathBuf {
+    if let Some(source_root) = start
+        .ancestors()
+        .find(|candidate| is_source_checkout_root(candidate))
+    {
+        return normalize_path(source_root);
+    }
     start
         .ancestors()
         .find(|candidate| is_runtime_root(candidate))
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| start.to_path_buf())
+        .map(normalize_path)
+        .unwrap_or_else(|| normalize_path(start))
+}
+
+fn current_project_root() -> PathBuf {
+    std::env::var_os("TURA_PROJECT_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| normalize_path(&path))
+        .unwrap_or_else(current_runtime_root)
 }
 
 fn same_root(left: &str, right: &Path) -> bool {
@@ -535,42 +561,191 @@ fn strip_verbatim(path: &str) -> String {
     }
 }
 
-fn gateway_port_available(endpoint: &GatewayEndpoint) -> bool {
-    endpoint
-        .bind_addrs()
-        .into_iter()
-        .any(|addr| TcpListener::bind(addr).is_ok())
-}
-
 #[cfg_attr(not(test), allow(dead_code))]
 fn gateway_health_reachable(endpoint: &GatewayEndpoint) -> bool {
     gateway_identity(endpoint).is_some()
 }
 
+fn default_gateway_endpoint() -> GatewayEndpoint {
+    if let Ok(port) = std::env::var(tura_path::TURA_GATEWAY_PORT_ENV)
+        .unwrap_or_default()
+        .trim()
+        .parse::<u16>()
+    {
+        return GatewayEndpoint {
+            host: "127.0.0.1".to_string(),
+            port,
+            explicit_port: Some(port),
+        };
+    }
+    GatewayEndpoint::parse(&tura_path::default_gateway_url_for_build_kind(
+        GATEWAY_BUILD_KIND,
+    ))
+}
+
+fn resolve_gateway_binary(my_root: &Path) -> Result<PathBuf, String> {
+    let exe_name = if cfg!(windows) {
+        "tura_gateway.exe"
+    } else {
+        "tura_gateway"
+    };
+    let mut candidates = Vec::new();
+    if let Some(value) =
+        std::env::var_os("TURA_GATEWAY_BIN").or_else(|| std::env::var_os("TURA_GATEWAY_EXE"))
+    {
+        candidates.push(PathBuf::from(value));
+    }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(dir) = current_exe.parent() {
+            candidates.push(dir.join(exe_name));
+        }
+    }
+    candidates.push(my_root.join("target").join("release").join(exe_name));
+    candidates.push(my_root.join("bin").join(exe_name));
+    candidates.push(my_root.join(exe_name));
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| "gateway binary not found; build or install tura_gateway first".to_string())
+}
+
 fn select_gateway_endpoint(
     requested_url: &str,
+    explicit: bool,
     my_root: &Path,
     instance_home: &Path,
 ) -> Result<GatewayEndpoint, String> {
-    let default_endpoint = GatewayEndpoint::parse(&tura_path::default_gateway_url_for_build_kind(
-        GATEWAY_BUILD_KIND,
-    ));
+    let default_endpoint = default_gateway_endpoint();
     if let Some(requested_url) = non_empty_gateway_url(requested_url) {
-        return Ok(GatewayEndpoint::parse(&requested_url));
+        let requested_endpoint = GatewayEndpoint::parse(&requested_url);
+        if explicit {
+            return Ok(requested_endpoint);
+        }
     }
     let candidates = gateway_endpoint_candidates(requested_url, instance_home, &default_endpoint);
     for candidate in candidates {
-        if let Some(root) = gateway_identity(&candidate) {
-            if root.is_empty() || same_root(&root, my_root) {
+        if let Some(identity) = gateway_identity(&candidate) {
+            if gateway_identity_matches_instance(&identity, my_root, instance_home) {
                 write_active_gateway_url(instance_home, &candidate)?;
                 return Ok(candidate);
             }
         }
-        if candidate.url() != default_endpoint.url() && !gateway_port_available(&candidate) {
-            terminate_gateway_from_lock(instance_home, &candidate)?;
-        }
+    }
+    if let Some(candidate) = same_home_gateway_process_endpoint(instance_home)
+        .filter(|candidate| endpoint_is_usable(candidate, false, my_root, instance_home))
+    {
+        write_active_gateway_url(instance_home, &candidate)?;
+        return Ok(candidate);
     }
     Ok(default_endpoint)
+}
+
+fn same_home_gateway_process_endpoint(instance_home: &Path) -> Option<GatewayEndpoint> {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessRefreshKind::new()
+            .with_cmd(UpdateKind::Always)
+            .with_cwd(UpdateKind::Always)
+            .with_environ(UpdateKind::Always)
+            .with_exe(UpdateKind::Always),
+    );
+    system.processes().values().find_map(|process| {
+        let snapshot = GatewayProcessSnapshot {
+            name: process.name().to_string(),
+            exe: process.exe().map(Path::to_path_buf),
+            cmd: process.cmd().to_vec(),
+            environ: process.environ().to_vec(),
+            cwd: process.cwd().map(Path::to_path_buf),
+        };
+        gateway_process_endpoint_from_snapshot(&snapshot, instance_home)
+    })
+}
+
+#[derive(Debug)]
+struct GatewayProcessSnapshot {
+    name: String,
+    exe: Option<PathBuf>,
+    cmd: Vec<String>,
+    environ: Vec<String>,
+    cwd: Option<PathBuf>,
+}
+
+fn gateway_process_endpoint_from_snapshot(
+    process: &GatewayProcessSnapshot,
+    instance_home: &Path,
+) -> Option<GatewayEndpoint> {
+    if !is_gateway_process(process) || !process_matches_instance_home(process, instance_home) {
+        return None;
+    }
+    gateway_process_port(process)
+        .map(|port| GatewayEndpoint {
+            host: "127.0.0.1".to_string(),
+            port,
+            explicit_port: Some(port),
+        })
+        .or_else(|| {
+            process_env_value(&process.environ, tura_path::TURA_GATEWAY_URL_ENV)
+                .map(|url| GatewayEndpoint::parse(&url))
+        })
+}
+
+fn is_gateway_process(process: &GatewayProcessSnapshot) -> bool {
+    process_binary_name_matches(&process.name)
+        || process.exe.as_deref().is_some_and(path_is_gateway_binary)
+        || process
+            .cmd
+            .first()
+            .map(Path::new)
+            .is_some_and(path_is_gateway_binary)
+}
+
+fn process_matches_instance_home(process: &GatewayProcessSnapshot, instance_home: &Path) -> bool {
+    process_env_value(&process.environ, "TURA_HOME")
+        .map(|home| comparable_path(Path::new(&home)) == comparable_path(instance_home))
+        .or_else(|| {
+            process
+                .cwd
+                .as_deref()
+                .map(|cwd| comparable_path(cwd) == comparable_path(instance_home))
+        })
+        .unwrap_or(false)
+}
+
+fn gateway_process_port(process: &GatewayProcessSnapshot) -> Option<u16> {
+    [tura_path::TURA_GATEWAY_PORT_ENV, "PORT"]
+        .into_iter()
+        .find_map(|key| {
+            process_env_value(&process.environ, key).and_then(|value| parse_port(&value))
+        })
+}
+
+fn process_env_value(environ: &[String], key: &str) -> Option<String> {
+    environ.iter().find_map(|entry| {
+        let (entry_key, value) = entry.split_once('=')?;
+        entry_key
+            .eq_ignore_ascii_case(key)
+            .then(|| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn path_is_gateway_binary(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(process_binary_name_matches)
+}
+
+fn process_binary_name_matches(name: &str) -> bool {
+    let name = name.trim();
+    let name = name
+        .strip_suffix(".exe")
+        .or_else(|| name.strip_suffix(".EXE"))
+        .unwrap_or(name);
+    name.eq_ignore_ascii_case("tura_gateway")
+}
+
+fn parse_port(value: &str) -> Option<u16> {
+    value.trim().parse::<u16>().ok()
 }
 
 fn gateway_endpoint_candidates(
@@ -612,20 +787,15 @@ fn write_active_gateway_url(
         .map_err(|error| format!("failed to write active gateway URL: {error}"))
 }
 
-fn wait_for_gateway_health(endpoint: &GatewayEndpoint, timeout: Duration) -> bool {
-    let started = Instant::now();
-    while started.elapsed() < timeout {
-        if gateway_health_reachable(endpoint) {
-            return true;
-        }
-        std::thread::sleep(GATEWAY_HEALTH_POLL_INTERVAL);
-    }
-    false
+#[derive(Debug, Clone, Default)]
+struct GatewayIdentity {
+    root: String,
+    home: String,
 }
 
-/// Probe `/global/health`; on a healthy gateway return its reported `root`,
+/// Probe `/global/health`; on a healthy gateway return its reported identity,
 /// otherwise `None`.
-fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<String> {
+fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<GatewayIdentity> {
     endpoint.socket_addrs().into_iter().find_map(|addr| {
         let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(350)).ok()?;
         let _ = stream.set_read_timeout(Some(Duration::from_millis(900)));
@@ -640,19 +810,37 @@ fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<String> {
         if !response.starts_with("HTTP/1.1 200") || !response.contains("\"healthy\":true") {
             return None;
         }
-        let root = response
+        let identity = response
             .split("\r\n\r\n")
             .nth(1)
             .and_then(|body| serde_json::from_str::<serde_json::Value>(body.trim()).ok())
-            .and_then(|value| {
-                value
+            .map(|value| {
+                let root = value
                     .get("root")
                     .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
+                    .unwrap_or_default()
+                    .to_string();
+                let home = value
+                    .get("home")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                GatewayIdentity { root, home }
             })
             .unwrap_or_default();
-        Some(root)
+        Some(identity)
     })
+}
+
+fn gateway_identity_matches_instance(
+    identity: &GatewayIdentity,
+    my_root: &Path,
+    instance_home: &Path,
+) -> bool {
+    if !identity.home.trim().is_empty() {
+        return same_root(&identity.home, instance_home);
+    }
+    same_root(&identity.root, my_root)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -699,18 +887,6 @@ impl GatewayEndpoint {
             .unwrap_or_default()
     }
 
-    fn bind_addrs(&self) -> Vec<SocketAddr> {
-        let addrs = self.socket_addrs();
-        if addrs.is_empty() && self.host == "localhost" {
-            return GatewayEndpoint {
-                host: "127.0.0.1".to_string(),
-                ..self.clone()
-            }
-            .socket_addrs();
-        }
-        addrs
-    }
-
     fn url(&self) -> String {
         let host = if self.host.contains(':') {
             format!("[{}]", self.host)
@@ -721,84 +897,6 @@ impl GatewayEndpoint {
     }
 }
 
-#[derive(Debug, Default)]
-struct GatewayLockRecord {
-    pid: Option<u32>,
-    process_start_time: Option<u64>,
-    kind: Option<String>,
-    mode: Option<String>,
-    port: Option<u16>,
-    root: Option<String>,
-}
-
-fn terminate_gateway_from_lock(
-    instance_home: &Path,
-    endpoint: &GatewayEndpoint,
-) -> Result<bool, String> {
-    let Some(record) = read_gateway_lock(instance_home) else {
-        return Ok(false);
-    };
-    if record.kind.as_deref() != Some("gateway")
-        || record.mode.as_deref() != Some(GATEWAY_BUILD_KIND)
-        || record.port != Some(endpoint.port)
-        || record
-            .root
-            .as_deref()
-            .is_none_or(|root| comparable_path(Path::new(root)) != comparable_path(instance_home))
-    {
-        return Ok(false);
-    }
-    let Some(pid) = record.pid else {
-        return Ok(false);
-    };
-    if pid == std::process::id() {
-        return Ok(false);
-    }
-    let Some(expected_start) = record.process_start_time else {
-        return Ok(false);
-    };
-    if current_process_start_time(pid) != Some(expected_start) {
-        return Ok(false);
-    }
-    let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
-    let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) else {
-        return Ok(false);
-    };
-    Ok(process.kill())
-}
-
-fn read_gateway_lock(instance_home: &Path) -> Option<GatewayLockRecord> {
-    let path = instance_home
-        .join(".tura")
-        .join("locks")
-        .join(format!("gateway-{GATEWAY_BUILD_KIND}.lock"));
-    let raw = std::fs::read_to_string(path).ok()?;
-    let mut record = GatewayLockRecord::default();
-    for line in raw.lines() {
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        match key.trim() {
-            "pid" => record.pid = value.trim().parse().ok(),
-            "process_start_time" => record.process_start_time = value.trim().parse().ok(),
-            "kind" => record.kind = Some(value.trim().to_string()),
-            "mode" => record.mode = Some(value.trim().to_string()),
-            "port" => record.port = value.trim().parse().ok(),
-            "root" => record.root = Some(value.trim().to_string()),
-            _ => {}
-        }
-    }
-    Some(record)
-}
-
-fn current_process_start_time(pid: u32) -> Option<u64> {
-    let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
-    system
-        .process(sysinfo::Pid::from_u32(pid))
-        .map(sysinfo::Process::start_time)
-}
 impl Default for GatewayEndpoint {
     fn default() -> Self {
         Self {
@@ -833,6 +931,34 @@ mod tests {
                 .as_str(),
             "http://localhost:3000/callback"
         );
+    }
+
+    #[test]
+    fn current_project_root_prefers_project_root_env() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let project_root = test_temp_dir("current-project-root-env");
+        let project_root_text = project_root.to_string_lossy().to_string();
+        let env = TestEnv::set([("TURA_PROJECT_ROOT", project_root_text.as_str())]);
+
+        assert_eq!(current_project_root(), normalize_path(&project_root));
+
+        drop(env);
+        let _ = fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    fn runtime_root_prefers_source_checkout_over_target_release_runtime_copy() {
+        let root = test_temp_dir("runtime-root-source-checkout");
+        let target_release = root.join("target").join("release");
+        create_source_checkout_root(&root);
+        create_release_runtime_root(&target_release);
+
+        assert_eq!(
+            runtime_root_from_start(&target_release),
+            normalize_path(&root)
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -873,6 +999,63 @@ mod tests {
             pairs.get("sessionId").map(|value| value.as_ref()),
             Some("session-123")
         );
+    }
+
+    #[test]
+    fn gateway_launch_args_are_remembered_for_tray_process_matching() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let env = TestEnv::set([(tura_path::TURA_GATEWAY_URL_ENV, "")]);
+
+        remember_gateway_url_from_args(&[
+            "--gateway-url".to_string(),
+            "http://127.0.0.1:4126/".to_string(),
+            "--workspace".to_string(),
+            "C:\\repo".to_string(),
+        ]);
+
+        assert_eq!(
+            std::env::var(tura_path::TURA_GATEWAY_URL_ENV).as_deref(),
+            Ok("http://127.0.0.1:4126")
+        );
+        drop(env);
+    }
+
+    #[test]
+    fn gateway_launch_command_uses_runtime_root_for_cwd_and_config() {
+        let runtime_root = test_temp_dir("gateway-launch-runtime-root");
+        let home = test_temp_dir("gateway-launch-home");
+        let provider_config = runtime_root.join("config").join("provider_config.json");
+        fs::create_dir_all(provider_config.parent().expect("provider config parent"))
+            .expect("provider config dir");
+        fs::write(&provider_config, "{}").expect("provider config");
+        let env_path = runtime_root.join(".env");
+        fs::write(&env_path, "OPENAI_LOGIN=oauth\n").expect("env file");
+
+        let endpoint = GatewayEndpoint::parse("http://127.0.0.1:4999");
+        let mut command = Command::new("tura_gateway");
+        configure_gateway_runtime_command(&mut command, &runtime_root, &home, &endpoint);
+
+        let envs = command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| (key.to_string_lossy().to_string(), PathBuf::from(value)))
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(command.get_current_dir(), Some(runtime_root.as_path()));
+        assert_eq!(envs.get("TURA_HOME"), Some(&home));
+        assert_eq!(envs.get("TURA_PROJECT_ROOT"), Some(&runtime_root));
+        assert_eq!(envs.get("TURA_PROVIDER_CONFIG"), Some(&provider_config));
+        assert_eq!(envs.get("TURA_ENV_PATH"), Some(&env_path));
+
+        let port = command.get_envs().find_map(|(key, value)| {
+            (key == tura_path::TURA_GATEWAY_PORT_ENV)
+                .then(|| value.map(|value| value.to_string_lossy().to_string()))
+                .flatten()
+        });
+        assert_eq!(port.as_deref(), Some("4999"));
+
+        let _ = fs::remove_dir_all(runtime_root);
+        let _ = fs::remove_dir_all(home);
     }
 
     #[test]
@@ -1110,10 +1293,91 @@ mod tests {
     }
 
     #[test]
+    fn default_gateway_endpoint_can_adopt_active_gateway() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let temp = test_temp_dir("default-endpoint-adopts-active");
+        let env = TestEnv::set([(tura_path::TURA_GATEWAY_URL_ENV, "")]);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        tura_path::write_active_gateway_url_for_home(&temp, &format!("http://127.0.0.1:{port}"))
+            .expect("write active gateway url");
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health check");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{}}}",
+                        serde_json::to_string(
+                            &std::env::current_dir().expect("cwd").to_string_lossy().to_string()
+                        )
+                        .expect("json root")
+                    )
+                    .as_bytes(),
+                )
+                .expect("write health response");
+        });
+
+        let selected = select_gateway_endpoint(
+            "http://127.0.0.1:4126",
+            false,
+            &std::env::current_dir().expect("cwd"),
+            &temp,
+        )
+        .expect("select endpoint");
+
+        assert_eq!(selected.url(), format!("http://127.0.0.1:{port}"));
+        drop(env);
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn default_gateway_endpoint_reuses_same_home_active_gateway_with_different_project_root() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let home = test_temp_dir("default-endpoint-same-home-active");
+        let project_root = test_temp_dir("default-endpoint-current-root");
+        let other_root = test_temp_dir("default-endpoint-other-root");
+        let env = TestEnv::set([(tura_path::TURA_GATEWAY_URL_ENV, "")]);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        tura_path::write_active_gateway_url_for_home(&home, &format!("http://127.0.0.1:{port}"))
+            .expect("write active gateway url");
+        let home_text = home.to_string_lossy().to_string();
+        let other_root_text = other_root.to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health check");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{},\"home\":{}}}",
+                        serde_json::to_string(&other_root_text).expect("json root"),
+                        serde_json::to_string(&home_text).expect("json home")
+                    )
+                    .as_bytes(),
+                )
+                .expect("write health response");
+        });
+
+        let selected =
+            select_gateway_endpoint("http://127.0.0.1:4126", false, &project_root, &home)
+                .expect("select endpoint");
+
+        assert_eq!(selected.url(), format!("http://127.0.0.1:{port}"));
+        drop(env);
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(project_root);
+        let _ = fs::remove_dir_all(other_root);
+    }
+
+    #[test]
     fn select_gateway_endpoint_does_not_probe_explicit_requested_url() {
         let temp = test_temp_dir("select-requested-no-probe");
-        let requested = select_gateway_endpoint("http://127.0.0.1:4997", Path::new("."), &temp)
-            .expect("select requested endpoint");
+        let requested =
+            select_gateway_endpoint("http://127.0.0.1:4997", true, Path::new("."), &temp)
+                .expect("select requested endpoint");
 
         assert_eq!(requested.url(), "http://127.0.0.1:4997");
         let _ = fs::remove_dir_all(temp);
@@ -1129,19 +1393,6 @@ mod tests {
             GatewayEndpoint::parse("http://[::1]:4102/global/health").url(),
             "http://[::1]:4102"
         );
-    }
-
-    #[test]
-    fn occupied_unhealthy_port_is_not_silently_remapped() {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind occupied listener");
-        let port = listener.local_addr().expect("local addr").port();
-        let endpoint = GatewayEndpoint {
-            host: "127.0.0.1".to_string(),
-            port,
-            explicit_port: Some(port),
-        };
-
-        assert!(!gateway_port_available(&endpoint));
     }
 
     #[test]
@@ -1183,10 +1434,98 @@ mod tests {
     }
 
     #[test]
+    fn same_home_gateway_process_snapshot_provides_port_endpoint() {
+        let home = test_temp_dir("same-home-process-port");
+        let snapshot = gateway_process_snapshot(
+            "tura_gateway.exe",
+            Some(home.join("bin").join("tura_gateway.exe")),
+            vec![home
+                .join("bin")
+                .join("tura_gateway.exe")
+                .display()
+                .to_string()],
+            vec![
+                format!("TURA_HOME={}", home.display()),
+                "TURA_GATEWAY_PORT=4789".to_string(),
+            ],
+            Some(home.clone()),
+        );
+
+        let endpoint = gateway_process_endpoint_from_snapshot(&snapshot, &home)
+            .expect("same home gateway endpoint");
+
+        assert_eq!(endpoint.url(), "http://127.0.0.1:4789");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn same_home_gateway_process_snapshot_falls_back_to_gateway_url() {
+        let home = test_temp_dir("same-home-process-url");
+        let snapshot = gateway_process_snapshot(
+            "tura_gateway",
+            None,
+            vec!["tura_gateway".to_string()],
+            vec![
+                format!("TURA_HOME={}", home.display()),
+                "TURA_GATEWAY_URL=http://127.0.0.1:4790".to_string(),
+            ],
+            None,
+        );
+
+        let endpoint = gateway_process_endpoint_from_snapshot(&snapshot, &home)
+            .expect("same home gateway endpoint");
+
+        assert_eq!(endpoint.url(), "http://127.0.0.1:4790");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn same_home_gateway_process_snapshot_rejects_foreign_home() {
+        let home = test_temp_dir("same-home-process-local");
+        let foreign_home = test_temp_dir("same-home-process-foreign");
+        let snapshot = gateway_process_snapshot(
+            "tura_gateway",
+            None,
+            vec!["tura_gateway".to_string()],
+            vec![
+                format!("TURA_HOME={}", foreign_home.display()),
+                "TURA_GATEWAY_PORT=4791".to_string(),
+            ],
+            Some(foreign_home.clone()),
+        );
+
+        assert!(gateway_process_endpoint_from_snapshot(&snapshot, &home).is_none());
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(foreign_home);
+    }
+
+    #[test]
+    fn same_home_gateway_process_snapshot_rejects_non_gateway_binary() {
+        let home = test_temp_dir("same-home-process-other");
+        let snapshot = gateway_process_snapshot(
+            "not_gateway",
+            Some(home.join("not_gateway.exe")),
+            vec![home.join("not_gateway.exe").display().to_string()],
+            vec![
+                format!("TURA_HOME={}", home.display()),
+                "TURA_GATEWAY_PORT=4792".to_string(),
+            ],
+            Some(home.clone()),
+        );
+
+        assert!(gateway_process_endpoint_from_snapshot(&snapshot, &home).is_none());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn start_gateway_returns_connected_when_endpoint_is_reachable() {
         let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
         let home = test_temp_dir("start-gateway-connected-home");
-        let env = TestEnv::set([("TURA_HOME", home.to_string_lossy().as_ref())]);
+        let home_text = home.to_string_lossy().to_string();
+        let env = TestEnv::set([
+            ("TURA_HOME", home_text.as_str()),
+            (tura_path::TURA_GATEWAY_URL_ENV, ""),
+        ]);
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
         let port = listener.local_addr().expect("local addr").port();
         std::thread::spawn(move || {
@@ -1200,8 +1539,8 @@ mod tests {
                 .expect("write health response");
         });
 
-        let response =
-            start_gateway(format!("http://127.0.0.1:{port}")).expect("start gateway response");
+        let response = start_gateway(format!("http://127.0.0.1:{port}"), Some(true))
+            .expect("start gateway response");
 
         assert!(response.ok);
         assert_eq!(response.status, "connected");
@@ -1214,121 +1553,83 @@ mod tests {
             tura_path::read_active_gateway_url_for_home(&home).as_deref(),
             Some(format!("http://127.0.0.1:{port}").as_str())
         );
+        assert_eq!(
+            std::env::var(tura_path::TURA_GATEWAY_URL_ENV).as_deref(),
+            Ok(format!("http://127.0.0.1:{port}").as_str())
+        );
         drop(env);
         let _ = fs::remove_dir_all(home);
     }
 
     #[test]
-    fn runtime_root_prefers_packaged_bin_layout() {
-        let temp = test_temp_dir("packaged-bin-layout");
-        let bin = temp.join("bin");
-        fs::create_dir_all(bin.join("agents").join("src")).expect("create agents");
-        fs::create_dir_all(bin.join("personas").join("src")).expect("create personas");
-        let gateway = bin.join(if cfg!(windows) {
-            "tura_gateway.exe"
-        } else {
-            "tura_gateway"
-        });
-        fs::write(&gateway, "").expect("write gateway");
+    fn start_gateway_errors_when_endpoint_is_absent() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
 
-        assert_eq!(runtime_root_for_gateway(&gateway), bin);
-        let _ = fs::remove_dir_all(temp);
+        let error = start_gateway(format!("http://127.0.0.1:{port}"), Some(true))
+            .expect_err("explicit absent gateway must fail without spawning");
+
+        assert!(error.contains("explicit gateway is not running at"));
     }
 
     #[test]
-    fn runtime_root_walks_from_target_release_to_workspace_root() {
-        let temp = test_temp_dir("target-release-layout");
-        let target_release = temp.join("target").join("release");
-        fs::create_dir_all(&target_release).expect("create target release");
-        fs::write(temp.join("Cargo.toml"), "[workspace]\n").expect("write Cargo.toml");
-        fs::create_dir_all(temp.join("crates").join("gateway")).expect("create gateway crate");
-        let gateway = target_release.join(if cfg!(windows) {
-            "tura_gateway.exe"
-        } else {
-            "tura_gateway"
+    fn start_gateway_non_explicit_launches_when_no_same_root_gateway_exists() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let home = test_temp_dir("start-gateway-launches-home");
+        let project_root = test_temp_dir("start-gateway-project-root");
+        let home_text = home.to_string_lossy().to_string();
+        let project_root_text = project_root.to_string_lossy().to_string();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let requested_port = port.saturating_sub(1).max(1024);
+        let env = TestEnv::set([
+            ("TURA_HOME", home_text.as_str()),
+            ("TURA_PROJECT_ROOT", project_root_text.as_str()),
+            (tura_path::TURA_GATEWAY_URL_ENV, ""),
+            (
+                tura_path::TURA_GATEWAY_PORT_ENV,
+                &requested_port.to_string(),
+            ),
+        ]);
+        let my_root = current_project_root();
+        let root_text = my_root.to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health check");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{}}}",
+                        serde_json::to_string(&root_text).expect("json root")
+                    )
+                    .as_bytes(),
+                )
+                .expect("write health response");
         });
-        fs::write(&gateway, "").expect("write gateway");
-
-        assert_eq!(runtime_root_for_gateway(&gateway), temp);
-        let _ = fs::remove_dir_all(test_temp_dir("target-release-layout"));
-    }
-
-    #[test]
-    fn gateway_lock_must_match_release_home_port_and_start_time() {
-        let temp = test_temp_dir("gateway-lock-scope");
-        let foreign_home = test_temp_dir("gateway-lock-foreign");
-        let endpoint = GatewayEndpoint {
-            host: "127.0.0.1".to_string(),
-            port: 4126,
-            explicit_port: Some(4126),
-        };
-        let pid = std::process::id();
-        let start_time = current_process_start_time(pid).expect("current start time");
-        let lock_dir = temp.join(".tura").join("locks");
-        fs::create_dir_all(&lock_dir).expect("lock dir");
-        let lock_path = lock_dir.join("gateway-release.lock");
-
-        fs::write(
-            &lock_path,
-            format!(
-                "pid={pid}\nprocess_start_time={start_time}\nkind=gateway\nmode=dev\nport=4126\nroot={}\n",
-                temp.display()
-            ),
+        let launched_url = format!("http://127.0.0.1:{port}");
+        let response = start_gateway_with_launcher(
+            "http://127.0.0.1:65530",
+            false,
+            |target, root, home_arg| {
+                assert_eq!(target.url(), format!("http://127.0.0.1:{requested_port}"));
+                assert_eq!(root, normalize_path(&project_root).as_path());
+                assert_eq!(home_arg, normalize_path(&home).as_path());
+                Ok(GatewayEndpoint::parse(&launched_url))
+            },
         )
-        .expect("dev lock");
-        assert!(!terminate_gateway_from_lock(&temp, &endpoint).expect("dev lock should not kill"));
+        .expect("start gateway response");
 
-        fs::write(
-            &lock_path,
-            format!(
-                "pid={pid}\nprocess_start_time={start_time}\nkind=gateway\nmode=release\nport=4126\nroot={}\n",
-                foreign_home.display()
-            ),
-        )
-        .expect("foreign home lock");
-        assert!(
-            !terminate_gateway_from_lock(&temp, &endpoint).expect("foreign lock should not kill")
+        assert_eq!(response.status, "connected");
+        assert_eq!(response.gateway_url, Some(launched_url.clone()));
+        assert_eq!(
+            tura_path::read_active_gateway_url_for_home(&home).as_deref(),
+            Some(launched_url.as_str())
         );
-
-        fs::write(
-            &lock_path,
-            format!(
-                "pid={pid}\nprocess_start_time={}\nkind=gateway\nmode=release\nport=4126\nroot={}\n",
-                start_time.saturating_sub(1),
-                temp.display()
-            ),
-        )
-        .expect("stale start lock");
-        assert!(!terminate_gateway_from_lock(&temp, &endpoint).expect("stale lock should not kill"));
-
-        let _ = fs::remove_dir_all(temp);
-        let _ = fs::remove_dir_all(foreign_home);
-    }
-
-    #[test]
-    fn provider_config_prefers_packaged_config_when_present() {
-        let temp = test_temp_dir("packaged-config");
-        let config = temp.join("config").join("provider_config.json");
-        fs::create_dir_all(config.parent().expect("config parent")).expect("create config dir");
-        fs::write(&config, "{}").expect("write config");
-
-        assert_eq!(provider_config_path_for_runtime_root(&temp), config);
-        let _ = fs::remove_dir_all(temp);
-    }
-
-    #[test]
-    fn provider_config_falls_back_to_workspace_config_when_present() {
-        let temp = test_temp_dir("workspace-config");
-        let config = temp
-            .join("crates")
-            .join("provider")
-            .join("config")
-            .join("provider_config.json");
-        fs::create_dir_all(config.parent().expect("config parent")).expect("create config dir");
-        fs::write(&config, "{}").expect("write config");
-
-        assert_eq!(provider_config_path_for_runtime_root(&temp), config);
-        let _ = fs::remove_dir_all(temp);
+        drop(env);
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(project_root);
     }
 
     struct TestEnv {
@@ -1360,6 +1661,22 @@ mod tests {
         }
     }
 
+    fn gateway_process_snapshot(
+        name: &str,
+        exe: Option<PathBuf>,
+        cmd: Vec<String>,
+        environ: Vec<String>,
+        cwd: Option<PathBuf>,
+    ) -> GatewayProcessSnapshot {
+        GatewayProcessSnapshot {
+            name: name.to_string(),
+            exe,
+            cmd,
+            environ,
+            cwd,
+        }
+    }
+
     fn test_temp_dir(name: &str) -> PathBuf {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -1371,5 +1688,53 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    fn create_source_checkout_root(root: &Path) {
+        fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        fs::create_dir_all(root.join("personas").join("src")).expect("personas dir");
+        fs::create_dir_all(root.join("crates").join("gateway")).expect("gateway crate dir");
+        fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        fs::create_dir_all(root.join("config")).expect("config dir");
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("cargo toml");
+        fs::write(root.join("config").join("provider_config.json"), "{}").expect("provider config");
+        fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
+    }
+
+    fn create_release_runtime_root(root: &Path) {
+        fs::create_dir_all(root.join("agents").join("src")).expect("agents dir");
+        fs::create_dir_all(root.join("personas").join("src")).expect("personas dir");
+        fs::create_dir_all(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run"),
+        )
+        .expect("command_run dir");
+        fs::create_dir_all(root.join("config")).expect("config dir");
+        fs::write(root.join("config").join("provider_config.json"), "{}").expect("provider config");
+        fs::write(
+            root.join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json"),
+            "{}",
+        )
+        .expect("command_run schema");
     }
 }

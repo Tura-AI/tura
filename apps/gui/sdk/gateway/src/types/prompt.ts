@@ -13,4 +13,3 @@ export type PromptAsyncRequest = {
   model_acceleration_enabled?: boolean;
   system?: string;
 };
-

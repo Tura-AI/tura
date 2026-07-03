@@ -10,6 +10,7 @@ SKIP_TUI=0
 SKIP_GUI=0
 SKIP_TAURI=0
 BACKEND_ONLY=0
+BINARY=0
 RELEASE_PROBE="${TURA_RELEASE_PROBE:-release-v0.0.0-ci}"
 
 while [ "$#" -gt 0 ]; do
@@ -17,7 +18,12 @@ while [ "$#" -gt 0 ]; do
     --skip-tui) SKIP_TUI=1 ;;
     --skip-gui) SKIP_GUI=1 ;;
     --skip-tauri) SKIP_TAURI=1 ;;
-    --backend-only|--skip-apps) BACKEND_ONLY=1 ;;
+    --backend-only) BACKEND_ONLY=1 ;;
+    --binary) BINARY=1 ;;
+    --skip-apps)
+      echo "--skip-apps was removed for release builds because it was ambiguous. Use --backend-only, --skip-tui, --skip-gui, or --skip-tauri explicitly." >&2
+      exit 2
+      ;;
     --release-probe)
       shift
       [ "$#" -gt 0 ] || { echo "--release-probe requires a value" >&2; exit 2; }
@@ -27,6 +33,8 @@ while [ "$#" -gt 0 ]; do
       cat <<'EOF'
 Usage:
   scripts/tests/scripts/test-build-release.sh [--backend-only] [--skip-tui] [--skip-gui] [--skip-tauri] [--release-probe release-v0.0.0-ci]
+
+Use --skip-tui, --skip-gui, or --skip-tauri for targeted app skips.
 EOF
       exit 0
       ;;
@@ -43,6 +51,16 @@ require_path() {
   path=$1
   message=$2
   [ -e "$path" ] || { echo "$message" >&2; exit 1; }
+}
+
+require_any_path() {
+  message=$1
+  shift
+  for path in "$@"; do
+    [ -e "$path" ] && return 0
+  done
+  echo "$message" >&2
+  exit 1
 }
 
 case "$RELEASE_PROBE" in
@@ -74,6 +92,7 @@ if [ "$SKIP_TUI" -eq 1 ]; then build_args="$build_args --skip-tui"; fi
 if [ "$SKIP_GUI" -eq 1 ]; then build_args="$build_args --skip-gui"; fi
 if [ "$SKIP_TAURI" -eq 1 ]; then build_args="$build_args --skip-tauri"; fi
 if [ "$BACKEND_ONLY" -eq 1 ]; then build_args="$build_args --backend-only"; fi
+if [ "$BINARY" -eq 1 ]; then build_args="$build_args --binary"; fi
 sh "$REPO_ROOT/scripts/build-release.sh" $build_args
 
 step "Checking release artifacts"
@@ -88,6 +107,14 @@ for name in \
 do
   require_path "$TARGET_DIR/$name" "Missing release artifact: $name"
 done
+require_path "$TARGET_DIR/config/provider_config.json" "Missing release provider config."
+if [ "$BINARY" -eq 0 ]; then
+  require_path "$TARGET_DIR/agents/src/direct/prompt.md" "Missing release agent prompt."
+  require_path "$TARGET_DIR/personas/src/tura/prompt/persona.md" "Missing release persona prompt."
+  require_path "$TARGET_DIR/crates/runtime/src/runtime_prompt/debug/prompt.md" "Missing release runtime prompt."
+  require_path "$TARGET_DIR/crates/tools/src/commands/shell_command/schema.json" "Missing release tool command schema."
+  require_path "$TARGET_DIR/commands/read_media/prompt.md" "Missing release external command prompt."
+fi
 
 if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TUI" -eq 0 ]; then
   require_path "$TARGET_DIR/tura" "Missing release TUI executable."
@@ -96,7 +123,7 @@ if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_GUI" -eq 0 ]; then
   require_path "$TARGET_DIR/tura_gui/index.html" "Missing release GUI dist."
 fi
 if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TAURI" -eq 0 ]; then
-  require_path "$TARGET_DIR/release/bundle" "Missing Tauri release bundle directory."
+  require_any_path "Missing Tauri release bundle directory." "$TARGET_DIR/bundle" "$TARGET_DIR/release/bundle"
 fi
 
 step "Checking command protocol health"

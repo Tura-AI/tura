@@ -6,9 +6,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$CommandDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$VenvDir = Join-Path $CommandDir ".venv"
+$CommandDir = [System.IO.Path]::GetFullPath((Split-Path -Parent $MyInvocation.MyCommand.Path))
+$VenvDir = [System.IO.Path]::GetFullPath((Join-Path $CommandDir ".venv"))
 $RequirementsPath = Join-Path $CommandDir "requirements.txt"
+$PythonVersion = "3.12"
 
 if ($Help) {
   Write-Host "Usage: commands\read_media\install.ps1 [-CheckOnly] [-Offline]"
@@ -32,6 +33,49 @@ function Require-Uv {
   }
 }
 
+function Test-UvPythonAvailable {
+  $findArgs = @("python", "find", $PythonVersion)
+  if ($Offline) {
+    $findArgs += "--offline"
+  }
+  & uv @findArgs > $null 2>&1
+  return $LASTEXITCODE -eq 0
+}
+
+function Ensure-PythonRuntime {
+  if (Test-UvPythonAvailable) {
+    return
+  }
+  if ($Offline) {
+    throw "Python $PythonVersion was not found in uv's cache or on PATH, and -Offline was supplied. Run the root scripts\install.ps1 without -Offline so uv can install Python first."
+  }
+  Write-Host "Installing Python $PythonVersion for read_media virtual environment"
+  & uv python install $PythonVersion
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  if (-not (Test-UvPythonAvailable)) {
+    throw "uv installed Python $PythonVersion, but it is still not discoverable."
+  }
+}
+
+function Initialize-VenvDirectory {
+  if (-not (Test-Path -LiteralPath $CommandDir -PathType Container)) {
+    throw "read_media command directory was not found at $CommandDir. Current directory: $(Get-Location)"
+  }
+  if (-not (Test-Path -LiteralPath $RequirementsPath -PathType Leaf)) {
+    throw "read_media requirements file was not found at $RequirementsPath."
+  }
+  if (Test-Path -LiteralPath $VenvDir -PathType Leaf) {
+    throw "read_media virtual environment path is a file, expected a directory: $VenvDir"
+  }
+  if (-not (Test-Path -LiteralPath $VenvDir -PathType Container)) {
+    try {
+      New-Item -ItemType Directory -Path $VenvDir -Force | Out-Null
+    } catch {
+      throw "Failed to prepare read_media virtual environment directory at $VenvDir. Command directory: $CommandDir. Current directory: $(Get-Location). $($_.Exception.Message)"
+    }
+  }
+}
+
 function Invoke-Verify {
   $python = Get-VenvPython
   if (-not (Test-Path -LiteralPath $python)) {
@@ -43,36 +87,34 @@ function Invoke-Verify {
   }
 }
 
-Require-Uv
-
 if ($CheckOnly) {
   Invoke-Verify
   Write-Host "read_media dependencies: ok"
   exit 0
 }
 
-Push-Location $CommandDir
-try {
-  if (-not (Test-Path -LiteralPath (Get-VenvPython))) {
-    $venvArgs = @("venv", "--python", "3.12", ".venv")
-    if ($Offline) {
-      $venvArgs += "--offline"
-    }
-    & uv @venvArgs
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  } else {
-    Write-Host "Reusing read_media virtual environment at $VenvDir"
-  }
+Require-Uv
 
-  $pipArgs = @("pip", "install", "--python", (Get-VenvPython), "-r", $RequirementsPath)
+if (-not (Test-Path -LiteralPath (Get-VenvPython))) {
+  Initialize-VenvDirectory
+  Ensure-PythonRuntime
+  $venvArgs = @("venv", "--python", "3.12")
   if ($Offline) {
-    $pipArgs += "--offline"
+    $venvArgs += "--offline"
   }
-  & uv @pipArgs
+  $venvArgs += $VenvDir
+  & uv @venvArgs
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-} finally {
-  Pop-Location
+} else {
+  Write-Host "Reusing read_media virtual environment at $VenvDir"
 }
+
+$pipArgs = @("pip", "install", "--python", (Get-VenvPython), "-r", $RequirementsPath)
+if ($Offline) {
+  $pipArgs += "--offline"
+}
+& uv @pipArgs
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Invoke-Verify
 Write-Host "read_media dependencies installed in $VenvDir"

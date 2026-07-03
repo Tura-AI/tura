@@ -522,7 +522,7 @@ export function defaultGatewayUrl(): string {
 
 function defaultLocalGatewayUrl(): string {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
-    ? "http://127.0.0.1:4156"
+    ? "http://127.0.0.1:4126"
     : "http://127.0.0.1:4126";
 }
 

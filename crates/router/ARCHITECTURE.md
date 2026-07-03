@@ -78,6 +78,12 @@ shared locked writer), so a slow `execution.enqueue_turn` never head-of-line
 blocks a concurrent `health_check`. Responses carry `request_id` so callers
 match them regardless of completion order.
 
+`execution.enqueue_turn` is the authority for per-session active-turn state. If
+the router already has an active turn for the requested `session_id`, it returns
+an application payload with `ok: false` and `code: "session_active_turn"`; the
+gateway converts normal prompts in that state into `session.append_user_command`
+follow-ups for the running runtime.
+
 ## Responsibilities
 
 Router owns:

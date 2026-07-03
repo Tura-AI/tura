@@ -30,6 +30,13 @@ pub async fn oauth_authorize(
     Query(_params): Query<OAuthAuthorizeParams>,
     Json(payload): Json<OAuthAuthorizePayload>,
 ) -> Json<OAuthAuthorizeResponse> {
+    Json(oauth_authorize_value(provider_id, payload).await)
+}
+
+pub async fn oauth_authorize_value(
+    provider_id: String,
+    payload: OAuthAuthorizePayload,
+) -> OAuthAuthorizeResponse {
     let methods = provider_auth_methods(&provider_id);
     let selected_method = methods.get(payload.method).filter(|method| {
         matches!(
@@ -39,19 +46,19 @@ pub async fn oauth_authorize(
     });
 
     let Some(selected_method) = selected_method else {
-        return Json(OAuthAuthorizeResponse {
+        return OAuthAuthorizeResponse {
             url: String::new(),
             method: OAuthMethod::Code,
             instructions: "Invalid auth method".to_string(),
-        });
+        };
     };
 
     if let Some(reason) = selected_method.unavailable_reason.as_deref() {
-        return Json(OAuthAuthorizeResponse {
+        return OAuthAuthorizeResponse {
             url: String::new(),
             method: OAuthMethod::Code,
             instructions: reason.to_string(),
-        });
+        };
     }
 
     let entry = tura_llm_rust::provider_auth_registry_entry(&provider_id);
@@ -80,11 +87,11 @@ pub async fn oauth_authorize(
                 )
             }
             Err(error) => {
-                return Json(OAuthAuthorizeResponse {
+                return OAuthAuthorizeResponse {
                     url: String::new(),
                     method: OAuthMethod::Code,
                     instructions: format!("GitHub Copilot OAuth cannot start: {error}"),
-                });
+                };
             }
         }
     } else if matches!(
@@ -98,14 +105,14 @@ pub async fn oauth_authorize(
         let code_challenge = oauth_code_challenge(&code_verifier);
         let Some(url) = oauth_authorize_url(&provider_id, authorize_kind, &state, &code_challenge)
         else {
-            return Json(OAuthAuthorizeResponse {
+            return OAuthAuthorizeResponse {
                 url: String::new(),
                 method: OAuthMethod::Code,
                 instructions: format!(
                     "{} OAuth cannot start because its OAuth client configuration is incomplete.",
                     provider_display_name(&provider_id)
                 ),
-            });
+            };
         };
         global_store().set_oauth_state(
             &provider_id,
@@ -156,11 +163,11 @@ pub async fn oauth_authorize(
         )
     };
 
-    Json(OAuthAuthorizeResponse {
+    OAuthAuthorizeResponse {
         url,
         method,
         instructions,
-    })
+    }
 }
 
 pub async fn oauth_callback(
@@ -168,7 +175,14 @@ pub async fn oauth_callback(
     Query(_params): Query<OAuthCallbackParams>,
     Json(payload): Json<OAuthCallbackPayload>,
 ) -> Json<ProviderAuthActionResponse> {
-    Json(complete_oauth_callback(provider_id, payload).await)
+    Json(oauth_callback_value(provider_id, payload).await)
+}
+
+pub async fn oauth_callback_value(
+    provider_id: String,
+    payload: OAuthCallbackPayload,
+) -> ProviderAuthActionResponse {
+    complete_oauth_callback(provider_id, payload).await
 }
 
 pub async fn oauth_callback_info(

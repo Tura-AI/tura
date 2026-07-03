@@ -48,4 +48,3 @@ export type SessionLogRecordsResponse = {
   page: SessionLogPage;
   records: SessionLogRecord[];
 };
-

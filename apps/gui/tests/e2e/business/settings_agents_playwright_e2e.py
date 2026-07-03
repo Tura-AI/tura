@@ -9,9 +9,6 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
-
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
 def free_port() -> int:
@@ -67,20 +64,6 @@ def start_server() -> subprocess.Popen | None:
     )
 
 
-def stop(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
-
-
 def record_browser_error(errors: list[str], text: str) -> None:
     ignored = [
         "net::ERR_NETWORK_CHANGED",
@@ -134,17 +117,17 @@ async def main() -> None:
             )
             await expect(page.locator(".agent-trigger-button")).to_be_visible(timeout=15000)
             await page.locator(".agent-trigger-button").click()
-            await expect(page.get_by_role("button", name="默认模型配置")).to_be_visible(timeout=15000)
-            await expect(page.get_by_role("button", name="智能体配置")).to_be_visible(timeout=15000)
+            await expect(page.get_by_role("button", name="Default model config")).to_be_visible(
+                timeout=15000
+            )
+            await expect(page.get_by_role("button", name="Agent config")).to_be_visible(timeout=15000)
             agent_options = page.locator(".agent-trigger-option")
             await expect(agent_options).to_have_count(4)
             assert "/" in await agent_options.nth(0).inner_text()
             await page.screenshot(path=OUT / "01-agent-menu.png", full_page=True)
             checks.append({"name": "composer-agent-menu-visible", "ok": True})
 
-            await page.get_by_role(
-                "button", name="Direct openai/gpt-", exact=False
-            ).click()
+            await page.get_by_role("button", name="Direct OpenAI/GPT-", exact=False).click()
             await expect(page.locator(".agent-trigger-button")).to_contain_text(
                 "OpenAI/GPT-5.5"
             )
@@ -156,11 +139,11 @@ async def main() -> None:
                 ".settings-view",
             )
             await page.locator('[data-section="models"]').click()
-            await expect(page.get_by_role("heading", name="默认模型配置")).to_be_visible()
+            await expect(page.get_by_role("heading", name="Default model config")).to_be_visible()
             await expect(page.locator(".model-config-panel .field-row")).to_have_count(2)
             model_text = await page.locator(".model-config-panel").inner_text()
-            assert "推理" in model_text
-            assert "快速" in model_text
+            assert "Thinking" in model_text
+            assert "Fast" in model_text
             assert "embedding" not in model_text.lower()
             labels = page.locator(".model-tier-label small")
             for index in range(await labels.count()):
@@ -169,10 +152,10 @@ async def main() -> None:
             checks.append({"name": "model-settings-filtered", "ok": True})
 
             await page.locator('[data-section="agents"]').click()
-            await expect(page.get_by_role("heading", name="智能体配置")).to_be_visible()
+            await expect(page.get_by_role("heading", name="Agent config")).to_be_visible()
             await expect(page.locator("#agent-settings-id")).to_have_count(0)
-            await expect(page.get_by_role("button", name="新智能体")).to_have_count(0)
-            await expect(page.get_by_role("button", name="删除")).to_have_count(0)
+            await expect(page.get_by_role("button", name="New agent")).to_have_count(0)
+            await expect(page.get_by_role("button", name="Delete")).to_have_count(0)
             await expect(
                 page.locator(".agent-pick-row")
                 .filter(has_text="Balanced")
@@ -197,28 +180,28 @@ async def main() -> None:
             await page.locator(".agent-pick-row").filter(has_text="Direct Text Only").click()
             await expect(
                 page.locator(".agent-editor .field-row")
-                .filter(has_text="默认模型 tier")
-                .filter(has_text="快速 · openai/gpt-5.5-mini")
+                .filter(has_text="Default model tier")
+                .filter(has_text="Fast · openai/gpt-5.5-mini")
             ).to_be_visible()
-            await expect(page.get_by_text("思考强度")).to_be_visible()
+            await expect(page.get_by_text("Reasoning effort")).to_be_visible()
             await page.locator(".agent-editor .field-row").filter(
-                has_text="思考强度"
+                has_text="Reasoning effort"
             ).locator(".appearance-select-button").click()
             await page.locator(".appearance-select-menu").get_by_role(
-                "button", name="高", exact=True
+                "button", name="High", exact=True
             ).click()
-            await page.get_by_role("button", name="保存").click()
-            await expect(page.get_by_text("已保存")).to_be_visible()
+            await page.get_by_role("button", name="Save").click()
+            await expect(page.get_by_text("Saved")).to_be_visible()
             await page.screenshot(path=OUT / "03-agent-settings.png", full_page=True)
             checks.append({"name": "agent-settings-model-only", "ok": True})
 
             await page.locator('[data-section="personalization"]').click()
-            await expect(page.get_by_role("heading", name="个性化设置")).to_be_visible()
+            await expect(page.get_by_role("heading", name="Personalization")).to_be_visible()
             await expect(page.locator(".agent-avatar-stage")).to_have_count(1)
             await expect(page.locator(".agent-avatar-loading")).to_have_count(1)
             await page.locator("#agent-avatar-pixel").fill("12")
             await page.locator("#agent-avatar-threshold").fill("160")
-            await page.get_by_role("button", name="保存").click()
+            await page.get_by_role("button", name="Save").click()
             await expect(page.locator("#agent-avatar-scale")).to_have_count(0)
             await page.screenshot(path=OUT / "04-personalization.png", full_page=True)
             checks.append({"name": "personalization-avatar-controls", "ok": True})
@@ -232,7 +215,7 @@ async def main() -> None:
                 wait_until="domcontentloaded",
             )
             await mobile.locator('[data-section="agents"]').evaluate("el => el.click()")
-            await expect(mobile.get_by_role("heading", name="智能体配置")).to_be_visible()
+            await expect(mobile.get_by_role("heading", name="Agent config")).to_be_visible()
             await expect(
                 mobile.locator(".agent-pick-row").filter(has_text="Direct").first
             ).to_be_visible()
@@ -248,8 +231,7 @@ async def main() -> None:
             )
             await browser.close()
     finally:
-        stop(process)
-        cleanup_repo_tura_processes()
+        pass
 
     failures = [check for check in checks if not check["ok"]]
     (OUT / "summary.json").write_text(

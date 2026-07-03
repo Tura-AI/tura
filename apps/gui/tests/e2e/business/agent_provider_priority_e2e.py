@@ -10,9 +10,6 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
-
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
 OUT = GUI / "test-results" / "agent-provider-priority"
@@ -70,20 +67,6 @@ def start_server() -> subprocess.Popen | None:
     )
 
 
-def stop(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
-
-
 async def select_field_option(page, label_pattern: str, option_name: str) -> None:
     row = page.locator(".agent-editor .field-row").filter(has_text=re.compile(label_pattern))
     await row.locator(".appearance-select-button").click()
@@ -135,12 +118,16 @@ async def main() -> None:
             await select_field_option(page, "服务商|Provider", "GitHub Copilot")
             await select_field_option(page, "当前模型|Current model", "Copilot GPT-5.5 Pro")
 
-            priority_row = page.locator(".agent-editor .field-row").filter(has_text="Priority")
+            priority_row = page.locator(".agent-editor .field-row").filter(
+                has_text=re.compile("加速|Acceleration")
+            )
             await expect(priority_row).to_be_visible()
-            priority_checkbox = priority_row.locator('input[type="checkbox"]')
-            if not await priority_checkbox.is_checked():
-                await priority_checkbox.check()
-            await expect(priority_checkbox).to_be_checked()
+            priority_control = priority_row.locator(".settings-priority-segmented")
+            await expect(priority_control).to_be_visible()
+            await expect(priority_control.get_by_role("radio", name=re.compile("关闭|Off"))).to_be_visible()
+            priority_button = priority_control.get_by_role("radio", name="Priority")
+            await priority_button.click()
+            await expect(priority_button).to_have_attribute("aria-checked", "true")
 
             await page.get_by_role("button", name=re.compile("保存|Save")).click()
             await expect(page.get_by_text(re.compile("已保存|Saved"))).to_be_visible()
@@ -166,8 +153,7 @@ async def main() -> None:
             await page.screenshot(path=OUT / "agent-provider-priority.png", full_page=True)
             await browser.close()
     finally:
-        stop(process)
-        cleanup_repo_tura_processes()
+        pass
 
     failures = [check for check in checks if not check["ok"]]
     (OUT / "summary.json").write_text(

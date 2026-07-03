@@ -25,6 +25,7 @@ import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
 import { sessionTitle } from "../state/global-store";
 import { providerIdFromAuthError, providerIdFromModel } from "../utils/settings";
+import { agentRuntimeRequest } from "../../../../tui/src/agent-runtime-config";
 
 const PLAN_RUN_TIMEOUT_MS = 30_000;
 const PLAN_RUN_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
@@ -71,6 +72,18 @@ export function usePlanActions(options: PlanActionsOptions) {
   const [acknowledgedAttentionSessions, setAcknowledgedAttentionSessions] = createSignal(
     new Set<string>(),
   );
+
+  function activeAgentRuntimeRequest() {
+    return agentRuntimeRequest(
+      state().agents.find((agent) => agent.name === state().selectedAgent),
+      {
+        model: state().selectedModel,
+        modelConfig: state().modelConfig,
+        reasoningLevel: state().modelVariant,
+        priorityEnabled: state().accelerationEnabled,
+      },
+    );
+  }
 
   async function openPlanSession(session: Session) {
     acknowledgeSessionAttention(session.id);
@@ -231,12 +244,15 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     const messageId = `plan-ticket:${session.id}:${taskId}:${Date.now()}`;
+    const runtime = activeAgentRuntimeRequest();
     try {
       await directoryClient().promptAsync(session.id, {
         messageID: messageId,
         parts: [{ id: `${messageId}:text`, type: "text", text: taskDisplayText(task) }],
-        model: state().selectedModel,
+        model: runtime.model,
         agent: state().selectedAgent,
+        variant: runtime.variant,
+        model_acceleration_enabled: runtime.model_acceleration_enabled,
       });
     } catch (error) {
       setState((previous) => ({ ...previous, error: errorMessage(error) }));
@@ -346,6 +362,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     try {
+      const runtime = activeAgentRuntimeRequest();
       await updatePlanTicketTask(session, {
         task_id: nonce,
         status: "doing",
@@ -354,8 +371,10 @@ export function usePlanActions(options: PlanActionsOptions) {
         directoryClient().promptAsync(session.id, {
           messageID: messageId,
           parts: [{ id: `${messageId}:text`, type: "text", text }],
-          model: state().selectedModel,
+          model: runtime.model,
           agent: state().selectedAgent,
+          variant: runtime.variant,
+          model_acceleration_enabled: runtime.model_acceleration_enabled,
         }),
         new Promise<never>((_, reject) =>
           window.setTimeout(() => reject(new Error(PLAN_RUN_TIMEOUT_CODE)), PLAN_RUN_TIMEOUT_MS),

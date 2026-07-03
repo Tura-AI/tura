@@ -5,10 +5,8 @@ non-interactive CLI and the interactive terminal UI. The package talks to the
 Rust gateway over HTTP and SSE; it does not embed runtime, provider, tool, or
 session-storage logic.
 
-When the requested gateway port is already occupied by another process, TUI
-autostart now chooses a free loopback port before spawning gateway so the
-terminal client waits on the actual gateway URL it owns instead of timing out on
-the occupied port.
+The TUI never owns gateway. It probes the requested, active, and default gateway
+URLs, then fails if none is already healthy.
 
 ## Scope
 
@@ -284,8 +282,8 @@ npm run build
 node apps/tui/dist/index.js --help
 ```
 
-The TUI auto-starts (and attaches to) its own `tura_gateway` on port 4126, so no
-separate gateway command is needed.
+Start `tura_gateway` before launching the TUI. The TUI only attaches to an
+existing gateway and fails when none is reachable.
 
 Repository start-script flow:
 

@@ -3,6 +3,7 @@ set -eu
 
 COMMAND_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 VENV_DIR="$COMMAND_DIR/.venv"
+PYTHON_VERSION=3.12
 CHECK_ONLY=0
 OFFLINE=0
 
@@ -36,7 +37,24 @@ verify_generate_media() {
   "$python" -c 'import edge_tts; print("generate_media edge-tts dependency ok")'
 }
 
-have uv || { echo "uv was not found. Run the root scripts/install.sh first or install uv from https://docs.astral.sh/uv/." >&2; exit 1; }
+uv_python_available() {
+  if [ "$OFFLINE" -eq 1 ]; then
+    uv python find "$PYTHON_VERSION" --offline >/dev/null 2>&1
+  else
+    uv python find "$PYTHON_VERSION" >/dev/null 2>&1
+  fi
+}
+
+ensure_python_runtime() {
+  uv_python_available && return
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "Python $PYTHON_VERSION was not found in uv's cache or on PATH, and --offline was supplied. Run the root scripts/install.sh without --offline so uv can install Python first." >&2
+    exit 1
+  fi
+  echo "Installing Python $PYTHON_VERSION for generate_media virtual environment"
+  uv python install "$PYTHON_VERSION"
+  uv_python_available || { echo "uv installed Python $PYTHON_VERSION, but it is still not discoverable." >&2; exit 1; }
+}
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
   verify_generate_media
@@ -44,12 +62,14 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   exit 0
 fi
 
-cd "$COMMAND_DIR"
+have uv || { echo "uv was not found. Run the root scripts/install.sh first or install uv from https://docs.astral.sh/uv/." >&2; exit 1; }
+
 if [ ! -x "$(venv_python)" ]; then
+  ensure_python_runtime
   if [ "$OFFLINE" -eq 1 ]; then
-    uv venv --python 3.12 .venv --offline
+    uv venv --python 3.12 --offline "$VENV_DIR"
   else
-    uv venv --python 3.12 .venv
+    uv venv --python 3.12 "$VENV_DIR"
   fi
 else
   echo "Reusing generate_media virtual environment at $VENV_DIR"

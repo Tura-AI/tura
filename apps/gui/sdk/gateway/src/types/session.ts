@@ -75,4 +75,3 @@ export type CreateSessionRequest = {
   auto_session_name?: boolean;
   task_management?: TaskManagement;
 };
-

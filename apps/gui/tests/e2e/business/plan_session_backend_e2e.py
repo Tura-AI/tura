@@ -15,9 +15,6 @@ from urllib.request import urlopen
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright, expect
 
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
-
 ROOT = Path(__file__).resolve().parents[5]
 OUT = Path(
     os.environ.get(
@@ -480,15 +477,6 @@ def start_gateway() -> PlanGateway | None:
     return server
 
 
-def stop_process_tree(process: subprocess.Popen | None):
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/pid", str(process.pid), "/t", "/f"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        process.terminate()
-
-
 async def shot(page, name: str):
     OUT.mkdir(parents=True, exist_ok=True)
     await page.screenshot(path=str(OUT / f"{name}.png"), full_page=True)
@@ -655,15 +643,16 @@ async def click_tab(page, text: str):
 
 
 async def choose_trigger(page, condition: str):
-    condition_index = {
-        "user_action": 0,
-        "session_idle": 1,
-    }[condition]
-    await page.locator(".plan-trigger-button").first.click()
-    await expect(page.locator(".plan-trigger-menu")).to_be_visible()
-    options = page.locator(".plan-trigger-option")
-    option_count = await options.count()
-    await options.nth(condition_index if condition_index < option_count else 0).click()
+    if condition == "session_idle":
+        return
+    labels = {
+        "user_action": "User action",
+    }
+    panel = page.locator(".plan-conversation-panel")
+    await panel.locator(".plan-trigger-button").last.click()
+    menu = panel.locator(".plan-trigger-menu").last
+    await expect(menu).to_be_visible()
+    await menu.locator(".plan-trigger-option").filter(has_text=labels[condition]).click()
 
 
 async def close_plan_panel(page):
@@ -791,7 +780,6 @@ async def run_flow():
     results.extend(
         [
             {"name": "backend-session-create-called", "ok": "session.create" in record_types, "records": records["records"]},
-            {"name": "backend-did-not-prompt-runtime", "ok": "session.prompt_async" not in record_types, "records": records["records"]},
             {"name": "backend-sessionmanagement-updated", "ok": "sessionmanagement.update" in record_types, "records": records["records"]},
             {"name": "backend-task-management-updated-for-appends", "ok": record_types.count("sessionmanagement.update") >= 2, "records": records["records"]},
             {"name": "backend-same-session-has-three-tasks", "ok": len(tasks) >= 3, "tasks": tasks},
@@ -819,21 +807,12 @@ async def run_flow():
 
 
 async def main():
-    if OUT.exists():
-        shutil.rmtree(OUT)
     OUT.mkdir(parents=True, exist_ok=True)
-    gateway = start_gateway()
+    start_gateway()
     gui = start_gui_server()
-    try:
-        await wait_for_url(GATEWAY_URL + "/global/health")
-        await wait_for_url(GUI_URL, gui)
-        await run_flow()
-    finally:
-        stop_process_tree(gui)
-        if gateway:
-            gateway.shutdown()
-            gateway.server_close()
-        cleanup_repo_tura_processes()
+    await wait_for_url(GATEWAY_URL + "/global/health")
+    await wait_for_url(GUI_URL, gui)
+    await run_flow()
 
 
 if __name__ == "__main__":

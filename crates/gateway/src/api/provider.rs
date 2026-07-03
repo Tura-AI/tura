@@ -17,10 +17,11 @@ mod auth_validation;
 mod oauth_flow;
 use auth_validation::{validate_provider_auth_config, validation_detail};
 pub use oauth_flow::{
-    oauth_authorize, oauth_callback, oauth_callback_info, oauth_redirect_callback,
+    oauth_authorize, oauth_authorize_value, oauth_callback, oauth_callback_info,
+    oauth_callback_value, oauth_redirect_callback,
 };
 mod catalog;
-pub use catalog::{list_providers, validate_model};
+pub use catalog::{list_providers, list_providers_value, validate_model};
 use catalog::{provider_display_name, provider_runtime_id};
 mod auth_registry;
 mod auth_scheduler;
@@ -49,6 +50,10 @@ pub async fn set_auth(
     Path(provider_id): Path<String>,
     Json(payload): Json<ProviderAuth>,
 ) -> Json<bool> {
+    Json(set_auth_value(provider_id, payload))
+}
+
+pub fn set_auth_value(provider_id: String, payload: ProviderAuth) -> bool {
     if payload
         .access
         .as_deref()
@@ -57,15 +62,19 @@ pub async fn set_auth(
         .unwrap_or_default()
         .is_empty()
     {
-        return Json(false);
+        return false;
     }
     let saved = persist_provider_auth(&provider_id, &payload).is_ok();
     let _ = global_store().set_auth(&provider_id, payload);
-    Json(saved)
+    saved
 }
 
 pub async fn remove_auth(Path(provider_id): Path<String>) -> Json<bool> {
-    Json(logout_provider_auth(&provider_id).is_ok() && global_store().remove_auth(&provider_id))
+    Json(remove_auth_value(provider_id))
+}
+
+pub fn remove_auth_value(provider_id: String) -> bool {
+    logout_provider_auth(&provider_id).is_ok() && global_store().remove_auth(&provider_id)
 }
 
 pub(super) async fn refresh_provider_auth_if_needed(
@@ -83,16 +92,27 @@ pub async fn provider_auth_status(
     Path(provider_id): Path<String>,
 ) -> Json<ProviderAuthStatusResponse> {
     let _ = refresh_provider_auth_if_needed(&provider_id, false).await;
-    Json(build_provider_auth_status(&provider_id))
+    Json(provider_auth_status_value(&provider_id))
+}
+
+pub fn provider_auth_status_value(provider_id: &str) -> ProviderAuthStatusResponse {
+    build_provider_auth_status(provider_id)
 }
 
 pub async fn provider_auth_validate(
     Path(provider_id): Path<String>,
     Json(payload): Json<ProviderAuthValidationRequest>,
 ) -> Json<ProviderAuthActionResponse> {
+    Json(provider_auth_validate_value(provider_id, payload).await)
+}
+
+pub async fn provider_auth_validate_value(
+    provider_id: String,
+    payload: ProviderAuthValidationRequest,
+) -> ProviderAuthActionResponse {
     let status = build_provider_auth_status(&provider_id);
     let receipt = validate_provider_auth_config(&provider_id, &status, Some(&payload)).await;
-    Json(ProviderAuthActionResponse {
+    ProviderAuthActionResponse {
         ok: receipt.ok,
         provider_id,
         code: receipt.code,
@@ -100,7 +120,7 @@ pub async fn provider_auth_validate(
         level: Some(receipt.level),
         details: receipt.details,
         status: Some(status),
-    })
+    }
 }
 
 pub async fn provider_auth_refresh(
@@ -152,6 +172,10 @@ pub async fn provider_auth_refresh(
 pub async fn provider_auth_logout(
     Path(provider_id): Path<String>,
 ) -> Json<ProviderAuthActionResponse> {
+    Json(provider_auth_logout_value(provider_id))
+}
+
+pub fn provider_auth_logout_value(provider_id: String) -> ProviderAuthActionResponse {
     let result = logout_provider_auth(&provider_id);
     let status = build_provider_auth_status(&provider_id);
     let ok = result.is_ok();
@@ -173,7 +197,7 @@ pub async fn provider_auth_logout(
                 )],
             )
         });
-    Json(ProviderAuthActionResponse {
+    ProviderAuthActionResponse {
         ok,
         provider_id,
         code: code.to_string(),
@@ -181,7 +205,7 @@ pub async fn provider_auth_logout(
         level: Some(if ok { "valid" } else { "invalid" }.to_string()),
         details,
         status: Some(status),
-    })
+    }
 }
 
 // ============================================================================
@@ -191,6 +215,10 @@ pub async fn provider_auth_logout(
 pub async fn provider_auth(
     Query(_params): Query<ProviderAuthQuery>,
 ) -> Json<HashMap<String, Vec<ProviderAuthMethod>>> {
+    Json(provider_auth_value().await)
+}
+
+pub async fn provider_auth_value() -> HashMap<String, Vec<ProviderAuthMethod>> {
     let mut response = HashMap::new();
     for entry in auth_registry::entries() {
         let methods = provider_auth_methods(entry.provider_id);
@@ -209,10 +237,10 @@ pub async fn provider_auth(
             }
         }
     }
-    Json(response)
+    response
 }
 
-fn provider_auth_methods(provider_id: &str) -> Vec<ProviderAuthMethod> {
+pub(crate) fn provider_auth_methods(provider_id: &str) -> Vec<ProviderAuthMethod> {
     let Some(entry) = auth_registry::entry(provider_id) else {
         return Vec::new();
     };

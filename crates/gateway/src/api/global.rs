@@ -22,6 +22,7 @@ pub async fn health() -> Json<HealthResponse> {
         healthy: true,
         version: env!("CARGO_PKG_VERSION").to_string(),
         root: gateway_identity_root(),
+        home: gateway_identity_home(),
         exe_dir: gateway_exe_dir(),
         dev_log_path: gateway_dev_log_path(),
     })
@@ -60,6 +61,10 @@ pub(crate) fn gateway_identity_root() -> String {
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
     canonical_string(&root)
+}
+
+pub(crate) fn gateway_identity_home() -> String {
+    canonical_string(&tura_path::instance_home())
 }
 
 fn gateway_exe_dir() -> String {

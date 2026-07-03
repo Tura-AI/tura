@@ -8,25 +8,25 @@ use helpers::*;
 #[test]
 fn web_discover_asset_cli_e2e_downloads_five_asset_styles() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let server = spawn_multi_asset_server(vec![
-        AssetResponse::ok(
+    let server = spawn_multi_response_server(vec![
+        StubResponse::ok(
             "/noir-hud.wgsl",
             "text/plain",
             b"@fragment fn fs_main() -> @location(0) vec4f { return vec4f(0.1, 0.9, 0.6, 1.0); }"
                 .to_vec(),
         ),
-        AssetResponse::ok(
+        StubResponse::ok(
             "/desert-rock.jpg",
             "image/jpeg",
             b"desert rock texture bytes".to_vec(),
         ),
-        AssetResponse::ok("/pixel-panel.png", "image/png", tiny_png_bytes().to_vec()),
-        AssetResponse::ok(
+        StubResponse::ok("/pixel-panel.png", "image/png", tiny_png_bytes().to_vec()),
+        StubResponse::ok(
             "/compact-ship.glb",
             "model/gltf-binary",
             b"glTF compact ship bytes".to_vec(),
         ),
-        AssetResponse::ok(
+        StubResponse::ok(
             "/retro-click.ogg",
             "audio/ogg",
             b"OggS retro click bytes".to_vec(),

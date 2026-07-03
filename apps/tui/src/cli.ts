@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveGatewayUrl, gatewayUrlIsExplicit, resolveCwd } from "./gateway/directory.js";
+import { ensureGatewayAvailable } from "./gateway/autostart.js";
 import {
   CliUsageError,
   type CliContext,
@@ -24,6 +25,7 @@ import { commandRegistryCommand } from "./commands/command-registry.js";
 import { gatewayCommand } from "./commands/gateway.js";
 import { inspectCommand } from "./commands/inspect.js";
 import { runTui } from "./tui/app.js";
+import { plainCapabilities } from "./tui/capabilities.js";
 import {
   runtimeOverridesFromAssignment,
   shellValue,
@@ -64,7 +66,7 @@ export async function main(argv: string[]): Promise<void> {
         return;
       }
       const parsed = parseRun(args, context.json);
-      await runPrompt(context, parsed);
+      await runPrompt(await gatewayContext(context), parsed);
       return;
     }
     const commandRunShell = commandRunShellForCommand(command);
@@ -74,7 +76,7 @@ export async function main(argv: string[]): Promise<void> {
         return;
       }
       const parsed = parseRun(args, context.json, commandRunShell);
-      await runPrompt(context, parsed);
+      await runPrompt(await gatewayContext(context), parsed);
       return;
     }
     if (command === "resume") {
@@ -83,7 +85,7 @@ export async function main(argv: string[]): Promise<void> {
         return;
       }
       const parsed = parseResume(args, context.json);
-      await resumeCommand(context, parsed);
+      await resumeCommand(await gatewayContext(context), parsed);
       return;
     }
     if (hasHelp(args)) {
@@ -99,16 +101,16 @@ export async function main(argv: string[]): Promise<void> {
       if (command === "gateway") return printGatewayHelp();
       if (command === "completion") return printCompletionHelp();
     }
-    if (command === "session") return sessionCommand(context, args);
-    if (command === "config") return configCommand(context, args);
-    if (command === "provider") return providerCommand(context, args);
-    if (command === "agent") return agentCommand(context, args);
-    if (command === "persona") return personaCommand(context, args);
-    if (command === "project") return projectCommand(context, args);
-    if (command === "file") return fileCommand(context, args);
-    if (command === "command") return commandRegistryCommand(context, args);
-    if (command === "inspect") return inspectCommand(context, args);
-    if (command === "gateway") return gatewayCommand(context, args);
+    if (command === "session") return sessionCommand(await gatewayContext(context), args);
+    if (command === "config") return configCommand(await gatewayContext(context), args);
+    if (command === "provider") return providerCommand(await gatewayContext(context), args);
+    if (command === "agent") return agentCommand(await gatewayContext(context), args);
+    if (command === "persona") return personaCommand(await gatewayContext(context), args);
+    if (command === "project") return projectCommand(await gatewayContext(context), args);
+    if (command === "file") return fileCommand(await gatewayContext(context), args);
+    if (command === "command") return commandRegistryCommand(await gatewayContext(context), args);
+    if (command === "inspect") return inspectCommand(await gatewayContext(context), args);
+    if (command === "gateway") return gatewayCommand(await gatewayContext(context), args);
     if (command === "completion") return completionCommand(args);
     await runTui(context, [command, ...args].join(" "));
   } catch (error) {
@@ -123,6 +125,17 @@ export async function main(argv: string[]): Promise<void> {
 
 function hasHelp(args: string[]): boolean {
   return args.includes("--help") || args.includes("-h") || args.includes("help");
+}
+
+async function gatewayContext(context: CliContext): Promise<CliContext> {
+  if (context.mock) return context;
+  const gatewayUrl = await ensureGatewayAvailable(
+    context.gatewayUrl,
+    plainCapabilities(),
+    context.dev,
+    context.gatewayUrlExplicit,
+  );
+  return { ...context, gatewayUrl };
 }
 
 function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
@@ -337,12 +350,12 @@ export function parseRun(
 }
 
 export function commandRunShellForCommand(command: string): CommandRunShell | undefined {
-  if (command === "bash" || command === "zsh" || command === "shll") return shellValue(command);
+  if (command === "bash" || command === "zsh" || command === "shel") return shellValue(command);
   return undefined;
 }
 
 function isCommandRunShellFlag(value: string): boolean {
-  return value === "--bash" || value === "--zsh" || value === "--shll";
+  return value === "--bash" || value === "--zsh" || value === "--shel";
 }
 
 function applyRunOverrides(

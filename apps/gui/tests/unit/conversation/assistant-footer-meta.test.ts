@@ -1,9 +1,6 @@
 import type { Message } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
-import {
-  assistantFooterMetaText,
-  assistantFooterModelText,
-} from "../../../app/src/conversation/assistant-footer-meta";
+import { assistantFooterMetaText } from "../../../app/src/conversation/assistant-footer-meta";
 
 function assistantMessage(overrides: Partial<Message>): Message {
   return {
@@ -15,30 +12,30 @@ function assistantMessage(overrides: Partial<Message>): Message {
   };
 }
 
-describe("assistant footer model text", () => {
-  test("does not repeat the model when provider already contains the model suffix", () => {
+describe("assistant footer metadata text", () => {
+  test("does not show provider and model names under assistant messages", () => {
     expect(
-      assistantFooterModelText(
+      assistantFooterMetaText(
         assistantMessage({
           providerID: "codex/gpt-5.5",
           modelID: "gpt-5.5",
         }),
       ),
-    ).toBe("codex/gpt-5.5");
+    ).toBe("");
   });
 
-  test("keeps distinct provider and model names separated by one slash", () => {
+  test("does not show distinct provider and model names", () => {
     expect(
-      assistantFooterModelText(
+      assistantFooterMetaText(
         assistantMessage({
           providerID: "openai",
           modelID: "gpt-5.5",
         }),
       ),
-    ).toBe("openai/gpt-5.5");
+    ).toBe("");
   });
 
-  test("keeps the footer metadata compact after model dedupe", () => {
+  test("keeps cost metadata without model text", () => {
     expect(
       assistantFooterMetaText(
         assistantMessage({
@@ -47,6 +44,41 @@ describe("assistant footer model text", () => {
           cost: 0.01234,
         }),
       ),
-    ).toBe("codex/gpt-5.5 · $0.0123");
+    ).toBe("$0.0123");
+  });
+
+  test("hides runtime reasoning and priority from assistant message metadata", () => {
+    expect(
+      assistantFooterMetaText(
+        assistantMessage({
+          providerID: "codex",
+          modelID: "gpt-5.5",
+          metadata: {
+            runtime: {
+              reasoning_level: "medium",
+              model_acceleration_enabled: true,
+            },
+          },
+        }),
+      ),
+    ).toBe("");
+  });
+
+  test("keeps metadata cost while hiding runtime reasoning and priority", () => {
+    expect(
+      assistantFooterMetaText(
+        assistantMessage({
+          providerID: "codex",
+          modelID: "gpt-5.5",
+          metadata: {
+            usage: { total_cost: 0.05678 },
+            runtime: {
+              reasoning_level: "high",
+              model_acceleration_enabled: true,
+            },
+          },
+        }),
+      ),
+    ).toBe("$0.0568");
   });
 });

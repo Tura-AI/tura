@@ -30,12 +30,13 @@ import type {
   PromptPayload,
   Session,
 } from "../types/session.js";
+import { defaultGatewayUrl } from "./active-url.js";
 import { directoryHeader } from "./directory.js";
 import { GatewayHttpError } from "./errors.js";
 import { parseSse } from "./events.js";
 
 export interface GatewayClientOptions {
-  baseUrl: string;
+  baseUrl?: string;
   directory: string;
   verbose?: boolean;
   timeoutMs?: number;
@@ -55,7 +56,7 @@ export class GatewayClient {
   private timeoutMs: number;
 
   constructor(options: GatewayClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = (options.baseUrl ?? defaultGatewayUrl()).replace(/\/+$/, "");
     this.directory = options.directory;
     this.verbose = Boolean(options.verbose);
     this.timeoutMs = options.timeoutMs ?? 20_000;

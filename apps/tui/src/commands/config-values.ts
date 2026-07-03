@@ -188,6 +188,6 @@ export function shellValue(value: unknown, key = "command_run_shell"): CommandRu
   const normalized = String(value).trim();
   if (normalized === "bash") return "bash";
   if (normalized === "zsh") return "zsh";
-  if (normalized === "shll") return "shell_command";
+  if (normalized === "shel") return "shell_command";
   throw new CliUsageError(t("unsupportedCommandRunShell", { key, value: normalized }));
 }

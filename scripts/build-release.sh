@@ -11,6 +11,7 @@ SKIP_TUI=0
 SKIP_GUI=0
 SKIP_TAURI=0
 BACKEND_ONLY=0
+BINARY=0
 CLEAN=0
 
 while [ "$#" -gt 0 ]; do
@@ -18,17 +19,26 @@ while [ "$#" -gt 0 ]; do
     --skip-tui) SKIP_TUI=1 ;;
     --skip-gui) SKIP_GUI=1 ;;
     --skip-tauri) SKIP_TAURI=1 ;;
-    --backend-only|--skip-apps) BACKEND_ONLY=1 ;;
+    --backend-only) BACKEND_ONLY=1 ;;
+    --binary) BINARY=1 ;;
+    --skip-apps)
+      echo "--skip-apps was removed for release builds because it was ambiguous. Use --backend-only, --skip-tui, --skip-gui, or --skip-tauri explicitly." >&2
+      exit 2
+      ;;
     -clean|--clean) CLEAN=1 ;;
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/build-release.sh [--backend-only] [--skip-tui] [--skip-gui] [--skip-tauri] [-clean|--clean]
+  scripts/build-release.sh [--backend-only] [--binary] [--skip-tui] [--skip-gui] [--skip-tauri] [-clean|--clean]
 
 Builds release artifacts directly into target/release.
 By default this builds backend binaries, the web GUI dist, the compiled TUI,
 and the Tauri desktop bundle. Use --backend-only when a CI job only needs Rust
 release artifacts.
+By default release output includes runtime configs, prompts, markdown, command
+metadata, and command source files. Pass --binary to keep only binaries and the
+minimal provider config.
+Use --skip-tui, --skip-gui, or --skip-tauri for targeted app skips.
 By default, local session DB/config state is preserved. Pass -clean to remove it before building.
 EOF
       exit 0
@@ -47,6 +57,11 @@ if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_GUI" -eq 0 ]; then BUILD_GUI=1; fi
 if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TAURI" -eq 0 ]; then BUILD_TAURI=1; fi
 if [ "$BUILD_TUI" -eq 1 ] || [ "$BUILD_GUI" -eq 1 ] || [ "$BUILD_TAURI" -eq 1 ]; then
   command -v bun >/dev/null 2>&1 || { echo "bun was not found on PATH; pass --backend-only to build Rust only." >&2; exit 1; }
+fi
+if [ "$BACKEND_ONLY" -eq 1 ]; then
+  echo "Building backend release artifacts only (--backend-only was specified)."
+else
+  echo "Building full release artifacts: backend processes, GUI dist, TUI executable, and Tauri desktop bundle."
 fi
 
 case "$(uname -s 2>/dev/null || echo unknown)" in
@@ -70,6 +85,57 @@ copy_gui_dist() {
   rm -rf "$dst"
   mkdir -p "$dst"
   cp -R "$src"/. "$dst"/
+}
+
+copy_release_config() {
+  src="$REPO_ROOT/crates/provider/config/provider_config.json"
+  dst="$TARGET_DIR/config"
+  if [ ! -f "$src" ]; then
+    echo "Provider config not found at $src." >&2
+    exit 1
+  fi
+  mkdir -p "$dst"
+  cp "$src" "$dst/provider_config.json"
+}
+
+copy_release_runtime_files() {
+  copy_runtime_path agents/src agents/src
+  copy_runtime_path personas/src personas/src
+  copy_runtime_path crates/runtime/src/runtime_prompt crates/runtime/src/runtime_prompt
+  copy_runtime_path crates/tools/src/commands crates/tools/src/commands
+  copy_runtime_path crates/tools/src/command_run/schema.json crates/tools/src/command_run/schema.json
+  copy_runtime_path commands/generate_media commands/generate_media
+  copy_runtime_path commands/read_media commands/read_media
+  copy_runtime_path commands/web_discover commands/web_discover
+  copy_runtime_path README.md README.md
+  copy_runtime_path scripts/ARCHITECTURE.md scripts/ARCHITECTURE.md
+}
+
+copy_runtime_path() {
+  src_rel=$1
+  dst_rel=$2
+  src="$REPO_ROOT/$src_rel"
+  dst="$TARGET_DIR/$dst_rel"
+  if [ ! -e "$src" ]; then
+    echo "Release runtime source not found: $src_rel" >&2
+    exit 1
+  fi
+  rm -rf "$dst"
+  mkdir -p "$(dirname "$dst")"
+  if [ -f "$src" ]; then
+    cp "$src" "$dst"
+    return 0
+  fi
+  mkdir -p "$dst"
+  cp -R "$src"/. "$dst"/
+  find "$dst" \( \
+    -name .venv -o \
+    -name tests -o \
+    -name target -o \
+    -name node_modules -o \
+    -name __pycache__ -o \
+    -name .pytest_cache \
+  \) -type d -prune -exec rm -rf {} +
 }
 
 install_js_if_missing() {
@@ -147,9 +213,14 @@ fi
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p runtime --bin tura_runtime)
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p generate_media -p read_media -p web_discover)
 
+copy_release_config
+if [ "$BINARY" -eq 0 ]; then
+  copy_release_runtime_files
+fi
+
 if [ "$BUILD_GUI" -eq 1 ]; then
   install_js_if_missing "$REPO_ROOT/apps/gui" "app/node_modules/vite/package.json"
-  (cd "$REPO_ROOT/apps/gui" && bun run build)
+  (cd "$REPO_ROOT/apps/gui" && TURA_BUILD_KIND=release bun run build)
   copy_gui_dist
 fi
 
@@ -158,10 +229,10 @@ if [ "$BUILD_TUI" -eq 1 ]; then
   mkdir -p "$TARGET_DIR"
   case "$(uname -s 2>/dev/null || echo unknown)" in
   MINGW*|MSYS*|CYGWIN*)
-    (cd "$REPO_ROOT" && bun build --compile --windows-icon "$ICON_PATH" --outfile "$TARGET_DIR/tura" apps/tui/src/index.ts)
+    (cd "$REPO_ROOT" && TURA_BUILD_KIND=release bun build --compile --windows-icon "$ICON_PATH" --outfile "$TARGET_DIR/tura" apps/tui/src/index.ts)
     ;;
   *)
-    (cd "$REPO_ROOT" && bun build --compile --outfile "$TARGET_DIR/tura" apps/tui/src/index.ts)
+    (cd "$REPO_ROOT" && TURA_BUILD_KIND=release bun build --compile --outfile "$TARGET_DIR/tura" apps/tui/src/index.ts)
     ;;
   esac
 fi
@@ -169,7 +240,7 @@ fi
 if [ "$BUILD_TAURI" -eq 1 ]; then
   install_js_if_missing "$REPO_ROOT/apps/gui" "app/node_modules/vite/package.json"
   install_js_if_missing "$REPO_ROOT/apps/tauri" "node_modules/@tauri-apps/cli/package.json"
-  (cd "$REPO_ROOT/apps/tauri" && bun run build)
+  (cd "$REPO_ROOT/apps/tauri" && TURA_BUILD_KIND=release bun run build)
 fi
 
 echo "Release artifacts ready in $TARGET_DIR"

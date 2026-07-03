@@ -9,7 +9,7 @@ describe("GatewayClient", () => {
       location: { search: "" },
     } as Window & typeof globalThis;
     try {
-      expect(defaultGatewayUrl()).toBe("http://127.0.0.1:4156");
+      expect(defaultGatewayUrl()).toBe("http://127.0.0.1:4126");
     } finally {
       globalThis.window = previousWindow;
     }

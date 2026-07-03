@@ -2,7 +2,7 @@ use super::files::{output_dir, write_images};
 use super::output::summarize_output;
 use super::providers::{call_provider, dry_run_payload};
 use super::speech::{call_speech_provider, dry_run_speech_payload, write_speech};
-use super::types::{GenerateMediaArgs, MediaKind};
+use super::types::{GenerateMediaArgs, ImageProvider, MediaKind, SpeechProvider};
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -98,8 +98,9 @@ pub(super) fn run_generate_media_inner(
         }
     }
     Err(format!(
-        "all generate_media providers failed: {}",
-        errors.join(" | ")
+        "all generate_media providers failed: {}; {}",
+        errors.join(" | "),
+        image_key_help(&args.provider_order)
     ))
 }
 
@@ -174,9 +175,50 @@ fn run_speech_generate_inner(
         }
     }
     Err(format!(
-        "all generate_media speech providers failed: {}",
-        errors.join(" | ")
+        "all generate_media speech providers failed: {}; {}",
+        errors.join(" | "),
+        speech_key_help(&args.speech_provider_order)
     ))
+}
+
+fn image_key_help(providers: &[ImageProvider]) -> String {
+    format!(
+        "set one of the matching media generation keys to enable generate_media: {}",
+        providers
+            .iter()
+            .map(|provider| match provider {
+                ImageProvider::ChatGptImage2 => "OPENAI_API_KEY or CODEX_OPENAI_OAUTH_TOKEN",
+                ImageProvider::ReplicateZImageTurbo => "REPLICATE_API_TOKEN",
+                ImageProvider::Gemini31Flash => "GOOGLE_API_KEY or GEMINI_API_KEY",
+                ImageProvider::Grok3 => "XAI_API_KEY or GROK_API_KEY",
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    )
+}
+
+fn speech_key_help(providers: &[SpeechProvider]) -> String {
+    let keys = providers
+        .iter()
+        .filter_map(|provider| match provider {
+            SpeechProvider::OpenAiTts => Some("OPENAI_API_KEY"),
+            SpeechProvider::ElevenLabs => Some("ELEVENLABS_API_KEY"),
+            SpeechProvider::QwenDashScope => Some("QWEN_API_KEY or DASHSCOPE_API_KEY"),
+            SpeechProvider::AzureEdgeTts => None,
+            SpeechProvider::AzureSpeech => Some("AZURE_SPEECH_KEY and AZURE_SPEECH_REGION"),
+            SpeechProvider::ReplicateQwen3Tts | SpeechProvider::ReplicateChatterbox => {
+                Some("REPLICATE_API_TOKEN")
+            }
+        })
+        .collect::<Vec<_>>();
+    if keys.is_empty() {
+        "configure a reachable speech provider endpoint to enable generate_media speech".to_string()
+    } else {
+        format!(
+            "set one of the matching media generation keys to enable generate_media speech: {}",
+            keys.join("; ")
+        )
+    }
 }
 
 fn compact_raw_response(mut value: Value) -> Value {

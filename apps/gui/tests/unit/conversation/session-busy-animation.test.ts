@@ -95,8 +95,8 @@ describe("session busy animation state", () => {
       },
     };
 
-    expect(messagesWithSessionThinking([userMessage()], idleWithStaleTask).map((item) => item.id)).toEqual([
-      "user-1",
-    ]);
+    expect(
+      messagesWithSessionThinking([userMessage()], idleWithStaleTask).map((item) => item.id),
+    ).toEqual(["user-1"]);
   });
 });

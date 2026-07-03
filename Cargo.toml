@@ -129,6 +129,10 @@ path = "tests/os_testing/process_state_management_e2e.rs"
 required-features = ["os-tests"]
 
 [[test]]
+name = "english_agent_output_punctuation"
+path = "tests/english_agent_output_punctuation.rs"
+
+[[test]]
 name = "session_db_workspace_flow_e2e"
 path = "tests/os_testing/session_db_workspace_flow_e2e.rs"
 required-features = ["os-tests"]

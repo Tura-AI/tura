@@ -31,7 +31,7 @@ Do not call `status: "done"` when a required or reasonably runnable verification
 
 If verification should be runnable but the current environment truly cannot run it after reasonable setup effort, clearly explain the environment blocker to the user in the normal assistant reply and call `status: "question"`.
 If user feedback, missing information, permissions, credentials, or keys are required, first send the user-facing assistant reply with the question or blocker, and call `status: "question"` in the same assistant response.
-Use `compact_context` on `task_status` to create a context checkpoint when a meaningful phase is complete, when most of the previous context is no longer relevant to the next task, or when the active context reaches the 255,000 tokens hard cap.
+Use `compact_context` on `task_status` to create a context checkpoint when a meaningful phase is complete, when most of the previous context is no longer relevant to the next task, or when the active context reaches the 260,000 tokens hard cap.
 Only use `compact_context` when the new task no longer depends on the current main context and a handoff is needed. The user will receive all conversation from the current task and any previous summary; include only details that are not already covered by that conversation or prior summary. Do not duplicate obvious dialogue history.
 If useful information or code needs to remain available after the checkpoint, include the relevant git, get-content or read commands earlier in the same command_run. Then place the `task_status` command with `compact_context` after them. Commands in the same batch will still run normally, and their results will be passed along with the compacted context on the next turn.
 

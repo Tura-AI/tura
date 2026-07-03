@@ -19,9 +19,11 @@ describe("i18n", () => {
   test("switches GUI language at runtime", () => {
     setLanguage("zh-CN");
     expect(t("settings")).toBe("设置");
+    expect(t("runtimeStopped")).toBe("Runtime 已停止。");
     setLanguage("en");
     expect(currentLanguage()).toBe("en");
     expect(t("settings")).toBe("Settings");
+    expect(t("runtimeStopped")).toBe("Runtime stopped.");
   });
 
   test("parses the same language aliases as the TUI", () => {

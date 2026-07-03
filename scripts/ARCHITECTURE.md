@@ -15,11 +15,13 @@ Important scripts:
 
 - `install.*`: install dependencies only. The root installer checks
   `shell_command`, `bash`, `zsh`, and `git` coverage on every platform, ensures
-  user-local `uv` and `bun`, calls command-owned `commands/*/install.*`
-  scripts, and runs Bun installs inside app/package directories. It does not
-  build binaries or register PATH launchers. Windows adds common Git/MSYS shell
-  paths before checking bash/zsh. macOS asserts zsh and bash and reports
-  optional PowerShell (`pwsh`) coverage.
+  user-local `uv`, Python 3.12 through `uv`, and `bun`, calls command-owned
+  `commands/*/install.*` scripts, and runs Bun installs inside app/package
+  directories. `--skip-uv`/`-SkipUv` requires command installers to be skipped,
+  and `--skip-bun`/`-SkipBun` requires app installs to be skipped when Bun
+  workspaces are present. It does not build binaries or register PATH launchers.
+  Windows adds common Git/MSYS shell paths before checking bash/zsh. macOS
+  asserts zsh and bash and reports optional PowerShell (`pwsh`) coverage.
 - `build-debug.*`: build Rust debug binaries and the TUI entry into `target/debug`.
 - `build-release.*`: build Rust release binaries, the web GUI dist, the TUI entry,
   and the Tauri desktop bundle. CLI/TUI artifacts and copied web assets land in
@@ -27,7 +29,10 @@ Important scripts:
   the release target bundle directory. Release builds preserve local session
   DB/cache state by default; pass `-Clean` on PowerShell or `-clean`/`--clean` on
   POSIX shells when a build must intentionally remove repository-local session
-  DB/cache files first. Pass `-BackendOnly` or `--backend-only` when a CI job only
+  DB/cache files first. The build scripts only stop repo-owned backend/service
+  binaries before rebuilding; they do not stop the interactive `tura` TUI or
+  `tura_gui` desktop process. If a frontend executable is locked, close it
+  explicitly and rerun. Pass `-BackendOnly` or `--backend-only` when a CI job only
   needs Rust release artifacts.
 - `register-cli.*`: add `target/release` to the user PATH. No wrapper directory is created; the registered CLI command is `tura exec`. The POSIX script updates `.profile`, `.bash_profile`, `.bashrc`, `.zprofile`, and `.zshrc` when present, and creates `.zprofile`/`.zshrc` on macOS so new Terminal sessions work.
 - `unregister-cli.*`: remove `target/release` from PATH and delete a stale `cli-bin` directory if present.
@@ -41,6 +46,18 @@ Important scripts:
   parallel.
 - `run-release-dry-run.*`: release dry-run orchestrator. It runs install, the CI
   flow, and release artifact build without publishing.
+- `scripts/npm/install-release.mjs`: npm postinstall release installer for the
+  public `tura` package. It first uses an installed platform package such as
+  `tura-win32-x64`, then a local archive from `release/`, and finally a GitHub
+  Release archive. The installed runtime layout is `target/release` with
+  `config/provider_config.json`, backend binaries, TUI, GUI dist, and Tauri
+  bundle artifacts.
+- `scripts/npm/package-platform.mjs`: stages the current OS release into a
+  platform npm package: `tura-linux-x64`, `tura-darwin-x64`,
+  `tura-darwin-arm64`, or `tura-win32-x64`.
+- `scripts/npm/package-release.mjs`: creates the matching GitHub Release archive
+  under `release/`, for example `tura-v0.1.0-windows-x64.zip` or
+  `tura-v0.1.0-macos-arm64.tar.gz`.
 
 Xtask test collection scripts:
 
@@ -100,5 +117,16 @@ GitHub Actions:
   Cargo and npm caches. Tags starting with `release` trigger a release dry-run
   job after CI completes; the job builds release artifacts and does not publish
   a GitHub release.
+- `.github/workflows/os-worker-tests.yml` runs the four current OS runners
+  (`ubuntu-latest`, `macos-latest`, `windows-2022`, and `windows-2025`) through
+  install-script checks, backend release-script checks, and serial backend OS
+  tests.
+- `.github/workflows/npm-release.yml` builds the four npm platform releases
+  (`tura-linux-x64`, `tura-darwin-x64`, `tura-darwin-arm64`, and
+  `tura-win32-x64`), verifies a local `npm install` of the main `tura` package
+  against the platform package, uploads release archives, and publishes npm
+  packages when `NPM_TOKEN` is configured.
 
-Wrapper/package routes are intentionally not used; release commands resolve directly from `target/release`.
+Local source builds still resolve directly from `target/release`. Published npm
+installs resolve through the main `tura` package plus the matching platform
+package, with GitHub Release archives as the fallback install route.

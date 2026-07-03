@@ -13,10 +13,14 @@ use super::{provider_env_key, provider_key_exists, provider_key_value_for_env};
 // ============================================================================
 
 pub async fn list_providers() -> Json<ProviderListResponse> {
+    Json(list_providers_value().await)
+}
+
+pub async fn list_providers_value() -> ProviderListResponse {
     let settings = tura_llm_rust::Settings::default().await.ok();
     if let Some(settings) = settings.as_deref() {
         if let Some(route) = active_agent_route(settings) {
-            return Json(provider_list_for_route(settings, route));
+            return provider_list_for_route(settings, route);
         }
     }
 
@@ -57,7 +61,7 @@ pub async fn list_providers() -> Json<ProviderListResponse> {
 
     enrich_provider_list(&mut all, &mut connected, &providers_enabled_set());
 
-    Json(ProviderListResponse {
+    ProviderListResponse {
         all,
         default: defaults,
         connected,
@@ -65,7 +69,7 @@ pub async fn list_providers() -> Json<ProviderListResponse> {
             .as_deref()
             .map(|settings| settings.provider_enums.clone())
             .unwrap_or_default(),
-    })
+    }
 }
 
 pub(super) fn provider_list_for_route(

@@ -10,12 +10,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..", "..", "..");
 const nonce = process.argv[2] || `manual-${Date.now()}`;
 const safeNonce = nonce.replace(/[^A-Za-z0-9_.-]/g, "-");
-const runRoot = path.join(
-  repoRoot,
-  "target",
-  "gui-agent-playwright",
-  safeNonce,
-);
+const runRoot = path.join(repoRoot, "target", "gui-agent-playwright", safeNonce);
 const artifacts = path.join(runRoot, "artifacts");
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
@@ -48,9 +43,7 @@ function run(command, args, options = {}) {
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
   if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(" ")} failed with ${result.status}`,
-    );
+    throw new Error(`${command} ${args.join(" ")} failed with ${result.status}`);
   }
   return result;
 }
@@ -71,8 +64,7 @@ function findOpenPort(preferred) {
       });
       server.listen(candidate, "127.0.0.1", () => {
         const address = server.address();
-        const selected =
-          typeof address === "object" && address ? address.port : candidate;
+        const selected = typeof address === "object" && address ? address.port : candidate;
         server.close(() => resolve(selected));
       });
     };
@@ -130,7 +122,7 @@ function createFixture() {
       "fn parse_cases(input: &str) -> Vec<BenchCase> {",
       "    input",
       "        .lines()",
-      "        .filter_map(|line| line.strip_prefix(\"case:\"))",
+      '        .filter_map(|line| line.strip_prefix("case:"))',
       "        .filter_map(|rest| {",
       "            let (id, description) = rest.split_once('=')?;",
       "            Some(BenchCase { id: id.trim().to_string(), description: description.trim().to_string() })",
@@ -140,10 +132,10 @@ function createFixture() {
       "",
       "fn eval_calc(a: i64, op: &str, b: i64) -> Result<i64, String> {",
       "    match op {",
-      "        \"+\" => Ok(a + b),",
-      "        \"-\" => Ok(a - b),",
-      "        \"*\" => Ok(a * b),",
-      "        _ => Err(format!(\"unsupported operator {op}\")),",
+      '        "+" => Ok(a + b),',
+      '        "-" => Ok(a - b),',
+      '        "*" => Ok(a * b),',
+      '        _ => Err(format!("unsupported operator {op}")),',
       "    }",
       "}",
       "",
@@ -152,48 +144,48 @@ function createFixture() {
       "}",
       "",
       "fn render_report(manifest: &str, cases: &[BenchCase]) -> String {",
-      "    let mut report = String::from(\"# ProgramBench Mini Report\\n\\n\");",
-      "    report.push_str(\"This executable reconstructs the testorg__calculator.abc1234 behavior inspired by facebookresearch/programbench.\\n\\n\");",
-      "    report.push_str(&format!(\"Manifest bytes: {}\\n\\n\", manifest.len()));",
-      "    report.push_str(\"## Cases\\n\");",
+      '    let mut report = String::from("# ProgramBench Mini Report\\n\\n");',
+      '    report.push_str("This executable reconstructs the testorg__calculator.abc1234 behavior inspired by facebookresearch/programbench.\\n\\n");',
+      '    report.push_str(&format!("Manifest bytes: {}\\n\\n", manifest.len()));',
+      '    report.push_str("## Cases\\n");',
       "    for case in cases {",
-      "        report.push_str(&format!(\"- `{}`: {}\\n\", case.id, case.description));",
+      '        report.push_str(&format!("- `{}`: {}\\n", case.id, case.description));',
       "    }",
-      "    report.push_str(\"\\n## Ordered Verification\\n\");",
-      "    report.push_str(\"Fixture, CLI, docs, and submission archive are parallel step-1 work. Build/test/report is the step-2 barrier.\\n\");",
+      '    report.push_str("\\n## Ordered Verification\\n");',
+      '    report.push_str("Fixture, CLI, docs, and submission archive are parallel step-1 work. Build/test/report is the step-2 barrier.\\n");',
       "    report",
       "}",
       "",
       "fn run() -> Result<(), String> {",
       "    let args = env::args().collect::<Vec<_>>();",
-      "    if args.iter().any(|arg| arg == \"--self-check\") {",
-      "        println!(\"PB_REBUILD_SELF_CHECK ok\");",
+      '    if args.iter().any(|arg| arg == "--self-check") {',
+      '        println!("PB_REBUILD_SELF_CHECK ok");',
       "        return Ok(());",
       "    }",
       "    if args.len() == 4 {",
       "        let a = args[1].parse::<i64>().map_err(|err| err.to_string())?;",
       "        let b = args[3].parse::<i64>().map_err(|err| err.to_string())?;",
-      "        println!(\"{}\", eval_calc(a, &args[2], b)?);",
+      '        println!("{}", eval_calc(a, &args[2], b)?);',
       "        return Ok(());",
       "    }",
-      "    let manifest_path = arg_value(&args, \"--manifest\").ok_or(\"missing --manifest\")?;",
-      "    let out_path = arg_value(&args, \"--out\").ok_or(\"missing --out\")?;",
+      '    let manifest_path = arg_value(&args, "--manifest").ok_or("missing --manifest")?;',
+      '    let out_path = arg_value(&args, "--out").ok_or("missing --out")?;',
       "    let manifest = fs::read_to_string(&manifest_path).map_err(|err| err.to_string())?;",
       "    let cases = parse_cases(&manifest);",
       "    if cases.len() < 4 {",
-      "        return Err(format!(\"expected at least four benchmark cases, got {}\", cases.len()));",
+      '        return Err(format!("expected at least four benchmark cases, got {}", cases.len()));',
       "    }",
       "    if let Some(parent) = out_path.parent() {",
       "        fs::create_dir_all(parent).map_err(|err| err.to_string())?;",
       "    }",
       "    fs::write(&out_path, render_report(&manifest, &cases)).map_err(|err| err.to_string())?;",
-      "    println!(\"PB_REBUILD_OK cases={} report={}\", cases.len(), out_path.display());",
+      '    println!("PB_REBUILD_OK cases={} report={}", cases.len(), out_path.display());',
       "    Ok(())",
       "}",
       "",
       "fn main() {",
       "    if let Err(error) = run() {",
-      "        eprintln!(\"PB_REBUILD_ERROR {error}\");",
+      '        eprintln!("PB_REBUILD_ERROR {error}");',
       "        std::process::exit(1);",
       "    }",
       "}",
@@ -204,26 +196,26 @@ function createFixture() {
       "",
       "    #[test]",
       "    fn parse_cases_extracts_parallel_and_barrier_work() {",
-      "        let cases = parse_cases(\"case:cli=Build exe\\ncase:docs=Write docs\\ncase:verify=Run barrier\\n\");",
+      '        let cases = parse_cases("case:cli=Build exe\\ncase:docs=Write docs\\ncase:verify=Run barrier\\n");',
       "        assert_eq!(cases.len(), 3);",
-      "        assert_eq!(cases[0].id, \"cli\");",
-      "        assert!(cases[2].description.contains(\"barrier\"));",
+      '        assert_eq!(cases[0].id, "cli");',
+      '        assert!(cases[2].description.contains("barrier"));',
       "    }",
       "",
       "    #[test]",
       "    fn report_names_programbench_and_ordered_verification() {",
-      "        let cases = parse_cases(\"case:fixture=Fixture\\ncase:cli=Build\\ncase:docs=Docs\\ncase:verify=Verify\\n\");",
-      "        let report = render_report(\"manifest\", &cases);",
-      "        assert!(report.contains(\"ProgramBench Mini Report\"));",
-      "        assert!(report.contains(\"step-2 barrier\"));",
+      '        let cases = parse_cases("case:fixture=Fixture\\ncase:cli=Build\\ncase:docs=Docs\\ncase:verify=Verify\\n");',
+      '        let report = render_report("manifest", &cases);',
+      '        assert!(report.contains("ProgramBench Mini Report"));',
+      '        assert!(report.contains("step-2 barrier"));',
       "    }",
       "",
       "    #[test]",
       "    fn calculator_matches_programbench_fixture_behavior() {",
-      "        assert_eq!(eval_calc(2, \"+\", 3).unwrap(), 5);",
-      "        assert_eq!(eval_calc(10, \"-\", 3).unwrap(), 7);",
-      "        assert_eq!(eval_calc(4, \"*\", 3).unwrap(), 12);",
-      "        assert!(eval_calc(1, \"/\", 1).is_err());",
+      '        assert_eq!(eval_calc(2, "+", 3).unwrap(), 5);',
+      '        assert_eq!(eval_calc(10, "-", 3).unwrap(), 7);',
+      '        assert_eq!(eval_calc(4, "*", 3).unwrap(), 12);',
+      '        assert!(eval_calc(1, "/", 1).is_err());',
       "    }",
       "}",
     ].join("\n"),
@@ -310,7 +302,9 @@ function createFixture() {
       "  app.innerHTML = '<main class=\"shell\">' +",
       '    \'<header><div><p>ProgramBench reconstruction</p><h1>Benchmark Rebuild Board</h1></div><div class="actions"><button id="modal">Open run</button><button id="error">Error</button></div></header>\' +',
       '    \'<section class="grid">\' + cardHtml() + "</section>" +',
-      '    \'<section class="artifact"><h2>Executable</h2><p>target/release/' + exeName + '</p><h2>Docs</h2><p>docs/REBUILD.md and docs/ARCHITECTURE.md</p></section>\' +',
+      '    \'<section class="artifact"><h2>Executable</h2><p>target/release/' +
+        exeName +
+        "</p><h2>Docs</h2><p>docs/REBUILD.md and docs/ARCHITECTURE.md</p></section>' +",
       '    \'<section class="stream" aria-label="Streaming output"><p>\' + stream + "</p></section>" +',
       '    (error ? \'<div role="alert">\' + error + "</div>" : "") +',
       '    (modal ? \'<div class="modal" role="dialog" aria-label="Run details"><h2>Run details</h2><p>Derived sessions: fixture, cli, docs, verify.</p><button id="close">Close</button></div>\' : "") +',
@@ -401,16 +395,12 @@ try {
 function startServer() {
   const out = fs.openSync(path.join(artifacts, "vite.log"), "w");
   const err = fs.openSync(path.join(artifacts, "vite.err.log"), "w");
-  const child = spawn(
-    npmCmd,
-    ["run", "dev", "--", "--port", String(port), "--strictPort"],
-    {
-      cwd: runRoot,
-      stdio: ["ignore", out, err],
-      shell: process.platform === "win32",
-      windowsHide: true,
-    },
-  );
+  const child = spawn(npmCmd, ["run", "dev", "--", "--port", String(port), "--strictPort"], {
+    cwd: runRoot,
+    stdio: ["ignore", out, err],
+    shell: process.platform === "win32",
+    windowsHide: true,
+  });
   fs.writeFileSync(path.join(artifacts, "vite.pid"), String(child.pid));
   return child;
 }
@@ -447,29 +437,71 @@ const instanceId = "testorg__calculator.abc1234";
 const pbRunDir = path.join(runRoot, "programbench-run", instanceId);
 run("cargo", ["test"], { timeoutMs: 180_000 });
 run("cargo", ["build", "--release"], { timeoutMs: 240_000 });
-marker("build", JSON.stringify({ exe: path.relative(runRoot, exePath), exists: fs.existsSync(exePath) }));
+marker(
+  "build",
+  JSON.stringify({ exe: path.relative(runRoot, exePath), exists: fs.existsSync(exePath) }),
+);
 const selfCheck = run(exePath, ["--self-check"], { timeoutMs: 30_000 });
 const calculatorCheck = run(exePath, ["2", "+", "3"], { timeoutMs: 30_000 });
 const cliRun = run(
   exePath,
-  ["--manifest", path.join("benches", "programbench-mini.manifest"), "--out", path.join("artifacts", "cli-report.md")],
+  [
+    "--manifest",
+    path.join("benches", "programbench-mini.manifest"),
+    "--out",
+    path.join("artifacts", "cli-report.md"),
+  ],
   { timeoutMs: 30_000 },
 );
 mkdirp(pbRunDir);
-run("tar", ["-czf", path.join(pbRunDir, "submission.tar.gz"), "src", "Cargo.toml", "docs", "benches"], {
-  timeoutMs: 30_000,
-});
+run(
+  "tar",
+  ["-czf", path.join(pbRunDir, "submission.tar.gz"), "src", "Cargo.toml", "docs", "benches"],
+  {
+    timeoutMs: 30_000,
+  },
+);
 const evalJson = {
   test_results: [
-    { name: "tests.test_calculator.test_addition", branch: "33128f6b8600", status: "passed", extra: { time: 0.001 } },
-    { name: "tests.test_calculator.test_subtraction", branch: "33128f6b8600", status: "passed", extra: { time: 0.001 } },
-    { name: "tests.test_calculator.test_multiplication", branch: "33128f6b8600", status: "passed", extra: { time: 0.001 } },
+    {
+      name: "tests.test_calculator.test_addition",
+      branch: "33128f6b8600",
+      status: "passed",
+      extra: { time: 0.001 },
+    },
+    {
+      name: "tests.test_calculator.test_subtraction",
+      branch: "33128f6b8600",
+      status: "passed",
+      extra: { time: 0.001 },
+    },
+    {
+      name: "tests.test_calculator.test_multiplication",
+      branch: "33128f6b8600",
+      status: "passed",
+      extra: { time: 0.001 },
+    },
   ],
   error_code: null,
   error_details: null,
   log: [
-    { step: "compile", command: "cargo build --release", wall_time: 0.0, output: "ok", returncode: 0, exception_info: "" },
-    { step: "results_read", branch: "33128f6b8600", command: "calculator fixture checks", wall_time: 0.0, output: "ok", returncode: 0, exception_info: "" },
+    {
+      step: "compile",
+      command: "cargo build --release",
+      wall_time: 0.0,
+      output: "ok",
+      returncode: 0,
+      exception_info: "",
+    },
+    {
+      step: "results_read",
+      branch: "33128f6b8600",
+      command: "calculator fixture checks",
+      wall_time: 0.0,
+      output: "ok",
+      returncode: 0,
+      exception_info: "",
+    },
   ],
   solution_branch: "submission",
   test_branches: ["33128f6b8600"],
@@ -478,12 +510,25 @@ const evalJson = {
   warnings: [],
 };
 fs.writeFileSync(path.join(pbRunDir, `${instanceId}.eval.json`), JSON.stringify(evalJson, null, 2));
-marker("cli", JSON.stringify({ self_check: selfCheck.stdout.trim(), calculator: calculatorCheck.stdout.trim(), report: "artifacts/cli-report.md", stdout: cliRun.stdout.trim(), submission: `programbench-run/${instanceId}/submission.tar.gz` }));
-const docsOk = ["docs/REBUILD.md", "docs/ARCHITECTURE.md"].every((file) =>
-  fs.readFileSync(path.join(runRoot, file), "utf8").includes("ProgramBench") ||
-  fs.readFileSync(path.join(runRoot, file), "utf8").includes("benchmark")
+marker(
+  "cli",
+  JSON.stringify({
+    self_check: selfCheck.stdout.trim(),
+    calculator: calculatorCheck.stdout.trim(),
+    report: "artifacts/cli-report.md",
+    stdout: cliRun.stdout.trim(),
+    submission: `programbench-run/${instanceId}/submission.tar.gz`,
+  }),
 );
-marker("docs", JSON.stringify({ docs_ok: docsOk, files: ["docs/REBUILD.md", "docs/ARCHITECTURE.md"] }));
+const docsOk = ["docs/REBUILD.md", "docs/ARCHITECTURE.md"].every(
+  (file) =>
+    fs.readFileSync(path.join(runRoot, file), "utf8").includes("ProgramBench") ||
+    fs.readFileSync(path.join(runRoot, file), "utf8").includes("benchmark"),
+);
+marker(
+  "docs",
+  JSON.stringify({ docs_ok: docsOk, files: ["docs/REBUILD.md", "docs/ARCHITECTURE.md"] }),
+);
 run(npmCmd, ["install"], { timeoutMs: 180_000 });
 run(npxCmd, ["playwright", "install", "chromium"], { timeoutMs: 240_000 });
 port = await findOpenPort(port);
@@ -495,9 +540,7 @@ try {
     env: { BASE_URL: `http://127.0.0.1:${port}` },
     timeoutMs: 120_000,
   });
-  const files = fs
-    .readdirSync(artifacts)
-    .filter((name) => name.endsWith(".png"));
+  const files = fs.readdirSync(artifacts).filter((name) => name.endsWith(".png"));
   const programbenchFiles = [
     "docs/REBUILD.md",
     "docs/ARCHITECTURE.md",
@@ -513,7 +556,9 @@ try {
     programbench: {
       files: programbenchFiles,
       build_ok: fs.existsSync(exePath),
-      cli_ok: fs.existsSync(path.join(artifacts, "cli-report.md")) && cliRun.stdout.includes("PB_REBUILD_OK"),
+      cli_ok:
+        fs.existsSync(path.join(artifacts, "cli-report.md")) &&
+        cliRun.stdout.includes("PB_REBUILD_OK"),
       calculator_ok: calculatorCheck.stdout.trim() === "5",
       docs_ok: docsOk,
       submission_ok: fs.existsSync(path.join(pbRunDir, "submission.tar.gz")),
@@ -524,14 +569,8 @@ try {
       manifest: "benches/programbench-mini.manifest",
     },
   };
-  fs.writeFileSync(
-    path.join(artifacts, "summary.json"),
-    JSON.stringify(summary, null, 2),
-  );
-  fs.writeFileSync(
-    path.join(runRoot, "summary.json"),
-    JSON.stringify(summary, null, 2),
-  );
+  fs.writeFileSync(path.join(artifacts, "summary.json"), JSON.stringify(summary, null, 2));
+  fs.writeFileSync(path.join(runRoot, "summary.json"), JSON.stringify(summary, null, 2));
   marker("cleanup", `artifacts=${files.join(",")}`);
 } finally {
   stopServer(server);

@@ -6,7 +6,6 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 
-import { cleanupRepoTuraProcesses } from "./cleanup_repo_tura_processes.mjs";
 import {
   assertNoMarkerBlink,
   assertSessionPickerCleared,
@@ -305,6 +304,7 @@ function createGatewayServer() {
     }
     sendJson(res, { error: "not found", path: url.pathname }, 404);
   });
+  server.on("connection", (socket) => socket.unref());
   return server;
 }
 
@@ -358,6 +358,7 @@ async function main() {
   await fs.mkdir(screenshotsDir, { recursive: true });
   const gateway = createGatewayServer();
   const gatewayPort = await listen(gateway);
+  gateway.unref();
   const webServer = http.createServer((_, res) => res.end("placeholder"));
   const webPort = await listen(webServer);
   await new Promise((resolve) => webServer.close(resolve));
@@ -799,9 +800,6 @@ async function main() {
     process.exitCode = 1;
   } finally {
     await browser?.close().catch(() => undefined);
-    web.child.kill();
-    gateway.close();
-    cleanupRepoTuraProcesses();
   }
 }
 

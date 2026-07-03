@@ -350,7 +350,7 @@ rebuild provider context. The retained slice starts at the immediately preceding
 tail of `tool_result` entries, if any, because compact rebuild still replays that
 tool context.
 
-The active compact threshold is capped at 255,000 tokens. Runtime still asks the
+The active compact threshold is capped at 260,000 tokens. Runtime still asks the
 agent to provide a `task_status.compact_context` handoff when provider-reported
 input reaches the active threshold, but it also applies an automatic checkpoint
 after a turn if `provider_input_tokens + newly_persisted_context_bytes / 3`

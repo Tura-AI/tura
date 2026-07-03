@@ -15,9 +15,6 @@ from urllib.request import urlopen
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright, expect
 
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
-
 ROOT = Path(__file__).resolve().parents[5]
 OUT = Path(
     os.environ.get(
@@ -300,7 +297,7 @@ class SettingsGatewayHandler(BaseHTTPRequestHandler):
                 {
                     "url": f"{GATEWAY_URL}/oauth/mock?state=settings-full-e2e",
                     "method": "code",
-                    "instructions": "请在浏览器完成授权，然后粘贴授权代码。",
+                    "instructions": "Please finish authorization in the browser, then paste the authorization code.",
                 }
             )
         if path.endswith("/oauth/callback"):
@@ -308,11 +305,40 @@ class SettingsGatewayHandler(BaseHTTPRequestHandler):
             self.server.auth[provider_id] = auth_status(provider_id, True, "oauth")
             self.server.records.append({"type": "oauth.callback", "provider_id": provider_id, "payload": payload})
             return self.send_json(True)
+        if path.endswith("/auth/validate"):
+            provider_id = path.split("/")[2]
+            self.server.records.append(
+                {
+                    "type": "auth.validate",
+                    "provider_id": provider_id,
+                    "payload": redact(payload),
+                    "token_env": payload.get("token_env"),
+                    "has_key": bool((payload.get("key") or "").strip()),
+                }
+            )
+            return self.send_json(
+                {
+                    "ok": True,
+                    "provider_id": provider_id,
+                    "code": "provider.validation.valid",
+                    "message": "credential validation passed",
+                    "level": "valid",
+                    "details": [
+                        {"code": "provider.validation.passed", "message": "credential validation passed"},
+                        {
+                            "code": "provider.remote.accepted",
+                            "message": "remote validation accepted credentials: mock",
+                            "value": "mock",
+                        },
+                    ],
+                    "status": self.server.auth.get(provider_id, auth_status(provider_id)),
+                }
+            )
         if path.endswith("/auth/logout"):
             provider_id = path.split("/")[2]
             self.server.auth[provider_id] = auth_status(provider_id)
             self.server.records.append({"type": "auth.logout", "provider_id": provider_id})
-            return self.send_json({"ok": True, "provider_id": provider_id, "message": "已退出", "status": self.server.auth[provider_id]})
+            return self.send_json({"ok": True, "provider_id": provider_id, "message": "Logged out", "status": self.server.auth[provider_id]})
         return self.send_json({})
 
     def provider_list(self):
@@ -417,15 +443,6 @@ def start_gui_server() -> subprocess.Popen | None:
     )
 
 
-def stop_process_tree(process: subprocess.Popen | None):
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/pid", str(process.pid), "/t", "/f"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        process.terminate()
-
-
 async def metrics(page):
     return await page.evaluate(
         """
@@ -489,12 +506,12 @@ async def open_section(page, label: str):
         return
 
     section_ids = {
-        "应用设置": "application",
-        "外观": "appearance",
-        "服务商": "providers",
-        "默认模型配置": "models",
-        "智能体配置": "agents",
-        "个性化设置": "personalization",
+        "Application settings": "application",
+        "Appearance": "appearance",
+        "Providers": "providers",
+        "Default model config": "models",
+        "Agent config": "agents",
+        "Personalization": "personalization",
     }
     if label in section_ids:
         changed = await page.evaluate(
@@ -643,43 +660,43 @@ async def run_flow():
             raise
         await wait_settings_ready(page)
 
-        for index, label in enumerate(["外观", "服务商", "默认模型配置"], 1):
+        for index, label in enumerate(["Appearance", "Providers", "Default model config"], 1):
             await open_section(page, label)
             data = await screenshot(page, f"{index:02d}-{label}", results)
             check(checks, f"{label}-visible", data["title"] == label and data["panelCount"] >= 1, data)
             check(checks, f"{label}-layout", data["overflowX"] <= 1 and not data["overlap"] and not data["error"], data)
 
-        await open_section(page, "服务商")
+        await open_section(page, "Providers")
         providers = await screenshot(page, "10-provider-openai-selected", results)
         check(checks, "providers-openai-visible", "OpenAI" in providers["body"], providers)
 
-        await open_section(page, "默认模型配置")
+        await open_section(page, "Default model config")
         await page.locator(".appearance-select-button").first.click()
         await page.locator(".appearance-select-menu").get_by_role(
             "button", name="GitHub Copilot/Copilot GPT-5.5 Pro", exact=True
         ).click()
         await screenshot(page, "11-model-gpt51-selected", results)
-        await page.wait_for_function("() => document.body.innerText.includes('已保存')", timeout=10_000)
+        await page.wait_for_function("() => document.body.innerText.includes('Saved')", timeout=10_000)
         model_saved = await screenshot(page, "12-model-saved", results)
-        check(checks, "model-save-notice", "已保存" in model_saved["notice"], model_saved)
+        check(checks, "model-save-notice", "Saved" in model_saved["notice"], model_saved)
 
-        await open_section(page, "外观")
-        await page.get_by_role("button", name="深色", exact=True).click()
-        await page.wait_for_function("() => document.body.innerText.includes('已保存')", timeout=10_000)
+        await open_section(page, "Appearance")
+        await page.get_by_role("button", name="Dark", exact=True).click()
+        await page.wait_for_function("() => document.body.innerText.includes('Saved')", timeout=10_000)
         saved = await screenshot(page, "13-appearance-dark-saved", results)
-        check(checks, "appearance-save-notice", "已保存" in saved["notice"], saved)
+        check(checks, "appearance-save-notice", "Saved" in saved["notice"], saved)
 
-        await open_section(page, "服务商")
+        await open_section(page, "Providers")
         await page.locator(".settings-provider-row").filter(has_text="OpenAI").click()
         await expect(page.locator(".provider-auth-dialog")).to_be_visible(timeout=10_000)
         login_initial = await screenshot(page, "14-provider-auth-initial", results)
         check(checks, "login-methods-visible", login_initial["loginMethodCount"] >= 1, login_initial)
 
         await page.get_by_placeholder("OPENAI_API_KEY").fill("sk-settings-full-e2e-token")
-        await page.locator(".login-method").filter(has_text="OpenAI API Key").get_by_role("button", name="保存").click()
-        await page.wait_for_function("() => document.body.innerText.includes('已连接')", timeout=10_000)
-        token_saved = await screenshot(page, "15-token-saved", results)
-        check(checks, "token-connected", "已连接" in token_saved["body"], token_saved)
+        await page.locator(".login-method").filter(has_text="OpenAI API Key").get_by_role("button", name="Save").click()
+        await page.wait_for_function("() => document.body.innerText.includes('Connected')", timeout=10_000)
+        token_saved = await screenshot(page, "16-token-saved", results)
+        check(checks, "token-connected", "Connected" in token_saved["body"], token_saved)
 
         oauth_method = page.locator(".login-method").filter(has_text="OpenAI OAuth")
         if await oauth_method.count() > 0:
@@ -687,23 +704,23 @@ async def run_flow():
                 await oauth_method.locator("button").first.click()
             popup = await popup_info.value
             await popup.wait_for_load_state("domcontentloaded")
-            await popup.screenshot(path=str(OUT / "16-oauth-popup.png"), full_page=True)
+            await popup.screenshot(path=str(OUT / "17-oauth-popup.png"), full_page=True)
             await popup.close()
-            await page.wait_for_function("() => document.body.innerText.includes('请在浏览器完成授权')", timeout=10_000)
-            await screenshot(page, "17-oauth-authorize-started", results)
+            await page.wait_for_function("() => document.body.innerText.includes('finish authorization')", timeout=10_000)
+            await screenshot(page, "18-oauth-authorize-started", results)
 
-            await page.get_by_placeholder("代码 / 令牌").fill("oauth-code-settings-full-e2e")
+            await page.get_by_placeholder("Code / token").fill("oauth-code-settings-full-e2e")
             await oauth_method.locator("button").first.click()
-            await page.wait_for_function("() => document.body.innerText.includes('已连接')", timeout=10_000)
-            oauth_done = await screenshot(page, "18-oauth-complete", results)
-            check(checks, "oauth-connected", "已连接" in oauth_done["body"], oauth_done)
+            await page.wait_for_function("() => document.body.innerText.includes('Connected')", timeout=10_000)
+            oauth_done = await screenshot(page, "19-oauth-complete", results)
+            check(checks, "oauth-connected", "Connected" in oauth_done["body"], oauth_done)
 
         logout = page.locator(".provider-auth-logout").first
         if await logout.count() > 0 and await logout.is_enabled():
             await logout.click()
-            await page.wait_for_function("() => document.body.innerText.includes('已退出')", timeout=10_000)
-            logged_out = await screenshot(page, "19-logout", results)
-            check(checks, "logout-notice", "已退出" in logged_out["notice"], logged_out)
+            await page.wait_for_function("() => document.body.innerText.includes('Logged out')", timeout=10_000)
+            logged_out = await screenshot(page, "20-logout", results)
+            check(checks, "logout-notice", "Logged out" in logged_out["notice"], logged_out)
 
         provider_dialog = page.locator(".provider-auth-dialog")
         if await provider_dialog.count() > 0 and await provider_dialog.first.is_visible():
@@ -734,7 +751,7 @@ async def run_flow():
             raise
         await wait_settings_ready(page)
         for index, (section_id, label) in enumerate(
-            [("models", "默认模型配置"), ("providers", "服务商"), ("appearance", "外观")],
+            [("models", "Default model config"), ("providers", "Providers"), ("appearance", "Appearance")],
             20,
         ):
             await switch_section_by_id(page, section_id, label)
@@ -770,21 +787,12 @@ async def run_flow():
 
 
 async def main():
-    if OUT.exists():
-        shutil.rmtree(OUT)
     OUT.mkdir(parents=True, exist_ok=True)
-    gateway = start_gateway()
+    start_gateway()
     gui = start_gui_server()
-    try:
-        await wait_for_url(GATEWAY_URL + "/global/health")
-        await wait_for_url(GUI_URL, gui)
-        await run_flow()
-    finally:
-        stop_process_tree(gui)
-        if gateway:
-            gateway.shutdown()
-            gateway.server_close()
-        cleanup_repo_tura_processes()
+    await wait_for_url(GATEWAY_URL + "/global/health")
+    await wait_for_url(GUI_URL, gui)
+    await run_flow()
 
 
 if __name__ == "__main__":

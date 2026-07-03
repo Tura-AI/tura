@@ -18,6 +18,9 @@ export function providerDomains(provider: SdkProvider): string[] {
   if (normalized.length > 0) {
     return normalized;
   }
+  if (capabilities.some(isMediaGenerationCapability)) {
+    return ["media_generation"];
+  }
   if (capabilities.some((capability) => capability.startsWith("llm."))) {
     return ["llm"];
   }
@@ -32,4 +35,8 @@ function providerCapabilities(provider: SdkProvider): string[] {
   return Array.isArray(value)
     ? value.filter((capability): capability is string => typeof capability === "string")
     : [];
+}
+
+function isMediaGenerationCapability(capability: string): boolean {
+  return ["media.generation", "image.generation", "speech.tts"].includes(capability);
 }

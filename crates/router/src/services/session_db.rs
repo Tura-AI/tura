@@ -32,6 +32,9 @@ impl SessionDbService {
             return Ok(self.status_payload("running"));
         }
         self.kill_managed_child();
+        if session_log::ipc::service_is_running() {
+            return Ok(self.status_payload("running"));
+        }
         let service_bin = session_db_binary()
             .ok_or_else(|| anyhow!("session_db service executable tura_session_db not found"))?;
         // tura_session_db owns the SQLite session-log write path. It serves a
@@ -87,7 +90,7 @@ impl SessionDbService {
 
     fn is_ready(&self) -> bool {
         let Ok(mut guard) = self.child.lock() else {
-            return session_log::ipc::service_is_running();
+            return false;
         };
         match guard.as_mut() {
             Some(child) => match child.try_wait() {
@@ -208,6 +211,7 @@ fn find_repo_root(path: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{find_repo_root, resolve_binary, SessionDbService};
+    use std::io::{BufRead, Write};
     use std::net::TcpListener;
     use std::path::PathBuf;
 
@@ -257,6 +261,57 @@ mod tests {
         server
             .join()
             .map_err(|_| anyhow::anyhow!("abortive session_db endpoint panicked"))??;
+        Ok(())
+    }
+
+    #[test]
+    fn start_adopts_reachable_existing_session_db_endpoint() -> anyhow::Result<()> {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let home = tempfile::tempdir()?;
+        let _env = EnvGuard::set_home(home.path());
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let addr = listener.local_addr()?;
+        let server = std::thread::spawn(move || -> anyhow::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let mut request = String::new();
+            std::io::BufReader::new(stream.try_clone()?).read_line(&mut request)?;
+            assert!(request.contains("\"health\""));
+            stream.write_all(
+                serde_json::to_string(&session_log::SessionLogResponse::Ok)?.as_bytes(),
+            )?;
+            stream.write_all(b"\n")?;
+            stream.flush()?;
+            Ok(())
+        });
+
+        let path = session_log::ipc::service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("service addr parent"))?;
+        std::fs::write(
+            &path,
+            serde_json::to_string(&session_log::ipc::ServiceEndpoint {
+                addr: addr.to_string(),
+                version: tura_path::instance_version(),
+            })?,
+        )?;
+
+        let service = SessionDbService::new();
+        let status = service.start()?;
+
+        assert_eq!(
+            status["status"], "running",
+            "router should adopt an already reachable same-version session_db: {status}"
+        );
+        assert!(
+            status["pid"].is_null(),
+            "adopting an external session_db should not fabricate a child pid: {status}"
+        );
+        assert!(
+            path.exists(),
+            "adopted session_db endpoint should remain published"
+        );
+        server
+            .join()
+            .map_err(|_| anyhow::anyhow!("adopted session_db endpoint panicked"))??;
         Ok(())
     }
 
