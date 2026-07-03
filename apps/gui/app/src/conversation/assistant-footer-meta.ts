@@ -56,9 +56,7 @@ function extractRuntimeMetadata(metadata: Record<string, unknown>): {
     stringField(metadata, "model_variant");
   return {
     cost: numericField(usage, "total_cost") ?? 0,
-    reasoningLevel: runtimeReasoning
-      ? normalizeAgentReasoningLevel(runtimeReasoning)
-      : undefined,
+    reasoningLevel: runtimeReasoning ? normalizeAgentReasoningLevel(runtimeReasoning) : undefined,
     priorityEnabled:
       booleanField(runtime, "priority") ??
       booleanField(runtime, "model_acceleration_enabled") ??
