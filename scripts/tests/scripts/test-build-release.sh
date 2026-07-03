@@ -45,6 +45,16 @@ require_path() {
   [ -e "$path" ] || { echo "$message" >&2; exit 1; }
 }
 
+require_any_path() {
+  message=$1
+  shift
+  for path in "$@"; do
+    [ -e "$path" ] && return 0
+  done
+  echo "$message" >&2
+  exit 1
+}
+
 case "$RELEASE_PROBE" in
   release-v[0-9]*.[0-9]*.[0-9]*)
     ;;
@@ -88,6 +98,7 @@ for name in \
 do
   require_path "$TARGET_DIR/$name" "Missing release artifact: $name"
 done
+require_path "$TARGET_DIR/config/provider_config.json" "Missing release provider config."
 
 if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TUI" -eq 0 ]; then
   require_path "$TARGET_DIR/tura" "Missing release TUI executable."
@@ -96,7 +107,7 @@ if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_GUI" -eq 0 ]; then
   require_path "$TARGET_DIR/tura_gui/index.html" "Missing release GUI dist."
 fi
 if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TAURI" -eq 0 ]; then
-  require_path "$TARGET_DIR/release/bundle" "Missing Tauri release bundle directory."
+  require_any_path "Missing Tauri release bundle directory." "$TARGET_DIR/bundle" "$TARGET_DIR/release/bundle"
 fi
 
 step "Checking command protocol health"

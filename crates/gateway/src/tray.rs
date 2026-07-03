@@ -623,8 +623,8 @@ fn open_terminal(workspace: &Path, gateway_url: &str, command: &str) -> Result<C
             command
         );
         for candidate in linux_terminal_commands(&script) {
-            if spawn_detached(candidate).is_ok() {
-                return Ok(());
+            if let Ok(child) = spawn_detached(candidate) {
+                return Ok(child);
             }
         }
         Err(anyhow!("no supported terminal emulator found for Tura TUI"))

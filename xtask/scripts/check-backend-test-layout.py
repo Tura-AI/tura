@@ -30,6 +30,7 @@ WORKSPACE_BENCHMARK_DIRS = {
     "tooling",
     "tui",
 }
+WORKSPACE_OS_TESTING_SCRIPT_DIRS = {"actions", "local"}
 
 
 def normalize(path: str | Path) -> str:
@@ -112,7 +113,7 @@ def module_dir_allowed(typed_root: Path, child: Path) -> bool:
 
 
 def validate_typed_directory_shape(package: str, tests_root: Path, errors: list[str]) -> None:
-    """Typed suites are peers under tests/; business/os_testing may have helper modules."""
+    """Typed suites are peers under tests/; OS workspace wrappers are explicit script dirs."""
     if not tests_root.exists():
         return
 
@@ -134,6 +135,12 @@ def validate_typed_directory_shape(package: str, tests_root: Path, errors: list[
                         )
                     continue
                 if typed_name in {"business", "os_testing", "live"} and module_dir_allowed(typed_root, child):
+                    continue
+                if (
+                    package == "workspace"
+                    and typed_name == "os_testing"
+                    and child.name in WORKSPACE_OS_TESTING_SCRIPT_DIRS
+                ):
                     continue
                 errors.append(
                     f"{package}: {normalize(child.relative_to(tests_root.parent))}/ "

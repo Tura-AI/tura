@@ -51,12 +51,17 @@ fn prompt_payload_extracts_model_runtime_options() {
 #[test]
 fn prompt_payload_extracts_documented_command_run_shell_surfaces() {
     let zsh = serde_json::json!({ "command_run_shell": "zsh" });
-    let shll = serde_json::json!({ "commandRunShell": "shell_command" });
+    let shel = serde_json::json!({ "command_run_shell": "shel" });
+    let shell_command = serde_json::json!({ "commandRunShell": "shell_command" });
     let typo = serde_json::json!({ "command_run_shell": "zash" });
 
     assert_eq!(prompt_command_run_shell(&zsh).as_deref(), Some("zsh"));
     assert_eq!(
-        prompt_command_run_shell(&shll).as_deref(),
+        prompt_command_run_shell(&shel).as_deref(),
+        Some("shell_command")
+    );
+    assert_eq!(
+        prompt_command_run_shell(&shell_command).as_deref(),
         Some("shell_command")
     );
     assert_eq!(prompt_command_run_shell(&typo), None);

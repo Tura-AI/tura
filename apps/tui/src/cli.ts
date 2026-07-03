@@ -337,12 +337,12 @@ export function parseRun(
 }
 
 export function commandRunShellForCommand(command: string): CommandRunShell | undefined {
-  if (command === "bash" || command === "zsh" || command === "shll") return shellValue(command);
+  if (command === "bash" || command === "zsh" || command === "shel") return shellValue(command);
   return undefined;
 }
 
 function isCommandRunShellFlag(value: string): boolean {
-  return value === "--bash" || value === "--zsh" || value === "--shll";
+  return value === "--bash" || value === "--zsh" || value === "--shel";
 }
 
 function applyRunOverrides(

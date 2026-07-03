@@ -72,6 +72,17 @@ copy_gui_dist() {
   cp -R "$src"/. "$dst"/
 }
 
+copy_release_config() {
+  src="$REPO_ROOT/crates/provider/config/provider_config.json"
+  dst="$TARGET_DIR/config"
+  if [ ! -f "$src" ]; then
+    echo "Provider config not found at $src." >&2
+    exit 1
+  fi
+  mkdir -p "$dst"
+  cp "$src" "$dst/provider_config.json"
+}
+
 install_js_if_missing() {
   workspace_dir=$1
   shift
@@ -103,7 +114,7 @@ is_under_repo() {
 
 stop_repo_tura_backends() {
   command -v pgrep >/dev/null 2>&1 || return 0
-  for name in tura tura_gui tura_gateway tura_router tura_session_db tura_runtime tura_exec; do
+  for name in tura_gateway tura_router tura_session_db tura_runtime tura_exec; do
     pids=$(pgrep -f "$REPO_ROOT/target/.*/$name" 2>/dev/null || true)
     [ -n "$pids" ] || continue
     # shellcheck disable=SC2086
@@ -146,6 +157,8 @@ fi
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p session_log --bin tura_session_db)
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p runtime --bin tura_runtime)
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p generate_media -p read_media -p web_discover)
+
+copy_release_config
 
 if [ "$BUILD_GUI" -eq 1 ]; then
   install_js_if_missing "$REPO_ROOT/apps/gui" "app/node_modules/vite/package.json"

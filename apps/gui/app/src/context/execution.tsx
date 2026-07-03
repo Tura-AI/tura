@@ -13,14 +13,12 @@ const ExecutionContext = createContext<ExecutionContextValue>();
 
 export function ExecutionProvider(props: {
   state: Accessor<AppState>;
-  gatewayUrl: Accessor<string>;
   children: JSX.Element;
 }) {
   const directory = createMemo(() => props.state().directory);
   const client = createMemo(
     () =>
       new GatewayClient({
-        baseUrl: props.gatewayUrl(),
         directory: directory(),
       }),
   );

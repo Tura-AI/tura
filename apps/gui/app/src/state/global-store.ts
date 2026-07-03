@@ -143,7 +143,7 @@ export type AppState = {
   lastEvent?: string;
 };
 
-export function initialAppState(gatewayUrl: string): AppState {
+export function initialAppState(gatewayUrl = "http://127.0.0.1:4126"): AppState {
   const drafts = draftStateDefaults();
   return {
     gatewayUrl,

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -28,6 +29,10 @@ export async function listen(server) {
 }
 
 export function startWebTerminal({ repoRoot, workspace, gatewayUrl, port }) {
+  const logDir = path.join(repoRoot, "apps", "tui", "test-results", "detached-web-terminal");
+  fs.mkdirSync(logDir, { recursive: true });
+  const stdout = fs.openSync(path.join(logDir, `${port}.stdout.log`), "a");
+  const stderr = fs.openSync(path.join(logDir, `${port}.stderr.log`), "a");
   const child = spawn(
     process.execPath,
     [path.join(repoRoot, "apps", "tui", "scripts", "web-terminal.mjs")],
@@ -41,18 +46,13 @@ export function startWebTerminal({ repoRoot, workspace, gatewayUrl, port }) {
         FORCE_COLOR: "1",
         TURA_LANG: "en",
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+      stdio: ["ignore", stdout, stderr],
       windowsHide: true,
     },
   );
-  let logs = "";
-  child.stdout.on("data", (chunk) => {
-    logs += chunk.toString();
-  });
-  child.stderr.on("data", (chunk) => {
-    logs += chunk.toString();
-  });
-  return { child, logs: () => logs };
+  child.unref();
+  return { child, logs: () => "" };
 }
 
 export async function terminalText(page) {

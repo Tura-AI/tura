@@ -4,11 +4,21 @@ pub async fn prompt_async(
     Path(session_id): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    match prompt_async_value(session_id, payload).await {
+        Ok(()) => StatusCode::NO_CONTENT,
+        Err((status, _error)) => status,
+    }
+}
+
+pub async fn prompt_async_value(
+    session_id: String,
+    payload: serde_json::Value,
+) -> Result<(), (StatusCode, String)> {
     session_store().clear_cancelled(&session_id);
     let content = prompt_text(&payload).unwrap_or_else(|| "Prompt submitted".to_string());
     let session = session_store().get_session(&session_id);
     if session.is_none() {
-        return StatusCode::NOT_FOUND;
+        return Err((StatusCode::NOT_FOUND, "session not found".to_string()));
     }
     if session
         .as_ref()
@@ -26,7 +36,7 @@ pub async fn prompt_async(
             Some(metadata),
         );
         append_user_command_for_runtime(&session_id, content);
-        return StatusCode::NO_CONTENT;
+        return Ok(());
     }
     let user_message = session_store().add_message_with_parts(
         &session_id,
@@ -69,7 +79,7 @@ pub async fn prompt_async(
             );
         }
     });
-    StatusCode::NO_CONTENT
+    Ok(())
 }
 
 pub fn start_task_scheduler() {
@@ -846,7 +856,7 @@ pub(super) fn prompt_command_run_shell(payload: &serde_json::Value) -> Option<St
     match value {
         "bash" => Some("bash".to_string()),
         "zsh" => Some("zsh".to_string()),
-        "shll" | "shell_command" => Some("shell_command".to_string()),
+        "shel" | "shell_command" => Some("shell_command".to_string()),
         _ => None,
     }
 }

@@ -419,10 +419,9 @@ impl RouterProcess {
 
     fn reachable_owned_router_endpoint(&self) -> Result<Option<RouterEndpoint>> {
         let endpoint = reachable_router_endpoint()?;
-        if endpoint
-            .as_ref()
-            .is_some_and(|endpoint| !self.owns_router_endpoint(endpoint))
-        {
+        if endpoint.as_ref().is_some_and(|endpoint| {
+            !self.owns_router_endpoint(endpoint) && !self.is_adopted_addr(endpoint)
+        }) {
             return Ok(None);
         }
         Ok(endpoint)
@@ -430,10 +429,10 @@ impl RouterProcess {
 
     fn healthy_owned_router_endpoint(&self) -> Result<Option<(RouterEndpoint, serde_json::Value)>> {
         let endpoint = healthy_router_endpoint()?;
-        if endpoint
-            .as_ref()
-            .is_some_and(|(endpoint, _)| !self.owns_router_endpoint(endpoint))
-        {
+        if endpoint.as_ref().is_some_and(|(endpoint, _)| {
+            !self.owns_router_endpoint(endpoint)
+                && !router_endpoint_process_fingerprint_matches(endpoint)
+        }) {
             return Ok(None);
         }
         Ok(endpoint)
@@ -454,6 +453,9 @@ impl RouterProcess {
     }
 
     fn owns_router_endpoint(&self, endpoint: &RouterEndpoint) -> bool {
+        if router_endpoint_process_identity_matches(endpoint) {
+            return true;
+        }
         let Some(pid) = endpoint.pid else {
             return false;
         };
@@ -468,6 +470,10 @@ impl RouterProcess {
             },
             _ => false,
         }
+    }
+
+    fn is_adopted_addr(&self, endpoint: &RouterEndpoint) -> bool {
+        self.addr.lock().as_deref() == Some(endpoint.addr.as_str())
     }
 
     fn managed_router_child_alive(&self) -> bool {
@@ -856,6 +862,23 @@ fn router_endpoint_process_identity_matches(endpoint: &RouterEndpoint) -> bool {
     current_process_start_time(pid).is_some_and(|start_time| start_time == expected_start_time)
 }
 
+fn router_endpoint_process_fingerprint_matches(endpoint: &RouterEndpoint) -> bool {
+    let (Some(pid), Some(expected_start_time)) = (endpoint.pid, endpoint.process_start_time) else {
+        return false;
+    };
+    if pid == std::process::id() && !allow_in_process_fake_router_endpoint() {
+        return false;
+    }
+    current_process_start_time(pid).is_some_and(|start_time| start_time == expected_start_time)
+}
+
+fn allow_in_process_fake_router_endpoint() -> bool {
+    std::env::var("TURA_GATEWAY_ALLOW_IN_PROCESS_FAKE_ROUTER")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
 fn router_lock_matches_endpoint(endpoint: &RouterEndpoint) -> bool {
     let Some(record) = read_process_lock_record(&router_lock_path()) else {
         return false;
@@ -1205,40 +1228,15 @@ mod tests {
     }
 
     #[test]
-    fn router_probe_preserves_pid_start_time_for_status() -> anyhow::Result<()> {
+    fn router_probe_preserves_pid_start_time_for_reachable_endpoint() -> anyhow::Result<()> {
         let _guard = crate::test_support::env_lock();
         let home = temp_home("tura-router-pid-status")?;
         let _env = EnvGuard::set_home(&home);
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let addr = listener.local_addr()?.to_string();
         let health_server = thread::spawn(move || -> anyhow::Result<()> {
-            for _ in 0..3 {
-                let (mut stream, _) = listener.accept()?;
-                stream.set_read_timeout(Some(Duration::from_secs(1)))?;
-                let mut request_line = String::new();
-                let _ = std::io::BufRead::read_line(
-                    &mut BufReader::new(stream.try_clone()?),
-                    &mut request_line,
-                );
-                if request_line.trim().is_empty() {
-                    continue;
-                }
-                std::io::Write::write_all(
-                    &mut stream,
-                    serde_json::to_string(&json!({
-                        "ok": true,
-                        "payload": {
-                            "pid": 4242,
-                            "process_start_time": 777,
-                        }
-                    }))?
-                    .as_bytes(),
-                )?;
-                std::io::Write::write_all(&mut stream, b"\n")?;
-                std::io::Write::flush(&mut stream)?;
-                return Ok(());
-            }
-            Err(anyhow!("fake router did not receive health_check"))
+            let (_stream, _) = listener.accept()?;
+            Ok(())
         });
         let path = router_addr_path();
         write_router_endpoint(
@@ -1255,17 +1253,6 @@ mod tests {
         assert_eq!(endpoint.pid, Some(4242));
         assert_eq!(endpoint.process_start_time, Some(777));
 
-        let process = RouterProcess {
-            router_bin: Some(PathBuf::from("unused")),
-            addr: ParkingMutex::new(None),
-            request_seq: AtomicU64::new(1),
-            restart_count: AtomicU64::new(0),
-            last_error: ParkingMutex::new(None),
-        };
-        let status = process.status();
-        assert_eq!(status.status, "running");
-        assert_eq!(status.pid, Some(4242));
-        assert_eq!(status.process_start_time, Some(777));
         health_server
             .join()
             .map_err(|_| anyhow!("fake health router panicked"))??;

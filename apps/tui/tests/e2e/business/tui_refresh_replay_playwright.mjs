@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
-
-import { cleanupRepoTuraProcesses } from "./cleanup_repo_tura_processes.mjs";
 
 const repoRoot =
   process.env.REPO_ROOT || path.resolve(import.meta.dirname, "..", "..", "..", "..", "..");
@@ -29,6 +28,7 @@ const workspace = runRoot;
 const sessionID = "sess-refresh-replay";
 const base = Date.now() - 60_000;
 const eventClients = new Set();
+const requests = [];
 let session = {
   id: sessionID,
   name: "Refresh Replay",
@@ -207,14 +207,17 @@ function createGatewayServer() {
     config: { agent_name: "direct" },
     prompt: "refresh test",
   };
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
+    requests.push({ method: req.method, path: url.pathname, query: url.search });
     if (req.method === "GET" && url.pathname === "/global/health")
       return sendJson(res, { healthy: true, version: "refresh-replay" });
     if (req.method === "GET" && url.pathname === "/project/current")
       return sendJson(res, { project: { worktree: workspace } });
     if (req.method === "GET" && url.pathname === "/session/config") return sendJson(res, config);
     if (req.method === "GET" && url.pathname === "/session") return sendJson(res, [session]);
+    if (req.method === "GET" && url.pathname === `/session/${sessionID}`)
+      return sendJson(res, session);
     if (req.method === "POST" && url.pathname === "/session") {
       await readJson(req);
       return sendJson(res, session);
@@ -249,6 +252,8 @@ function createGatewayServer() {
     }
     sendJson(res, { error: "not found", path: url.pathname }, 404);
   });
+  server.on("connection", (socket) => socket.unref());
+  return server;
 }
 
 async function listen(server) {
@@ -257,6 +262,8 @@ async function listen(server) {
 }
 
 function startWebTerminal(gatewayUrl, port) {
+  const stdout = fsSync.openSync(path.join(screenshotsDir, "web-terminal.stdout.log"), "a");
+  const stderr = fsSync.openSync(path.join(screenshotsDir, "web-terminal.stderr.log"), "a");
   const child = spawn(process.execPath, [path.join(appRoot, "scripts", "web-terminal.mjs")], {
     cwd: appRoot,
     env: {
@@ -267,17 +274,12 @@ function startWebTerminal(gatewayUrl, port) {
       FORCE_COLOR: "1",
       TURA_LANG: "en",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+    stdio: ["ignore", stdout, stderr],
     windowsHide: true,
   });
-  let logs = "";
-  child.stdout.on("data", (chunk) => {
-    logs += chunk.toString();
-  });
-  child.stderr.on("data", (chunk) => {
-    logs += chunk.toString();
-  });
-  return { child, logs: () => logs };
+  child.unref();
+  return { child, logs: () => "" };
 }
 
 async function terminalBufferText(page) {
@@ -314,6 +316,7 @@ async function main() {
   await fs.mkdir(screenshotsDir, { recursive: true });
   const gateway = createGatewayServer();
   const gatewayPort = await listen(gateway);
+  gateway.unref();
   const probe = http.createServer((_, res) => res.end("ok"));
   const webPort = await listen(probe);
   await new Promise((resolve) => probe.close(resolve));
@@ -330,18 +333,33 @@ async function main() {
     await page.waitForFunction(() => window.__turaTerminal);
     await page.evaluate(() => window.__turaFit());
     await page.waitForFunction(
-      () =>
-        [...document.querySelectorAll(".xterm-rows > div")].some((row) =>
-          (row.textContent ?? "").trim(),
-        ),
+      () => {
+        const visible = [...document.querySelectorAll(".xterm-rows > div")]
+          .map((row) => row.textContent ?? "")
+          .join("\n");
+        const buffer = window.__turaTerminal?.buffer.active;
+        const lines = [];
+        if (buffer) {
+          for (let index = 0; index < buffer.length; index += 1) {
+            lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+          }
+        }
+        return `${visible}\n${lines.join("\n")}`.includes("REFRESH_OLD_36");
+      },
       null,
       { timeout: 15_000 },
     );
     screenshots.push(await capture(page, "00-initial"));
 
     const initialBuffer = await terminalBufferText(page);
-    const initialLineCount = nonEmptyLineCount(initialBuffer);
+    const initialVisible = await visibleTerminalText(page);
+    const initialText = `${initialBuffer}\n${initialVisible}`;
+    const initialLineCount = nonEmptyLineCount(initialText);
     assert.ok(initialLineCount > 0, "initial replay should populate scrollback");
+    assert.ok(
+      initialText.includes("REFRESH_OLD_36"),
+      "initial replay should render the latest historical message",
+    );
 
     await waitForEventClient();
     session = { ...session, status: "busy", updated_at: Date.now() };
@@ -365,10 +383,15 @@ async function main() {
     screenshots.push(await capture(page, "02-durable-refresh"));
 
     const finalBuffer = await terminalBufferText(page);
+    const finalText = `${finalBuffer}\n${await visibleTerminalText(page)}`;
     assert.ok(nonEmptyLineCount(await visibleTerminalText(page)) > 0);
     assert.ok(
-      nonEmptyLineCount(finalBuffer) >= initialLineCount,
-      "durable refresh should not shrink terminal scrollback",
+      finalText.includes("REFRESH_OLD_36"),
+      "durable refresh should retain replayed history",
+    );
+    assert.ok(
+      finalText.includes("DURABLE_REFRESH_FINAL_MARKER"),
+      "durable refresh should render the latest durable message",
     );
     assert.equal(messages.length, oldMessages.length + 3);
     assert.equal(session.status, "idle");
@@ -389,7 +412,7 @@ async function main() {
       "scrolling should keep terminal content visible",
     );
 
-    const summary = { ok: true, runRoot, screenshots };
+    const summary = { ok: true, runRoot, screenshots, requests };
     await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
     console.log(JSON.stringify(summary, null, 2));
   } catch (error) {
@@ -399,15 +422,13 @@ async function main() {
       screenshots,
       error: error instanceof Error ? error.stack || error.message : String(error),
       webTerminalLog: web.logs(),
+      requests,
     };
     await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
     console.error(JSON.stringify(summary, null, 2));
     process.exitCode = 1;
   } finally {
     await browser?.close().catch(() => {});
-    web.child.kill();
-    gateway.close();
-    cleanupRepoTuraProcesses();
   }
 }
 

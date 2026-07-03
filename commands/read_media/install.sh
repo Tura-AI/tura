@@ -37,8 +37,6 @@ verify_read_media() {
   "$python" -c 'import cv2, fitz, imageio_ffmpeg, PIL; print(imageio_ffmpeg.get_ffmpeg_exe())'
 }
 
-have uv || { echo "uv was not found. Run the root scripts/install.sh first or install uv from https://docs.astral.sh/uv/." >&2; exit 1; }
-
 uv_python_available() {
   if [ "$OFFLINE" -eq 1 ]; then
     uv python find "$PYTHON_VERSION" --offline >/dev/null 2>&1
@@ -64,13 +62,14 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   exit 0
 fi
 
-cd "$COMMAND_DIR"
+have uv || { echo "uv was not found. Run the root scripts/install.sh first or install uv from https://docs.astral.sh/uv/." >&2; exit 1; }
+
 if [ ! -x "$(venv_python)" ]; then
   ensure_python_runtime
   if [ "$OFFLINE" -eq 1 ]; then
-    uv venv --python 3.12 .venv --offline
+    uv venv --python 3.12 --offline "$VENV_DIR"
   else
-    uv venv --python 3.12 .venv
+    uv venv --python 3.12 "$VENV_DIR"
   fi
 else
   echo "Reusing read_media virtual environment at $VENV_DIR"

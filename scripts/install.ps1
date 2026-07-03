@@ -44,6 +44,15 @@ function Write-Step {
   Write-Host "==> $Message"
 }
 
+function Test-InstallOptionContracts {
+  if ($SkipUv -and -not $SkipCommands) {
+    throw "-SkipUv was supplied, but command installers require uv. Remove -SkipUv or also pass -SkipCommands."
+  }
+  if ($SkipBun -and -not $SkipApps) {
+    throw "-SkipBun was supplied, but JavaScript workspace installs require bun. Remove -SkipBun or pass -SkipApps."
+  }
+}
+
 function Test-IsWindows {
   return ($IsWindows -or $env:OS -eq "Windows_NT")
 }
@@ -167,6 +176,19 @@ function Find-PowerShellTool {
     return $currentPowerShell
   }
   Resolve-ExistingCommand @("pwsh", "powershell.exe", "powershell")
+}
+
+function Invoke-PowerShellScriptFile {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments = @()
+  )
+
+  $powerShell = Find-PowerShellTool
+  if (-not $powerShell) {
+    throw "PowerShell was not found, so $FilePath cannot be run."
+  }
+  & $powerShell -NoProfile -ExecutionPolicy Bypass -File $FilePath @Arguments
 }
 
 function Find-BashTool {
@@ -519,19 +541,22 @@ function Invoke-DownloadedInstaller {
   Write-Step "Installing $Name into the current user's tool directory"
   Invoke-WebRequest -Uri $uri -OutFile $tempPath -UseBasicParsing
 
+  $installerExitCode = 0
   if (Test-IsWindows) {
     & $tempPath
+    $installerExitCode = $LASTEXITCODE
   } else {
     $sh = Get-Command "sh" -ErrorAction SilentlyContinue
     if (-not $sh) {
       throw "sh was not found; cannot run $Name installer."
     }
     & $sh.Source $tempPath
-  }
-  if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+    $installerExitCode = $LASTEXITCODE
   }
   Add-UserToolPaths
+  if ($installerExitCode -ne 0 -and -not (Test-CommandAvailable $Name)) {
+    exit $installerExitCode
+  }
 }
 
 function Ensure-Uv {
@@ -569,7 +594,8 @@ function Ensure-CommandPython {
     return
   }
   if ($SkipUv) {
-    throw "-SkipUv was supplied, but command installers require uv. Remove -SkipUv or also pass -SkipCommands."
+    Write-Host "Skipping command Python setup."
+    return
   }
   if (Test-UvPythonAvailable) {
     Write-DetectedVersion "python" (Get-CommandOutputLine "uv" @("python", "find", $CommandPythonVersion, "--show-version"))
@@ -592,6 +618,10 @@ function Ensure-CommandPython {
 }
 
 function Ensure-Bun {
+  if ($SkipApps) {
+    Write-Host "Skipping bun setup."
+    return
+  }
   if ($SkipBun) {
     Write-Host "Skipping bun setup."
     return
@@ -639,10 +669,10 @@ function Invoke-CommandInstallers {
 
     Write-Step "Installing command dependencies: $($commandDir.Name)"
     if (Test-Path -LiteralPath $psInstaller) {
-      $installerArgs = @{}
-      if ($CheckOnly.IsPresent) { $installerArgs.CheckOnly = $true }
-      if ($Offline.IsPresent) { $installerArgs.Offline = $true }
-      & $psInstaller @installerArgs
+      $installerArgs = @()
+      if ($CheckOnly.IsPresent) { $installerArgs += "-CheckOnly" }
+      if ($Offline.IsPresent) { $installerArgs += "-Offline" }
+      Invoke-PowerShellScriptFile -FilePath $psInstaller -Arguments $installerArgs
     } elseif (Test-CommandAvailable "sh") {
       $shArgs = @()
       if ($CheckOnly) { $shArgs += "--check-only" }
@@ -704,6 +734,7 @@ function Invoke-JsWorkspaceInstall {
   }
 }
 
+Test-InstallOptionContracts
 Set-Location $RepoRoot
 
 Write-Step "Checking root dependency installers"

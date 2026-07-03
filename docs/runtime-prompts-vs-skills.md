@@ -30,15 +30,15 @@ and the bundled manuals live under [crates/runtime/src/runtime_prompt](../crates
 Current manual families include:
 
 - `debug`
+- `devops`
 - `frontend`
 - `visual`
 - `editorial`
 - `interactive_and_3d`
-- `data_visualization`
+- `data_research`
 - `new_build`
 - `refactoring`
-- `research_and_learning`
-- `creative_and_writing`
+- `website`
 
 The active task can update `task_type` through `task_status`. When a manual is
 active, Tura can insert its operating guidance and extend the active
@@ -69,6 +69,7 @@ Tura avoids that by separating durable operating modes from opportunistic skills
 
 - The base agent stays small.
 - A frontend task gets frontend taste and media inspection tools.
+- A DevOps task gets cost-aware CI/release discipline and cloud-resource safety rules.
 - A refactor task gets source-port discipline.
 - A visual task gets visual verification and media commands.
 - Compaction can reinsert the active manuals after old context is replaced.

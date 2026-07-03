@@ -89,14 +89,14 @@ Per-run command tool shell overrides are available as CLI commands and flags.
 ```powershell
 tura bash "Inspect the workspace using bash command tools"
 tura zsh "Inspect shell startup files with zsh command tools"
-tura shll "Use the system shell_command surface"
+tura shel "Use the system shell_command surface"
 tura exec --zsh "Run through the Rust CLI front with zsh command tools"
 ```
 
 ```bash
 tura bash "Inspect the workspace using bash command tools"
 tura zsh "Inspect shell startup files with zsh command tools"
-tura shll "Use the system shell_command surface"
+tura shel "Use the system shell_command surface"
 tura exec --zsh "Run through the Rust CLI front with zsh command tools"
 ```
 

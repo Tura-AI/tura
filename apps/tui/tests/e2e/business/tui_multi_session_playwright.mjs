@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
-
-import { cleanupRepoTuraProcesses } from "./cleanup_repo_tura_processes.mjs";
 
 const repoRoot =
   process.env.REPO_ROOT || path.resolve(import.meta.dirname, "..", "..", "..", "..", "..");
@@ -250,6 +249,7 @@ function createGatewayServer() {
     }
     sendJson(res, { error: "not found", path: url.pathname }, 404);
   });
+  server.on("connection", (socket) => socket.unref());
   return server;
 }
 
@@ -259,6 +259,8 @@ async function listen(server) {
 }
 
 function startWebTerminal(gatewayUrl, port) {
+  const stdout = fsSync.openSync(path.join(screenshotsDir, "web-terminal.stdout.log"), "a");
+  const stderr = fsSync.openSync(path.join(screenshotsDir, "web-terminal.stderr.log"), "a");
   const child = spawn(process.execPath, [path.join(appRoot, "scripts", "web-terminal.mjs")], {
     cwd: appRoot,
     env: {
@@ -269,17 +271,12 @@ function startWebTerminal(gatewayUrl, port) {
       FORCE_COLOR: "1",
       TURA_LANG: "en",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+    stdio: ["ignore", stdout, stderr],
     windowsHide: true,
   });
-  let logs = "";
-  child.stdout.on("data", (chunk) => {
-    logs += chunk.toString();
-  });
-  child.stderr.on("data", (chunk) => {
-    logs += chunk.toString();
-  });
-  return { child, logs: () => logs };
+  child.unref();
+  return { child, logs: () => "" };
 }
 
 async function terminalText(page) {
@@ -339,6 +336,7 @@ async function main() {
   await fs.mkdir(workspace, { recursive: true });
   const gateway = createGatewayServer();
   const gatewayPort = await listen(gateway);
+  gateway.unref();
   const webServer = http.createServer((_, res) => res.end("placeholder"));
   const webPort = await listen(webServer);
   await new Promise((resolve) => webServer.close(resolve));
@@ -444,9 +442,6 @@ async function main() {
     process.exitCode = 1;
   } finally {
     await browser?.close().catch(() => undefined);
-    web.child.kill();
-    gateway.close();
-    cleanupRepoTuraProcesses();
   }
 }
 

@@ -168,8 +168,6 @@ function parseAgents(value) {
     ["tura", "tura-planning-shll"],
     ["tura-balanced", "tura-balanced"],
     ["balanced", "tura-balanced"],
-    ["tura-blanced", "tura-balanced"],
-    ["blanced", "tura-balanced"],
     ["tura-direct", "tura-direct"],
     ["direct", "tura-direct"],
     ["tura-thinking", "tura-thinking-shll"],

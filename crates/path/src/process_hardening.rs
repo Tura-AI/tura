@@ -8,6 +8,8 @@ pub const WINDOWS_DETACHED_PROCESS: u32 = 0x0000_0008;
 pub const WINDOWS_CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
 pub fn hide_child_console_window(command: &mut Command) {
+    #[cfg(not(windows))]
+    let _ = command;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -16,6 +18,8 @@ pub fn hide_child_console_window(command: &mut Command) {
 }
 
 pub fn hide_child_console_window_and_detach(command: &mut Command) {
+    #[cfg(not(windows))]
+    let _ = command;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -24,6 +28,8 @@ pub fn hide_child_console_window_and_detach(command: &mut Command) {
 }
 
 pub fn hide_child_console_window_and_create_group(command: &mut Command) {
+    #[cfg(not(windows))]
+    let _ = command;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

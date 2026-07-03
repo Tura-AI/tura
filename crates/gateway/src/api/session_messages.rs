@@ -4,12 +4,15 @@ pub async fn list_messages(
     Path(session_id): Path<String>,
     Query(params): Query<MessageListParams>,
 ) -> Json<Vec<Message>> {
-    let messages = page_messages(session_store().get_frontend_messages(&session_id), &params);
-    let api_messages: Vec<Message> = messages
+    Json(list_messages_value(&session_id, &params))
+}
+
+pub fn list_messages_value(session_id: &str, params: &MessageListParams) -> Vec<Message> {
+    let messages = page_messages(session_store().get_frontend_messages(session_id), params);
+    messages
         .into_iter()
         .map(message_with_parts_from_store)
-        .collect();
-    Json(api_messages)
+        .collect()
 }
 
 fn page_messages<T: Clone + MessageId>(messages: Vec<T>, params: &MessageListParams) -> Vec<T> {

@@ -46,6 +46,16 @@ function Assert-Path {
   }
 }
 
+function Assert-AnyPath {
+  param([string[]]$Paths, [string]$Message)
+  foreach ($candidate in $Paths) {
+    if (Test-Path -LiteralPath $candidate) {
+      return
+    }
+  }
+  throw $Message
+}
+
 function Test-ProtocolHealth {
   param([string]$Binary)
   $payload = '{"kind":"health_check","payload":{}}'
@@ -92,6 +102,7 @@ foreach ($name in @(
 )) {
   Assert-Path (Join-Path $TargetDir $name) "Missing release artifact: $name"
 }
+Assert-Path (Join-Path $TargetDir "config\provider_config.json") "Missing release provider config."
 
 if ($BuildTui) {
   Assert-Path (Join-Path $TargetDir "tura.exe") "Missing release TUI executable."
@@ -100,7 +111,10 @@ if ($BuildGui) {
   Assert-Path (Join-Path $TargetDir "tura_gui\index.html") "Missing release GUI dist."
 }
 if ($BuildTauri) {
-  Assert-Path (Join-Path $TargetDir "release\bundle") "Missing Tauri release bundle directory."
+  Assert-AnyPath @(
+    (Join-Path $TargetDir "bundle"),
+    (Join-Path $TargetDir "release\bundle")
+  ) "Missing Tauri release bundle directory."
 }
 
 Write-Step "Checking command protocol health"

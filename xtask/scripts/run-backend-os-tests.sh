@@ -95,11 +95,31 @@ run_case() {
   target=${rest%%|*}
   features=${rest#*|}
   printf '\n==> Running backend OS test %s::%s [serial]\n' "$package" "$target"
+  log=$(mktemp)
+  set +e
   if [ -n "$features" ]; then
-    run_cargo test -p "$package" --features "$features" --test "$target" -- --nocapture --test-threads=1
+    run_cargo test -p "$package" --features "$features" --test "$target" -- --nocapture --test-threads=1 > "$log" 2>&1
+    status=$?
   else
-    run_cargo test -p "$package" --test "$target" -- --nocapture --test-threads=1
+    run_cargo test -p "$package" --test "$target" -- --nocapture --test-threads=1 > "$log" 2>&1
+    status=$?
   fi
+  set -e
+  cat "$log"
+  if [ "$status" -ne 0 ]; then
+    failure_text=$(awk '
+      /FAILED|failures|panicked|Error:|error:|assertion|Caused by|timed out|exceeded/ { capture = 80 }
+      capture > 0 { print; capture-- }
+    ' "$log" | tail -n 120 || true)
+    if [ -z "$failure_text" ]; then
+      failure_text=$(tail -n 40 "$log")
+    fi
+    tail_text=$(printf '%s' "$failure_text" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+    printf '::error title=Backend OS test failed::%s::%s exited with %s%%0A%s\n' "$package" "$target" "$status" "$tail_text"
+    rm -f "$log"
+    exit "$status"
+  fi
+  rm -f "$log"
 }
 
 add_case() {

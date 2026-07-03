@@ -4,13 +4,10 @@ import os
 import socket
 import subprocess
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
-
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
 
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
@@ -67,20 +64,6 @@ def start_server() -> subprocess.Popen | None:
         stdin=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
-
-
-def stop(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
 
 
 def record_browser_error(errors: list[str], text: str) -> None:
@@ -267,8 +250,7 @@ async def main() -> None:
             checks.append({"name": "no-console-errors", "ok": not page_errors, "errors": page_errors})
             await browser.close()
     finally:
-        stop(process)
-        cleanup_repo_tura_processes()
+        pass
 
     failures = [check for check in checks if not check["ok"]]
     (OUT / "summary.json").write_text(

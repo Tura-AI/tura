@@ -30,11 +30,18 @@ pub async fn list_sessions(
     headers: HeaderMap,
     Query(params): Query<SessionListParams>,
 ) -> Json<Vec<Session>> {
+    Json(list_sessions_value(params, encoded_header(&headers, "x-opencode-directory")).await)
+}
+
+pub async fn list_sessions_value(
+    params: SessionListParams,
+    header_directory: Option<String>,
+) -> Vec<Session> {
     let directory = params
         .directory
         .clone()
         .or(params.workspace.clone())
-        .or_else(|| encoded_header(&headers, "x-opencode-directory"))
+        .or(header_directory)
         .or_else(|| global_store().get_current_directory());
 
     session_store().hydrate_directory(directory.clone());
@@ -65,7 +72,7 @@ pub async fn list_sessions(
         session.last_user_message_at.unwrap_or(0)
     }
 
-    Json(sessions)
+    sessions
 }
 
 async fn refresh_busy_session_liveness(sessions: &[Session]) {
@@ -228,37 +235,38 @@ fn workspace_key(directory: &str) -> String {
 }
 
 pub async fn get_session(Path(session_id): Path<String>) -> Json<Session> {
+    Json(get_session_value(session_id))
+}
+
+pub fn get_session_value(session_id: String) -> Session {
     session_store()
         .get_session(&session_id)
-        .map(Json)
-        .unwrap_or_else(|| {
-            Json(Session {
-                id: session_id,
-                name: None,
-                parent_id: None,
-                created_at: 0,
-                updated_at: 0,
-                last_user_message_at: None,
-                task_start_at: None,
-                directory: None,
-                model: None,
-                agent: None,
-                session_type: Some("coding".to_string()),
-                auto_session_name: true,
-                kill_processes_on_start: false,
-                validator_enabled: false,
-                force_planning: false,
-                disable_permission_restrictions: false,
-                model_variant: None,
-                model_acceleration_enabled: false,
-                status: SessionStatus::Idle,
-                message_count: 0,
-                task_management: serde_json::json!({}),
-                context_tokens: SessionContextTokens::default(),
-                usage: Default::default(),
-                plan_summary: None,
-                session_display_name: None,
-            })
+        .unwrap_or_else(|| Session {
+            id: session_id,
+            name: None,
+            parent_id: None,
+            created_at: 0,
+            updated_at: 0,
+            last_user_message_at: None,
+            task_start_at: None,
+            directory: None,
+            model: None,
+            agent: None,
+            session_type: Some("coding".to_string()),
+            auto_session_name: true,
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: false,
+            disable_permission_restrictions: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            status: SessionStatus::Idle,
+            message_count: 0,
+            task_management: serde_json::json!({}),
+            context_tokens: SessionContextTokens::default(),
+            usage: Default::default(),
+            plan_summary: None,
+            session_display_name: None,
         })
 }
 
@@ -268,10 +276,26 @@ pub async fn create_session(
     payload: Option<Json<CreateSessionRequest>>,
 ) -> Json<Session> {
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
+    Json(
+        create_session_value(
+            params,
+            payload,
+            encoded_header(&headers, "x-opencode-directory"),
+        )
+        .await,
+    )
+}
+
+pub async fn create_session_value(
+    params: SessionDirectoryParams,
+    payload: CreateSessionRequest,
+    header_directory: Option<String>,
+) -> Session {
     let directory = payload
         .directory
+        .clone()
         .or(params.directory)
-        .or_else(|| encoded_header(&headers, "x-opencode-directory"))
+        .or(header_directory)
         .or_else(|| global_store().get_current_directory());
     let persisted_config = directory.as_deref().map(load_config).unwrap_or_default();
     let kill_processes_on_start = payload
@@ -286,7 +310,10 @@ pub async fn create_session(
         .force_planning
         .or(persisted_config.force_planning)
         .unwrap_or(false);
-    let model_variant = payload.model_variant.or(persisted_config.model_variant);
+    let model_variant = payload
+        .model_variant
+        .clone()
+        .or(persisted_config.model_variant);
     let model_acceleration_enabled = payload
         .model_acceleration_enabled
         .or(persisted_config.model_acceleration_enabled)
@@ -309,7 +336,7 @@ pub async fn create_session(
         .or(persisted_config.active_agent.clone());
     let mut session = session_store().create_session(
         directory,
-        payload.model.or(persisted_config.model),
+        payload.model.clone().or(persisted_config.model),
         requested_agent,
         Some(requested_session_type),
         kill_processes_on_start,
@@ -348,7 +375,7 @@ pub async fn create_session(
             info: session.clone(),
         },
     });
-    Json(session)
+    session
 }
 
 pub async fn get_session_config(
@@ -359,7 +386,11 @@ pub async fn get_session_config(
         .directory
         .or_else(|| encoded_header(&headers, "x-opencode-directory"))
         .or_else(|| global_store().get_current_directory());
-    Json(directory.as_deref().map(load_config).unwrap_or_default())
+    Json(get_session_config_value(directory))
+}
+
+pub fn get_session_config_value(directory: Option<String>) -> TuraSessionConfig {
+    directory.as_deref().map(load_config).unwrap_or_default()
 }
 
 pub async fn patch_session_config(
@@ -371,14 +402,21 @@ pub async fn patch_session_config(
         .directory
         .or_else(|| encoded_header(&headers, "x-opencode-directory"))
         .or_else(|| global_store().get_current_directory());
+    Json(patch_session_config_value(directory, payload))
+}
+
+pub fn patch_session_config_value(
+    directory: Option<String>,
+    payload: TuraSessionConfig,
+) -> TuraSessionConfig {
     let Some(directory) = directory else {
-        return Json(TuraSessionConfig::default());
+        return TuraSessionConfig::default();
     };
     match merge_config(directory, payload) {
-        Ok(config) => Json(config),
+        Ok(config) => config,
         Err(err) => {
             tracing::warn!(error = %err, "failed to patch session config");
-            Json(TuraSessionConfig::default())
+            TuraSessionConfig::default()
         }
     }
 }
@@ -420,8 +458,12 @@ fn hex(value: u8) -> Option<u8> {
 // ============================================================================
 
 pub async fn delete_session(Path(session_id): Path<String>) -> Json<bool> {
+    Json(delete_session_value(session_id).await)
+}
+
+pub async fn delete_session_value(session_id: String) -> bool {
     let info = session_store().get_session(&session_id);
-    let abort = abort_session_scope(&session_id);
+    let abort = abort_session_value(&session_id);
     tracing::info!(
         session_id,
         aborted_sessions = ?abort.sessions,
@@ -450,13 +492,17 @@ pub async fn delete_session(Path(session_id): Path<String>) -> Json<bool> {
             });
         }
     }
-    Json(deleted || write_result.is_ok())
+    deleted || write_result.is_ok()
 }
 
 pub async fn update_session(
     Path(session_id): Path<String>,
     Json(payload): Json<UpdateSessionRequest>,
 ) -> Json<Session> {
+    Json(update_session_value(session_id, payload))
+}
+
+pub fn update_session_value(session_id: String, payload: UpdateSessionRequest) -> Session {
     if let Some(auto_session_name) = payload.auto_session_name {
         let _ = session_store().update_session_auto_session_name(&session_id, auto_session_name);
     }
@@ -508,13 +554,20 @@ pub async fn update_session(
         },
     });
 
-    Json(session)
+    session
 }
 
 pub async fn update_session_task_management(
     Path(session_id): Path<String>,
     Json(payload): Json<UpdateSessionTaskManagementRequest>,
 ) -> Json<Session> {
+    Json(update_session_task_management_value(session_id, payload))
+}
+
+pub fn update_session_task_management_value(
+    session_id: String,
+    payload: UpdateSessionTaskManagementRequest,
+) -> Session {
     let session = session_store()
         .update_session(
             &session_id,
@@ -561,14 +614,14 @@ pub async fn update_session_task_management(
             info: session.clone(),
         },
     });
-    Json(session)
+    session
 }
 
 pub async fn abort_session(Path(session_id): Path<String>) -> Json<AbortResponse> {
-    Json(abort_session_scope(&session_id))
+    Json(abort_session_value(&session_id))
 }
 
-fn abort_session_scope(session_id: &str) -> AbortResponse {
+pub fn abort_session_value(session_id: &str) -> AbortResponse {
     let aborted_sessions = session_store().cancellation_scope_session_ids(session_id);
     let mut cleanups = Vec::new();
     let router = RouterClient::global();
@@ -608,6 +661,10 @@ pub async fn fork_session(
     Path(session_id): Path<String>,
     Json(payload): Json<ForkSessionRequest>,
 ) -> Json<Session> {
+    Json(fork_session_value(session_id, payload).await)
+}
+
+pub async fn fork_session_value(session_id: String, payload: ForkSessionRequest) -> Session {
     let original = session_store().get_session(&session_id);
     let new_session = session_store().create_session(
         payload
@@ -681,7 +738,7 @@ pub async fn fork_session(
             info: new_session.clone(),
         },
     });
-    Json(new_session)
+    new_session
 }
 
 async fn write_session_log_command(command: SessionLogCommand) -> Result<(), String> {
@@ -889,9 +946,9 @@ pub use crate::contracts::{
 #[cfg(test)]
 use session_messages::{agent_message_content, agent_message_metadata, planning_todos};
 pub use session_messages::{
-    get_message, get_message_part, get_todos, list_messages, send_agent_message,
-    send_agent_message_payload, send_message, session_command, stream_agent_message,
-    stream_agent_message_payload, update_todos,
+    get_message, get_message_part, get_todos, list_messages, list_messages_value,
+    send_agent_message, send_agent_message_payload, send_message, session_command,
+    stream_agent_message, stream_agent_message_payload, update_todos,
 };
 pub async fn revert_session(Path(session_id): Path<String>) -> Json<bool> {
     Json(
@@ -1083,7 +1140,7 @@ use session_prompt::{
     prompt_model_acceleration, prompt_model_variant, prompt_text,
 };
 use session_prompt::{final_agent_message, frontend_safe_reply_message, run_mano_for_prompt};
-pub use session_prompt::{prompt_async, start_task_scheduler};
+pub use session_prompt::{prompt_async, prompt_async_value, start_task_scheduler};
 #[cfg(any(feature = "business-tests", feature = "os-tests"))]
 pub use session_prompt::{
     run_due_task_scheduler_tick_for_business_test,

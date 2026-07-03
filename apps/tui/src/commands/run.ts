@@ -1,10 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../gateway/client.js";
-import { ensureGatewayAvailable } from "../gateway/autostart.js";
 import { sameDirectory } from "../gateway/directory.js";
 import { normalizeEvent } from "../gateway/events.js";
-import { plainCapabilities } from "../tui/capabilities.js";
 import {
   GatewayUnavailableError,
   TimeoutError,
@@ -52,14 +50,8 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
 }
 
 async function runPromptWithShellEnv(context: CliContext, options: RunOptions): Promise<RunResult> {
-  const gatewayUrl = await ensureGatewayAvailable(
-    context.gatewayUrl,
-    plainCapabilities(),
-    context.dev,
-    context.gatewayUrlExplicit,
-  );
   const client = new GatewayClient({
-    baseUrl: gatewayUrl,
+    baseUrl: context.gatewayUrl,
     directory: context.cwd,
     verbose: context.verbose,
   });

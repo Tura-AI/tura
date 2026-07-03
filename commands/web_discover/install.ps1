@@ -6,8 +6,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$CommandDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$VenvDir = Join-Path $CommandDir ".venv"
+$CommandDir = [System.IO.Path]::GetFullPath((Split-Path -Parent $MyInvocation.MyCommand.Path))
+$VenvDir = [System.IO.Path]::GetFullPath((Join-Path $CommandDir ".venv"))
 $RequirementsPath = Join-Path $CommandDir "requirements.txt"
 $PythonVersion = "3.12"
 
@@ -57,6 +57,25 @@ function Ensure-PythonRuntime {
   }
 }
 
+function Initialize-VenvDirectory {
+  if (-not (Test-Path -LiteralPath $CommandDir -PathType Container)) {
+    throw "web_discover command directory was not found at $CommandDir. Current directory: $(Get-Location)"
+  }
+  if (-not (Test-Path -LiteralPath $RequirementsPath -PathType Leaf)) {
+    throw "web_discover requirements file was not found at $RequirementsPath."
+  }
+  if (Test-Path -LiteralPath $VenvDir -PathType Leaf) {
+    throw "web_discover virtual environment path is a file, expected a directory: $VenvDir"
+  }
+  if (-not (Test-Path -LiteralPath $VenvDir -PathType Container)) {
+    try {
+      New-Item -ItemType Directory -Path $VenvDir -Force | Out-Null
+    } catch {
+      throw "Failed to prepare web_discover virtual environment directory at $VenvDir. Command directory: $CommandDir. Current directory: $(Get-Location). $($_.Exception.Message)"
+    }
+  }
+}
+
 function Invoke-Verify {
   $python = Get-VenvPython
   if (-not (Test-Path -LiteralPath $python)) {
@@ -68,37 +87,34 @@ function Invoke-Verify {
   }
 }
 
-Require-Uv
-
 if ($CheckOnly) {
   Invoke-Verify
   Write-Host "web_discover dependencies: ok"
   exit 0
 }
 
-Push-Location $CommandDir
-try {
-  if (-not (Test-Path -LiteralPath (Get-VenvPython))) {
-    Ensure-PythonRuntime
-    $venvArgs = @("venv", "--python", "3.12", ".venv")
-    if ($Offline) {
-      $venvArgs += "--offline"
-    }
-    & uv @venvArgs
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  } else {
-    Write-Host "Reusing web_discover virtual environment at $VenvDir"
-  }
+Require-Uv
 
-  $pipArgs = @("pip", "install", "--python", (Get-VenvPython), "-r", $RequirementsPath)
+if (-not (Test-Path -LiteralPath (Get-VenvPython))) {
+  Initialize-VenvDirectory
+  Ensure-PythonRuntime
+  $venvArgs = @("venv", "--python", "3.12")
   if ($Offline) {
-    $pipArgs += "--offline"
+    $venvArgs += "--offline"
   }
-  & uv @pipArgs
+  $venvArgs += $VenvDir
+  & uv @venvArgs
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-} finally {
-  Pop-Location
+} else {
+  Write-Host "Reusing web_discover virtual environment at $VenvDir"
 }
+
+$pipArgs = @("pip", "install", "--python", (Get-VenvPython), "-r", $RequirementsPath)
+if ($Offline) {
+  $pipArgs += "--offline"
+}
+& uv @pipArgs
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Invoke-Verify
 Write-Host "web_discover dependencies installed in $VenvDir"

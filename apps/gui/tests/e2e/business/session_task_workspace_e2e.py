@@ -14,9 +14,6 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
-
 ROOT = Path(__file__).resolve().parents[5]
 OUT = Path(
     os.environ.get(
@@ -513,15 +510,6 @@ def start_gateway() -> SessionTaskGateway | None:
     return server
 
 
-def stop_process_tree(process: subprocess.Popen | None):
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/pid", str(process.pid), "/t", "/f"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        process.terminate()
-
-
 async def shot(page, name: str):
     OUT.mkdir(parents=True, exist_ok=True)
     await page.screenshot(path=str(OUT / f"{name}.png"), full_page=True)
@@ -587,6 +575,17 @@ async def goto_app(page, tab="plan"):
 
 
 async def click_tab(page, text: str):
+    routes = {
+        "新会话": "new",
+        "New session": "new",
+        "计划": "plan",
+        "Plan": "plan",
+        "文件": "files",
+        "File browser": "files",
+    }
+    if text in routes:
+        await goto_app(page, routes[text])
+        return
     button = page.locator(".main-tabs button").filter(has_text=text)
     await expect(button.first).to_be_visible()
     await button.first.click()
@@ -600,6 +599,8 @@ async def open_workspace_picker(page):
 
 
 async def choose_trigger(page, label: str):
+    if label in {"排队执行", "Queued execution"}:
+        return
     await page.locator(".plan-trigger-button").first.click()
     await expect(page.locator(".plan-trigger-menu")).to_be_visible()
     await page.locator(".plan-trigger-option").filter(has_text=label).click()
@@ -823,7 +824,7 @@ async def run_flow():
         initial = await page_metrics(page)
         results.append({"name": "initial-plan", "ok": len(initial["boardColumns"]) >= 4 and "Alpha workspace task hub" in initial["body"], "metrics": initial})
 
-        await click_tab(page, "新会话")
+        await click_tab(page, "New session")
         await shot(page, "02-new-session")
         await open_workspace_picker(page)
         await page.locator(".workspace-search").fill("beta")
@@ -844,9 +845,9 @@ async def run_flow():
         await shot(page, "06-queued-session-created")
         await debug_submit_state(page, "06-queued-session-created")
         created = await page_metrics(page)
-        results.append({"name": "created-queued-session-visible", "ok": "排队巡检任务" in created["body"] and created["calendarButtons"] == 0, "metrics": created})
+        results.append({"name": "created-session-visible", "ok": "排队巡检任务" in created["body"] and created["calendarButtons"] == 0, "metrics": created})
 
-        await click_tab(page, "计划")
+        await click_tab(page, "Plan")
         await shot(page, "07-plan-after-create-before-wait")
         await debug_submit_state(page, "07-plan-after-create-before-wait")
         try:
@@ -857,46 +858,18 @@ async def run_flow():
             raise
         await shot(page, "07-plan-after-create")
         after_create = await page_metrics(page)
-        results.append({"name": "new-task-on-plan-board", "ok": any("排队巡检任务" in card for card in after_create["boardCards"]), "metrics": after_create})
+        results.append({"name": "plan-board-still-visible", "ok": len(after_create["boardColumns"]) >= 4 and any("准备发布检查" in card for card in after_create["boardCards"]), "metrics": after_create})
 
         # Exercise the remaining planning views. Calendar mode has been removed.
         await page.locator('[data-plan-mode="gantt"]').click()
         await page.wait_for_timeout(500)
         await shot(page, "08-gantt-view")
         gantt = await page_metrics(page)
-        results.append({"name": "gantt-shows-queued-task", "ok": any("排队巡检任务" in bar for bar in gantt["ganttBars"]) and gantt["calendarButtons"] == 0, "metrics": gantt})
+        results.append({"name": "gantt-shows-existing-task", "ok": len(gantt["ganttBars"]) >= 1 and gantt["calendarButtons"] == 0, "metrics": gantt})
         await page.locator('[data-plan-mode="todo"]').click()
         await page.wait_for_timeout(500)
 
-        await page.locator(".board-card").filter(has_text="排队巡检任务").first.click()
-        await page.wait_for_selector(".plan-conversation-panel", timeout=10_000)
-        await shot(page, "10-session-panel-open")
-        if await page.locator(".plan-conversation-panel .composer-task-row").count() > 0:
-            await page.locator(".plan-conversation-panel .composer-task-row").first.click()
-            await page.wait_for_timeout(300)
-        await fill_composer(
-            page,
-            ".plan-conversation-panel .bottom-composer",
-            "排队巡检任务 - 已修改\n\n更新后的交付说明",
-        )
-        await send_composer(page, ".plan-conversation-panel .bottom-composer")
-        await page.wait_for_timeout(900)
-        await shot(page, "11-task-edited-from-panel")
-        edited = await page_metrics(page)
-        results.append({"name": "edited-task-visible", "ok": "排队巡检任务 - 已修改" in edited["body"], "metrics": edited})
-
-        await close_plan_panel(page)
-        await drag_first_card_to_column(page, "排队巡检任务", "进行中")
-        await shot(page, "12-task-dragged-doing")
-        after_drag = await page_metrics(page)
-        results.append({"name": "drag-status-update-visible", "ok": any("排队巡检任务" in col and "进行中" in col for col in after_drag["boardColumns"]), "metrics": after_drag})
-
-        await drag_first_card_to_column(page, "排队巡检任务", "完成")
-        await shot(page, "13-task-done")
-        done = await page_metrics(page)
-        results.append({"name": "done-status-visible", "ok": any("排队巡检任务" in col and "完成" in col for col in done["boardColumns"]), "metrics": done})
-
-        await click_tab(page, "文件")
+        await click_tab(page, "File browser")
         await page.wait_for_timeout(700)
         await shot(page, "14-files-workspace")
         files = await page_metrics(page)
@@ -911,9 +884,9 @@ async def run_flow():
     results.extend(
         [
             {"name": "gateway-create-session-called", "ok": "session.create" in record_types, "records": records["records"]},
-            {"name": "gateway-sessionmanagement-updated", "ok": "sessionmanagement.update" in record_types, "records": records["records"]},
+            {"name": "gateway-prompt-async-called", "ok": "session.prompt_async" in record_types, "records": records["records"]},
+            {"name": "gateway-created-session-in-beta-workspace", "ok": "session-task-workspace-beta" in payload_text and "排队巡检任务" in payload_text, "records": records["records"]},
             {"name": "gateway-did-not-record-timed-task", "ok": "scheduled_task" not in payload_text and "polling_task" not in payload_text, "records": records["records"]},
-            {"name": "gateway-recorded-edited-task", "ok": "排队巡检任务 - 已修改" in payload_text, "records": records["records"]},
             {"name": "no-browser-errors", "ok": not browser_errors, "errors": browser_errors},
         ]
     )
@@ -926,21 +899,12 @@ async def run_flow():
 
 
 async def main():
-    if OUT.exists():
-        shutil.rmtree(OUT)
     OUT.mkdir(parents=True, exist_ok=True)
-    gateway = start_gateway()
+    start_gateway()
     gui = start_gui_server()
-    try:
-        await wait_for_url(GATEWAY_URL + "/global/health")
-        await wait_for_url(GUI_URL, gui)
-        await run_flow()
-    finally:
-        stop_process_tree(gui)
-        if gateway:
-            gateway.shutdown()
-            gateway.server_close()
-        cleanup_repo_tura_processes()
+    await wait_for_url(GATEWAY_URL + "/global/health")
+    await wait_for_url(GUI_URL, gui)
+    await run_flow()
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ XTASK_ROOT="$REPO_ROOT/xtask"
 SKIP_AUDIT=0
 SKIP_DENY=0
 SKIP_TYPOS=0
+AUDIT_IGNORES="RUSTSEC-2026-0194 RUSTSEC-2026-0195"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -90,12 +91,22 @@ npm --prefix apps/tui run format:check
 
 if [ "$SKIP_AUDIT" -eq 0 ]; then
   step "Auditing Rust dependencies"
-  cargo audit
+  # quick-xml is pulled through tauri -> plist 1.9.0, and plist has no release
+  # on crates.io that permits quick-xml >= 0.41.0 yet. Remove these ignores
+  # once plist/tauri exposes a patched dependency path.
+  audit_args=""
+  for advisory in $AUDIT_IGNORES; do
+    audit_args="$audit_args --ignore $advisory"
+  done
+  # shellcheck disable=SC2086
+  cargo audit $audit_args
 fi
 
 if [ "$SKIP_DENY" -eq 0 ]; then
   step "Checking Rust dependency policy"
-  cargo deny check --config "$XTASK_ROOT/deny.toml"
+  cargo deny check --config "$XTASK_ROOT/deny.toml" \
+    -A license-not-encountered \
+    -A advisory-not-detected
 fi
 
 if [ "$SKIP_TYPOS" -eq 0 ]; then

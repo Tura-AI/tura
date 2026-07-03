@@ -95,6 +95,16 @@ function Copy-GuiDist {
   Copy-Item -Path (Join-Path $Source "*") -Destination $Destination -Recurse -Force
 }
 
+function Copy-ReleaseConfig {
+  $Source = Join-Path $RepoRoot "crates\provider\config\provider_config.json"
+  $DestinationDir = Join-Path $TargetDir "config"
+  if (-not (Test-Path -LiteralPath $Source)) {
+    throw "Provider config not found at $Source."
+  }
+  New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+  Copy-Item -LiteralPath $Source -Destination (Join-Path $DestinationDir "provider_config.json") -Force
+}
+
 function Test-PathUnderRepo {
   param([string]$Path)
   $Full = [System.IO.Path]::GetFullPath($Path)
@@ -105,7 +115,7 @@ function Test-PathUnderRepo {
 }
 
 function Stop-RepoTuraBackends {
-  $Names = @("tura", "tura_gui", "tura_gateway", "tura_router", "tura_session_db", "tura_runtime", "tura_exec")
+  $Names = @("tura_gateway", "tura_router", "tura_session_db", "tura_runtime", "tura_exec")
   $Processes = Get-Process -ErrorAction SilentlyContinue |
     Where-Object { $Names -contains $_.ProcessName } |
     Where-Object {
@@ -170,6 +180,8 @@ try {
 } finally {
   $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
 }
+
+Copy-ReleaseConfig
 
 if ($BuildGui) {
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")

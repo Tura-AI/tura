@@ -258,7 +258,7 @@
   "unknownProviderSetAuthArguments": "未知 provider set-auth 参数：{args}",
   "unknownSessionCommand": "未知 session 命令：{command}",
   "unsupportedLanguage": "不支持的语言",
-  "unsupportedCommandRunShell": "{key} 只能是 bash、zsh 或 shll",
+  "unsupportedCommandRunShell": "{key} 只能是 bash、zsh 或 shel",
   "unsupportedSessionConfigKey": "不支持的会话配置键：{key}",
   "updated": "已更新",
   "usage": "用法",

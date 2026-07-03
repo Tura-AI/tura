@@ -1,7 +1,7 @@
 import {
   GatewayClient,
-  type GatewayEventEnvelope,
   defaultGatewayUrl,
+  type GatewayEventEnvelope,
   errorMessage,
   type AgentUpsertRequest,
   type PlanStatus,
@@ -74,7 +74,6 @@ declare global {
 
 export function App() {
   const e2eFixture = readSearchParam("e2eFixture");
-  const requestedGatewayUrl = readSearchParam("gatewayUrl") ?? defaultGatewayUrl();
   const requestedTab = readSearchParam("tab");
   const disableGatewayAutostart = readSearchParam("e2eNoGatewayStart") === "1";
   const initialTab = readMainTabSearchParam();
@@ -83,6 +82,7 @@ export function App() {
   const initialSessionId = forceNewSession ? null : readSearchParam("sessionId");
   const initialModel = readSearchParam("model");
   const initialAgent = readSearchParam("agent");
+  const requestedGatewayUrl = readSearchParam("gatewayUrl") ?? defaultGatewayUrl();
   const [state, setState] = createSignal<AppState>(
     withInitialOverrides(
       e2eFixture
@@ -1098,7 +1098,7 @@ export function App() {
   }
 
   return (
-    <AppProviders state={state} setState={setState} gatewayUrl={gatewayUrl}>
+    <AppProviders state={state} setState={setState}>
       <AppShell
         view={{
           state,

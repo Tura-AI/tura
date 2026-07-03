@@ -183,6 +183,8 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
             return self.json({"project": self.project()})
         if path == "/project":
             return self.json([self.project()])
+        if path == "/session-log/workspaces":
+            return self.json({"workspaces": [{"directory": str(ROOT), "last_updated_at": int(time.time() * 1000)}]})
         if path == "/api/config":
             return self.json({"name": "Tura"})
         if path == "/api/me":
@@ -635,12 +637,33 @@ async def run_round():
             screenshots.append(await shot(page, "02-prompt-filled"))
             await composer.locator(".composer-send").click(force=True)
             await page.wait_for_timeout(900)
-            if await page.locator(".run-summary").count() == 0:
-                await composer.locator(".composer-rich-editor").press("Control+Enter")
-                await page.wait_for_timeout(900)
             screenshots.append(await shot(page, "03-after-send"))
 
+            session_id = None
+            for _ in range(30):
+                if gateway.sessions:
+                    session_id = gateway.sessions[0]["id"]
+                    break
+                await page.wait_for_timeout(100)
+            if not session_id:
+                raise AssertionError("snake-session-not-created")
+
+            reload_query = urlencode(
+                {
+                    "gatewayUrl": GATEWAY_URL,
+                    "tab": "conversation",
+                    "sessionId": session_id,
+                    "agent": "thinking-planning",
+                    "model": "codex/gpt-5.5",
+                }
+            )
+            await page.goto(f"{GUI_URL}/?{reload_query}", wait_until="domcontentloaded")
+
             try:
+                await expect(page.locator(".message.assistant").first).to_contain_text(
+                    "keyboard probe",
+                    timeout=20000,
+                )
                 await expect(page.locator(".run-summary").first).to_be_visible(timeout=20000)
             except Exception:
                 diagnostics = await page.evaluate(
@@ -837,8 +860,6 @@ async def run_round():
             ),
             encoding="utf-8",
         )
-        gateway.shutdown()
-        gateway.server_close()
 
 
 async def shot(page, name):

@@ -224,16 +224,20 @@ lazy_static! {
 }
 
 pub async fn public_config() -> Json<PublicConfig> {
-    Json(PublicConfig {
+    Json(public_config_value())
+}
+
+pub fn public_config_value() -> PublicConfig {
+    PublicConfig {
         deployment_mode: "local".to_string(),
         signup_enabled: false,
         google_oauth_enabled: false,
         version: env!("CARGO_PKG_VERSION").to_string(),
-    })
+    }
 }
 
 pub async fn current_user() -> Json<ProductUser> {
-    Json(PRODUCT_STORE.user.read().clone())
+    Json(current_user_snapshot())
 }
 
 pub fn current_user_snapshot() -> ProductUser {
@@ -255,24 +259,40 @@ pub async fn patch_current_user(Json(input): Json<UserPatch>) -> Json<ProductUse
 }
 
 pub async fn list_workspaces() -> Json<Vec<Workspace>> {
-    Json(sorted_values(PRODUCT_STORE.workspaces.read().clone()))
+    Json(list_workspaces_value())
+}
+
+pub fn list_workspaces_value() -> Vec<Workspace> {
+    sorted_values(PRODUCT_STORE.workspaces.read().clone())
 }
 
 pub async fn list_issues(Query(query): Query<IssueQuery>) -> Json<Vec<Issue>> {
-    Json(filter_issues(query))
+    Json(list_issues_value(query))
+}
+
+pub fn list_issues_value(query: IssueQuery) -> Vec<Issue> {
+    filter_issues(query)
 }
 
 pub async fn quick_create_issue(Json(input): Json<IssueInput>) -> Json<Issue> {
-    Json(create_issue_record(input))
+    Json(quick_create_issue_value(input))
+}
+
+pub fn quick_create_issue_value(input: IssueInput) -> Issue {
+    create_issue_record(input)
 }
 
 pub async fn patch_issue(
     Path(issue_id): Path<String>,
     Json(input): Json<IssueInput>,
 ) -> Json<Option<Issue>> {
+    Json(patch_issue_value(issue_id, input))
+}
+
+pub fn patch_issue_value(issue_id: String, input: IssueInput) -> Option<Issue> {
     let mut issues = PRODUCT_STORE.issues.write();
     let Some(issue) = issues.get_mut(&issue_id) else {
-        return Json(None);
+        return None;
     };
     if let Some(title) = input.title.filter(|value| !value.trim().is_empty()) {
         issue.title = title;
@@ -302,7 +322,7 @@ pub async fn patch_issue(
         issue.session_id = input.session_id;
     }
     issue.updated_at = Utc::now().timestamp_millis();
-    Json(Some(issue.clone()))
+    Some(issue.clone())
 }
 
 pub async fn issue_usage(Path(_issue_id): Path<String>) -> Json<Value> {
@@ -314,10 +334,18 @@ pub async fn issue_usage(Path(_issue_id): Path<String>) -> Json<Value> {
 }
 
 pub async fn list_product_projects() -> Json<Vec<ProductProject>> {
-    Json(sorted_values(PRODUCT_STORE.projects.read().clone()))
+    Json(list_product_projects_value())
+}
+
+pub fn list_product_projects_value() -> Vec<ProductProject> {
+    sorted_values(PRODUCT_STORE.projects.read().clone())
 }
 
 pub async fn list_product_agents() -> Json<Vec<ProductAgent>> {
+    Json(list_product_agents_value())
+}
+
+pub fn list_product_agents_value() -> Vec<ProductAgent> {
     let mut agents = sorted_values(PRODUCT_STORE.agents.read().clone());
     for agent in &mut agents {
         let session_count = session_store()
@@ -328,7 +356,7 @@ pub async fn list_product_agents() -> Json<Vec<ProductAgent>> {
         agent.run_count_7d = agent.run_count_7d.max(session_count);
         agent.run_count_30d = agent.run_count_30d.max(session_count);
     }
-    Json(agents)
+    agents
 }
 
 pub async fn agent_templates() -> Json<Vec<Value>> {

@@ -4,41 +4,55 @@ use axum::{extract::Path, http::StatusCode, Json};
 use std::collections::HashMap;
 
 pub async fn list_agents() -> Json<Vec<Agent>> {
-    Json(list_agents_from_store())
+    Json(list_agents_value())
+}
+
+pub fn list_agents_value() -> Vec<Agent> {
+    list_agents_from_store()
 }
 
 pub async fn get_agent(
     Path(agent_id): Path<String>,
 ) -> Result<Json<tura_agents::store::StoredAgent>, (StatusCode, Json<BadRequestError>)> {
-    let root = registry::project_root();
-    tura_agents::store::load_agent(&root, &agent_id)
+    get_agent_value(agent_id)
         .map(Json)
-        .ok_or_else(|| {
-            api_error(
-                StatusCode::NOT_FOUND,
-                format!("agent `{agent_id}` not found"),
-            )
-        })
+        .map_err(|(status, error)| api_error(status, error))
+}
+
+pub fn get_agent_value(
+    agent_id: String,
+) -> Result<tura_agents::store::StoredAgent, (StatusCode, String)> {
+    let root = registry::project_root();
+    tura_agents::store::load_agent(&root, &agent_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("agent `{agent_id}` not found"),
+        )
+    })
 }
 
 pub async fn create_agent(
     Json(payload): Json<UpsertAgentRequest>,
 ) -> Result<Json<tura_agents::store::StoredAgent>, (StatusCode, Json<BadRequestError>)> {
+    create_agent_value(payload).map(Json).map_err(|err| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            format!("failed to create agent: {err}"),
+        )
+    })
+}
+
+pub fn create_agent_value(
+    payload: UpsertAgentRequest,
+) -> Result<tura_agents::store::StoredAgent, String> {
     upsert_agent_in_store(None, payload)
-        .map(Json)
-        .map_err(|err| {
-            api_error(
-                StatusCode::BAD_REQUEST,
-                format!("failed to create agent: {err}"),
-            )
-        })
 }
 
 pub async fn update_agent(
     Path(agent_id): Path<String>,
     Json(payload): Json<UpsertAgentRequest>,
 ) -> Result<Json<tura_agents::store::StoredAgent>, (StatusCode, Json<BadRequestError>)> {
-    upsert_agent_in_store(Some(agent_id), payload)
+    update_agent_value(agent_id, payload)
         .map(Json)
         .map_err(|err| {
             api_error(
@@ -48,12 +62,23 @@ pub async fn update_agent(
         })
 }
 
+pub fn update_agent_value(
+    agent_id: String,
+    payload: UpsertAgentRequest,
+) -> Result<tura_agents::store::StoredAgent, String> {
+    upsert_agent_in_store(Some(agent_id), payload)
+}
+
 pub async fn delete_agent(
     Path(agent_id): Path<String>,
 ) -> Result<Json<bool>, (StatusCode, Json<BadRequestError>)> {
-    tura_agents::store::delete_dynamic_agent(&registry::project_root(), &agent_id)
+    delete_agent_value(agent_id)
         .map(Json)
         .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))
+}
+
+pub fn delete_agent_value(agent_id: String) -> Result<bool, String> {
+    tura_agents::store::delete_dynamic_agent(&registry::project_root(), &agent_id)
 }
 
 fn api_error(status: StatusCode, error: String) -> (StatusCode, Json<BadRequestError>) {

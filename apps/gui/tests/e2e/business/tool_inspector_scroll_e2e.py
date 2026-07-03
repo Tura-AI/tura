@@ -72,20 +72,6 @@ def start_server() -> subprocess.Popen | None:
     )
 
 
-def stop(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
-
-
 async def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     process = start_server()
@@ -218,7 +204,7 @@ async def main() -> None:
             checks.append({"name": "no-console-errors", "ok": not page_errors, "errors": page_errors})
             await browser.close()
     finally:
-        stop(process)
+        pass
 
     failures = [check for check in checks if not check["ok"]]
     OUT.mkdir(parents=True, exist_ok=True)

@@ -28,9 +28,19 @@ pub async fn get_current_project(
     headers: HeaderMap,
     Query(params): Query<ProjectDirectoryParams>,
 ) -> Json<CurrentProjectResponse> {
+    Json(
+        current_project_value(ProjectDirectoryParams {
+            directory: params
+                .directory
+                .or_else(|| encoded_header(&headers, "x-opencode-directory")),
+        })
+        .await,
+    )
+}
+
+pub async fn current_project_value(params: ProjectDirectoryParams) -> CurrentProjectResponse {
     let directory = params
         .directory
-        .or_else(|| encoded_header(&headers, "x-opencode-directory"))
         .or_else(|| global_store().get_current_directory());
 
     let project = directory.map(|dir| {
@@ -38,28 +48,44 @@ pub async fn get_current_project(
         upsert_workspace_project(path, None)
     });
 
-    Json(CurrentProjectResponse { project })
+    CurrentProjectResponse { project }
 }
 
 pub async fn create_named_workspace(
     Json(payload): Json<WorkspaceCreateRequest>,
 ) -> Result<Json<Project>, (StatusCode, String)> {
+    create_named_workspace_value(payload).await.map(Json)
+}
+
+pub async fn create_named_workspace_value(
+    payload: WorkspaceCreateRequest,
+) -> Result<Project, (StatusCode, String)> {
     let name = sanitize_workspace_name(payload.name.as_deref().unwrap_or("New project"));
     let directory = documents_directory().join(&name);
     prepare_workspace_directory(&directory)?;
-    Ok(Json(upsert_workspace_project(directory, Some(name))))
+    Ok(upsert_workspace_project(directory, Some(name)))
 }
 
 pub async fn use_default_workspace() -> Result<Json<Project>, (StatusCode, String)> {
+    use_default_workspace_value().await.map(Json)
+}
+
+pub async fn use_default_workspace_value() -> Result<Project, (StatusCode, String)> {
     let name = DEFAULT_WORKSPACE_NAME.to_string();
     let directory = documents_directory().join(&name);
     prepare_workspace_directory(&directory)?;
-    Ok(Json(upsert_workspace_project(directory, Some(name))))
+    Ok(upsert_workspace_project(directory, Some(name)))
 }
 
 pub async fn select_local_workspace(
     Json(payload): Json<DirectoryWorkspaceRequest>,
 ) -> Result<Json<Option<Project>>, (StatusCode, String)> {
+    select_local_workspace_value(payload).await.map(Json)
+}
+
+pub async fn select_local_workspace_value(
+    payload: DirectoryWorkspaceRequest,
+) -> Result<Option<Project>, (StatusCode, String)> {
     let title = payload.title.clone();
     let selected = tokio::task::spawn_blocking(move || select_directory(title.as_deref()))
         .await
@@ -75,7 +101,7 @@ pub async fn select_local_workspace(
                 format!("Failed to open directory picker: {error}"),
             )
         })?;
-    Ok(Json(selected.map(|directory| {
+    Ok(selected.map(|directory| {
         let path = PathBuf::from(directory);
         let name = workspace_name_from_path(&path);
         if let Err(error) = prepare_workspace_directory(&path) {
@@ -86,7 +112,7 @@ pub async fn select_local_workspace(
             );
         }
         upsert_workspace_project(path, Some(name))
-    })))
+    }))
 }
 
 fn same_directory(left: &str, right: &str) -> bool {

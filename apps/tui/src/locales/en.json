@@ -258,7 +258,7 @@
   "unknownProviderSetAuthArguments": "unknown provider set-auth arguments: {args}",
   "unknownSessionCommand": "unknown session command: {command}",
   "unsupportedLanguage": "unsupported language",
-  "unsupportedCommandRunShell": "{key} must be one of: bash, zsh, shll",
+  "unsupportedCommandRunShell": "{key} must be one of: bash, zsh, shel",
   "unsupportedSessionConfigKey": "unsupported session config key: {key}",
   "updated": "updated",
   "usage": "Usage",

@@ -10,9 +10,6 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
-
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
 OUT = GUI / "test-results" / "agent-provider-priority"
@@ -68,20 +65,6 @@ def start_server() -> subprocess.Popen | None:
         stdin=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
-
-
-def stop(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
 
 
 async def select_field_option(page, label_pattern: str, option_name: str) -> None:
@@ -166,8 +149,7 @@ async def main() -> None:
             await page.screenshot(path=OUT / "agent-provider-priority.png", full_page=True)
             await browser.close()
     finally:
-        stop(process)
-        cleanup_repo_tura_processes()
+        pass
 
     failures = [check for check in checks if not check["ok"]]
     (OUT / "summary.json").write_text(

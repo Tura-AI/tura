@@ -14,6 +14,16 @@ sense.
 Rust builds use the pinned toolchain in `rust-toolchain.toml`. The repository is
 licensed under AGPL-3.0-or-later; see `LICENSE`.
 
+The public npm install path is:
+
+```bash
+npm install tura
+```
+
+The main `tura` package installs the matching platform release package
+(`tura-linux-x64`, `tura-darwin-x64`, `tura-darwin-arm64`, or `tura-win32-x64`)
+and falls back to GitHub Release archives under the same version tag.
+
 ## Try It
 
 Full setup, build, launcher, CI, and release commands live in the dedicated

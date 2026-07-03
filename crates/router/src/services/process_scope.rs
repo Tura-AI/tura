@@ -1,6 +1,6 @@
 #![allow(unsafe_code)]
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tokio::process::{Child, Command};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +62,7 @@ impl WorkerProcessScope {
         unsafe {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {
-                return Err(anyhow!("failed to create worker job object"));
+                return Err(anyhow::anyhow!("failed to create worker job object"));
             }
 
             let mut info = std::mem::zeroed::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
@@ -75,20 +75,24 @@ impl WorkerProcessScope {
             );
             if configured == 0 {
                 CloseHandle(job);
-                return Err(anyhow!("failed to configure worker job object"));
+                return Err(anyhow::anyhow!("failed to configure worker job object"));
             }
 
             let process: HANDLE = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
             if process.is_null() {
                 CloseHandle(job);
-                return Err(anyhow!("failed to open worker process for job assignment"));
+                return Err(anyhow::anyhow!(
+                    "failed to open worker process for job assignment"
+                ));
             }
 
             let assigned = AssignProcessToJobObject(job, process);
             CloseHandle(process);
             if assigned == 0 {
                 CloseHandle(job);
-                return Err(anyhow!("failed to assign worker process to job object"));
+                return Err(anyhow::anyhow!(
+                    "failed to assign worker process to job object"
+                ));
             }
 
             Ok(Some(Self { job }))

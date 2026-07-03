@@ -29,3 +29,4 @@ function takeOption(args: string[], name: string): string | undefined {
   args.splice(index, 2);
   return value;
 }
+

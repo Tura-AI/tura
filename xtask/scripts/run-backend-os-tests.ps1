@@ -73,21 +73,74 @@ function Get-CargoTestArguments {
 }
 
 function Invoke-CargoTestWithTimeout {
-  param([string[]]$Arguments, [int]$TimeoutSeconds)
-  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-  $startInfo.FileName = "cargo"
-  $startInfo.UseShellExecute = $false
-  $startInfo.RedirectStandardOutput = $false
-  $startInfo.RedirectStandardError = $false
-  $startInfo.Arguments = ($Arguments | ForEach-Object { Format-ProcessArgument $_ }) -join " "
-  $process = [System.Diagnostics.Process]::Start($startInfo)
+  param([string[]]$Arguments, [int]$TimeoutSeconds, [string]$Label)
+  $stdoutLog = New-TemporaryFile
+  $stderrLog = New-TemporaryFile
+  $argumentText = ($Arguments | ForEach-Object { Format-ProcessArgument $_ }) -join " "
+  $process = Start-Process `
+    -FilePath "cargo" `
+    -ArgumentList $argumentText `
+    -NoNewWindow `
+    -RedirectStandardOutput $stdoutLog `
+    -RedirectStandardError $stderrLog `
+    -PassThru
   if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    $process.WaitForExit()
+    $lines = Write-CargoLogOutput $stdoutLog $stderrLog
+    Write-BackendOsFailureAnnotation $Label "timeout after ${TimeoutSeconds}s" $lines
+    Remove-Item -LiteralPath $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
     throw "cargo $($Arguments -join ' ') exceeded ${TimeoutSeconds}s"
   }
+  $lines = Write-CargoLogOutput $stdoutLog $stderrLog
   if ($process.ExitCode -ne 0) {
+    Write-BackendOsFailureAnnotation $Label "exit code $($process.ExitCode)" $lines
+    Remove-Item -LiteralPath $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
     exit $process.ExitCode
   }
+  Remove-Item -LiteralPath $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
+}
+
+function Write-CargoLogOutput {
+  param([string]$StdoutLog, [string]$StderrLog)
+  $lines = @()
+  if (Test-Path -LiteralPath $StdoutLog) {
+    $lines += Get-Content -LiteralPath $StdoutLog
+  }
+  if (Test-Path -LiteralPath $StderrLog) {
+    $lines += Get-Content -LiteralPath $StderrLog
+  }
+  foreach ($line in $lines) {
+    Write-Host $line
+  }
+  $lines
+}
+
+function Write-BackendOsFailureAnnotation {
+  param([string]$Label, [string]$Status, $Lines)
+  $failureLines = @()
+  $capture = 0
+  foreach ($line in $Lines) {
+    if ($line -match "FAILED|failures|panicked|Error:|error:|assertion|Caused by|timed out|exceeded") {
+      $capture = 80
+    }
+    if ($capture -gt 0) {
+      $failureLines += $line
+      $capture--
+    }
+  }
+  $failureLines = @($failureLines | Select-Object -Last 120)
+  if ($failureLines.Count -eq 0) {
+    $failureLines = @($Lines | Select-Object -Last 40)
+  }
+  $tail = $failureLines -join "`n"
+  $message = Convert-GitHubAnnotationText "$Label failed with $Status`n$tail"
+  Write-Host "::error title=Backend OS test failed::$message"
+}
+
+function Convert-GitHubAnnotationText {
+  param([string]$Value)
+  $Value.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
 }
 
 function Invoke-SerialOsTestCases {
@@ -101,7 +154,7 @@ function Invoke-SerialOsTestCases {
   foreach ($case in $Cases) {
     Write-Host ""
     Write-Host "==> Running backend OS test $($case.Package)::$($case.Target) [serial]"
-    Invoke-CargoTestWithTimeout (Get-CargoTestArguments $case) $TimeoutSeconds
+    Invoke-CargoTestWithTimeout (Get-CargoTestArguments $case) $TimeoutSeconds "$($case.Package)::$($case.Target)"
   }
 }
 

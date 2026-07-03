@@ -5,7 +5,7 @@
       "tura [OPTIONS]                         open the interactive TUI",
       "tura [OPTIONS] exec [PROMPT...]        run the Rust CLI front",
       "tura [OPTIONS] run [PROMPT...]         run a non-interactive prompt",
-      "tura [OPTIONS] bash|zsh|shll [PROMPT...]",
+      "tura [OPTIONS] bash|zsh|shel [PROMPT...]",
       "tura [OPTIONS] <command> --help        show command-specific help"
     ],
     "commands": [
@@ -13,7 +13,7 @@
       { "name": "exec", "summary": "forward to the Rust CLI front (`tura_exec`)" },
       { "name": "bash", "summary": "run a prompt with command tools forced to bash" },
       { "name": "zsh", "summary": "run a prompt with command tools forced to zsh" },
-      { "name": "shll", "summary": "run a prompt with command tools forced to shell_command" },
+      { "name": "shel", "summary": "run a prompt with command tools forced to shell_command" },
       { "name": "resume", "summary": "show an existing session or append a follow-up prompt" },
       { "name": "session", "summary": "list or show sessions" },
       { "name": "config", "summary": "read or update workspace session config" },
@@ -24,14 +24,10 @@
       { "name": "file", "summary": "list, read, open, or reveal workspace files" },
       { "name": "command", "summary": "list or execute gateway commands" },
       { "name": "inspect", "summary": "show gateway service, paths, and sessions" },
-      { "name": "gateway", "summary": "call any gateway HTTP endpoint directly" },
+      { "name": "gateway", "summary": "send a raw gateway CLI protocol request" },
       { "name": "completion", "summary": "generate shell completion for bash, zsh, or fish" }
     ],
     "options": [
-      {
-        "flags": "--gateway-url URL",
-        "summary": "Gateway base URL; defaults to TURA_GATEWAY_URL, the project active URL, then dev 4125 / release 4126"
-      },
       { "flags": "--cwd PATH", "summary": "Workspace directory sent to gateway" },
       {
         "flags": "--initial-session ID",
@@ -51,7 +47,7 @@
           "tura run \"Inspect the workspace and summarize the architecture\"",
           "tura exec \"Inspect the workspace using the Rust CLI front\"",
           "tura zsh \"Inspect shell startup files with zsh semantics\"",
-          "tura run --shll \"Use the system shell_command surface\"",
+          "tura run --shel \"Use the system shell_command surface\"",
           "tura run --model openai/gpt-5 --output ndjson \"Fix the failing test\"",
           "tura session list --json",
           "tura provider list --json"
@@ -63,7 +59,7 @@
     "title": "Run a prompt",
     "usage": [
       "tura [OPTIONS] run [PROMPT...] [RUN_OPTIONS]",
-      "tura [OPTIONS] bash|zsh|shll [PROMPT...] [RUN_OPTIONS]"
+      "tura [OPTIONS] bash|zsh|shel [PROMPT...] [RUN_OPTIONS]"
     ],
     "options": [
       { "flags": "--session ID", "summary": "append the prompt to an existing session" },
@@ -75,7 +71,7 @@
       { "flags": "--model-acceleration", "summary": "enable priority/accelerated routing" },
       { "flags": "--no-model-acceleration", "summary": "disable priority/accelerated routing" },
       {
-        "flags": "--bash, --zsh, --shll",
+        "flags": "--bash, --zsh, --shel",
         "summary": "force the command-run shell surface for this prompt"
       },
       { "flags": "--output text|json|ndjson", "summary": "output format" },
@@ -208,16 +204,20 @@
     ]
   },
   "gateway": {
-    "title": "Raw gateway HTTP",
+    "title": "Raw gateway CLI protocol",
     "usage": [
-      "tura [OPTIONS] gateway GET /global/health",
-      "tura [OPTIONS] gateway POST /command --data '{\"command\":\"name\",\"args\":[]}'",
-      "tura [OPTIONS] gateway PATCH /session/SESSION_ID --data '{\"name\":\"New name\"}'"
+      "tura [OPTIONS] gateway global.health",
+      "tura [OPTIONS] gateway command.execute --data '{\"command\":\"name\",\"args\":[]}'",
+      "tura [OPTIONS] gateway session.update --params '{\"sessionID\":\"SESSION_ID\"}' --data '{\"name\":\"New name\"}'"
     ],
     "options": [
       {
+        "flags": "--params JSON",
+        "summary": "JSON object sent as CLI protocol params"
+      },
+      {
         "flags": "-d, --data JSON",
-        "summary": "JSON request body for POST, PATCH, PUT, and DELETE"
+        "summary": "JSON payload sent through the CLI protocol"
       }
     ]
   }

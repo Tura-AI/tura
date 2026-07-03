@@ -8,9 +8,6 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
-from cleanup_repo_tura_processes import cleanup_repo_tura_processes
-
-
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
 def free_port() -> int:
@@ -66,20 +63,6 @@ def start_server() -> subprocess.Popen | None:
         stdin=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
-
-
-def stop(process: subprocess.Popen | None) -> None:
-    if not process or process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/pid", str(process.pid), "/t", "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        process.terminate()
 
 
 def record_browser_error(errors: list[str], text: str) -> None:
@@ -155,7 +138,7 @@ async def main() -> None:
                 ".plan-workbench",
             )
             await expect(desktop.locator(".plan-workbench")).to_be_visible(timeout=15000)
-            await desktop.get_by_role("button", name="分屏协作").click()
+            await desktop.get_by_role("button", name="Split").click()
             await expect(desktop.locator(".plan-conversation-panel")).to_be_visible(timeout=15000)
 
             handle = await rect(desktop, ".plan-panel-resize")
@@ -190,7 +173,7 @@ async def main() -> None:
                 ".plan-workbench",
             )
             await expect(mobile.locator(".plan-workbench")).to_be_visible(timeout=15000)
-            await mobile.get_by_role("button", name="分屏协作").click()
+            await mobile.get_by_role("button", name="Split").click()
             await expect(mobile.locator(".plan-conversation-panel")).to_be_visible(timeout=15000)
             mobile_workbench_class = await mobile.locator(".workbench").get_attribute(
                 "class"
@@ -208,8 +191,7 @@ async def main() -> None:
             if errors:
                 raise AssertionError("\\n".join(errors))
     finally:
-        stop(process)
-        cleanup_repo_tura_processes()
+        pass
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ const COMMANDS = [
   "exec",
   "bash",
   "zsh",
-  "shll",
+  "shel",
   "resume",
   "session",
   "config",
