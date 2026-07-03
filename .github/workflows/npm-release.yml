@@ -100,16 +100,39 @@ jobs:
           if (-not $platformPackage) { throw "Platform package tarball was not produced." }
           $mainPackJson = npm pack --json --pack-destination release/npm-main | ConvertFrom-Json
           $mainPackage = Join-Path $root (Join-Path "release/npm-main" $mainPackJson[0].filename)
+          $platformInstallDir = Join-Path $env:RUNNER_TEMP "tura-platform-package-check"
           $installDir = Join-Path $env:RUNNER_TEMP "tura-npm-install-check"
+          if (Test-Path -LiteralPath $platformInstallDir) { Remove-Item -LiteralPath $platformInstallDir -Recurse -Force }
           if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $platformInstallDir | Out-Null
           New-Item -ItemType Directory -Path $installDir | Out-Null
+          Push-Location $platformInstallDir
+          try {
+            npm init -y --silent | Out-Null
+            npm install --omit=optional $platformPackage.FullName
+            $platformPackageDir = Get-ChildItem -LiteralPath (Join-Path $platformInstallDir "node_modules") -Directory -Filter "tura-*" | Select-Object -First 1
+            if (-not $platformPackageDir) { throw "Installed platform package directory was not found." }
+          } finally {
+            Pop-Location
+          }
           Push-Location $installDir
           try {
             npm init -y --silent | Out-Null
-            npm install $platformPackage.FullName
-            $platformPackageDir = Get-ChildItem -LiteralPath (Join-Path $installDir "node_modules") -Directory -Filter "tura-*" | Select-Object -First 1
-            if (-not $platformPackageDir) { throw "Installed platform package directory was not found." }
-            npm install --foreground-scripts $mainPackage
+            $env:TURA_NPM_PLATFORM_PACKAGE_DIR = $platformPackageDir.FullName
+            npm install --foreground-scripts --omit=optional $mainPackage
+            $mainPackageDir = Join-Path $installDir "node_modules/tura"
+            $releaseDir = Join-Path $mainPackageDir "target/release"
+            $releaseBinary = Join-Path $releaseDir (if ($IsWindows) { "tura.exe" } else { "tura" })
+            $rustCliBinary = Join-Path $releaseDir (if ($IsWindows) { "tura_exec.exe" } else { "tura_exec" })
+            $providerConfig = Join-Path $releaseDir "config/provider_config.json"
+            $guiIndex = Join-Path $releaseDir "tura_gui/index.html"
+            foreach ($requiredPath in @($releaseBinary, $rustCliBinary, $providerConfig, $guiIndex)) {
+              if (-not (Test-Path -LiteralPath $requiredPath)) { throw "Installed package is missing $requiredPath" }
+            }
+            if (-not $IsWindows) {
+              $mode = (Get-Item -LiteralPath $releaseBinary).UnixFileMode
+              if (-not ($mode -band [System.IO.UnixFileMode]::UserExecute)) { throw "Installed tura binary is not executable: $releaseBinary" }
+            }
             $binName = if ($IsWindows) { "tura.cmd" } else { "tura" }
             $turaBin = Join-Path $installDir (Join-Path "node_modules/.bin" $binName)
             if (-not (Test-Path -LiteralPath $turaBin)) { throw "Installed tura bin was not found: $turaBin" }
@@ -126,6 +149,7 @@ jobs:
             }
             $helpOutput | Select-Object -First 8 | ForEach-Object { Write-Host $_ }
           } finally {
+            Remove-Item Env:\TURA_NPM_PLATFORM_PACKAGE_DIR -ErrorAction SilentlyContinue
             Pop-Location
           }
 
