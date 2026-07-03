@@ -82,7 +82,9 @@ export function App() {
   const initialSessionId = forceNewSession ? null : readSearchParam("sessionId");
   const initialModel = readSearchParam("model");
   const initialAgent = readSearchParam("agent");
-  const requestedGatewayUrl = readSearchParam("gatewayUrl") ?? defaultGatewayUrl();
+  const requestedGatewayParam = readSearchParam("gatewayUrl");
+  const requestedGatewayUrl = requestedGatewayParam ?? defaultGatewayUrl();
+  const gatewayUrlExplicit = requestedGatewayParam !== undefined;
   const [state, setState] = createSignal<AppState>(
     withInitialOverrides(
       e2eFixture
@@ -655,6 +657,7 @@ export function App() {
     state,
     setState,
     gatewayUrl,
+    gatewayUrlExplicit,
     rootClient,
     forceNewSession,
     disableGatewayAutostart,

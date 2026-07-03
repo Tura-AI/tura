@@ -27,6 +27,7 @@ export function isGatewayTimeoutError(error: unknown): boolean {
 
 export async function tryStartGateway(
   baseUrl: string,
+  gatewayUrlExplicit: boolean,
   setState: Setter<AppState>,
 ): Promise<boolean> {
   setState((previous) => ({
@@ -38,7 +39,7 @@ export async function tryStartGateway(
     gatewayStartupNotice: t("gatewayWaiting"),
   }));
   if (isTauriRuntime()) {
-    return tryConnectGatewayFromTauri(baseUrl, setState);
+    return tryConnectGatewayFromTauri(baseUrl, gatewayUrlExplicit, setState);
   }
   return tryConnectGatewayByHealth(baseUrl, setState);
 }
@@ -76,11 +77,12 @@ async function tryConnectGatewayByHealth(
 
 async function tryConnectGatewayFromTauri(
   baseUrl: string,
+  gatewayUrlExplicit: boolean,
   setState: Setter<AppState>,
 ): Promise<boolean> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    const payload = (await invoke("start_gateway", { gatewayUrl: baseUrl })) as
+    const payload = (await invoke("start_gateway", { gatewayUrl: baseUrl, gatewayUrlExplicit })) as
       { status?: string; gatewayUrl?: string; gateway_url?: string } | undefined;
     const nextGatewayUrl = payload?.gatewayUrl ?? payload?.gateway_url;
     const notice = payload?.status === "connected" ? t("gatewayWaiting") : t("gatewayWaiting");

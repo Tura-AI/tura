@@ -17,7 +17,11 @@ while [ "$#" -gt 0 ]; do
     --skip-tui) SKIP_TUI=1 ;;
     --skip-gui) SKIP_GUI=1 ;;
     --skip-tauri) SKIP_TAURI=1 ;;
-    --backend-only|--skip-apps) BACKEND_ONLY=1 ;;
+    --backend-only) BACKEND_ONLY=1 ;;
+    --skip-apps)
+      echo "--skip-apps was removed for release builds because it was ambiguous. Use --backend-only, --skip-tui, --skip-gui, or --skip-tauri explicitly." >&2
+      exit 2
+      ;;
     --release-probe)
       shift
       [ "$#" -gt 0 ] || { echo "--release-probe requires a value" >&2; exit 2; }
@@ -27,6 +31,8 @@ while [ "$#" -gt 0 ]; do
       cat <<'EOF'
 Usage:
   scripts/tests/scripts/test-build-release.sh [--backend-only] [--skip-tui] [--skip-gui] [--skip-tauri] [--release-probe release-v0.0.0-ci]
+
+Use --skip-tui, --skip-gui, or --skip-tauri for targeted app skips.
 EOF
       exit 0
       ;;

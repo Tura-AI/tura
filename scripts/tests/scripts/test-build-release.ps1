@@ -3,10 +3,15 @@ param(
   [switch]$SkipGui,
   [switch]$SkipTauri,
   [switch]$BackendOnly,
+  [switch]$SkipApps,
   [string]$ReleaseProbe = $env:TURA_RELEASE_PROBE
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($SkipApps) {
+  throw "-SkipApps was removed for release builds because it was ambiguous. Use -BackendOnly, -SkipTui, -SkipGui, or -SkipTauri explicitly."
+}
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "..\..\.."))

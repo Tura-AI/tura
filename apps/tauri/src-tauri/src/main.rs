@@ -212,25 +212,107 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
+fn start_gateway(
+    gateway_url: String,
+    gateway_url_explicit: Option<bool>,
+) -> Result<StartGatewayResponse, String> {
+    start_gateway_with_launcher(
+        &gateway_url,
+        gateway_url_explicit.unwrap_or(false),
+        launch_gateway_process,
+    )
+}
+
+fn start_gateway_with_launcher(
+    gateway_url: &str,
+    gateway_url_explicit: bool,
+    launcher: impl Fn(&GatewayEndpoint, &Path, &Path) -> Result<GatewayEndpoint, String>,
+) -> Result<StartGatewayResponse, String> {
     let my_root = current_runtime_root();
     let instance_home = instance_home_for_runtime_root(&my_root);
-    let endpoint = select_gateway_endpoint(&gateway_url, &my_root, &instance_home)?;
-    if let Some(root) = gateway_identity(&endpoint) {
-        if root.is_empty() || same_root(&root, &my_root) {
-            write_active_gateway_url(&instance_home, &endpoint)?;
-            remember_gateway_url(&endpoint.url());
-            return Ok(StartGatewayResponse {
-                ok: true,
-                status: "connected",
-                gateway_path: None,
-                gateway_url: Some(endpoint.url()),
-            });
-        }
+    let endpoint = select_gateway_endpoint(gateway_url, gateway_url_explicit, &my_root, &instance_home)?;
+    if endpoint_is_usable(&endpoint, gateway_url_explicit, &my_root) {
+        return connected_gateway_response(&instance_home, &endpoint, "connected");
+    }
+    if gateway_url_explicit {
+        return Err(format!(
+            "explicit gateway is not running at {}; start that gateway or remove the explicit URL",
+            endpoint.url()
+        ));
+    }
+    let launched = launcher(&endpoint, &my_root, &instance_home)?;
+    if endpoint_is_usable(&launched, false, &my_root) {
+        return connected_gateway_response(&instance_home, &launched, "connected");
     }
     Err(format!(
-        "gateway is not running at {}; start tura_gateway before launching tura_gui",
-        endpoint.url()
+        "gateway did not become healthy for this home at {}",
+        launched.url()
+    ))
+}
+
+fn connected_gateway_response(
+    instance_home: &Path,
+    endpoint: &GatewayEndpoint,
+    status: &'static str,
+) -> Result<StartGatewayResponse, String> {
+    write_active_gateway_url(instance_home, endpoint)?;
+    remember_gateway_url(&endpoint.url());
+    Ok(StartGatewayResponse {
+        ok: true,
+        status,
+        gateway_path: None,
+        gateway_url: Some(endpoint.url()),
+    })
+}
+
+fn endpoint_is_usable(endpoint: &GatewayEndpoint, explicit: bool, my_root: &Path) -> bool {
+    let Some(root) = gateway_identity(endpoint) else {
+        return false;
+    };
+    explicit || same_root(&root, my_root)
+}
+
+fn launch_gateway_process(
+    target: &GatewayEndpoint,
+    my_root: &Path,
+    instance_home: &Path,
+) -> Result<GatewayEndpoint, String> {
+    let executable = resolve_gateway_binary(my_root)?;
+    let mut command = Command::new(&executable);
+    command
+        .env("TURA_HOME", instance_home)
+        .env("TURA_PROJECT_ROOT", my_root)
+        .env(tura_path::TURA_GATEWAY_PORT_ENV, target.port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null());
+    tura_path::process_hardening::hide_child_console_window(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("failed to start gateway {}: {err}", executable.display()))?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|err| format!("failed to inspect gateway startup: {err}"))?
+        {
+            return Err(format!(
+                "gateway exited before becoming healthy: {}",
+                status
+            ));
+        }
+        let candidate = tura_path::read_active_gateway_url_for_home(instance_home)
+            .map(|url| GatewayEndpoint::parse(&url))
+            .unwrap_or_else(|| target.clone());
+        if endpoint_is_usable(&candidate, false, my_root) {
+            return Ok(candidate);
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let _ = child.kill();
+    Err(format!(
+        "gateway did not become healthy after startup at {}",
+        target.url()
     ))
 }
 
@@ -421,24 +503,66 @@ fn gateway_health_reachable(endpoint: &GatewayEndpoint) -> bool {
     gateway_identity(endpoint).is_some()
 }
 
+fn default_gateway_endpoint() -> GatewayEndpoint {
+    if let Ok(port) = std::env::var(tura_path::TURA_GATEWAY_PORT_ENV)
+        .unwrap_or_default()
+        .trim()
+        .parse::<u16>()
+    {
+        return GatewayEndpoint {
+            host: "127.0.0.1".to_string(),
+            port,
+            explicit_port: Some(port),
+        };
+    }
+    GatewayEndpoint::parse(&tura_path::default_gateway_url_for_build_kind(
+        GATEWAY_BUILD_KIND,
+    ))
+}
+
+fn resolve_gateway_binary(my_root: &Path) -> Result<PathBuf, String> {
+    let exe_name = if cfg!(windows) {
+        "tura_gateway.exe"
+    } else {
+        "tura_gateway"
+    };
+    let mut candidates = Vec::new();
+    if let Some(value) = std::env::var_os("TURA_GATEWAY_BIN")
+        .or_else(|| std::env::var_os("TURA_GATEWAY_EXE"))
+    {
+        candidates.push(PathBuf::from(value));
+    }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(dir) = current_exe.parent() {
+            candidates.push(dir.join(exe_name));
+        }
+    }
+    candidates.push(my_root.join("target").join("release").join(exe_name));
+    candidates.push(my_root.join("bin").join(exe_name));
+    candidates.push(my_root.join(exe_name));
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| "gateway binary not found; build or install tura_gateway first".to_string())
+}
+
 fn select_gateway_endpoint(
     requested_url: &str,
+    explicit: bool,
     my_root: &Path,
     instance_home: &Path,
 ) -> Result<GatewayEndpoint, String> {
-    let default_endpoint = GatewayEndpoint::parse(&tura_path::default_gateway_url_for_build_kind(
-        GATEWAY_BUILD_KIND,
-    ));
+    let default_endpoint = default_gateway_endpoint();
     if let Some(requested_url) = non_empty_gateway_url(requested_url) {
         let requested_endpoint = GatewayEndpoint::parse(&requested_url);
-        if requested_endpoint.url() != default_endpoint.url() {
+        if explicit {
             return Ok(requested_endpoint);
         }
     }
-    let candidates = gateway_endpoint_candidates("", instance_home, &default_endpoint);
+    let candidates = gateway_endpoint_candidates(requested_url, instance_home, &default_endpoint);
     for candidate in candidates {
         if let Some(root) = gateway_identity(&candidate) {
-            if root.is_empty() || same_root(&root, my_root) {
+            if same_root(&root, my_root) {
                 write_active_gateway_url(instance_home, &candidate)?;
                 return Ok(candidate);
             }
@@ -916,13 +1040,25 @@ mod tests {
             let _ = stream.read(&mut buffer);
             stream
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 16\r\n\r\n{\"healthy\":true}",
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{}}}",
+                        serde_json::to_string(
+                            &std::env::current_dir().expect("cwd").to_string_lossy().to_string()
+                        )
+                        .expect("json root")
+                    )
+                    .as_bytes(),
                 )
                 .expect("write health response");
         });
 
-        let selected = select_gateway_endpoint("http://127.0.0.1:4126", Path::new("."), &temp)
-            .expect("select endpoint");
+        let selected = select_gateway_endpoint(
+            "http://127.0.0.1:4126",
+            false,
+            &std::env::current_dir().expect("cwd"),
+            &temp,
+        )
+        .expect("select endpoint");
 
         assert_eq!(selected.url(), format!("http://127.0.0.1:{port}"));
         drop(env);
@@ -932,7 +1068,7 @@ mod tests {
     #[test]
     fn select_gateway_endpoint_does_not_probe_explicit_requested_url() {
         let temp = test_temp_dir("select-requested-no-probe");
-        let requested = select_gateway_endpoint("http://127.0.0.1:4997", Path::new("."), &temp)
+        let requested = select_gateway_endpoint("http://127.0.0.1:4997", true, Path::new("."), &temp)
             .expect("select requested endpoint");
 
         assert_eq!(requested.url(), "http://127.0.0.1:4997");
@@ -1012,7 +1148,8 @@ mod tests {
         });
 
         let response =
-            start_gateway(format!("http://127.0.0.1:{port}")).expect("start gateway response");
+            start_gateway(format!("http://127.0.0.1:{port}"), Some(true))
+                .expect("start gateway response");
 
         assert!(response.ok);
         assert_eq!(response.status, "connected");
@@ -1039,11 +1176,60 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
         drop(listener);
 
-        let error = start_gateway(format!("http://127.0.0.1:{port}"))
-            .expect_err("standalone GUI must not start gateway");
+        let error = start_gateway(format!("http://127.0.0.1:{port}"), Some(true))
+            .expect_err("explicit absent gateway must fail without spawning");
 
-        assert!(error.contains("gateway is not running at"));
-        assert!(error.contains("start tura_gateway before launching tura_gui"));
+        assert!(error.contains("explicit gateway is not running at"));
+    }
+
+    #[test]
+    fn start_gateway_non_explicit_launches_when_no_same_root_gateway_exists() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let home = test_temp_dir("start-gateway-launches-home");
+        let home_text = home.to_string_lossy().to_string();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let requested_port = port.saturating_sub(1).max(1024);
+        let env = TestEnv::set([
+            ("TURA_HOME", home_text.as_str()),
+            (tura_path::TURA_GATEWAY_URL_ENV, ""),
+            (tura_path::TURA_GATEWAY_PORT_ENV, &requested_port.to_string()),
+        ]);
+        let my_root = current_runtime_root();
+        let root_text = my_root.to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health check");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{}}}",
+                        serde_json::to_string(&root_text).expect("json root")
+                    )
+                    .as_bytes(),
+                )
+                .expect("write health response");
+        });
+        let launched_url = format!("http://127.0.0.1:{port}");
+        let response = start_gateway_with_launcher(
+            "http://127.0.0.1:65530",
+            false,
+            |target, _root, _home| {
+                assert_eq!(target.url(), format!("http://127.0.0.1:{requested_port}"));
+                Ok(GatewayEndpoint::parse(&launched_url))
+            },
+        )
+        .expect("start gateway response");
+
+        assert_eq!(response.status, "connected");
+        assert_eq!(response.gateway_url, Some(launched_url.clone()));
+        assert_eq!(
+            tura_path::read_active_gateway_url_for_home(&home).as_deref(),
+            Some(launched_url.as_str())
+        );
+        drop(env);
+        let _ = fs::remove_dir_all(home);
     }
 
     struct TestEnv {

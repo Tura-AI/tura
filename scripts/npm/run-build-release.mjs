@@ -11,12 +11,16 @@ const psFlagMap = new Map([
   ["--skip-gui", "-SkipGui"],
   ["--skip-tauri", "-SkipTauri"],
   ["--backend-only", "-BackendOnly"],
-  ["--skip-apps", "-BackendOnly"],
   ["--clean", "-Clean"],
   ["-clean", "-Clean"],
   ["--help", "-Help"],
   ["-h", "-Help"]
 ]);
+
+if (userArgs.includes("--skip-apps")) {
+  console.error("--skip-apps was removed for release builds because it was ambiguous. Use --backend-only, --skip-tui, --skip-gui, or --skip-tauri explicitly.");
+  process.exit(2);
+}
 
 function run(command, args) {
   return spawnSync(command, args, {

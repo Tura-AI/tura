@@ -3,6 +3,7 @@ param(
   [switch]$SkipGui,
   [switch]$SkipTauri,
   [switch]$BackendOnly,
+  [switch]$SkipApps,
   [switch]$Help,
   [switch]$Clean
 )
@@ -26,8 +27,13 @@ Builds release artifacts directly into target\release.
 By default this builds backend binaries, the web GUI dist, the compiled TUI,
 and the Tauri desktop bundle. Use -BackendOnly when a CI job only needs Rust
 release artifacts.
+Use -SkipTui, -SkipGui, or -SkipTauri for targeted app skips.
 "@
   exit 0
+}
+
+if ($SkipApps) {
+  throw "-SkipApps was removed for release builds because it was ambiguous. Use -BackendOnly, -SkipTui, -SkipGui, or -SkipTauri explicitly."
 }
 
 function Require-Command {
@@ -115,7 +121,7 @@ function Test-PathUnderRepo {
 }
 
 function Stop-RepoTuraBackends {
-  $Names = @("tura_gateway", "tura_router", "tura_session_db", "tura_runtime", "tura_exec")
+  $Names = @("tura", "tura_gui", "tura_gateway", "tura_router", "tura_session_db", "tura_runtime", "tura_exec")
   $Processes = Get-Process -ErrorAction SilentlyContinue |
     Where-Object { $Names -contains $_.ProcessName } |
     Where-Object {
@@ -156,6 +162,11 @@ Require-Command "cargo" "Install Rust, then rerun this script."
 if ($BuildTui -or $BuildGui -or $BuildTauri) {
   Require-Command "bun" "Install Bun, then rerun this script or pass -BackendOnly."
 }
+if ($BackendOnly) {
+  Write-Host "Building backend release artifacts only (-BackendOnly was specified)."
+} else {
+  Write-Host "Building full release artifacts: backend processes, GUI dist, TUI executable, and Tauri desktop bundle."
+}
 
 if ($IsWindows -or $env:OS -eq "Windows_NT") {
   Add-RustFlag "-C link-arg=/DEBUG:NONE"
@@ -185,7 +196,13 @@ Copy-ReleaseConfig
 
 if ($BuildGui) {
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")
-  Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\gui")
+  $PreviousTuraBuildKind = $env:TURA_BUILD_KIND
+  $env:TURA_BUILD_KIND = "release"
+  try {
+    Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\gui")
+  } finally {
+    $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
+  }
   Copy-GuiDist
 }
 
@@ -202,13 +219,25 @@ if ($BuildTui) {
   if ($IsWindows -or $env:OS -eq "Windows_NT") {
     $bunArgs = @("build", "--compile", "--windows-icon", $IconPath, "--outfile", (Join-Path $TargetDir "tura.exe"), "apps\tui\src\index.ts")
   }
-  Invoke-Checked "bun" $bunArgs
+  $PreviousTuraBuildKind = $env:TURA_BUILD_KIND
+  $env:TURA_BUILD_KIND = "release"
+  try {
+    Invoke-Checked "bun" $bunArgs
+  } finally {
+    $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
+  }
 }
 
 if ($BuildTauri) {
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\tauri") @("node_modules\@tauri-apps\cli\package.json")
-  Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\tauri")
+  $PreviousTuraBuildKind = $env:TURA_BUILD_KIND
+  $env:TURA_BUILD_KIND = "release"
+  try {
+    Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\tauri")
+  } finally {
+    $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
+  }
 }
 
 Write-Host "Release artifacts ready in $TargetDir"
