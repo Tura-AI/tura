@@ -16,8 +16,16 @@ export type AgentRuntimeConfig = {
 
 export type AgentRuntimeFallback = {
   model?: string;
+  modelConfig?: ModelTierConfigLike;
   reasoningLevel?: string;
   priorityEnabled?: boolean;
+};
+
+export type ModelTierConfigLike = {
+  tiers?: Array<{
+    tier: string;
+    current?: { provider?: string; model?: string };
+  }>;
 };
 
 export type AgentRuntimeRequest = {
@@ -67,10 +75,22 @@ export function agentRuntimeRequest(
   }
   const config = agentRuntimeConfig(agent);
   return {
-    model: modelPairText(config.currentModel) ?? fallback.model,
+    model:
+      modelPairText(config.currentModel) ??
+      modelForRuntimeTier(fallback.modelConfig, config.defaultModelTier) ??
+      fallback.model,
     variant: config.reasoningLevel,
     model_acceleration_enabled: config.priorityEnabled,
   };
+}
+
+export function modelForRuntimeTier(
+  modelConfig: ModelTierConfigLike | undefined,
+  tier: string,
+): string | undefined {
+  const current = modelConfig?.tiers?.find((item) => item.tier === tier)?.current;
+  if (!current?.provider || !current.model) return undefined;
+  return `${current.provider}/${current.model.startsWith(`${current.provider}/`) ? current.model.slice(current.provider.length + 1) : current.model}`;
 }
 
 export function applyAgentRuntimeConfig<T extends { provider?: unknown }>(

@@ -10,6 +10,7 @@ import { agentDisplayName, visibleConfigurableAgents } from "../utils/agent-disp
 import {
   agentRuntimeConfig,
   formatAgentRuntimeModelText,
+  modelForRuntimeTier,
   modelPairText,
 } from "../../../../tui/src/agent-runtime-config";
 
@@ -157,8 +158,8 @@ function agentModelText(
   const runtime = agentRuntimeConfig(agent);
   const model =
     modelPairText(runtime.currentModel) ??
-    fallbackModel ??
-    modelForTier(modelConfig, runtime.defaultModelTier);
+    modelForRuntimeTier(modelConfig, runtime.defaultModelTier) ??
+    fallbackModel;
   const displayModel = model ? runtimeModelText(model, modelConfig) : "";
   return displayModel ? formatAgentRuntimeModelText(displayModel, runtime, "p") : "";
 }
@@ -167,17 +168,6 @@ function runtimeModelText(model: string, modelConfig: TuraConfigResponse | undef
   const [provider, ...modelParts] = model.split("/");
   const modelId = modelParts.join("/");
   return namedModelText(modelConfig, provider, modelId) ?? model;
-}
-
-function modelForTier(
-  modelConfig: TuraConfigResponse | undefined,
-  tier: string,
-): string | undefined {
-  const current = modelConfig?.tiers?.find((item) => item.tier === tier)?.current;
-  return (
-    namedModelText(modelConfig, current?.provider, current?.model) ??
-    (current?.provider && current.model ? `${current.provider}/${current.model}` : undefined)
-  );
 }
 
 function namedModelText(

@@ -130,6 +130,7 @@ export function App() {
       state().agents.find((agent) => agent.name === state().selectedAgent),
       {
         model: state().selectedModel,
+        modelConfig: state().modelConfig,
         reasoningLevel: state().modelVariant,
         priorityEnabled: state().accelerationEnabled,
       },
