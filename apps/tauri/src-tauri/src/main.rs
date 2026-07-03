@@ -36,6 +36,7 @@ static PENDING_MAIN_WINDOW_ARGS: OnceLock<Mutex<Option<Vec<String>>>> = OnceLock
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            remember_gateway_url_from_args(&args);
             restore_main_window_from_args(app, args);
         }))
         .on_page_load(|webview, payload| {
@@ -45,6 +46,8 @@ fn main() {
         })
         .setup(|app| {
             let args = std::env::args().skip(1).collect::<Vec<_>>();
+            remember_gateway_url_from_args(&args);
+            remember_active_gateway_url_if_unset();
             queue_main_window_restore(args.clone());
             restore_main_window_from_args(app.handle(), args);
             Ok(())
@@ -135,6 +138,36 @@ fn gui_startup_url_from_args(mut base_url: Url, args: Vec<String>) -> Option<Url
     Some(base_url)
 }
 
+fn remember_gateway_url_from_args(args: &[String]) {
+    if let Some(params) = GuiStartupParams::parse(args.to_vec()) {
+        remember_gateway_url(&params.gateway_url);
+    }
+}
+
+fn remember_active_gateway_url_if_unset() {
+    if std::env::var(tura_path::TURA_GATEWAY_URL_ENV)
+        .ok()
+        .and_then(|value| non_empty_gateway_url(&value))
+        .is_some()
+    {
+        return;
+    }
+    let my_root = current_runtime_root();
+    let instance_home = instance_home_for_runtime_root(&my_root);
+    if let Some(url) = tura_path::read_active_gateway_url_for_home(&instance_home) {
+        remember_gateway_url(&url);
+    }
+}
+
+fn remember_gateway_url(gateway_url: &str) {
+    if let Some(url) = non_empty_gateway_url(gateway_url) {
+        std::env::set_var(
+            tura_path::TURA_GATEWAY_URL_ENV,
+            GatewayEndpoint::parse(&url).url(),
+        );
+    }
+}
+
 fn is_gui_startup_base_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "tauri" | "asset" | "file")
 }
@@ -186,6 +219,7 @@ fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
     if let Some(root) = gateway_identity(&endpoint) {
         if root.is_empty() || same_root(&root, &my_root) {
             write_active_gateway_url(&instance_home, &endpoint)?;
+            remember_gateway_url(&endpoint.url());
             return Ok(StartGatewayResponse {
                 ok: true,
                 status: "connected",
@@ -396,9 +430,12 @@ fn select_gateway_endpoint(
         GATEWAY_BUILD_KIND,
     ));
     if let Some(requested_url) = non_empty_gateway_url(requested_url) {
-        return Ok(GatewayEndpoint::parse(&requested_url));
+        let requested_endpoint = GatewayEndpoint::parse(&requested_url);
+        if requested_endpoint.url() != default_endpoint.url() {
+            return Ok(requested_endpoint);
+        }
     }
-    let candidates = gateway_endpoint_candidates(requested_url, instance_home, &default_endpoint);
+    let candidates = gateway_endpoint_candidates("", instance_home, &default_endpoint);
     for candidate in candidates {
         if let Some(root) = gateway_identity(&candidate) {
             if root.is_empty() || same_root(&root, my_root) {
@@ -609,6 +646,25 @@ mod tests {
             pairs.get("sessionId").map(|value| value.as_ref()),
             Some("session-123")
         );
+    }
+
+    #[test]
+    fn gateway_launch_args_are_remembered_for_tray_process_matching() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let env = TestEnv::set([(tura_path::TURA_GATEWAY_URL_ENV, "")]);
+
+        remember_gateway_url_from_args(&[
+            "--gateway-url".to_string(),
+            "http://127.0.0.1:4126/".to_string(),
+            "--workspace".to_string(),
+            "C:\\repo".to_string(),
+        ]);
+
+        assert_eq!(
+            std::env::var(tura_path::TURA_GATEWAY_URL_ENV).as_deref(),
+            Ok("http://127.0.0.1:4126")
+        );
+        drop(env);
     }
 
     #[test]
@@ -846,6 +902,34 @@ mod tests {
     }
 
     #[test]
+    fn default_gateway_endpoint_can_adopt_active_gateway() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let temp = test_temp_dir("default-endpoint-adopts-active");
+        let env = TestEnv::set([(tura_path::TURA_GATEWAY_URL_ENV, "")]);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        tura_path::write_active_gateway_url_for_home(&temp, &format!("http://127.0.0.1:{port}"))
+            .expect("write active gateway url");
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health check");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 16\r\n\r\n{\"healthy\":true}",
+                )
+                .expect("write health response");
+        });
+
+        let selected = select_gateway_endpoint("http://127.0.0.1:4126", Path::new("."), &temp)
+            .expect("select endpoint");
+
+        assert_eq!(selected.url(), format!("http://127.0.0.1:{port}"));
+        drop(env);
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
     fn select_gateway_endpoint_does_not_probe_explicit_requested_url() {
         let temp = test_temp_dir("select-requested-no-probe");
         let requested = select_gateway_endpoint("http://127.0.0.1:4997", Path::new("."), &temp)
@@ -909,7 +993,11 @@ mod tests {
     fn start_gateway_returns_connected_when_endpoint_is_reachable() {
         let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
         let home = test_temp_dir("start-gateway-connected-home");
-        let env = TestEnv::set([("TURA_HOME", home.to_string_lossy().as_ref())]);
+        let home_text = home.to_string_lossy().to_string();
+        let env = TestEnv::set([
+            ("TURA_HOME", home_text.as_str()),
+            (tura_path::TURA_GATEWAY_URL_ENV, ""),
+        ]);
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
         let port = listener.local_addr().expect("local addr").port();
         std::thread::spawn(move || {
@@ -936,6 +1024,10 @@ mod tests {
         assert_eq!(
             tura_path::read_active_gateway_url_for_home(&home).as_deref(),
             Some(format!("http://127.0.0.1:{port}").as_str())
+        );
+        assert_eq!(
+            std::env::var(tura_path::TURA_GATEWAY_URL_ENV).as_deref(),
+            Ok(format!("http://127.0.0.1:{port}").as_str())
         );
         drop(env);
         let _ = fs::remove_dir_all(home);
