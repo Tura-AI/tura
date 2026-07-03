@@ -537,6 +537,11 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
     );
     let turn_id =
         first_prompt_part_id(&payload).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let runtime_metadata = agent_runtime_message_metadata(
+        model_override.clone(),
+        reasoning_effort.clone(),
+        acceleration_enabled,
+    );
     let body = serde_json::json!({
         "session_id": session_id,
         "directory": directory,
@@ -561,6 +566,9 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
             session_store().update_session_status(&session_id, SessionStatusMano::Idle);
             session_store().finish_todos(&session_id, true);
             if let Some(message) = final_agent_message(&session_id, before_count) {
+                let message = session_store()
+                    .merge_message_metadata(&session_id, &message.id, runtime_metadata.clone())
+                    .unwrap_or(message);
                 session_store().push_event(GlobalEvent::MessageUpdated {
                     properties: MessageUpdatedProperties {
                         session_id: session_id.clone(),
@@ -884,6 +892,21 @@ fn normalize_model_override(value: String) -> Option<String> {
         other => other,
     };
     Some(format!("{provider}/{model}"))
+}
+
+fn agent_runtime_message_metadata(
+    model: Option<String>,
+    reasoning_effort: Option<String>,
+    acceleration_enabled: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "runtime": {
+            "model": model,
+            "reasoning_level": reasoning_effort,
+            "priority": acceleration_enabled,
+            "model_acceleration_enabled": acceleration_enabled,
+        }
+    })
 }
 
 pub(super) fn final_agent_message(

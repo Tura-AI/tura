@@ -151,7 +151,9 @@ pub(super) fn parse_cli_args(input: &str) -> Result<WebDiscoverArgs, String> {
             }
             "--format" | "--media-format" | "--media_format" | "--yt-dlp-format"
             | "--yt_dlp_format" => format_selector = Some(take_value(&mut index)?),
-            _ if query_parts.is_empty() && is_media_kind(&word) => kind = normalize_kind(&word),
+            _ if query_parts.is_empty() && kind == "website" && is_kind_word(&word) => {
+                kind = normalize_kind(&word)
+            }
             _ if !word.starts_with("--") => query_parts.push(word.clone()),
             _ => {
                 if inline_value.is_none()
@@ -185,10 +187,10 @@ pub(super) fn is_web_discover_command_name(value: &str) -> bool {
     )
 }
 
-pub(super) fn is_media_kind(value: &str) -> bool {
+pub(super) fn is_kind_word(value: &str) -> bool {
     matches!(
         normalize_kind(value).as_str(),
-        "website" | "image" | "video" | "audio"
+        "website" | "image" | "video" | "audio" | "asset"
     )
 }
 
@@ -214,9 +216,20 @@ pub(super) fn args_from_parts(
     format_selector: Option<String>,
 ) -> Result<WebDiscoverArgs, String> {
     let kind = normalize_kind(kind);
-    if !matches!(kind.as_str(), "website" | "image" | "video" | "audio") {
+    if !matches!(
+        kind.as_str(),
+        "website" | "image" | "video" | "audio" | "asset"
+    ) {
         return Err(format!("unsupported web_discover type: {kind}"));
     }
+    if query.trim().is_empty() {
+        return Err("web_discover query cannot be empty".to_string());
+    }
+    let (asset_type, query) = if kind == "asset" {
+        split_asset_type_from_query(query)
+    } else {
+        (None, query)
+    };
     if query.trim().is_empty() {
         return Err("web_discover query cannot be empty".to_string());
     }
@@ -227,6 +240,7 @@ pub(super) fn args_from_parts(
     };
     Ok(WebDiscoverArgs {
         kind,
+        asset_type,
         query,
         include_regex,
         exclude_regex,
@@ -240,6 +254,29 @@ pub(super) fn args_from_parts(
     })
 }
 
+fn split_asset_type_from_query(query: String) -> (Option<String>, String) {
+    let trimmed = query.trim();
+    let Some((head, tail)) = trimmed.split_once(char::is_whitespace) else {
+        return (normalize_asset_type(trimmed), String::new());
+    };
+    match normalize_asset_type(head) {
+        Some(asset_type) => (Some(asset_type), tail.trim().to_string()),
+        None => (None, trimmed.to_string()),
+    }
+}
+
+fn normalize_asset_type(value: &str) -> Option<String> {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "3d" | "model" | "models" => Some("3d".to_string()),
+        "texture" | "textures" | "material" | "materials" => Some("texture".to_string()),
+        "2d" | "sprite" | "sprites" | "ui" => Some("2d".to_string()),
+        "shader" | "shaders" => Some("shader".to_string()),
+        "audio" | "sound" | "sounds" | "sfx" => Some("audio".to_string()),
+        "auto" | "any" | "asset" | "assets" => Some("auto".to_string()),
+        _ => None,
+    }
+}
+
 pub(super) fn normalize_kind(value: &str) -> String {
     match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
         "web" | "page" | "pages" | "site" | "website" | "webpage" | "webpages" | "web_page"
@@ -247,6 +284,7 @@ pub(super) fn normalize_kind(value: &str) -> String {
         "img" | "images" | "photo" | "photos" => "image".to_string(),
         "videos" | "movie" | "movies" => "video".to_string(),
         "sound" | "music" => "audio".to_string(),
+        "assets" => "asset".to_string(),
         other => other.to_string(),
     }
 }

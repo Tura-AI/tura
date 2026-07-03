@@ -1,11 +1,22 @@
 import type { Message } from "@tura/gateway-sdk";
 import { asRecord } from "./message-tools";
+import {
+  formatAgentRuntimeModelText,
+  normalizeAgentReasoningLevel,
+} from "../../../../tui/src/agent-runtime-config";
 
 export function assistantFooterModelText(message: Message): string {
   const runtime = messageRuntimeMeta(message);
   const provider = runtime.providerID ?? message.providerID;
   const modelId = runtime.modelID ?? message.modelID;
-  return normalizedModelText(provider, modelId) || "Tura";
+  const model = normalizedModelText(provider, modelId) || "Tura";
+  return runtime.reasoningLevel
+    ? formatAgentRuntimeModelText(
+        model,
+        { reasoningLevel: runtime.reasoningLevel, priorityEnabled: runtime.priorityEnabled },
+        "priority",
+      )
+    : model;
 }
 
 export function assistantFooterMetaText(message: Message): string {
@@ -42,10 +53,14 @@ function messageRuntimeMeta(message: Message): {
   cost: number;
   providerID?: string;
   modelID?: string;
+  reasoningLevel?: ReturnType<typeof normalizeAgentReasoningLevel>;
+  priorityEnabled: boolean;
 } {
   let cost = 0;
   let providerID: string | undefined;
   let modelID: string | undefined;
+  let reasoningLevel: ReturnType<typeof normalizeAgentReasoningLevel> | undefined;
+  let priorityEnabled = false;
 
   for (const part of message.parts) {
     const state = asRecord(part.state);
@@ -67,10 +82,24 @@ function messageRuntimeMeta(message: Message): {
         stringField(provider, "model_id") ??
         stringField(metadata, "modelID") ??
         stringField(metadata, "model_id");
+      const runtime = asRecord(metadata.runtime);
+      const runtimeReasoning =
+        stringField(runtime, "reasoning_level") ??
+        stringField(runtime, "reasoningLevel") ??
+        stringField(metadata, "reasoning_level") ??
+        stringField(metadata, "model_variant");
+      if (runtimeReasoning) {
+        reasoningLevel ??= normalizeAgentReasoningLevel(runtimeReasoning);
+      }
+      priorityEnabled ||=
+        booleanField(runtime, "priority") ??
+        booleanField(runtime, "model_acceleration_enabled") ??
+        booleanField(metadata, "model_acceleration_enabled") ??
+        false;
     }
   }
 
-  return { cost, providerID, modelID };
+  return { cost, providerID, modelID, reasoningLevel, priorityEnabled };
 }
 
 function numericField(record: Record<string, unknown>, key: string) {
@@ -81,4 +110,9 @@ function numericField(record: Record<string, unknown>, key: string) {
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function booleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
 }

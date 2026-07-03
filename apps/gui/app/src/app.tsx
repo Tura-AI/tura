@@ -28,6 +28,7 @@ import {
 import { AppShell } from "./app/app-shell";
 import { AppProviders } from "./context/app-providers";
 import { DEFAULT_AGENT_ID } from "./config/defaults";
+import { agentRuntimeRequest } from "../../../tui/src/agent-runtime-config";
 import {
   appendTaskToSession,
   defaultPollInterval,
@@ -123,6 +124,17 @@ export function App() {
   const [expandedRailGroup, setExpandedRailGroup] = createSignal<string>();
   const [workspaceTreeTouched, setWorkspaceTreeTouched] = createSignal(false);
   const e2eStoredAgents = new Map<string, StoredAgent>();
+
+  function activeAgentRuntimeRequest() {
+    return agentRuntimeRequest(
+      state().agents.find((agent) => agent.name === state().selectedAgent),
+      {
+        model: state().selectedModel,
+        reasoningLevel: state().modelVariant,
+        priorityEnabled: state().accelerationEnabled,
+      },
+    );
+  }
 
   if (e2eFixture && typeof window !== "undefined") {
     window.__turaGuiE2E = {
@@ -844,14 +856,15 @@ export function App() {
     if (e2eFixture) {
       return;
     }
+    const runtime = activeAgentRuntimeRequest();
     await Promise.race([
       directoryClient().promptAsync(session.id, {
         messageID: messageId,
         parts: [{ id: `${messageId}:text`, type: "text", text: content }],
-        model: state().selectedModel,
+        model: runtime.model,
         agent: state().selectedAgent,
-        variant: state().modelVariant,
-        model_acceleration_enabled: state().accelerationEnabled,
+        variant: runtime.variant,
+        model_acceleration_enabled: runtime.model_acceleration_enabled,
       }),
       new Promise<never>((_, reject) =>
         window.setTimeout(
@@ -968,12 +981,13 @@ export function App() {
   }
 
   function createSessionPayload() {
+    const runtime = activeAgentRuntimeRequest();
     return {
       directory: state().directory,
-      model: state().selectedModel,
+      model: runtime.model,
       agent: state().selectedAgent ?? DEFAULT_AGENT_ID,
-      model_variant: state().modelVariant,
-      model_acceleration_enabled: state().accelerationEnabled,
+      model_variant: runtime.variant,
+      model_acceleration_enabled: runtime.model_acceleration_enabled,
       disable_permission_restrictions: disablePermissionRestrictions,
       auto_session_name: true,
       task_management:

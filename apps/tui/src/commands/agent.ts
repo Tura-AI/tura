@@ -1,11 +1,16 @@
 import { GatewayClient } from "../gateway/client.js";
 import { CliUsageError, type CliContext } from "../types/common.js";
-import type { AgentConfig, AgentProviderConfig, AgentUpsertRequest } from "../types/agent.js";
+import type { AgentConfig, AgentUpsertRequest } from "../types/agent.js";
 import { HumanOutput } from "../output/human.js";
 import { printJson } from "../output/json.js";
 import { existsSync, readFileSync } from "node:fs";
 import { t } from "../i18n.js";
 import { agentDescription } from "../agent-display.js";
+import {
+  agentRuntimeConfig,
+  applyAgentRuntimeConfig,
+  modelPairText,
+} from "../agent-runtime-config.js";
 
 export async function agentCommand(context: CliContext, args: string[]): Promise<void> {
   const client = new GatewayClient({
@@ -68,27 +73,30 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     const modelArg = args.shift();
     const stored = await client.getAgent(id);
     if (!modelArg) {
-      const provider = providerObject(stored.config.provider);
+      const runtime = agentRuntimeConfig(undefined, stored);
       const response = {
         agent: id,
-        default_model_tier: defaultModelTier(provider),
-        current_model: stringValue(provider.current_model) ?? "",
-        reasoning_effort: stringValue(provider.model_reasoning_effort) ?? "high",
+        default_model_tier: runtime.defaultModelTier,
+        current_model: modelPairText(runtime.currentModel) ?? "",
+        reasoning_effort: runtime.reasoningLevel,
+        priority: runtime.priorityEnabled,
       };
       if (json) printJson(response);
       else
         new HumanOutput(context.color).out(
-          `${response.agent}\t${response.current_model || response.default_model_tier}\t${response.reasoning_effort}`,
+          `${response.agent}\t${response.current_model || response.default_model_tier}\t${response.reasoning_effort}\t${response.priority ? "priority" : "auto"}`,
         );
       return;
     }
     const currentModel = parseProviderModel(modelArg, args);
     const reasoning = takeOption(args, "--reasoning") ?? takeOption(args, "--reasoning-effort");
+    const priority = takePriorityOption(args);
     if (args.length > 0)
       throw new CliUsageError(t("unknownAgentTierArguments", { args: args.join(" ") }));
     const config = agentConfigWithCurrentModel(stored.config, {
       currentModel,
       reasoningEffort: reasoning,
+      priorityEnabled: priority,
     });
     const updated = await client.updateAgent(id, { config, prompt: stored.prompt ?? undefined });
     if (json) printJson(updated);
@@ -115,27 +123,15 @@ function parseAgentUpsertArgs(id: string, args: string[]): AgentUpsertRequest {
 
 function agentConfigWithCurrentModel(
   config: AgentConfig,
-  settings: { currentModel: string; reasoningEffort?: string },
+  settings: { currentModel: string; reasoningEffort?: string; priorityEnabled?: boolean },
 ): AgentConfig {
-  const provider = providerObject(config.provider);
-  const defaultTier = defaultModelTier(provider);
-  return {
-    ...config,
-    provider: {
-      ...provider,
-      default_model_tier: defaultTier,
-      tura_llm_name: defaultTier,
-      current_model: settings.currentModel,
-      ...(settings.reasoningEffort ? { model_reasoning_effort: settings.reasoningEffort } : {}),
-    },
-  };
-}
-
-function defaultModelTier(provider: AgentProviderConfig): string {
-  const explicit = stringValue(provider.default_model_tier);
-  if (explicit) return explicit;
-  const legacy = stringValue(provider.tura_llm_name);
-  return legacy && !legacy.includes("/") ? legacy : "thinking";
+  const runtime = agentRuntimeConfig(undefined, { config });
+  return applyAgentRuntimeConfig(config, {
+    defaultModelTier: runtime.defaultModelTier,
+    currentModel: settings.currentModel,
+    reasoningLevel: settings.reasoningEffort ?? runtime.reasoningLevel,
+    priorityEnabled: settings.priorityEnabled ?? runtime.priorityEnabled,
+  });
 }
 
 function parseProviderModel(first: string, args: string[]): string {
@@ -147,16 +143,6 @@ function parseProviderModel(first: string, args: string[]): string {
   const model = args.shift();
   if (first && model) return `${first}/${model}`;
   throw new CliUsageError(t("modelTierRequiresProviderModelPair"));
-}
-
-function providerObject(value: unknown): AgentProviderConfig {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? { ...(value as AgentProviderConfig) }
-    : {};
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function takeOption(args: string[], name: string): string | undefined {
@@ -173,6 +159,17 @@ function takeFlag(args: string[], name: string): boolean {
   if (index < 0) return false;
   args.splice(index, 1);
   return true;
+}
+
+function takePriorityOption(args: string[]): boolean | undefined {
+  const priority = takeFlag(args, "--priority");
+  const noPriority = takeFlag(args, "--no-priority");
+  if (priority && noPriority) {
+    throw new CliUsageError(t("useOnlyOneOption", { left: "--priority", right: "--no-priority" }));
+  }
+  if (priority) return true;
+  if (noPriority) return false;
+  return undefined;
 }
 
 function readJsonValue<T>(value: string, option: string): T {

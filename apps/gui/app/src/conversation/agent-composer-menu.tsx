@@ -7,6 +7,11 @@ import { t } from "../i18n";
 import { classNames } from "../state/format";
 import type { SettingsSection } from "../state/global-store";
 import { agentDisplayName, visibleConfigurableAgents } from "../utils/agent-display";
+import {
+  agentRuntimeConfig,
+  formatAgentRuntimeModelText,
+  modelPairText,
+} from "../../../../tui/src/agent-runtime-config";
 
 export function AgentComposerMenu(props: {
   agents: Agent[];
@@ -25,10 +30,10 @@ export function AgentComposerMenu(props: {
     () => visibleAgents().find((agent) => agent.name === props.selectedAgent) ?? visibleAgents()[0],
   );
   const selectedModelText = createMemo(() =>
-    props.selectedModel
-      ? runtimeModelText(props.selectedModel, props.modelConfig)
-      : selectedAgent()
-        ? agentModelText(selectedAgent()!, props.modelConfig)
+    selectedAgent()
+      ? agentModelText(selectedAgent()!, props.modelConfig, props.selectedModel)
+      : props.selectedModel
+        ? runtimeModelText(props.selectedModel, props.modelConfig)
         : "",
   );
 
@@ -119,7 +124,9 @@ export function AgentComposerMenu(props: {
                   >
                     <AgentIcon agent={agent} />
                     <span>{agentDisplayName(agent)}</span>
-                    <small>{agentModelText(agent, props.modelConfig) || "--"}</small>
+                    <small>
+                      {agentModelText(agent, props.modelConfig, props.selectedModel) || "--"}
+                    </small>
                     <Show when={selected()}>
                       <Check size={14} strokeWidth={1.8} />
                     </Show>
@@ -142,64 +149,24 @@ export function AgentComposerMenu(props: {
   );
 }
 
-function agentModelText(agent: Agent, modelConfig: TuraConfigResponse | undefined): string {
-  const currentModel = agentCurrentModel(agent);
-  if (currentModel) {
-    const [provider, ...modelParts] = currentModel.split("/");
-    return namedModelText(modelConfig, provider, modelParts.join("/")) ?? currentModel;
-  }
-  const directModel = namedModelText(modelConfig, agent.model?.providerID, agent.model?.modelID);
-  if (directModel) {
-    return directModel;
-  }
-  const directModelId =
-    agent.model?.providerID && agent.model.modelID
-      ? `${agent.model.providerID}/${agent.model.modelID}`
-      : "";
-  if (directModelId) {
-    return directModelId;
-  }
-  const tier = agentTier(agent);
-  return modelForTier(modelConfig, tier) ?? "";
+function agentModelText(
+  agent: Agent,
+  modelConfig: TuraConfigResponse | undefined,
+  fallbackModel: string | undefined,
+): string {
+  const runtime = agentRuntimeConfig(agent);
+  const model =
+    modelPairText(runtime.currentModel) ??
+    fallbackModel ??
+    modelForTier(modelConfig, runtime.defaultModelTier);
+  const displayModel = model ? runtimeModelText(model, modelConfig) : "";
+  return displayModel ? formatAgentRuntimeModelText(displayModel, runtime, "p") : "";
 }
 
 function runtimeModelText(model: string, modelConfig: TuraConfigResponse | undefined): string {
   const [provider, ...modelParts] = model.split("/");
   const modelId = modelParts.join("/");
   return namedModelText(modelConfig, provider, modelId) ?? model;
-}
-
-function agentTier(agent: Agent): string {
-  return (
-    readDefaultModelTier(agent.options.provider) ??
-    readDefaultModelTier(agent.options) ??
-    "thinking"
-  );
-}
-
-function readDefaultModelTier(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  const tier = record.default_model_tier ?? record.tura_llm_name;
-  return typeof tier === "string" ? tier : undefined;
-}
-
-function agentCurrentModel(agent: Agent): string | undefined {
-  const provider = readCurrentModel(agent.options.provider) ?? readCurrentModel(agent.options);
-  if (provider) {
-    return provider;
-  }
-  return undefined;
-}
-
-function readCurrentModel(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const current = (value as Record<string, unknown>).current_model;
-  return typeof current === "string" && current.includes("/") ? current : undefined;
 }
 
 function modelForTier(

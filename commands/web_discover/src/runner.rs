@@ -1,3 +1,4 @@
+use super::asset::asset_records;
 use super::files::{relative_or_display, resolve_download_dir};
 use super::filter::{
     filter_results, normalized_search_query, site_filters_to_image_keywords,
@@ -39,6 +40,8 @@ pub(super) fn run_web_discover_inner(
     let normalized_query = normalized_search_query(&args.query);
     let search_query = if args.kind == "image" {
         site_filters_to_image_keywords(&normalized_query)
+    } else if args.kind == "asset" {
+        normalized_query.clone()
     } else if matches!(args.kind.as_str(), "video" | "audio") {
         strip_site_filters_from_query(&normalized_query)
     } else {
@@ -76,6 +79,30 @@ pub(super) fn run_web_discover_inner(
             return Ok(output);
         }
     }
+    if args.kind == "asset" {
+        let (records, downloaded_files, searched_sources) = asset_records(
+            &args,
+            &client,
+            &search_query,
+            output_dir.as_deref(),
+            session_dir,
+        )?;
+        let output = json!({
+            "query": args.query,
+            "type": args.kind,
+            "asset_type": args.asset_type.as_deref().unwrap_or("auto"),
+            "normalized_query": normalized_query,
+            "saved": should_download,
+            "download_dir": output_dir.as_deref().map(|path| relative_or_display(path, session_dir)),
+            "searched_sources": searched_sources,
+            "result_count": records.len(),
+            "results": records,
+            "downloaded_files": downloaded_files,
+            "summary_markdown": summarize_records(&records, &downloaded_files),
+        });
+        return Ok(output);
+    }
+
     let mut results = if args.kind == "website" {
         search_websites(&client, &search_query, args.max_results)?
     } else {

@@ -46,7 +46,7 @@ describe("gateway startup wrapper", () => {
     }) as typeof fetch;
     const { state, setState } = stateHarness();
 
-    await expect(tryStartGateway("http://127.0.0.1:4126", setState)).resolves.toBe(true);
+    await expect(tryStartGateway("http://127.0.0.1:4126", false, setState)).resolves.toBe(true);
 
     expect(fetchCalls).toHaveLength(1);
     expect(fetchCalls[0]?.url).toBe("http://127.0.0.1:4126/global/health");
@@ -62,7 +62,7 @@ describe("gateway startup wrapper", () => {
     }) as typeof fetch;
     const { setState } = stateHarness();
 
-    await expect(tryStartGateway("http://localhost:4100", setState)).resolves.toBe(false);
+    await expect(tryStartGateway("http://localhost:4100", false, setState)).resolves.toBe(false);
     expect(invokeCalls).toHaveLength(0);
   });
 
@@ -74,12 +74,12 @@ describe("gateway startup wrapper", () => {
     } as Window & typeof globalThis;
     const { setState } = stateHarness();
 
-    await expect(tryStartGateway("http://localhost:4100", setState)).resolves.toBe(true);
+    await expect(tryStartGateway("http://localhost:4100", false, setState)).resolves.toBe(true);
 
     expect(invokeCalls).toEqual([
       {
         command: "start_gateway",
-        args: { gatewayUrl: "http://localhost:4100" },
+        args: { gatewayUrl: "http://localhost:4100", gatewayUrlExplicit: false },
       },
     ]);
   });
@@ -93,7 +93,7 @@ describe("gateway startup wrapper", () => {
     invokeResult = { status: "connected", gatewayUrl: "http://127.0.0.1:49231" };
     const { state, setState } = stateHarness();
 
-    await expect(tryStartGateway("http://127.0.0.1:4126", setState)).resolves.toBe(true);
+    await expect(tryStartGateway("http://127.0.0.1:4126", false, setState)).resolves.toBe(true);
 
     expect(state().gatewayUrl).toBe("http://127.0.0.1:49231");
   });
@@ -107,7 +107,7 @@ describe("gateway startup wrapper", () => {
     invokeError = new Error("gateway unavailable");
     const { setState } = stateHarness();
 
-    await expect(tryStartGateway("http://localhost:4126", setState)).resolves.toBe(false);
+    await expect(tryStartGateway("http://localhost:4126", false, setState)).resolves.toBe(false);
   });
 
   test("recognizes abort, timeout, and fetch failures as gateway timeouts", () => {
