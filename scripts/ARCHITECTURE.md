@@ -59,9 +59,10 @@ Important scripts:
   dependency pruning before the main package `postinstall` runs. The verifier
   then runs `tura exec --help` through the installed npm wrapper to prove the
   TUI entry can dispatch to the bundled Rust CLI without starting an interactive
-  session. Postinstall also restores executable bits on copied release binaries
-  because npm package tarballs do not preserve native executable modes for
-  ordinary package files.
+  session. The wrapper passes `TURA_RELEASE_BIN_DIR` so the compiled TUI resolves
+  sibling Rust release binaries from the npm installation layout. Postinstall
+  also restores executable bits on copied release binaries because npm package
+  tarballs do not preserve native executable modes for ordinary package files.
 - `scripts/npm/package-platform.mjs`: stages the current OS release into a
   platform npm package: `tura-linux-x64`, `tura-darwin-x64`,
   `tura-darwin-arm64`, or `tura-win32-x64`.

@@ -109,7 +109,7 @@ jobs:
           Push-Location $platformInstallDir
           try {
             npm init -y --silent | Out-Null
-            npm install --silent $platformPackage.FullName | Out-Null
+            npm install $platformPackage.FullName | Out-Null
             $platformPackageDir = Get-ChildItem -LiteralPath (Join-Path $platformInstallDir "node_modules") -Directory -Filter "tura-*" | Select-Object -First 1
             if (-not $platformPackageDir) { throw "Installed platform package directory was not found." }
           } finally {
@@ -119,17 +119,20 @@ jobs:
           try {
             npm init -y --silent | Out-Null
             $env:TURA_NPM_PLATFORM_PACKAGE_DIR = $platformPackageDir.FullName
-            npm install --silent --omit=optional $mainPackage | Out-Null
+            npm install --foreground-scripts --omit=optional $mainPackage | Out-Null
+            $binName = if ($IsWindows) { "tura.cmd" } else { "tura" }
+            $turaBin = Join-Path $installDir (Join-Path "node_modules/.bin" $binName)
+            if (-not (Test-Path -LiteralPath $turaBin)) { throw "Installed tura bin was not found: $turaBin" }
             $PSNativeCommandUseErrorActionPreference = $false
-            $helpOutput = npx tura exec --help 2>&1
+            $helpOutput = & $turaBin exec --help 2>&1
             if ($LASTEXITCODE -ne 0) {
               $helpOutput | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
-              throw "npx tura exec --help failed with exit $LASTEXITCODE"
+              throw "$turaBin exec --help failed with exit $LASTEXITCODE"
             }
             $helpText = $helpOutput -join "`n"
             if (-not $helpText.Contains("Tura Rust CLI")) {
               $helpOutput | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
-              throw "npx tura exec --help did not return the Rust CLI help text."
+              throw "$turaBin exec --help did not return the Rust CLI help text."
             }
             $helpOutput | Select-Object -First 8 | ForEach-Object { Write-Host $_ }
           } finally {
@@ -180,6 +183,12 @@ jobs:
           }
           $packageDir = Get-ChildItem -LiteralPath release/npm-platform -Directory | Select-Object -First 1
           if (-not $packageDir) { throw "Platform package directory was not produced." }
+          $packageJson = Get-Content -LiteralPath (Join-Path $packageDir.FullName "package.json") -Raw | ConvertFrom-Json
+          npm view "$($packageJson.name)@$($packageJson.version)" version *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "$($packageJson.name)@$($packageJson.version) already exists on npm; skipping publish."
+            exit 0
+          }
           npm publish $packageDir.FullName --access public --provenance
 
   publish-main:
@@ -203,4 +212,9 @@ jobs:
             exit 1
           fi
           node scripts/npm/prepack.mjs
+          version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
+          if npm view "tura@${version}" version >/dev/null 2>&1; then
+            echo "tura@${version} already exists on npm; skipping publish."
+            exit 0
+          fi
           npm publish --access public --provenance
