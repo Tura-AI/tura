@@ -116,7 +116,9 @@ test("settings root hides removed command validator stall guard and session type
   setActiveCapabilities(richCapabilities());
   const rendered = stripAnsi(settingsLines(baseState(), 96, 20).join("\n"));
 
-  assert.match(rendered, /Acceleration mode/u);
+  assert.match(rendered, /Priority mode/u);
+  assert.doesNotMatch(rendered, /Fast mode/u);
+  assert.doesNotMatch(rendered, /Acceleration mode/u);
   assert.match(rendered, /Persona\s+tura/u);
   assert.match(rendered, /Language\s+en/u);
   assert.doesNotMatch(rendered, /Show commands by default/u);

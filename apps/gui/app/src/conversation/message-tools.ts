@@ -260,8 +260,7 @@ function commandRecord(
     "";
   const command = cleanCommandLine(commandType, rawCommand);
   const output = outputText(result.output) || outputText(result);
-  const exitCode =
-    numberField(result, "exit_code") ?? numberField(result, "exitCode") ?? exitCodeFromText(output);
+  const exitCode = commandExitCode(result, output);
   const status = result.success === false ? "failed" : toolStatusFromResult(result, exitCode);
   const recordId = commandRecordID(result) ?? commandRecordID(spec) ?? `record-${index}`;
   return {
@@ -304,10 +303,7 @@ function patchRecordsFromState(part: MessagePart, state: JsonRecord): ToolRecord
       durationMs:
         toolDurationMs(part) ?? durationFromText(output) ?? fallbackDurationMs(toolStatus(state)),
       timeoutMs: commandTimeoutMs(state, undefined, command),
-      exitCode:
-        numberField(state, "exit_code") ??
-        numberField(state, "exitCode") ??
-        exitCodeFromText(output),
+      exitCode: commandExitCode(state, output),
     },
   ];
 }
@@ -332,9 +328,19 @@ function fallbackRecord(part: MessagePart): ToolRecord {
     durationMs:
       toolDurationMs(part) ?? durationFromText(output) ?? fallbackDurationMs(toolStatus(state)),
     timeoutMs: commandTimeoutMs(state, undefined, command),
-    exitCode:
-      numberField(state, "exit_code") ?? numberField(state, "exitCode") ?? exitCodeFromText(output),
+    exitCode: commandExitCode(state, output),
   };
+}
+
+function commandExitCode(record: JsonRecord, output: string): number | undefined {
+  const outputRecord = asRecord(record.output);
+  return (
+    numberField(record, "exit_code") ??
+    numberField(record, "exitCode") ??
+    numberField(outputRecord, "exit_code") ??
+    numberField(outputRecord, "exitCode") ??
+    exitCodeFromText(output)
+  );
 }
 
 function commandSpecs(state: JsonRecord): JsonRecord[] {
@@ -675,16 +681,22 @@ function commandTimeoutMs(
 ): number | undefined {
   const resultCommand = asRecord(result.command);
   const specCommand = asRecord(spec?.command);
+  const parsedResultCommandLine = parsedCommandLine(stringField(result, "command_line") ?? "");
+  const parsedSpecCommandLine = parsedCommandLine(stringField(spec ?? {}, "command_line") ?? "");
   const parsed = parsedCommandLine(rawCommand);
   return (
     numberField(result, "timeout_ms") ??
     numberField(result, "timeoutMs") ??
     numberField(resultCommand, "timeout_ms") ??
     numberField(resultCommand, "timeoutMs") ??
+    numberField(parsedResultCommandLine, "timeout_ms") ??
+    numberField(parsedResultCommandLine, "timeoutMs") ??
     numberField(spec ?? {}, "timeout_ms") ??
     numberField(spec ?? {}, "timeoutMs") ??
     numberField(specCommand, "timeout_ms") ??
     numberField(specCommand, "timeoutMs") ??
+    numberField(parsedSpecCommandLine, "timeout_ms") ??
+    numberField(parsedSpecCommandLine, "timeoutMs") ??
     numberField(parsed, "timeout_ms") ??
     numberField(parsed, "timeoutMs")
   );

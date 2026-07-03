@@ -6,6 +6,10 @@ import { promptRuntimeSelection } from "../../../tui/src/tui/logic/selection";
 import { initialState, reducer } from "../../../tui/src/tui/reducer";
 import { render } from "../../../tui/src/tui/render";
 import { stripAnsi } from "../../../tui/src/tui/render-terminal";
+import {
+  agentRuntimeConfig,
+  applyAgentRuntimeConfig,
+} from "../../../tui/src/agent-runtime-config";
 
 describe("GUI/TUI runtime model config sync", () => {
   test("tier names resolve to the configured model instead of rendering thinking", () => {
@@ -59,6 +63,41 @@ describe("GUI/TUI runtime model config sync", () => {
     expect(tuiPromptModel(gatewayConfig)).toBe(tuiSelectedModel);
     expect(tuiBottomMeta(gatewayConfig)).toContain(tuiSelectedModel);
     expect(tuiBottomMeta(gatewayConfig)).not.toContain("codex/gpt-5.5");
+  });
+
+  test("GUI and TUI agent settings share one persisted provider contract", () => {
+    const config = applyAgentRuntimeConfig(
+      {
+        agent_name: "balanced",
+        provider: {
+          current_model: "legacy/stale",
+          default_model_tier: "direct",
+          tura_llm_name: "direct",
+          model_reasoning_effort: "low",
+          model_acceleration_enabled: true,
+          service_tier: "priority",
+        },
+      },
+      {
+        defaultModelTier: "thinking",
+        currentModel: "codex/gpt-5.5",
+        reasoningLevel: "medium",
+        priorityEnabled: false,
+      },
+    );
+
+    expect(config.provider).toEqual({
+      current_model: "codex/gpt-5.5",
+      default_model_tier: "thinking",
+      tura_llm_name: "thinking",
+      model_reasoning_effort: "medium",
+    });
+    expect(agentRuntimeConfig(undefined, { config })).toEqual({
+      defaultModelTier: "thinking",
+      currentModel: { provider: "codex", model: "gpt-5.5" },
+      reasoningLevel: "medium",
+      priorityEnabled: false,
+    });
   });
 });
 

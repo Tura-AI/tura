@@ -271,9 +271,10 @@ export function ToolInspector(props: {
                             </section>
                           </Show>
                           <footer class="inspector-status">
-                            <span>{toolStatusLabel(record().status)}</span>
-                            <span>{serviceStatusLabel(props.serviceStatus)}</span>
-                            <span>
+                            <span class="inspector-command-timing">
+                              {formatCommandTiming(record().durationMs, record().timeoutMs)}
+                            </span>
+                            <span class="inspector-exit-code">
                               {t("exitCode")}:{" "}
                               {record().exitCode === undefined ? "--" : record().exitCode}
                             </span>
@@ -336,43 +337,6 @@ function toolStatusLabel(status: string): string {
     default:
       return status;
   }
-}
-
-function serviceStatusLabel(status?: ServiceStatusResponse): string {
-  if (!status) {
-    return `${t("backgroundService")}: ${t("unknown")}`;
-  }
-  const processes = sessionProcessCount(status.session_processes);
-  const lspCount = status.lsp?.length ?? 0;
-  const health = status.router?.status || status.mano?.status || "unknown";
-  const parts = [
-    toolServiceStatusLabel(health),
-    processes === 0 ? t("serviceNoProcesses") : t("serviceProcesses", { count: processes }),
-    lspCount > 0 ? t("serviceLsp", { count: lspCount }) : "",
-  ].filter(Boolean);
-  return `${t("backgroundService")}: ${parts.join(" · ")}`;
-}
-
-function toolServiceStatusLabel(status: string): string {
-  switch (status) {
-    case "connected":
-      return t("connected");
-    case "checking":
-      return t("checking");
-    case "error":
-      return t("failed");
-    default:
-      return status || t("unknown");
-  }
-}
-
-function sessionProcessCount(value: unknown): number {
-  const record =
-    value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-  const processes = record.processes;
-  return Array.isArray(processes) ? processes.length : 0;
 }
 
 function diffFileLabel(output: string): string | undefined {

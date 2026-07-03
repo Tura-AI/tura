@@ -68,8 +68,8 @@
       { "flags": "-a, --agent-id ID", "summary": "request-scoped agent id" },
       { "flags": "--session-type TYPE", "summary": "session type passed to gateway" },
       { "flags": "--model-variant LEVEL", "summary": "reasoning/model variant override" },
-      { "flags": "--model-acceleration", "summary": "enable priority/accelerated routing" },
-      { "flags": "--no-model-acceleration", "summary": "disable priority/accelerated routing" },
+      { "flags": "--model-acceleration", "summary": "enable priority mode routing" },
+      { "flags": "--no-model-acceleration", "summary": "disable priority mode routing" },
       {
         "flags": "--bash, --zsh, --shel",
         "summary": "force the command-run shell surface for this prompt"

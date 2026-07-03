@@ -5,6 +5,7 @@ import { agentCommand } from "../../../src/commands/agent.js";
 import {
   agentRuntimeConfig,
   agentRuntimeRequest,
+  applyAgentRuntimeConfig,
   formatAgentRuntimeModelText,
   modelForRuntimeTier,
 } from "../../../src/agent-runtime-config.js";
@@ -100,6 +101,41 @@ test("agent model writes priority flags through shared runtime config", async ()
       },
     },
     prompt: "fast prompt",
+  });
+});
+
+test("shared agent runtime config round-trips the same GUI and TUI provider shape", () => {
+  const config = applyAgentRuntimeConfig(
+    {
+      agent_name: "fast",
+      provider: {
+        current_model: "legacy/stale",
+        default_model_tier: "direct",
+        tura_llm_name: "direct",
+        model_reasoning_effort: "low",
+        model_acceleration_enabled: true,
+        service_tier: "priority",
+      },
+    },
+    {
+      defaultModelTier: "thinking",
+      currentModel: "codex/gpt-5.5",
+      reasoningLevel: "medium",
+      priorityEnabled: false,
+    },
+  );
+
+  assert.deepEqual(config.provider, {
+    current_model: "codex/gpt-5.5",
+    default_model_tier: "thinking",
+    tura_llm_name: "thinking",
+    model_reasoning_effort: "medium",
+  });
+  assert.deepEqual(agentRuntimeConfig(undefined, { config }), {
+    defaultModelTier: "thinking",
+    currentModel: { provider: "codex", model: "gpt-5.5" },
+    reasoningLevel: "medium",
+    priorityEnabled: false,
   });
 });
 

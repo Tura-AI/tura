@@ -47,7 +47,7 @@ describe("assistant footer metadata text", () => {
     ).toBe("$0.0123");
   });
 
-  test("shows runtime reasoning and priority from assistant message metadata", () => {
+  test("hides runtime reasoning and priority from assistant message metadata", () => {
     expect(
       assistantFooterMetaText(
         assistantMessage({
@@ -61,23 +61,24 @@ describe("assistant footer metadata text", () => {
           },
         }),
       ),
-    ).toBe("medium - priority");
+    ).toBe("");
   });
 
-  test("omits priority when runtime metadata did not enable it", () => {
+  test("keeps metadata cost while hiding runtime reasoning and priority", () => {
     expect(
       assistantFooterMetaText(
         assistantMessage({
           providerID: "codex",
           modelID: "gpt-5.5",
           metadata: {
+            usage: { total_cost: 0.05678 },
             runtime: {
               reasoning_level: "high",
-              model_acceleration_enabled: false,
+              model_acceleration_enabled: true,
             },
           },
         }),
       ),
-    ).toBe("high");
+    ).toBe("$0.0568");
   });
 });

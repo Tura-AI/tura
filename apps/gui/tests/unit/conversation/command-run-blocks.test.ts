@@ -337,6 +337,90 @@ describe("assistant command run blocks", () => {
     expect(formatCommandTiming(212_000, undefined)).toBe("3m32s");
   });
 
+  test("extracts command exit code from nested output objects", () => {
+    const part: MessagePart = {
+      id: "runtime-exit-code.tool.command_run",
+      sessionID: "s1",
+      messageID: "runtime-exit-code.message",
+      type: "tool",
+      tool: "command_run",
+      state: {
+        status: "completed",
+        input: {
+          commands: [
+            {
+              command_id: "runtime-exit-code.tool.command_run:call_1:0",
+              command_type: "shell_command",
+              command_line: '{"command":"npm test","timeout_ms":300000}',
+              created_at: 100,
+            },
+          ],
+        },
+        streamed_command_run_result: {
+          results: [
+            {
+              command_id: "runtime-exit-code.tool.command_run:call_1:0",
+              command_type: "shell_command",
+              success: false,
+              duration_ms: 195_000,
+              output: {
+                exit_code: 7,
+                stderr: "tests failed",
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    const records = toolRecords([part]);
+
+    expect(records[0]?.exitCode).toBe(7);
+    expect(records[0]?.status).toBe("failed");
+    expect(records[0]?.timeoutMs).toBe(300_000);
+    expect(formatCommandTiming(records[0]?.durationMs, records[0]?.timeoutMs)).toBe("3m15s/5m");
+  });
+
+  test("keeps timeout from the scheduled spec when result echoes a raw command line", () => {
+    const part: MessagePart = {
+      id: "runtime-result-raw-command.tool.command_run",
+      sessionID: "s1",
+      messageID: "runtime-result-raw-command.message",
+      type: "tool",
+      tool: "command_run",
+      state: {
+        status: "completed",
+        input: {
+          commands: [
+            {
+              command_id: "runtime-result-raw-command.tool.command_run:call_1:0",
+              command_type: "shell_command",
+              command_line: '{"command":"npm test","timeout_ms":300000}',
+            },
+          ],
+        },
+        streamed_command_run_result: {
+          results: [
+            {
+              command_id: "runtime-result-raw-command.tool.command_run:call_1:0",
+              command_type: "shell_command",
+              command_line: "npm test",
+              success: true,
+              duration_ms: 195_000,
+              output: "tests passed\nExit code: 0",
+            },
+          ],
+        },
+      },
+    };
+
+    const records = toolRecords([part]);
+
+    expect(records[0]?.command).toBe("npm test");
+    expect(records[0]?.timeoutMs).toBe(300_000);
+    expect(formatCommandTiming(records[0]?.durationMs, records[0]?.timeoutMs)).toBe("3m15s/5m");
+  });
+
   test("summarizes elapsed time from the whole command_run group instead of the last command", () => {
     const startedAt = 1_700_000_100_000;
     const firstEndedAt = 1_700_000_170_000;

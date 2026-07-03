@@ -59,6 +59,7 @@ pub struct GatewayTrayApp {
     port: u16,
     event_loop: EventLoop<TrayUserEvent>,
     menu: Menu,
+    menu_handle: TrayMenuHandle,
     tray_icon: TrayIcon,
     snapshot: TraySnapshot,
     session_actions: HashMap<String, ActiveSessionItem>,
@@ -99,7 +100,7 @@ impl GatewayTrayApp {
 
         let menu = Menu::new();
         let snapshot = read_snapshot();
-        let session_actions = rebuild_menu(&menu, &snapshot)?;
+        let (menu_handle, session_actions) = rebuild_menu(&menu, &snapshot)?;
         let tray_icon = TrayIconBuilder::new()
             .with_tooltip("Tura Gateway")
             .with_icon(load_tura_icon()?)
@@ -112,6 +113,7 @@ impl GatewayTrayApp {
             port,
             event_loop,
             menu,
+            menu_handle,
             tray_icon,
             snapshot,
             session_actions,
@@ -123,6 +125,7 @@ impl GatewayTrayApp {
             port,
             event_loop,
             menu,
+            menu_handle,
             tray_icon,
             snapshot,
             session_actions,
@@ -130,7 +133,8 @@ impl GatewayTrayApp {
         let mut state = GatewayTrayState {
             port,
             menu,
-            tray_icon,
+            menu_handle,
+            _tray_icon: tray_icon,
             snapshot,
             session_actions,
             launched_clients: Vec::new(),
@@ -162,7 +166,8 @@ impl GatewayTrayApp {
 struct GatewayTrayState {
     port: u16,
     menu: Menu,
-    tray_icon: TrayIcon,
+    menu_handle: TrayMenuHandle,
+    _tray_icon: TrayIcon,
     snapshot: TraySnapshot,
     session_actions: HashMap<String, ActiveSessionItem>,
     launched_clients: Vec<Child>,
@@ -182,11 +187,10 @@ impl GatewayTrayState {
         if snapshots_equal(&self.snapshot, &snapshot) {
             return;
         }
-        match rebuild_menu(&self.menu, &snapshot) {
+        match refresh_menu(&self.menu, &mut self.menu_handle, &snapshot) {
             Ok(actions) => {
                 self.snapshot = snapshot;
                 self.session_actions = actions;
-                self.tray_icon.set_menu(Some(Box::new(self.menu.clone())));
             }
             Err(error) => tracing::warn!(error = %error, "failed to refresh gateway tray menu"),
         }
@@ -246,39 +250,83 @@ impl GatewayTrayState {
 fn rebuild_menu(
     menu: &Menu,
     snapshot: &TraySnapshot,
+) -> Result<(TrayMenuHandle, HashMap<String, ActiveSessionItem>)> {
+    let handle = replace_menu(menu, menu_model(snapshot))?;
+    Ok((handle, session_actions(snapshot)))
+}
+
+struct TrayMenuHandle {
+    model: Vec<TrayMenuEntry>,
+    items: Vec<Option<MenuItem>>,
+}
+
+fn refresh_menu(
+    menu: &Menu,
+    handle: &mut TrayMenuHandle,
+    snapshot: &TraySnapshot,
 ) -> Result<HashMap<String, ActiveSessionItem>> {
+    let model = menu_model(snapshot);
+    if same_menu_structure(&handle.model, &model) {
+        update_menu_items(handle, model);
+    } else {
+        *handle = replace_menu(menu, model)?;
+    }
+    Ok(session_actions(snapshot))
+}
+
+fn replace_menu(menu: &Menu, model: Vec<TrayMenuEntry>) -> Result<TrayMenuHandle> {
     while !menu.items().is_empty() {
         let _ = menu.remove_at(0);
     }
 
-    let mut session_actions = HashMap::new();
-    for entry in menu_model(snapshot) {
-        match (entry.id, entry.label) {
+    let mut items = Vec::with_capacity(model.len());
+    for entry in &model {
+        match (entry.id.as_deref(), entry.label.as_deref()) {
             (Some(id), Some(label)) => {
-                menu.append(&MenuItem::with_id(
-                    MenuId::new(&id),
-                    &label,
-                    entry.enabled,
-                    None,
-                ))?;
-                if let Some(session) = id
-                    .strip_prefix("session:")
-                    .and_then(|session_id| {
-                        snapshot
-                            .active_sessions
-                            .iter()
-                            .find(|session| session.session_id == session_id)
-                    })
-                    .cloned()
-                {
-                    session_actions.insert(id, session);
-                }
+                let item = MenuItem::with_id(MenuId::new(id), label, entry.enabled, None);
+                menu.append(&item)?;
+                items.push(Some(item));
             }
-            (None, None) => menu.append(&PredefinedMenuItem::separator())?,
+            (None, None) => {
+                menu.append(&PredefinedMenuItem::separator())?;
+                items.push(None);
+            }
             _ => {}
         }
     }
-    Ok(session_actions)
+    Ok(TrayMenuHandle { model, items })
+}
+
+fn same_menu_structure(left: &[TrayMenuEntry], right: &[TrayMenuEntry]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.id == right.id && left.label.is_some() == right.label.is_some()
+        })
+}
+
+fn update_menu_items(handle: &mut TrayMenuHandle, model: Vec<TrayMenuEntry>) {
+    for ((old, new), item) in handle.model.iter().zip(&model).zip(&handle.items) {
+        let Some(item) = item else {
+            continue;
+        };
+        if old.label != new.label {
+            if let Some(label) = new.label.as_deref() {
+                item.set_text(label);
+            }
+        }
+        if old.enabled != new.enabled {
+            item.set_enabled(new.enabled);
+        }
+    }
+    handle.model = model;
+}
+
+fn session_actions(snapshot: &TraySnapshot) -> HashMap<String, ActiveSessionItem> {
+    snapshot
+        .active_sessions
+        .iter()
+        .map(|session| (format!("session:{}", session.session_id), session.clone()))
+        .collect()
 }
 
 fn menu_model(snapshot: &TraySnapshot) -> Vec<TrayMenuEntry> {
@@ -713,7 +761,8 @@ fn is_gateway_client_process(process: &sysinfo::Process, gateway_url: &str) -> b
 mod tests {
     use super::{
         gui_args, is_active_session, load_tura_icon, menu_model, parse_tray_language,
-        session_label, tray_enabled, tray_text, TrayLanguage, TraySnapshot, TrayText,
+        same_menu_structure, session_label, tray_enabled, tray_text, ActiveSessionItem,
+        TrayLanguage, TraySnapshot, TrayText,
     };
     use serde_json::json;
     use session_log::SessionSummary;
@@ -848,6 +897,50 @@ mod tests {
     #[test]
     fn tray_refreshes_background_process_status_every_second() {
         assert_eq!(super::REFRESH_INTERVAL, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn tray_menu_refresh_keeps_structure_for_text_and_enabled_changes() {
+        let inactive = TraySnapshot {
+            active_sessions: Vec::new(),
+            last_workspace: Some("C:\\repo".to_string()),
+            session_process_directory: Some("C:\\repo".to_string()),
+            background_process_count: 0,
+            language: TrayLanguage::En,
+        };
+        let active = TraySnapshot {
+            background_process_count: 2,
+            ..inactive.clone()
+        };
+
+        assert!(
+            same_menu_structure(&menu_model(&inactive), &menu_model(&active)),
+            "count and enabled-state refreshes should update existing tray menu items in place"
+        );
+    }
+
+    #[test]
+    fn tray_menu_refresh_rebuilds_only_when_dynamic_session_shape_changes() {
+        let empty = TraySnapshot {
+            active_sessions: Vec::new(),
+            last_workspace: Some("C:\\repo".to_string()),
+            session_process_directory: Some("C:\\repo".to_string()),
+            background_process_count: 0,
+            language: TrayLanguage::En,
+        };
+        let with_session = TraySnapshot {
+            active_sessions: vec![ActiveSessionItem {
+                session_id: "session-1".to_string(),
+                workspace: "C:\\repo".to_string(),
+                label: "Build tray - repo".to_string(),
+            }],
+            ..empty.clone()
+        };
+
+        assert!(
+            !same_menu_structure(&menu_model(&empty), &menu_model(&with_session)),
+            "adding or removing session actions changes the tray menu structure"
+        );
     }
 
     #[test]
