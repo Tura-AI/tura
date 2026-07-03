@@ -13,7 +13,7 @@ use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, 
 const MAX_TRAY_SESSIONS: usize = 12;
 const SESSION_TITLE_MAX_CHARS: usize = 24;
 const SESSION_WORKSPACE_MAX_CHARS: usize = 18;
-const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const OPEN_GUI_ID: &str = "action:open-gui";
 const KILL_BACKGROUND_PROCESSES_ID: &str = "action:kill-background-processes";
 const QUIT_ID: &str = "action:quit";
@@ -359,9 +359,11 @@ fn read_snapshot() -> TraySnapshot {
     let background_process_count = session_process_directory
         .as_deref()
         .map(|directory| {
-            crate::session::process_snapshot::collect_session_process_snapshot(Path::new(directory))
-                .processes
-                .len()
+            crate::session::process_snapshot::collect_runtime_shell_process_snapshot(Path::new(
+                directory,
+            ))
+            .processes
+            .len()
         })
         .unwrap_or(0);
     TraySnapshot {
@@ -647,11 +649,12 @@ fn terminate_tracked_clients(children: &mut Vec<Child>) {
 
 fn stop_all_session_processes(session_directory: &Path) {
     let snapshot =
-        crate::session::process_snapshot::collect_session_process_snapshot(session_directory);
+        crate::session::process_snapshot::collect_runtime_shell_process_snapshot(session_directory);
     for process in snapshot.processes {
-        if let Err(error) =
-            crate::session::process_snapshot::stop_session_process(session_directory, process.pid)
-        {
+        if let Err(error) = crate::session::process_snapshot::stop_runtime_shell_process(
+            session_directory,
+            process.pid,
+        ) {
             tracing::warn!(
                 pid = process.pid,
                 error,
@@ -791,7 +794,7 @@ mod tests {
     #[test]
     fn tray_kill_all_background_processes_stops_session_processes() -> anyhow::Result<()> {
         let workspace = tempfile::tempdir()?;
-        let mut child = spawn_long_running_child(workspace.path())?;
+        let mut child = spawn_long_running_child(workspace.path(), true)?;
         wait_until(Duration::from_secs(8), || {
             let snapshot = crate::session::process_snapshot::collect_session_process_snapshot(
                 workspace.path(),
@@ -811,6 +814,40 @@ mod tests {
             None => Err(anyhow::anyhow!("child process still running")),
         })?;
         Ok(())
+    }
+
+    #[test]
+    fn tray_kill_all_background_processes_ignores_unmarked_native_processes() -> anyhow::Result<()>
+    {
+        let workspace = tempfile::tempdir()?;
+        let mut child = spawn_long_running_child(workspace.path(), false)?;
+        wait_until(Duration::from_secs(8), || {
+            let snapshot = crate::session::process_snapshot::collect_session_process_snapshot(
+                workspace.path(),
+            );
+            snapshot
+                .processes
+                .iter()
+                .any(|process| process.pid == child.id())
+                .then_some(())
+                .ok_or_else(|| anyhow::anyhow!("native process not visible yet"))
+        })?;
+
+        super::stop_all_session_processes(workspace.path());
+
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(
+            child.try_wait()?.is_none(),
+            "tray kill-all must not stop unmarked Tura native/background processes"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok(())
+    }
+
+    #[test]
+    fn tray_refreshes_background_process_status_every_second() {
+        assert_eq!(super::REFRESH_INTERVAL, Duration::from_secs(1));
     }
 
     #[test]
@@ -915,7 +952,10 @@ mod tests {
         }
     }
 
-    fn spawn_long_running_child(workspace: &std::path::Path) -> anyhow::Result<Child> {
+    fn spawn_long_running_child(
+        workspace: &std::path::Path,
+        runtime_shell_process: bool,
+    ) -> anyhow::Result<Child> {
         let mut command = if cfg!(windows) {
             let mut command = Command::new("powershell");
             command.args([
@@ -931,6 +971,9 @@ mod tests {
             command.args(["-c", "echo $$ > tray-child-ready.txt; sleep 60"]);
             command
         };
+        if runtime_shell_process {
+            command.env("TURA_BACKGROUND_PROCESS_KIND", "runtime_shell");
+        }
         command
             .current_dir(workspace)
             .stdin(Stdio::null())

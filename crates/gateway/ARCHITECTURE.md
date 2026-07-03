@@ -114,7 +114,11 @@ ignored and leave the gateway alive when the front exits. The gateway owns the
 desktop tray/menu lifecycle: a tray left click launches the packaged `tura_gui`
 desktop app with gateway/workspace/session arguments, while the context menu
 keeps short localized labels and delegates GUI items to the same desktop entry
-instead of opening the browser-served web GUI. The Tauri shell owns the GUI
+instead of opening the browser-served web GUI. The tray's background-process
+count and kill-all action are limited to runtime-created shell command processes
+marked with `TURA_BACKGROUND_PROCESS_KIND=runtime_shell`; gateway, router,
+session_db, runtime workers, and other native Tura owners are not tray-managed
+background processes. The Tauri shell owns the GUI
 single-instance boundary, so any duplicate tray, session, or direct executable
 launch is intercepted by the running `tura_gui` process, navigates with the new
 arguments, unminimizes the main window, and focuses it instead of creating a

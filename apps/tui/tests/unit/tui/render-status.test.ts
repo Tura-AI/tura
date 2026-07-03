@@ -196,7 +196,7 @@ test("render bottom meta displays provider/model from active runtime config", ()
 
   const output = render(state, richCapabilities());
   const meta = output.split("\n").find((line) => stripAnsi(line).includes("openai/gpt-5.5")) ?? "";
-  assert.equal(stripAnsi(meta), "openai/gpt-5.5 │ high │ priority │ tura");
+  assert.equal(stripAnsi(meta), "openai/gpt-5.5 │ high │ fast │ tura");
   assert.doesNotMatch(stripAnsi(meta), /flagship_thinking/);
 });
 

@@ -308,6 +308,20 @@
   font-size: var(--font-ui);
 }
 
+.settings-toggle-copy {
+  display: inline-flex;
+  min-width: 0;
+  gap: var(--space-1);
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.settings-inline-note {
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-weight: 430;
+}
+
 .settings-toggle-row input {
   width: 16px;
   min-height: 16px;
@@ -319,6 +333,10 @@
   display: grid;
   gap: var(--space-1);
   min-width: 0;
+}
+
+.agent-priority-row {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .settings-fields {

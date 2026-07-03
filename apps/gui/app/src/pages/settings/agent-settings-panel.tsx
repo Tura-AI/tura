@@ -253,7 +253,6 @@ export function AgentSettingsPanel(props: {
             />
           </div>
           <div class="field-row agent-priority-row">
-            <span>{t("modelPriority")}</span>
             <div class="settings-toggle-field">
               <label class="settings-toggle-row">
                 <input
@@ -261,9 +260,11 @@ export function AgentSettingsPanel(props: {
                   checked={priorityEnabled()}
                   onChange={(event) => setPriorityEnabled(event.currentTarget.checked)}
                 />
-                <span>{t("acceleration")}</span>
+                <span class="settings-toggle-copy">
+                  {t("acceleration")}
+                  <small class="settings-inline-note">{t("accelerationHint")}</small>
+                </span>
               </label>
-              <small class="settings-note">{t("accelerationHint")}</small>
             </div>
           </div>
           <div class="field-row agent-capabilities-row">

@@ -280,10 +280,7 @@ fn launch_gateway_process(
 ) -> Result<GatewayEndpoint, String> {
     let executable = resolve_gateway_binary(my_root)?;
     let mut command = Command::new(&executable);
-    command
-        .env("TURA_HOME", instance_home)
-        .env("TURA_PROJECT_ROOT", my_root)
-        .env(tura_path::TURA_GATEWAY_PORT_ENV, target.port.to_string())
+    configure_gateway_runtime_command(&mut command, my_root, instance_home, target)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .stdin(Stdio::null());
@@ -315,6 +312,44 @@ fn launch_gateway_process(
         "gateway did not become healthy after startup at {}",
         target.url()
     ))
+}
+
+fn configure_gateway_runtime_command<'a>(
+    command: &'a mut Command,
+    runtime_root: &Path,
+    instance_home: &Path,
+    target: &GatewayEndpoint,
+) -> &'a mut Command {
+    command
+        .current_dir(runtime_root)
+        .env("TURA_HOME", instance_home)
+        .env("TURA_PROJECT_ROOT", runtime_root)
+        .env(tura_path::TURA_GATEWAY_PORT_ENV, target.port.to_string());
+    if let Some(provider_config) = provider_config_for_runtime_root(runtime_root) {
+        command.env("TURA_PROVIDER_CONFIG", provider_config);
+    }
+    if let Some(env_path) = env_path_for_runtime_root(runtime_root) {
+        command.env("TURA_ENV_PATH", env_path);
+    }
+    command
+}
+
+fn provider_config_for_runtime_root(runtime_root: &Path) -> Option<PathBuf> {
+    [
+        runtime_root.join("config").join("provider_config.json"),
+        runtime_root
+            .join("crates")
+            .join("provider")
+            .join("config")
+            .join("provider_config.json"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn env_path_for_runtime_root(runtime_root: &Path) -> Option<PathBuf> {
+    let path = runtime_root.join(".env");
+    path.is_file().then_some(path)
 }
 
 #[tauri::command]
@@ -811,6 +846,44 @@ mod tests {
             Ok("http://127.0.0.1:4126")
         );
         drop(env);
+    }
+
+    #[test]
+    fn gateway_launch_command_uses_runtime_root_for_cwd_and_config() {
+        let runtime_root = test_temp_dir("gateway-launch-runtime-root");
+        let home = test_temp_dir("gateway-launch-home");
+        let provider_config = runtime_root.join("config").join("provider_config.json");
+        fs::create_dir_all(provider_config.parent().expect("provider config parent"))
+            .expect("provider config dir");
+        fs::write(&provider_config, "{}").expect("provider config");
+        let env_path = runtime_root.join(".env");
+        fs::write(&env_path, "OPENAI_LOGIN=oauth\n").expect("env file");
+
+        let endpoint = GatewayEndpoint::parse("http://127.0.0.1:4999");
+        let mut command = Command::new("tura_gateway");
+        configure_gateway_runtime_command(&mut command, &runtime_root, &home, &endpoint);
+
+        let envs = command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| (key.to_string_lossy().to_string(), PathBuf::from(value)))
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(command.get_current_dir(), Some(runtime_root.as_path()));
+        assert_eq!(envs.get("TURA_HOME"), Some(&home));
+        assert_eq!(envs.get("TURA_PROJECT_ROOT"), Some(&runtime_root));
+        assert_eq!(envs.get("TURA_PROVIDER_CONFIG"), Some(&provider_config));
+        assert_eq!(envs.get("TURA_ENV_PATH"), Some(&env_path));
+
+        let port = command.get_envs().find_map(|(key, value)| {
+            (key == tura_path::TURA_GATEWAY_PORT_ENV)
+                .then(|| value.map(|value| value.to_string_lossy().to_string()))
+                .flatten()
+        });
+        assert_eq!(port.as_deref(), Some("4999"));
+
+        let _ = fs::remove_dir_all(runtime_root);
+        let _ = fs::remove_dir_all(home);
     }
 
     #[test]

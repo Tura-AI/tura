@@ -16,6 +16,9 @@ use crate::runtime::tool::ToolContext;
 use std::path::Path;
 use std::process::Command;
 
+const BACKGROUND_PROCESS_KIND_ENV: &str = "TURA_BACKGROUND_PROCESS_KIND";
+const RUNTIME_SHELL_BACKGROUND_PROCESS_KIND: &str = "runtime_shell";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShellKind {
     ShellCommand,
@@ -89,6 +92,10 @@ pub fn execute(
         command
     };
     command.current_dir(&request.cwd);
+    command.env(
+        BACKGROUND_PROCESS_KIND_ENV,
+        RUNTIME_SHELL_BACKGROUND_PROCESS_KIND,
+    );
 
     execution::run_command_with_timeout(command, request.timeout_secs)
 }
@@ -156,6 +163,10 @@ pub async fn execute_async(
         command
     };
     command.current_dir(&request.cwd);
+    command.env(
+        BACKGROUND_PROCESS_KIND_ENV,
+        RUNTIME_SHELL_BACKGROUND_PROCESS_KIND,
+    );
     execution::run_tokio_command_with_timeout(command, request.timeout_secs, ctx).await
 }
 
@@ -187,7 +198,8 @@ pub(crate) fn json_like_output(
 
 #[cfg(test)]
 mod tests {
-    use super::{read_batch, request, shell};
+    use super::{execute, execute_async, read_batch, request, shell, ShellKind};
+    use crate::runtime::tool::ToolContext;
     use read_batch::space_batched_read_command;
     use request::{embedded_apply_patch_text, parse_shell_request};
     use shell::{looks_posix_shell_script, normalize_bash_command};
@@ -459,6 +471,52 @@ mod tests {
         assert!(!looks_posix_shell_script(
             "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'for f in *.py; do echo $f; done'"
         ));
+    }
+
+    #[test]
+    fn shell_executor_marks_spawned_processes_as_runtime_shell_background_processes() {
+        let response = execute(
+            &background_process_kind_command(),
+            Path::new("."),
+            10,
+            ShellKind::ShellCommand,
+        );
+
+        assert!(response.success, "{response:?}");
+        assert_eq!(
+            response.stdout.trim(),
+            super::RUNTIME_SHELL_BACKGROUND_PROCESS_KIND
+        );
+    }
+
+    #[tokio::test]
+    async fn async_shell_executor_marks_spawned_processes_as_runtime_shell_background_processes() {
+        let context = ToolContext::new(std::env::current_dir().expect("current dir"));
+        let response = execute_async(
+            &background_process_kind_command(),
+            Path::new("."),
+            10,
+            ShellKind::ShellCommand,
+            &context,
+        )
+        .await;
+
+        assert!(response.success, "{response:?}");
+        assert_eq!(
+            response.stdout.trim(),
+            super::RUNTIME_SHELL_BACKGROUND_PROCESS_KIND
+        );
+    }
+
+    fn background_process_kind_command() -> String {
+        if cfg!(windows) {
+            format!(
+                "[Environment]::GetEnvironmentVariable('{}', 'Process')",
+                super::BACKGROUND_PROCESS_KIND_ENV
+            )
+        } else {
+            format!("printf '%s' \"${}\"", super::BACKGROUND_PROCESS_KIND_ENV)
+        }
     }
 
     #[test]

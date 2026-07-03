@@ -118,7 +118,9 @@ async def main() -> None:
             await select_field_option(page, "服务商|Provider", "GitHub Copilot")
             await select_field_option(page, "当前模型|Current model", "Copilot GPT-5.5 Pro")
 
-            priority_row = page.locator(".agent-editor .field-row").filter(has_text="Priority")
+            priority_row = page.locator(".agent-editor .field-row").filter(
+                has_text=re.compile("加速|Acceleration")
+            )
             await expect(priority_row).to_be_visible()
             priority_checkbox = priority_row.locator('input[type="checkbox"]')
             if not await priority_checkbox.is_checked():

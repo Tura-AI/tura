@@ -5,14 +5,15 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use gateway::session::process_snapshot::{
-    collect_session_process_snapshot, stop_session_process, SessionProcessInfo,
+    collect_runtime_shell_process_snapshot, collect_session_process_snapshot,
+    stop_runtime_shell_process, stop_session_process, SessionProcessInfo,
 };
 
 #[test]
 fn gateway_process_snapshot_business_flow_isolates_and_stops_session_processes() -> Result<()> {
     let workspace = tempfile::tempdir().context("create session workspace")?;
     let other_workspace = tempfile::tempdir().context("create unrelated workspace")?;
-    let mut child = spawn_long_running_child(workspace.path())?;
+    let mut child = spawn_long_running_child(workspace.path(), false)?;
 
     let process = wait_for_process_snapshot(workspace.path(), child.id())
         .context("child appears in snapshot")?;
@@ -66,7 +67,60 @@ fn gateway_process_snapshot_business_flow_isolates_and_stops_session_processes()
     Ok(())
 }
 
-fn spawn_long_running_child(workspace: &Path) -> Result<Child> {
+#[test]
+fn gateway_runtime_shell_process_snapshot_filters_and_stops_only_marked_processes() -> Result<()> {
+    let workspace = tempfile::tempdir().context("create session workspace")?;
+    let mut native_child = spawn_long_running_child(workspace.path(), false)?;
+    let mut shell_child = spawn_long_running_child(workspace.path(), true)?;
+
+    let native_process = wait_for_process_snapshot(workspace.path(), native_child.id())
+        .context("native child appears in broad snapshot")?;
+    let shell_process = wait_for_process_snapshot(workspace.path(), shell_child.id())
+        .context("runtime shell child appears in broad snapshot")?;
+    assert_eq!(native_process.kind, "workspace");
+    assert_eq!(shell_process.kind, "runtime_shell");
+
+    wait_until(Duration::from_secs(8), || {
+        let snapshot = collect_runtime_shell_process_snapshot(workspace.path());
+        let has_shell = snapshot
+            .processes
+            .iter()
+            .any(|process| process.pid == shell_child.id());
+        let has_native = snapshot
+            .processes
+            .iter()
+            .any(|process| process.pid == native_child.id());
+        if has_shell && !has_native {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "runtime shell snapshot mismatch: has_shell={has_shell}, has_native={has_native}, snapshot={:?}",
+                snapshot.processes
+            ))
+        }
+    })?;
+
+    let native_error = stop_runtime_shell_process(workspace.path(), native_child.id())
+        .expect_err("runtime shell stopper must reject unmarked native process");
+    assert!(
+        native_error.contains("not a runtime shell background process"),
+        "unexpected native rejection: {native_error}"
+    );
+    assert!(
+        native_child.try_wait()?.is_none(),
+        "runtime shell stopper must not kill unmarked native process"
+    );
+
+    stop_runtime_shell_process(workspace.path(), shell_child.id())
+        .map_err(|error| anyhow!("stop runtime shell child: {error}"))?;
+    wait_for_child_exit(&mut shell_child).context("runtime shell child exits after stop")?;
+
+    let _ = native_child.kill();
+    let _ = native_child.wait();
+    Ok(())
+}
+
+fn spawn_long_running_child(workspace: &Path, runtime_shell_process: bool) -> Result<Child> {
     let mut command = if cfg!(windows) {
         let mut command = Command::new("powershell");
         command.args([
@@ -82,6 +136,9 @@ fn spawn_long_running_child(workspace: &Path) -> Result<Child> {
         command.args(["-c", "echo $$ > child-ready.txt; sleep 60"]);
         command
     };
+    if runtime_shell_process {
+        command.env("TURA_BACKGROUND_PROCESS_KIND", "runtime_shell");
+    }
     command
         .current_dir(workspace)
         .stdin(Stdio::null())
