@@ -62,44 +62,69 @@ function messageRuntimeMeta(message: Message): {
   let reasoningLevel: ReturnType<typeof normalizeAgentReasoningLevel> | undefined;
   let priorityEnabled = false;
 
+  for (const metadata of [asRecord(message.metadata)]) {
+    const extracted = extractRuntimeMetadata(metadata);
+    cost += extracted.cost;
+    providerID ??= extracted.providerID;
+    modelID ??= extracted.modelID;
+    reasoningLevel ??= extracted.reasoningLevel;
+    priorityEnabled ||= extracted.priorityEnabled;
+  }
+
   for (const part of message.parts) {
     const state = asRecord(part.state);
     const candidates = [asRecord(part.metadata), asRecord(state.metadata)];
     for (const metadata of candidates) {
-      const usage = asRecord(metadata.usage);
-      cost += numericField(usage, "total_cost") ?? 0;
-
-      const provider = asRecord(metadata.provider);
-      providerID ??=
-        stringField(provider, "provider_name") ??
-        stringField(provider, "providerID") ??
-        stringField(provider, "provider_id") ??
-        stringField(metadata, "providerID") ??
-        stringField(metadata, "provider_id");
-      modelID ??=
-        stringField(provider, "model_name") ??
-        stringField(provider, "modelID") ??
-        stringField(provider, "model_id") ??
-        stringField(metadata, "modelID") ??
-        stringField(metadata, "model_id");
-      const runtime = asRecord(metadata.runtime);
-      const runtimeReasoning =
-        stringField(runtime, "reasoning_level") ??
-        stringField(runtime, "reasoningLevel") ??
-        stringField(metadata, "reasoning_level") ??
-        stringField(metadata, "model_variant");
-      if (runtimeReasoning) {
-        reasoningLevel ??= normalizeAgentReasoningLevel(runtimeReasoning);
-      }
-      priorityEnabled ||=
-        booleanField(runtime, "priority") ??
-        booleanField(runtime, "model_acceleration_enabled") ??
-        booleanField(metadata, "model_acceleration_enabled") ??
-        false;
+      const extracted = extractRuntimeMetadata(metadata);
+      cost += extracted.cost;
+      providerID ??= extracted.providerID;
+      modelID ??= extracted.modelID;
+      reasoningLevel ??= extracted.reasoningLevel;
+      priorityEnabled ||= extracted.priorityEnabled;
     }
   }
 
   return { cost, providerID, modelID, reasoningLevel, priorityEnabled };
+}
+
+function extractRuntimeMetadata(metadata: Record<string, unknown>): {
+  cost: number;
+  providerID?: string;
+  modelID?: string;
+  reasoningLevel?: ReturnType<typeof normalizeAgentReasoningLevel>;
+  priorityEnabled: boolean;
+} {
+  const usage = asRecord(metadata.usage);
+  const provider = asRecord(metadata.provider);
+  const runtime = asRecord(metadata.runtime);
+  const runtimeReasoning =
+    stringField(runtime, "reasoning_level") ??
+    stringField(runtime, "reasoningLevel") ??
+    stringField(metadata, "reasoning_level") ??
+    stringField(metadata, "model_variant");
+  return {
+    cost: numericField(usage, "total_cost") ?? 0,
+    providerID:
+      stringField(provider, "provider_name") ??
+      stringField(provider, "providerID") ??
+      stringField(provider, "provider_id") ??
+      stringField(metadata, "providerID") ??
+      stringField(metadata, "provider_id"),
+    modelID:
+      stringField(provider, "model_name") ??
+      stringField(provider, "modelID") ??
+      stringField(provider, "model_id") ??
+      stringField(metadata, "modelID") ??
+      stringField(metadata, "model_id"),
+    reasoningLevel: runtimeReasoning
+      ? normalizeAgentReasoningLevel(runtimeReasoning)
+      : undefined,
+    priorityEnabled:
+      booleanField(runtime, "priority") ??
+      booleanField(runtime, "model_acceleration_enabled") ??
+      booleanField(metadata, "model_acceleration_enabled") ??
+      false,
+  };
 }
 
 function numericField(record: Record<string, unknown>, key: string) {

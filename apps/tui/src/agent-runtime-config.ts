@@ -24,7 +24,7 @@ export type AgentRuntimeFallback = {
 export type ModelTierConfigLike = {
   tiers?: Array<{
     tier: string;
-    current?: { provider?: string; model?: string };
+    current?: { provider?: string; model?: string } | null;
   }>;
 };
 

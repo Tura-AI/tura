@@ -49,4 +49,38 @@ describe("assistant footer model text", () => {
       ),
     ).toBe("codex/gpt-5.5 · $0.0123");
   });
+
+  test("shows runtime reasoning and priority from assistant message metadata", () => {
+    expect(
+      assistantFooterMetaText(
+        assistantMessage({
+          providerID: "codex",
+          modelID: "gpt-5.5",
+          metadata: {
+            runtime: {
+              reasoning_level: "medium",
+              model_acceleration_enabled: true,
+            },
+          },
+        }),
+      ),
+    ).toBe("codex/gpt-5.5 - medium - priority");
+  });
+
+  test("omits priority when runtime metadata did not enable it", () => {
+    expect(
+      assistantFooterMetaText(
+        assistantMessage({
+          providerID: "codex",
+          modelID: "gpt-5.5",
+          metadata: {
+            runtime: {
+              reasoning_level: "high",
+              model_acceleration_enabled: false,
+            },
+          },
+        }),
+      ),
+    ).toBe("codex/gpt-5.5 - high");
+  });
 });

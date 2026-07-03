@@ -9,11 +9,13 @@ function withGatewayEnv<T>(value: string | undefined, run: () => T): T {
   const previous = process.env.TURA_BUILD_KIND;
   const previousHome = process.env.TURA_HOME;
   const previousUrl = process.env.TURA_GATEWAY_URL;
+  const previousPort = process.env.TURA_GATEWAY_PORT;
   const home = mkdtempSync(join(tmpdir(), "tura-tui-gateway-url-"));
   if (value === undefined) delete process.env.TURA_BUILD_KIND;
   else process.env.TURA_BUILD_KIND = value;
   process.env.TURA_HOME = home;
   delete process.env.TURA_GATEWAY_URL;
+  delete process.env.TURA_GATEWAY_PORT;
   try {
     return run();
   } finally {
@@ -23,6 +25,8 @@ function withGatewayEnv<T>(value: string | undefined, run: () => T): T {
     else process.env.TURA_HOME = previousHome;
     if (previousUrl === undefined) delete process.env.TURA_GATEWAY_URL;
     else process.env.TURA_GATEWAY_URL = previousUrl;
+    if (previousPort === undefined) delete process.env.TURA_GATEWAY_PORT;
+    else process.env.TURA_GATEWAY_PORT = previousPort;
     rmSync(home, { recursive: true, force: true });
   }
 }

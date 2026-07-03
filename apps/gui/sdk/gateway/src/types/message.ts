@@ -28,6 +28,7 @@ export type Message = {
   cost?: number;
   providerID?: string;
   modelID?: string;
+  metadata?: unknown;
   tokens?: unknown;
 };
 
