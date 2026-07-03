@@ -72,7 +72,10 @@ export async function ensureGatewayAvailable(
       for (const candidate of candidates) {
         tick();
         const identity = await gatewayIdentityWithProbeTimeout(candidate);
-        if (identity && gatewayMatchesInstance(identity, instanceHome, projectRoot, Boolean(explicit))) {
+        if (
+          identity &&
+          gatewayMatchesInstance(identity, instanceHome, projectRoot, Boolean(explicit))
+        ) {
           connectedUrl = candidate;
           return;
         }
@@ -188,7 +191,10 @@ async function launchGatewayProcess(request: GatewayLaunchRequest): Promise<stri
     const activeUrl = readActiveGatewayUrl(request.instanceHome);
     const candidateUrl = activeUrl ? stripTrailingSlash(activeUrl) : targetUrl;
     const identity = await gatewayIdentityWithProbeTimeout(candidateUrl);
-    if (identity && gatewayMatchesInstance(identity, request.instanceHome, request.projectRoot, false)) {
+    if (
+      identity &&
+      gatewayMatchesInstance(identity, request.instanceHome, request.projectRoot, false)
+    ) {
       return candidateUrl;
     }
     await delay(HEALTH_POLL_INTERVAL_MS);
@@ -335,7 +341,10 @@ function findRepoRoot(): string {
   return process.cwd();
 }
 
-function findAncestor(start: string, predicate: (candidate: string) => boolean): string | undefined {
+function findAncestor(
+  start: string,
+  predicate: (candidate: string) => boolean,
+): string | undefined {
   let current = resolve(start);
   for (let depth = 0; depth < 8; depth += 1) {
     if (predicate(current)) return current;
@@ -347,7 +356,9 @@ function findAncestor(start: string, predicate: (candidate: string) => boolean):
 }
 
 function isSourceCheckoutRoot(candidate: string): boolean {
-  return existsSync(join(candidate, "Cargo.toml")) && existsSync(join(candidate, "crates", "gateway"));
+  return (
+    existsSync(join(candidate, "Cargo.toml")) && existsSync(join(candidate, "crates", "gateway"))
+  );
 }
 
 function isRuntimeRoot(candidate: string): boolean {

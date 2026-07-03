@@ -37,7 +37,10 @@ test("agent runtime resolves default tiers to models without displaying tier nam
   assert.equal(request.model, "codex/gpt-5.5");
   assert.equal(request.variant, "medium");
   assert.equal(request.model_acceleration_enabled, true);
-  assert.equal(formatAgentRuntimeModelText(displayModel ?? "", runtime, "p"), "codex/gpt-5.5 - medium - p");
+  assert.equal(
+    formatAgentRuntimeModelText(displayModel ?? "", runtime, "p"),
+    "codex/gpt-5.5 - medium - p",
+  );
 });
 
 test("agent runtime omits priority suffix when priority is disabled", () => {
@@ -51,10 +54,7 @@ test("agent runtime omits priority suffix when priority is disabled", () => {
     },
   });
 
-  assert.equal(
-    formatAgentRuntimeModelText("codex/gpt-5.5", runtime, "p"),
-    "codex/gpt-5.5 - high",
-  );
+  assert.equal(formatAgentRuntimeModelText("codex/gpt-5.5", runtime, "p"), "codex/gpt-5.5 - high");
 });
 
 test("agent model writes priority flags through shared runtime config", async () => {

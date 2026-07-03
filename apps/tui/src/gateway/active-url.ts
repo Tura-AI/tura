@@ -77,7 +77,10 @@ function findRuntimeRoot(): string {
   return process.cwd();
 }
 
-function findAncestor(start: string, predicate: (candidate: string) => boolean): string | undefined {
+function findAncestor(
+  start: string,
+  predicate: (candidate: string) => boolean,
+): string | undefined {
   let current = resolve(start);
   for (let depth = 0; depth < 8; depth += 1) {
     if (predicate(current)) return current;
@@ -89,7 +92,9 @@ function findAncestor(start: string, predicate: (candidate: string) => boolean):
 }
 
 function isSourceCheckoutRoot(candidate: string): boolean {
-  return existsSync(join(candidate, "Cargo.toml")) && existsSync(join(candidate, "crates", "gateway"));
+  return (
+    existsSync(join(candidate, "Cargo.toml")) && existsSync(join(candidate, "crates", "gateway"))
+  );
 }
 
 function isRuntimeRoot(candidate: string): boolean {
