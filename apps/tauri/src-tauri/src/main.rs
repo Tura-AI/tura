@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
 use tauri::webview::PageLoadEvent;
 use tauri::Manager;
 use url::Url;
@@ -233,8 +233,10 @@ fn start_gateway_with_launcher(
     let instance_home = instance_home_for_runtime_root(&my_root);
     let endpoint =
         select_gateway_endpoint(gateway_url, gateway_url_explicit, &my_root, &instance_home)?;
-    if endpoint_is_usable(&endpoint, gateway_url_explicit, &my_root, &instance_home) {
-        return connected_gateway_response(&instance_home, &endpoint, "connected");
+    if let Some(identity) =
+        usable_gateway_identity(&endpoint, gateway_url_explicit, &my_root, &instance_home)
+    {
+        return connected_gateway_response(&instance_home, &endpoint, "connected", Some(identity));
     }
     if gateway_url_explicit {
         return Err(format!(
@@ -242,22 +244,70 @@ fn start_gateway_with_launcher(
             endpoint.url()
         ));
     }
-    let launched = launcher(&endpoint, &my_root, &instance_home)?;
-    if endpoint_is_usable(&launched, false, &my_root, &instance_home) {
-        return connected_gateway_response(&instance_home, &launched, "connected");
+    match launcher(&endpoint, &my_root, &instance_home) {
+        Ok(launched) => {
+            if let Some(identity) =
+                usable_gateway_identity(&launched, false, &my_root, &instance_home)
+            {
+                return connected_gateway_response(
+                    &instance_home,
+                    &launched,
+                    "connected",
+                    Some(identity),
+                );
+            }
+        }
+        Err(error) if !gateway_startup_timeout_error(&error) => return Err(error),
+        Err(_) => {}
+    }
+    if terminate_active_gateway_process(&instance_home) {
+        let relaunched = launcher(&endpoint, &my_root, &instance_home)?;
+        if let Some(identity) =
+            usable_gateway_identity(&relaunched, false, &my_root, &instance_home)
+        {
+            return connected_gateway_response(
+                &instance_home,
+                &relaunched,
+                "connected",
+                Some(identity),
+            );
+        }
+        return Err(format!(
+            "gateway did not become healthy for this home at {}",
+            relaunched.url()
+        ));
     }
     Err(format!(
         "gateway did not become healthy for this home at {}",
-        launched.url()
+        endpoint.url()
     ))
+}
+
+fn gateway_startup_timeout_error(error: &str) -> bool {
+    error.contains("did not become healthy") || error.contains("exited before becoming healthy")
 }
 
 fn connected_gateway_response(
     instance_home: &Path,
     endpoint: &GatewayEndpoint,
     status: &'static str,
+    identity: Option<GatewayIdentity>,
 ) -> Result<StartGatewayResponse, String> {
-    write_active_gateway_url(instance_home, endpoint)?;
+    if let Some(identity) = identity {
+        if let (Some(pid), Some(process_start_time)) = (identity.pid, identity.process_start_time) {
+            tura_path::write_active_gateway_process_for_home(
+                instance_home,
+                &endpoint.url(),
+                pid,
+                Some(process_start_time),
+            )
+            .map_err(|error| format!("failed to write active gateway URL: {error}"))?;
+        } else {
+            write_active_gateway_url(instance_home, endpoint)?;
+        }
+    } else {
+        write_active_gateway_url(instance_home, endpoint)?;
+    }
     remember_gateway_url(&endpoint.url());
     Ok(StartGatewayResponse {
         ok: true,
@@ -273,10 +323,20 @@ fn endpoint_is_usable(
     my_root: &Path,
     instance_home: &Path,
 ) -> bool {
+    usable_gateway_identity(endpoint, explicit, my_root, instance_home).is_some()
+}
+
+fn usable_gateway_identity(
+    endpoint: &GatewayEndpoint,
+    explicit: bool,
+    my_root: &Path,
+    instance_home: &Path,
+) -> Option<GatewayIdentity> {
     let Some(identity) = gateway_identity(endpoint) else {
-        return false;
+        return None;
     };
-    explicit || gateway_identity_matches_instance(&identity, my_root, instance_home)
+    (explicit || gateway_identity_matches_instance(&identity, my_root, instance_home))
+        .then_some(identity)
 }
 
 fn launch_gateway_process(
@@ -787,10 +847,70 @@ fn write_active_gateway_url(
         .map_err(|error| format!("failed to write active gateway URL: {error}"))
 }
 
+#[derive(Debug, Clone)]
+struct ActiveGatewayProcessRecord {
+    pid: u32,
+    process_start_time: u64,
+}
+
+fn terminate_active_gateway_process(instance_home: &Path) -> bool {
+    let Some(record) = read_active_gateway_process_record(instance_home) else {
+        return false;
+    };
+    terminate_gateway_process_record(&record)
+}
+
+fn read_active_gateway_process_record(instance_home: &Path) -> Option<ActiveGatewayProcessRecord> {
+    let raw =
+        std::fs::read_to_string(tura_path::active_gateway_env_path_for_home(instance_home)).ok()?;
+    let mut pid = None;
+    let mut process_start_time = None;
+    for line in raw.lines() {
+        let Some((key, value)) = line.trim().split_once('=') else {
+            continue;
+        };
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        if key.eq_ignore_ascii_case(tura_path::TURA_GATEWAY_PID_ENV) {
+            pid = value.parse::<u32>().ok();
+        }
+        if key.eq_ignore_ascii_case(tura_path::TURA_GATEWAY_PROCESS_START_TIME_ENV) {
+            process_start_time = value.parse::<u64>().ok();
+        }
+    }
+    Some(ActiveGatewayProcessRecord {
+        pid: pid?,
+        process_start_time: process_start_time?,
+    })
+}
+
+fn terminate_gateway_process_record(record: &ActiveGatewayProcessRecord) -> bool {
+    let mut system = System::new_all();
+    system.refresh_all();
+    let Some(process) = system.process(Pid::from_u32(record.pid)) else {
+        return false;
+    };
+    if process.start_time() != record.process_start_time {
+        return false;
+    }
+    let snapshot = GatewayProcessSnapshot {
+        name: process.name().to_string(),
+        exe: process.exe().map(Path::to_path_buf),
+        cmd: process.cmd().to_vec(),
+        environ: process.environ().to_vec(),
+        cwd: process.cwd().map(Path::to_path_buf),
+    };
+    if !is_gateway_process(&snapshot) {
+        return false;
+    }
+    process.kill()
+}
+
 #[derive(Debug, Clone, Default)]
 struct GatewayIdentity {
     root: String,
     home: String,
+    pid: Option<u32>,
+    process_start_time: Option<u64>,
 }
 
 /// Probe `/global/health`; on a healthy gateway return its reported identity,
@@ -825,7 +945,19 @@ fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<GatewayIdentity> {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or_default()
                     .to_string();
-                GatewayIdentity { root, home }
+                let pid = value
+                    .get("pid")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok());
+                let process_start_time = value
+                    .get("process_start_time")
+                    .and_then(serde_json::Value::as_u64);
+                GatewayIdentity {
+                    root,
+                    home,
+                    pid,
+                    process_start_time,
+                }
             })
             .unwrap_or_default();
         Some(identity)
@@ -1630,6 +1762,23 @@ mod tests {
         drop(env);
         let _ = fs::remove_dir_all(home);
         let _ = fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    fn active_gateway_process_record_requires_pid_and_start_time() {
+        let home = test_temp_dir("active-gateway-record-home");
+        fs::create_dir_all(home.join(".tura")).expect("runtime dir");
+        fs::write(
+            home.join(".tura").join("gateway-active.env"),
+            "TURA_GATEWAY_URL=http://127.0.0.1:4125\nTURA_GATEWAY_PID=42\nTURA_GATEWAY_PROCESS_START_TIME=777\n",
+        )
+        .expect("active gateway env");
+
+        let record = read_active_gateway_process_record(&home).expect("active record");
+
+        assert_eq!(record.pid, 42);
+        assert_eq!(record.process_start_time, 777);
+        let _ = fs::remove_dir_all(home);
     }
 
     struct TestEnv {

@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
+import { isCliPathRegistered, unregisterCliPath } from "./cli-path.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const releaseDir = path.join(repoRoot, "release");
@@ -79,7 +81,59 @@ function packageMain() {
   if (!filename) {
     fail("npm pack output did not include a tarball filename.");
   }
-  return path.join(mainOutDir, filename);
+  const tarball = path.join(mainOutDir, filename);
+  verifyPackedMainPackage(tarball, parsed?.[0]);
+  return tarball;
+}
+
+function readTarEntry(tarball, entryName) {
+  const archive = gunzipSync(readFileSync(tarball));
+  let offset = 0;
+  while (offset + 512 <= archive.length) {
+    const name = archive.toString("utf8", offset, offset + 100).replace(/\0.*$/u, "");
+    if (!name) return null;
+    const prefix = archive.toString("utf8", offset + 345, offset + 500).replace(/\0.*$/u, "");
+    const fullName = prefix ? `${prefix}/${name}` : name;
+    const sizeText = archive.toString("utf8", offset + 124, offset + 136).replace(/\0.*$/u, "").trim();
+    const size = Number.parseInt(sizeText || "0", 8);
+    const dataStart = offset + 512;
+    if (fullName === entryName) {
+      return archive.subarray(dataStart, dataStart + size).toString("utf8");
+    }
+    offset = dataStart + Math.ceil(size / 512) * 512;
+  }
+  return null;
+}
+
+function verifyPackedMainPackage(tarball, packInfo) {
+  const expectedFiles = new Set([
+    "LICENSE",
+    "README.md",
+    "npm/tura.mjs",
+    "package.json",
+    "scripts/npm/cli-path.mjs",
+    "scripts/npm/install-release.mjs",
+    "scripts/npm/release-artifacts.mjs"
+  ]);
+  const packedFiles = (packInfo?.files ?? []).map((file) => file.path.replaceAll("\\", "/")).sort();
+  const missing = [...expectedFiles].filter((file) => !packedFiles.includes(file));
+  const extra = packedFiles.filter((file) => !expectedFiles.has(file));
+  if (missing.length > 0 || extra.length > 0) {
+    fail(
+      `main npm package contents are not slim runtime files.\nMissing:\n${missing.join("\n") || "(none)"}\nExtra:\n${extra.join("\n") || "(none)"}`
+    );
+  }
+
+  const packedPackageJsonText = readTarEntry(tarball, "package/package.json");
+  if (!packedPackageJsonText) {
+    fail("packed main package did not contain package/package.json.");
+  }
+  const packedPackageJson = JSON.parse(packedPackageJsonText);
+  const scripts = packedPackageJson.scripts ?? {};
+  const scriptNames = Object.keys(scripts).sort();
+  if (scriptNames.length !== 1 || scripts.postinstall !== "node ./scripts/npm/install-release.mjs") {
+    fail(`packed main package contains unexpected npm scripts: ${scriptNames.join(", ") || "(none)"}`);
+  }
 }
 
 const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
@@ -143,59 +197,28 @@ if (missing.length > 0) {
   fail(`installed package is missing required release files:\n${missing.join("\n")}`);
 }
 
-function pathContains(value, entry) {
-  const normalize = (item) => path.resolve(item.trim()).replaceAll("\\", "/").replace(/\/$/, "").toLowerCase();
-  const expected = normalize(entry);
-  return (value || "")
-    .split(path.delimiter)
-    .filter(Boolean)
-    .some((item) => normalize(item) === expected);
-}
-
 function verifyCliRegistration() {
-  if (process.platform === "win32") {
-    const userPath = run(
-      "powershell.exe",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "[Environment]::GetEnvironmentVariable('Path', 'User')"],
-      { capture: true }
-    );
-    if (!pathContains(userPath, installedReleaseDir)) {
-      fail(`CLI registration did not add release directory to the user PATH: ${installedReleaseDir}`);
-    }
-    return;
-  }
-
-  const profiles = [".profile", ".bash_profile", ".bashrc", ".zprofile", ".zshrc"]
-    .map((name) => path.join(registrationHome, name))
-    .filter((profile) => existsSync(profile));
-  const registered = profiles.some((profile) => readFileSync(profile, "utf8").includes(installedReleaseDir));
-  if (!registered) {
-    fail(`CLI registration did not add release directory to a shell profile: ${installedReleaseDir}`);
+  if (!isCliPathRegistered({ packageRoot: mainPackageDir, releaseDir: installedReleaseDir })) {
+    fail(`CLI registration did not add release directory to the user CLI path: ${installedReleaseDir}`);
   }
 }
 
 function cleanupCliRegistration() {
-  const script = path.join(
-    mainPackageDir,
-    "scripts",
-    process.platform === "win32" ? "unregister-cli.ps1" : "unregister-cli.sh"
-  );
-  if (!existsSync(script)) {
-    return;
-  }
-  const args = process.platform === "win32"
-    ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Quiet"]
-    : [script];
-  const command = process.platform === "win32" ? "powershell.exe" : "sh";
-  spawnSync(command, args, {
-    cwd: mainPackageDir,
-    env: process.platform === "win32" ? process.env : { ...process.env, HOME: registrationHome },
-    shell: process.platform === "win32",
-    stdio: "ignore",
-    windowsHide: false
+  unregisterCliPath({ packageRoot: mainPackageDir, releaseDir: installedReleaseDir, quiet: true });
+}
+
+function verifyCliUnregistration() {
+  const binPath = path.join(installDir, "node_modules", ".bin", binName);
+  run(binPath, ["unregister-cli"], {
+    cwd: installDir,
+    env: process.platform === "win32" ? process.env : { ...process.env, HOME: registrationHome }
   });
+  if (isCliPathRegistered({ packageRoot: mainPackageDir, releaseDir: installedReleaseDir })) {
+    cleanupCliRegistration();
+    fail(`CLI unregistration did not remove release directory from the user CLI path: ${installedReleaseDir}`);
+  }
 }
 
 verifyCliRegistration();
-cleanupCliRegistration();
+verifyCliUnregistration();
 console.log(`[tura verify-platform-install] installed release files verified in ${installedReleaseDir}`);

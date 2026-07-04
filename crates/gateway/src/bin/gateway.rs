@@ -229,11 +229,23 @@ fn my_home() -> String {
 
 fn write_active_gateway_url(port: u16) {
     let url = format!("http://127.0.0.1:{port}");
-    if let Err(error) =
-        tura_path::write_active_gateway_url_for_home(tura_path::instance_home(), &url)
-    {
+    let pid = std::process::id();
+    if let Err(error) = tura_path::write_active_gateway_process_for_home(
+        tura_path::instance_home(),
+        &url,
+        pid,
+        current_process_start_time(pid),
+    ) {
         eprintln!("gateway failed to write active URL {url}: {error}");
     }
+}
+
+fn current_process_start_time(pid: u32) -> Option<u64> {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_all();
+    system
+        .process(sysinfo::Pid::from_u32(pid))
+        .map(sysinfo::Process::start_time)
 }
 
 #[derive(Debug, Clone, Default)]

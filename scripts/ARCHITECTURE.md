@@ -51,22 +51,29 @@ Important scripts:
   `tura-win32-x64`, then a local archive from `release/`, and finally a GitHub
   Release archive. The installed runtime layout is `target/release` with
   `config/provider_config.json`, backend binaries, TUI, GUI dist, and Tauri
-  bundle artifacts. After verifying the release files it runs the matching
-  `register-cli.*` script so npm installs register the `tura` command on the
+  bundle artifacts. After verifying the release files it calls
+  `scripts/npm/cli-path.mjs` so npm installs register the `tura` command on the
   current OS; set `TURA_NPM_SKIP_CLI_REGISTRATION=1` to suppress this in
-  automation. The npm release workflow builds CLI/backend/TUI and web GUI
-  artifacts with Tauri packaging skipped, so desktop installer failures do not
-  block publishing the platform npm packages used by `npm install tura-ai`. Its
-  local install verifier stages the freshly packed platform tarball outside the
-  main install tree and points `TURA_NPM_PLATFORM_PACKAGE_DIR` at it, avoiding
-  npm registry lookups for optional platform packages before those packages are
-  published. The verifier checks the installed release files and executable bits,
-  then runs `tura exec --help` through the installed npm wrapper to prove the TUI
-  entry can dispatch to the bundled Rust CLI without starting an interactive
-  session. The wrapper passes `TURA_RELEASE_BIN_DIR` so the compiled TUI resolves
-  sibling Rust release binaries from the npm installation layout. Postinstall
-  also restores executable bits on copied release binaries because npm package
-  tarballs do not preserve native executable modes for ordinary package files.
+  automation. Current npm releases do not run uninstall lifecycle scripts, so
+  the package exposes `tura unregister-cli` for PATH/profile cleanup before
+  `npm uninstall tura-ai` instead of publishing fake `uninstall` scripts. The
+  npm release workflow builds CLI/backend/TUI and web GUI artifacts with Tauri
+  packaging skipped, so desktop installer failures do not block publishing the
+  platform npm packages used by `npm install tura-ai`. Its local install
+  verifier stages the freshly packed platform tarball outside the main install
+  tree and points `TURA_NPM_PLATFORM_PACKAGE_DIR` at it, avoiding npm registry
+  lookups for optional platform packages before those packages are published.
+  The verifier checks the installed release files, verifies PATH registration,
+  runs `tura unregister-cli`, and asserts the PATH entry was removed. The wrapper
+  passes `TURA_RELEASE_BIN_DIR` so the compiled TUI resolves sibling Rust release
+  binaries from the npm installation layout. Postinstall also restores executable
+  bits on copied release binaries because npm package tarballs do not preserve
+  native executable modes for ordinary package files.
+- `scripts/npm/stage-main-package.mjs` and
+  `scripts/npm/restore-main-package.mjs`: temporarily replace the repository
+  `package.json` during `npm pack`/`npm publish` so the published main package
+  contains only runtime files and the real `postinstall` lifecycle script. The
+  repository package metadata is restored in `postpack`.
 - `scripts/npm/package-platform.mjs`: stages the current OS release into a
   platform npm package: `tura-linux-x64`, `tura-darwin-x64`,
   `tura-darwin-arm64`, or `tura-win32-x64`.
@@ -139,7 +146,8 @@ GitHub Actions:
 - `.github/workflows/npm-release.yml` builds the four npm platform releases
   (`tura-linux-x64`, `tura-darwin-x64`, `tura-darwin-arm64`, and
   `tura-win32-x64`), verifies a local `npm install` of the main `tura-ai` package
-  against the platform package, verifies postinstall CLI registration, uploads
+  against the platform package, verifies the slim main npm package contents,
+  verifies postinstall CLI registration plus `tura unregister-cli`, uploads
   release archives, and publishes npm packages when `NPM_TOKEN` is configured.
 
 Local source builds still resolve directly from `target/release`. Published npm

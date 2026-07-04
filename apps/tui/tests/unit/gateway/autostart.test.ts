@@ -9,6 +9,8 @@ import {
   ensureGatewayAvailable,
   _gatewayProbeForTest,
   _setGatewayLauncherForTest,
+  _setGatewayProcessTerminatorForTest,
+  _setGatewayStartTimeoutMsForTest,
 } from "../../../src/gateway/autostart.js";
 import { plainCapabilities } from "../../../src/tui/capabilities.js";
 
@@ -157,6 +159,71 @@ test("ensureGatewayAvailable reuses same-home active gateway even when project r
     rmSync(home, { recursive: true, force: true });
     rmSync(projectRoot, { recursive: true, force: true });
     rmSync(otherRoot, { recursive: true, force: true });
+  }
+});
+
+test("ensureGatewayAvailable terminates stale active gateway and relaunches once after startup timeout", async () => {
+  const home = mkdtempSync(join(tmpdir(), "tura-tui-stale-gateway-home-"));
+  const projectRoot = mkdtempSync(join(tmpdir(), "tura-tui-stale-project-root-"));
+  const ownServer = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({ healthy: true, root: projectRoot, home, pid: 99, process_start_time: 1234 }),
+    );
+  });
+  await listen(ownServer);
+  const previousHome = process.env.TURA_HOME;
+  const previousRoot = process.env.TURA_PROJECT_ROOT;
+  const previousUrl = process.env.TURA_GATEWAY_URL;
+  let restoreLauncher: (() => void) | undefined;
+  let restoreTerminator: (() => void) | undefined;
+  let restoreTimeout: (() => void) | undefined;
+  try {
+    process.env.TURA_HOME = home;
+    process.env.TURA_PROJECT_ROOT = projectRoot;
+    delete process.env.TURA_GATEWAY_URL;
+    mkdirSync(join(home, ".tura"), { recursive: true });
+    writeFileSync(
+      join(home, ".tura", "gateway-active.env"),
+      "TURA_GATEWAY_URL=http://127.0.0.1:65530\nTURA_GATEWAY_PID=42\nTURA_GATEWAY_PROCESS_START_TIME=777\n",
+    );
+    const ownAddress = ownServer.address() as AddressInfo;
+    const ownUrl = `http://127.0.0.1:${ownAddress.port}`;
+    restoreTimeout = _setGatewayStartTimeoutMsForTest(1);
+    let launches = 0;
+    restoreLauncher = _setGatewayLauncherForTest(async () => {
+      launches += 1;
+      return ownUrl;
+    });
+    const terminated: Array<{ pid?: number; processStartTime?: number; home: string }> = [];
+    restoreTerminator = _setGatewayProcessTerminatorForTest(async (record, instanceHome) => {
+      terminated.push({
+        pid: record.pid,
+        processStartTime: record.processStartTime,
+        home: instanceHome,
+      });
+      return true;
+    });
+
+    assert.equal(
+      await ensureGatewayAvailable("http://127.0.0.1:65531", plainCapabilities(), false, false),
+      ownUrl,
+    );
+    assert.equal(launches, 1);
+    assert.deepEqual(terminated, [{ pid: 42, processStartTime: 777, home }]);
+  } finally {
+    restoreTimeout?.();
+    restoreTerminator?.();
+    restoreLauncher?.();
+    if (previousHome === undefined) delete process.env.TURA_HOME;
+    else process.env.TURA_HOME = previousHome;
+    if (previousRoot === undefined) delete process.env.TURA_PROJECT_ROOT;
+    else process.env.TURA_PROJECT_ROOT = previousRoot;
+    if (previousUrl === undefined) delete process.env.TURA_GATEWAY_URL;
+    else process.env.TURA_GATEWAY_URL = previousUrl;
+    await close(ownServer);
+    rmSync(home, { recursive: true, force: true });
+    rmSync(projectRoot, { recursive: true, force: true });
   }
 });
 

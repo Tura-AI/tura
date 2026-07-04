@@ -15,10 +15,10 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { cliPathRegistrationSkipped, registerCliPath } from "./cli-path.mjs";
 import {
   executableName,
   executableNames,
-  missingPackageFiles,
   missingReleaseFiles,
   platformPackageName,
   releaseArchiveName,
@@ -59,38 +59,12 @@ function run(command, args, cwd = packageRoot) {
   }
 }
 
-function registrationSkipped() {
-  return (
-    process.env.TURA_NPM_SKIP_CLI_REGISTRATION === "1" ||
-    process.env.TURA_NPM_SKIP_CLI_REGISTRATION === "true"
-  );
-}
-
 function registerCli() {
-  if (registrationSkipped()) {
+  if (cliPathRegistrationSkipped()) {
     log("CLI registration skipped by TURA_NPM_SKIP_CLI_REGISTRATION");
     return;
   }
-  const script = path.join(
-    packageRoot,
-    "scripts",
-    process.platform === "win32" ? "register-cli.ps1" : "register-cli.sh",
-  );
-  if (!existsSync(script)) {
-    fail(`CLI registration script was not found: ${path.relative(packageRoot, script)}`);
-  }
-  if (process.platform === "win32") {
-    run("powershell.exe", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      script,
-      "-Quiet",
-    ]);
-  } else {
-    run("sh", [script, "--quiet"]);
-  }
+  registerCliPath({ packageRoot, releaseDir, quiet: true });
   log("CLI command registered");
 }
 
@@ -161,12 +135,6 @@ function extractArchive(archivePath) {
 }
 
 function verifyInstall() {
-  const missingPackage = missingPackageFiles(packageRoot);
-  if (missingPackage.length > 0) {
-    fail(
-      `package is missing required config/assets: ${missingPackage.join(", ")}`,
-    );
-  }
   const missingRelease = missingReleaseFiles(packageRoot);
   if (missingRelease.length > 0) {
     fail(

@@ -1,6 +1,7 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { TerminalCapabilities } from "../tui/capabilities.js";
 import { TUI_DRAW_INTERVAL_MS } from "../tui/frame-rate.js";
@@ -9,8 +10,10 @@ import { t } from "../i18n.js";
 import {
   currentBuildMode,
   defaultGatewayUrl,
+  readActiveGatewayRecord,
   readActiveGatewayUrl,
   writeActiveGatewayUrl,
+  type ActiveGatewayRecord,
 } from "./active-url.js";
 
 type StartupStep = "checking";
@@ -22,6 +25,8 @@ interface GatewayIdentity {
   root: string;
   home?: string;
   version?: string;
+  pid?: number;
+  processStartTime?: number;
 }
 
 interface GatewayLaunchRequest {
@@ -32,8 +37,15 @@ interface GatewayLaunchRequest {
 }
 
 type GatewayLauncher = (request: GatewayLaunchRequest) => Promise<string>;
+type GatewayProcessTerminator = (
+  record: ActiveGatewayRecord,
+  instanceHome: string,
+) => Promise<boolean>;
 
 let gatewayLauncher: GatewayLauncher = launchGatewayProcess;
+let gatewayProcessTerminator: GatewayProcessTerminator = terminateGatewayProcess;
+let gatewayStartTimeoutMs = GATEWAY_START_TIMEOUT_MS;
+const execFileAsync = promisify(execFile);
 
 function gatewayCandidates(
   requestedUrl: string,
@@ -64,6 +76,7 @@ export async function ensureGatewayAvailable(
   const candidates = gatewayCandidates(desiredUrl, targetUrl, instanceHome, Boolean(explicit));
 
   let connectedUrl: string | undefined;
+  let connectedIdentity: GatewayIdentity | undefined;
   await runWithSpinner({
     step: "checking",
     text: t("gatewayWaiting"),
@@ -77,6 +90,7 @@ export async function ensureGatewayAvailable(
           gatewayMatchesInstance(identity, instanceHome, projectRoot, Boolean(explicit))
         ) {
           connectedUrl = candidate;
+          connectedIdentity = identity;
           return;
         }
       }
@@ -84,26 +98,58 @@ export async function ensureGatewayAvailable(
   });
 
   if (connectedUrl) {
-    writeActiveGatewayUrl(connectedUrl, instanceHome);
+    writeActiveGatewayUrl(connectedUrl, instanceHome, connectedIdentity);
     return connectedUrl;
   }
 
   if (!explicit) {
-    const startedUrl = await gatewayLauncher({
+    const request = {
       targetUrl,
       instanceHome,
       projectRoot,
       dev: Boolean(dev),
-    });
-    const identity = await waitForSameHomeGateway(
-      startedUrl,
-      instanceHome,
-      projectRoot,
-      GATEWAY_START_TIMEOUT_MS,
-    );
-    if (identity) {
-      writeActiveGatewayUrl(startedUrl, instanceHome);
-      return startedUrl;
+    };
+    const activeRecord = readActiveGatewayRecord(instanceHome);
+    if (activeRecord) {
+      const activeProbe = await gatewayIdentityWithProbeTimeout(activeRecord.url);
+      if (activeProbe && !gatewayMatchesInstance(activeProbe, instanceHome, projectRoot, false)) {
+        const first = await launchAndConfirmGateway(request);
+        if (first) {
+          writeActiveGatewayUrl(first.url, instanceHome, first.identity);
+          return first.url;
+        }
+        throw new Error(t("gatewayStartTimeout"));
+      }
+      const activeIdentity = await waitForSameHomeGateway(
+        activeRecord.url,
+        instanceHome,
+        projectRoot,
+        gatewayStartTimeoutMs,
+      );
+      if (activeIdentity) {
+        writeActiveGatewayUrl(activeRecord.url, instanceHome, activeIdentity);
+        return activeRecord.url;
+      }
+      if (await gatewayProcessTerminator(activeRecord, instanceHome)) {
+        const restarted = await launchAndConfirmGateway(request);
+        if (restarted) {
+          writeActiveGatewayUrl(restarted.url, instanceHome, restarted.identity);
+          return restarted.url;
+        }
+        throw new Error(t("gatewayStartTimeout"));
+      }
+    }
+    const first = await launchAndConfirmGateway(request);
+    if (first) {
+      writeActiveGatewayUrl(first.url, instanceHome, first.identity);
+      return first.url;
+    }
+    if (activeRecord && (await gatewayProcessTerminator(activeRecord, instanceHome))) {
+      const restarted = await launchAndConfirmGateway(request);
+      if (restarted) {
+        writeActiveGatewayUrl(restarted.url, instanceHome, restarted.identity);
+        return restarted.url;
+      }
     }
     throw new Error(t("gatewayStartTimeout"));
   }
@@ -125,6 +171,52 @@ export function _setGatewayLauncherForTest(launcher: GatewayLauncher): () => voi
   };
 }
 
+export function _setGatewayProcessTerminatorForTest(
+  terminator: GatewayProcessTerminator,
+): () => void {
+  const previous = gatewayProcessTerminator;
+  gatewayProcessTerminator = terminator;
+  return () => {
+    gatewayProcessTerminator = previous;
+  };
+}
+
+export function _setGatewayStartTimeoutMsForTest(timeoutMs: number): () => void {
+  const previous = gatewayStartTimeoutMs;
+  gatewayStartTimeoutMs = timeoutMs;
+  return () => {
+    gatewayStartTimeoutMs = previous;
+  };
+}
+
+async function launchAndConfirmGateway(
+  request: GatewayLaunchRequest,
+): Promise<{ url: string; identity: GatewayIdentity } | null> {
+  let startedUrl: string;
+  try {
+    startedUrl = await gatewayLauncher(request);
+  } catch (error) {
+    if (!isGatewayStartupTimeout(error)) throw error;
+    return null;
+  }
+  const identity = await waitForSameHomeGateway(
+    startedUrl,
+    request.instanceHome,
+    request.projectRoot,
+    gatewayStartTimeoutMs,
+  );
+  return identity ? { url: startedUrl, identity } : null;
+}
+
+function isGatewayStartupTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes(t("gatewayStartTimeout")) ||
+    message.includes("did not become healthy") ||
+    message.includes("exited before becoming healthy")
+  );
+}
+
 async function gatewayIdentityWithProbeTimeout(
   gatewayUrl: string,
 ): Promise<GatewayIdentity | null> {
@@ -142,6 +234,8 @@ async function gatewayIdentityWithProbeTimeout(
         root: typeof body.root === "string" ? body.root : "",
         home: typeof body.home === "string" ? body.home : undefined,
         version: typeof body.version === "string" ? body.version : undefined,
+        pid: numberField(body.pid),
+        processStartTime: numberField(body.process_start_time),
       };
     } finally {
       clearTimeout(timer);
@@ -248,6 +342,81 @@ function stopUnreadyChild(child: ChildProcess): void {
   } catch {
     // Best effort: the gateway may have already detached or exited.
   }
+}
+
+async function terminateGatewayProcess(
+  record: ActiveGatewayRecord,
+  _instanceHome: string,
+): Promise<boolean> {
+  if (!record.pid || !record.processStartTime) return false;
+  const info = await gatewayProcessInfo(record.pid).catch(() => undefined);
+  if (!info || !gatewayProcessNameMatches(info.name)) return false;
+  if (Math.abs(info.processStartTime - record.processStartTime) > 2) return false;
+  try {
+    process.kill(record.pid);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function gatewayProcessInfo(
+  pid: number,
+): Promise<{ name: string; processStartTime: number } | undefined> {
+  if (process.platform === "win32") return windowsProcessInfo(pid);
+  return posixProcessInfo(pid);
+}
+
+async function windowsProcessInfo(
+  pid: number,
+): Promise<{ name: string; processStartTime: number } | undefined> {
+  const command = [
+    "$p = Get-CimInstance Win32_Process -Filter 'ProcessId = ",
+    String(pid),
+    "'; if ($p) {",
+    " $d = [Management.ManagementDateTimeConverter]::ToDateTime($p.CreationDate).ToUniversalTime();",
+    " $s = ([DateTimeOffset]$d).ToUnixTimeSeconds();",
+    " Write-Output ($p.Name + '|' + $s)",
+    " }",
+  ].join("");
+  const { stdout } = await execFileAsync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", command],
+    { windowsHide: true, timeout: 3_000 },
+  );
+  return parseProcessInfo(stdout);
+}
+
+async function posixProcessInfo(
+  pid: number,
+): Promise<{ name: string; processStartTime: number } | undefined> {
+  const { stdout } = await execFileAsync(
+    "ps",
+    ["-p", String(pid), "-o", "comm=", "-o", "lstart="],
+    {
+      timeout: 3_000,
+    },
+  );
+  const line = stdout.trim();
+  if (!line) return undefined;
+  const parts = line.split(/\s+/u);
+  const name = parts.shift() ?? "";
+  const processStartTime = Math.floor(Date.parse(parts.join(" ")) / 1000);
+  return name && Number.isFinite(processStartTime) ? { name, processStartTime } : undefined;
+}
+
+function parseProcessInfo(raw: string): { name: string; processStartTime: number } | undefined {
+  const [name, start] = raw.trim().split("|", 2);
+  const processStartTime = Number(start);
+  return name && Number.isFinite(processStartTime) ? { name, processStartTime } : undefined;
+}
+
+function gatewayProcessNameMatches(name: string): boolean {
+  return name.replace(/\.exe$/iu, "").toLowerCase() === "tura_gateway";
+}
+
+function numberField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 function gatewayMatchesInstance(

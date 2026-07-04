@@ -24,8 +24,18 @@ pub async fn health() -> Json<HealthResponse> {
         root: gateway_identity_root(),
         home: gateway_identity_home(),
         exe_dir: gateway_exe_dir(),
+        pid: Some(std::process::id()),
+        process_start_time: current_process_start_time(std::process::id()),
         dev_log_path: gateway_dev_log_path(),
     })
+}
+
+fn current_process_start_time(pid: u32) -> Option<u64> {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_all();
+    system
+        .process(sysinfo::Pid::from_u32(pid))
+        .map(sysinfo::Process::start_time)
 }
 
 /// Returns the provider LLM call log directory when dev logging is active.

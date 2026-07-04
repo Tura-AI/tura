@@ -23,6 +23,8 @@ pub const RELEASE_GATEWAY_PORT: u16 = 4126;
 pub const ACTIVE_GATEWAY_ENV_FILE: &str = "gateway-active.env";
 pub const TURA_GATEWAY_URL_ENV: &str = "TURA_GATEWAY_URL";
 pub const TURA_GATEWAY_PORT_ENV: &str = "TURA_GATEWAY_PORT";
+pub const TURA_GATEWAY_PID_ENV: &str = "TURA_GATEWAY_PID";
+pub const TURA_GATEWAY_PROCESS_START_TIME_ENV: &str = "TURA_GATEWAY_PROCESS_START_TIME";
 
 // ---------------------------------------------------------------------------
 // Repo / project root
@@ -136,6 +138,26 @@ pub fn write_active_gateway_url_for_home(
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, format!("{TURA_GATEWAY_URL_ENV}={gateway_url}\n"))
+}
+
+pub fn write_active_gateway_process_for_home(
+    home: impl AsRef<Path>,
+    gateway_url: &str,
+    pid: u32,
+    process_start_time: Option<u64>,
+) -> std::io::Result<()> {
+    let path = active_gateway_env_path_for_home(home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut content =
+        format!("{TURA_GATEWAY_URL_ENV}={gateway_url}\n{TURA_GATEWAY_PID_ENV}={pid}\n");
+    if let Some(start_time) = process_start_time {
+        content.push_str(&format!(
+            "{TURA_GATEWAY_PROCESS_START_TIME_ENV}={start_time}\n"
+        ));
+    }
+    std::fs::write(path, content)
 }
 
 fn parse_active_gateway_url(raw: &str) -> Option<String> {
