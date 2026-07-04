@@ -28,7 +28,8 @@ const requiredFiles = [
   "scripts/npm/release-artifacts.mjs",
   "scripts/npm/install-release.mjs",
   "scripts/npm/package-platform.mjs",
-  "scripts/npm/package-release.mjs"
+  "scripts/npm/package-release.mjs",
+  "scripts/npm/verify-platform-install.mjs"
 ];
 
 const missing = requiredFiles.filter((file) => !existsSync(path.join(repoRoot, file)));

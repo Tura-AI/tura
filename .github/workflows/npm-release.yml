@@ -99,55 +99,7 @@ jobs:
           if (-not $platformPackage) { throw "Platform package tarball was not produced." }
 
       - name: Verify npm install uses local platform package
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $root = (Resolve-Path .).Path
-          New-Item -ItemType Directory -Path release/npm-main -Force | Out-Null
-          $platformPackage = Get-ChildItem -LiteralPath release/npm-platform -Filter *.tgz | Select-Object -First 1
-          if (-not $platformPackage) { throw "Platform package tarball was not produced." }
-          $mainPackJson = npm pack --json --pack-destination release/npm-main | ConvertFrom-Json
-          $mainPackage = Join-Path $root (Join-Path "release/npm-main" $mainPackJson[0].filename)
-          $platformInstallDir = Join-Path $env:RUNNER_TEMP "tura-platform-package-check"
-          $installDir = Join-Path $env:RUNNER_TEMP "tura-npm-install-check"
-          if (Test-Path -LiteralPath $platformInstallDir) { Remove-Item -LiteralPath $platformInstallDir -Recurse -Force }
-          if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force }
-          New-Item -ItemType Directory -Path $platformInstallDir | Out-Null
-          New-Item -ItemType Directory -Path $installDir | Out-Null
-          Push-Location $platformInstallDir
-          try {
-            npm init -y --silent | Out-Null
-            npm install --omit=optional $platformPackage.FullName
-            $platformPackageDir = Get-ChildItem -LiteralPath (Join-Path $platformInstallDir "node_modules") -Directory -Filter "tura-*" | Select-Object -First 1
-            if (-not $platformPackageDir) { throw "Installed platform package directory was not found." }
-          } finally {
-            Pop-Location
-          }
-          Push-Location $installDir
-          try {
-            npm init -y --silent | Out-Null
-            $env:TURA_NPM_PLATFORM_PACKAGE_DIR = $platformPackageDir.FullName
-            npm install --foreground-scripts --omit=optional $mainPackage
-            $mainPackageDir = Join-Path $installDir "node_modules/tura"
-            $releaseDir = Join-Path $mainPackageDir "target/release"
-            $releaseBinary = Join-Path $releaseDir (if ($IsWindows) { "tura.exe" } else { "tura" })
-            $rustCliBinary = Join-Path $releaseDir (if ($IsWindows) { "tura_exec.exe" } else { "tura_exec" })
-            $providerConfig = Join-Path $releaseDir "config/provider_config.json"
-            $guiIndex = Join-Path $releaseDir "tura_gui/index.html"
-            $commandConfig = Join-Path $releaseDir "commands/web_discover/command.toml"
-            $releaseReadme = Join-Path $releaseDir "README.md"
-            $scriptsArchitecture = Join-Path $releaseDir "scripts/ARCHITECTURE.md"
-            foreach ($requiredPath in @($releaseBinary, $rustCliBinary, $providerConfig, $guiIndex, $commandConfig, $releaseReadme, $scriptsArchitecture)) {
-              if (-not (Test-Path -LiteralPath $requiredPath)) { throw "Installed package is missing $requiredPath" }
-            }
-            $binName = if ($IsWindows) { "tura.cmd" } else { "tura" }
-            $turaBin = Join-Path $installDir (Join-Path "node_modules/.bin" $binName)
-            if (-not (Test-Path -LiteralPath $turaBin)) { throw "Installed tura bin was not found: $turaBin" }
-            Write-Host "Installed release files verified in $releaseDir"
-          } finally {
-            Remove-Item Env:\TURA_NPM_PLATFORM_PACKAGE_DIR -ErrorAction SilentlyContinue
-            Pop-Location
-          }
+        run: node scripts/npm/verify-platform-install.mjs
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
