@@ -13,8 +13,26 @@ permissions:
   id-token: write
 
 jobs:
+  validate-npm-token:
+    name: Validate npm token
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
+    steps:
+      - name: Check npm publish token
+        run: |
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            echo "Skipping npm token check for non-tag workflow run."
+            exit 0
+          fi
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error title=NPM token missing::Configure one repository secret named NPM_TOKEN, NODE_AUTH_TOKEN, or NPM_AUTH_TOKEN before publishing to npm." >&2
+            exit 1
+          fi
+
   build-platform:
     name: Build ${{ matrix.package }}
+    needs: validate-npm-token
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -136,14 +154,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
           if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
           }
           if (-not $env:NODE_AUTH_TOKEN) {
-            Write-Host "::error title=NPM token missing::NPM_TOKEN repository secret is not configured; cannot publish platform npm package."
+            Write-Host "::error title=NPM token missing::Configure one repository secret named NPM_TOKEN, NODE_AUTH_TOKEN, or NPM_AUTH_TOKEN before publishing to npm."
             exit 1
           }
           $packageDir = Get-ChildItem -LiteralPath release/npm-platform -Directory | Select-Object -First 1
@@ -164,7 +182,7 @@ jobs:
     needs: build-platform
     if: startsWith(github.ref, 'refs/tags/')
     env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Node setup
@@ -175,7 +193,7 @@ jobs:
       - name: Verify and publish main package
         run: |
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error title=NPM token missing::NPM_TOKEN repository secret is not configured; cannot publish main npm package." >&2
+            echo "::error title=NPM token missing::Configure one repository secret named NPM_TOKEN, NODE_AUTH_TOKEN, or NPM_AUTH_TOKEN before publishing to npm." >&2
             exit 1
           fi
           node scripts/npm/prepack.mjs
