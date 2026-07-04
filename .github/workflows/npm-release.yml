@@ -139,14 +139,20 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
           if (-not $env:NODE_AUTH_TOKEN) {
-            throw "NPM_TOKEN is not configured; cannot publish platform npm package."
+            Write-Host "::error title=NPM token missing::NPM_TOKEN repository secret is not configured; cannot publish platform npm package."
+            exit 1
           }
           $packageDir = Get-ChildItem -LiteralPath release/npm-platform -Directory | Select-Object -First 1
           if (-not $packageDir) { throw "Platform package directory was not produced." }
           $packageJson = Get-Content -LiteralPath (Join-Path $packageDir.FullName "package.json") -Raw | ConvertFrom-Json
           npm view "$($packageJson.name)@$($packageJson.version)" version *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $viewExitCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($viewExitCode -eq 0) {
             Write-Host "$($packageJson.name)@$($packageJson.version) already exists on npm; skipping publish."
             exit 0
           }
@@ -169,7 +175,7 @@ jobs:
       - name: Verify and publish main package
         run: |
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is not configured; cannot publish main npm package." >&2
+            echo "::error title=NPM token missing::NPM_TOKEN repository secret is not configured; cannot publish main npm package." >&2
             exit 1
           fi
           node scripts/npm/prepack.mjs
