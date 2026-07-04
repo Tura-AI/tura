@@ -173,6 +173,9 @@ run(npmCommand(), ["install", "--foreground-scripts", "--omit=optional", mainPac
   cwd: installDir,
   env: installEnv
 });
+if (process.platform !== "win32") {
+  process.env.HOME = registrationHome;
+}
 
 const mainPackageDir = path.join(installDir, "node_modules", packageJson.name);
 const installedReleaseDir = path.join(mainPackageDir, "target", "release");
