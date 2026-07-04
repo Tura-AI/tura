@@ -82,6 +82,18 @@ jobs:
         with:
           key: crate-${{ matrix.crate }}
           cache-on-failure: true
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            pkg-config
       - name: Run crate clippy and tests
         run: sh xtask/scripts/run-ci-crate-tests.sh --crate "${{ matrix.crate }}" --jobs 1 --timeout-seconds 600
 
@@ -98,6 +110,18 @@ jobs:
         with:
           key: backend-business
           cache-on-failure: true
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            pkg-config
       - name: Run backend business tests
         run: sh xtask/scripts/run-backend-business-tests.sh --jobs 4 --timeout-seconds 300
 

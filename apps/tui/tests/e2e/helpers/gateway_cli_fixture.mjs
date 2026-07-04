@@ -503,6 +503,10 @@ export async function startGateway(runRoot) {
         instructions: "OAuth started.",
       });
     }
+    if (req.method === "POST" && url.pathname === "/provider/openai/auth/validate") {
+      await readJson(req);
+      return sendJson(res, { ok: true, provider_id: "openai", message: "validated" });
+    }
     if (req.method === "POST" && url.pathname === "/provider/openai/auth/logout") {
       records.providerLogouts.push("openai");
       return sendJson(res, { ok: true, provider_id: "openai", message: "logged out" });
