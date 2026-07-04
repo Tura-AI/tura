@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveWindowsPowerShellCommand } from "./cli-path.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const userArgs = process.argv.slice(2);
@@ -28,10 +29,12 @@ function run(command, args) {
 if (process.platform === "win32") {
   const script = path.join(repoRoot, "scripts", "install.ps1");
   const mappedArgs = userArgs.map((arg) => psFlagMap.get(arg) ?? arg);
-  let result = run("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, ...mappedArgs]);
-  if (result.error?.code === "ENOENT") {
-    result = run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, ...mappedArgs]);
+  const powerShell = resolveWindowsPowerShellCommand();
+  if (!powerShell) {
+    console.error("PowerShell was not found. Restore Windows PowerShell to PATH, set TURA_POWERSHELL_PATH, or install PowerShell 7.");
+    process.exit(1);
   }
+  const result = run(powerShell, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, ...mappedArgs]);
   if (result.error) {
     console.error(result.error.message);
     process.exit(1);

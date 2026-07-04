@@ -53,7 +53,9 @@ Important scripts:
   `config/provider_config.json`, backend binaries, TUI, GUI dist, and Tauri
   bundle artifacts. After verifying the release files it calls
   `scripts/npm/cli-path.mjs` so npm installs register the `tura` command on the
-  current OS; set `TURA_NPM_SKIP_CLI_REGISTRATION=1` to suppress this in
+  current OS. On Windows it resolves PowerShell from PATH, standard Windows
+  install locations, or `TURA_POWERSHELL_PATH`; set
+  `TURA_NPM_SKIP_CLI_REGISTRATION=1` to suppress PATH/profile changes in
   automation. Current npm releases do not run uninstall lifecycle scripts, so
   the package exposes `tura unregister-cli` for PATH/profile cleanup before
   `npm uninstall tura-ai` instead of publishing fake `uninstall` scripts. The
@@ -66,9 +68,15 @@ Important scripts:
   The verifier checks the installed release files, verifies PATH registration,
   runs `tura unregister-cli`, and asserts the PATH entry was removed. The wrapper
   passes `TURA_RELEASE_BIN_DIR` so the compiled TUI resolves sibling Rust release
-  binaries from the npm installation layout. Postinstall also restores executable
-  bits on copied release binaries because npm package tarballs do not preserve
-  native executable modes for ordinary package files.
+  binaries from the installed package.
+- `scripts/npm/verify-npm-install-fixture.mjs`: fast multi-OS npm install
+  verifier used by `.github/workflows/npm-install-matrix.yml`. It builds a small
+  fixture platform package for the current runner, packs the slim main npm
+  package, installs through `postinstall`, verifies release binaries and the npm
+  `tura` shim landed, then checks CLI registration and `unregister-cli` cleanup.
+  On Windows it intentionally runs the main install with PATH restricted to the
+  Node directory so PowerShell resolution does not depend on `powershell.exe`
+  already being on PATH.
 - `scripts/npm/stage-main-package.mjs` and
   `scripts/npm/restore-main-package.mjs`: temporarily replace the repository
   `package.json` during `npm pack`/`npm publish` so the published main package

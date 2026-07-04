@@ -32,6 +32,7 @@ const requiredFiles = [
   "scripts/npm/cli-path.mjs",
   "scripts/npm/release-artifacts.mjs",
   "scripts/npm/install-release.mjs",
+  "scripts/npm/verify-npm-install-fixture.mjs",
   "scripts/npm/package-platform.mjs",
   "scripts/npm/package-release.mjs",
   "scripts/npm/stage-main-package.mjs",

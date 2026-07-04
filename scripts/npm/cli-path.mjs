@@ -131,9 +131,72 @@ function pathRegisteredPosix(releaseDir) {
     .some((profile) => readFileSync(profile, "utf8").includes(resolvedReleaseDir));
 }
 
+function envValue(env, names) {
+  for (const name of names) {
+    const value = env[name];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function pathEntries(env) {
+  const value = envValue(env, ["Path", "PATH", "path"]);
+  return value
+    ? value
+        .split(path.win32.delimiter)
+        .map((entry) => entry.trim().replace(/^"|"$/g, ""))
+        .filter(Boolean)
+    : [];
+}
+
+function windowsExecutableNames(name, env) {
+  if (path.win32.extname(name)) {
+    return [name];
+  }
+  const pathExt = envValue(env, ["PATHEXT", "PathExt"]) || ".COM;.EXE;.BAT;.CMD";
+  return pathExt.split(";").filter(Boolean).map((extension) => `${name}${extension.toLowerCase()}`);
+}
+
+function pushUnique(candidates, value) {
+  if (value && !candidates.includes(value)) {
+    candidates.push(value);
+  }
+}
+
+export function resolveWindowsPowerShellCommand({ env = process.env, pathExists = existsSync } = {}) {
+  const candidates = [];
+  pushUnique(candidates, env.TURA_POWERSHELL_PATH);
+
+  for (const entry of pathEntries(env)) {
+    for (const name of ["pwsh", "powershell"]) {
+      for (const executable of windowsExecutableNames(name, env)) {
+        pushUnique(candidates, path.win32.join(entry, executable));
+      }
+    }
+  }
+
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]);
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+
+  const systemRoot = envValue(env, ["SystemRoot", "SYSTEMROOT", "windir", "WINDIR"]) || "C:\\Windows";
+  pushUnique(candidates, path.win32.join(systemRoot, "Sysnative", "WindowsPowerShell", "v1.0", "powershell.exe"));
+  pushUnique(candidates, path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
+
+  return candidates.find((candidate) => path.win32.isAbsolute(candidate) && pathExists(candidate)) || null;
+}
+
 function runPowerShell(script, env) {
+  const powerShell = resolveWindowsPowerShellCommand({ env: { ...process.env, ...env } });
+  if (!powerShell) {
+    fail("PowerShell was not found. Restore Windows PowerShell to PATH, set TURA_POWERSHELL_PATH, or install PowerShell 7.");
+  }
   const result = spawnSync(
-    "powershell.exe",
+    powerShell,
     ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
     {
       env: { ...process.env, ...env },
