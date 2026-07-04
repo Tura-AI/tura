@@ -114,7 +114,7 @@ run(npmCommand(), ["install", "--foreground-scripts", "--omit=optional", mainPac
   }
 });
 
-const mainPackageDir = path.join(installDir, "node_modules", "tura");
+const mainPackageDir = path.join(installDir, "node_modules", packageJson.name);
 const installedReleaseDir = path.join(mainPackageDir, "target", "release");
 const executableExtension = process.platform === "win32" ? ".exe" : "";
 const binName = process.platform === "win32" ? "tura.cmd" : "tura";
