@@ -204,9 +204,10 @@ jobs:
             exit 1
           fi
           node scripts/npm/prepack.mjs
+          package_name="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).name")"
           version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
-          if npm view "tura@${version}" version >/dev/null 2>&1; then
-            echo "tura@${version} already exists on npm; skipping publish."
+          if npm view "${package_name}@${version}" version >/dev/null 2>&1; then
+            echo "${package_name}@${version} already exists on npm; skipping publish."
             exit 0
           fi
           npm publish --access public --provenance

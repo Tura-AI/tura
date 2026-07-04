@@ -17,12 +17,13 @@ licensed under AGPL-3.0-or-later; see `LICENSE`.
 The public npm install path is:
 
 ```bash
-npm install tura
+npm install tura-ai
 ```
 
-The main `tura` package installs the matching platform release package
+The main `tura-ai` package installs the matching platform release package
 (`tura-linux-x64`, `tura-darwin-x64`, `tura-darwin-arm64`, or `tura-win32-x64`)
-and falls back to GitHub Release archives under the same version tag.
+and falls back to GitHub Release archives under the same version tag. It exposes
+the `tura` CLI command.
 
 ## Try It
 

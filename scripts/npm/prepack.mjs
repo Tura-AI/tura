@@ -47,8 +47,8 @@ if (packageJson.private === true) {
   process.exit(1);
 }
 
-if (packageJson.name !== "tura") {
-  console.error("npm package check failed; root package name must be tura.");
+if (packageJson.name !== "tura-ai") {
+  console.error("npm package check failed; root package name must be tura-ai.");
   process.exit(1);
 }
 

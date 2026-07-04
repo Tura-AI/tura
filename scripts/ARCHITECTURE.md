@@ -47,13 +47,13 @@ Important scripts:
 - `run-release-dry-run.*`: release dry-run orchestrator. It runs install, the CI
   flow, and release artifact build without publishing.
 - `scripts/npm/install-release.mjs`: npm postinstall release installer for the
-  public `tura` package. It first uses an installed platform package such as
+  public `tura-ai` package. It first uses an installed platform package such as
   `tura-win32-x64`, then a local archive from `release/`, and finally a GitHub
   Release archive. The installed runtime layout is `target/release` with
   `config/provider_config.json`, backend binaries, TUI, GUI dist, and Tauri
   bundle artifacts. The npm release workflow builds CLI/backend/TUI and web GUI
   artifacts with Tauri packaging skipped, so desktop installer failures do not
-  block publishing the platform npm packages used by `npm install tura`. Its
+  block publishing the platform npm packages used by `npm install tura-ai`. Its
   local install verifier stages the freshly packed platform tarball outside the
   main install tree and points `TURA_NPM_PLATFORM_PACKAGE_DIR` at it, avoiding
   npm registry lookups for optional platform packages before those packages are
@@ -135,10 +135,10 @@ GitHub Actions:
   tests.
 - `.github/workflows/npm-release.yml` builds the four npm platform releases
   (`tura-linux-x64`, `tura-darwin-x64`, `tura-darwin-arm64`, and
-  `tura-win32-x64`), verifies a local `npm install` of the main `tura` package
+  `tura-win32-x64`), verifies a local `npm install` of the main `tura-ai` package
   against the platform package, uploads release archives, and publishes npm
   packages when `NPM_TOKEN` is configured.
 
 Local source builds still resolve directly from `target/release`. Published npm
-installs resolve through the main `tura` package plus the matching platform
+installs resolve through the main `tura-ai` package plus the matching platform
 package, with GitHub Release archives as the fallback install route.
