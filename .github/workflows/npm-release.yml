@@ -25,11 +25,11 @@ jobs:
             package: tura-linux-x64
             install: sh scripts/install.sh
             build: sh scripts/build-release.sh --skip-tauri
-          - runner: macos-13
+          - runner: macos-15-intel
             package: tura-darwin-x64
             install: sh scripts/install.sh
             build: sh scripts/build-release.sh --skip-tauri
-          - runner: macos-14
+          - runner: macos-15
             package: tura-darwin-arm64
             install: sh scripts/install.sh
             build: sh scripts/build-release.sh --skip-tauri
