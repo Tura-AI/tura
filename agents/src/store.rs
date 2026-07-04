@@ -491,7 +491,6 @@ mod tests {
             .expect("agents crate should live under project root");
 
         for (agent_id, expected_reflection, expected_op_manual, expected_self_reflection) in [
-            ("thoughtful", true, true, true),
             ("balanced", false, true, false),
             ("direct", false, false, false),
             ("direct-text-only", false, false, false),

@@ -200,7 +200,7 @@ fn pass_aliases_cmd_and_command_line_are_accepted() {
     let output = command_run::execute(
         &json!({
             "commands": [
-                { "cmd": "shell_command", "commandLine": json!({ "command": "Write-Output ok" }).to_string(), "step": 1 }
+                { "cmd": "shell_command", "commandLine": json!({ "command": shell_echo("ok") }).to_string(), "step": 1 }
             ]
         }),
         &root,
@@ -217,7 +217,7 @@ fn pass_single_shell_object_without_commands_is_wrapped() {
     let root = temp_workspace("single-shell-object");
     let output = command_run::execute(
         &json!({
-            "command": json!({ "command": "Write-Output ok", "timeout_ms": 5000 }).to_string(),
+            "command": json!({ "command": shell_echo("ok"), "timeout_ms": 5000 }).to_string(),
             "timeoutMs": 120000
         }),
         &root,
@@ -472,13 +472,13 @@ fn pass_mutating_commands_are_barriers_between_read_batches() {
     let output = command_run::execute(
         &json!({
             "commands": [
-                { "step": 1, "command": "shell_command", "command_line": json!({ "command": "Get-Content state.txt" }).to_string() },
+                { "step": 1, "command": "shell_command", "command_line": json!({ "command": shell_cat("state.txt") }).to_string() },
                 {
                     "step": 1,
                     "command": "apply_patch",
                     "command_line": "*** Begin Patch\n*** Update File: state.txt\n@@\n-before\n+after\n*** End Patch\n"
                 },
-                { "step": 1, "command": "shell_command", "command_line": json!({ "command": "Get-Content state.txt" }).to_string() }
+                { "step": 1, "command": "shell_command", "command_line": json!({ "command": shell_cat("state.txt") }).to_string() }
             ]
         }),
         &root,

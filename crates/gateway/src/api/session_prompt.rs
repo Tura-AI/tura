@@ -539,7 +539,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         first_prompt_part_id(&payload).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let runtime_metadata = agent_runtime_message_metadata(
         model_override.clone(),
-        reasoning_effort.clone(),
+        reasoning_effort,
         acceleration_enabled,
     );
     let body = serde_json::json!({
@@ -567,7 +567,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
             session_store().finish_todos(&session_id, true);
             if let Some(message) = final_agent_message(&session_id, before_count) {
                 let message = session_store()
-                    .merge_message_metadata(&session_id, &message.id, runtime_metadata.clone())
+                    .merge_message_metadata(&session_id, &message.id, runtime_metadata)
                     .unwrap_or(message);
                 session_store().push_event(GlobalEvent::MessageUpdated {
                     properties: MessageUpdatedProperties {

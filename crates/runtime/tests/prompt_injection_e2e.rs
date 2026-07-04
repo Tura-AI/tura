@@ -8,40 +8,12 @@ use runtime::state_machine::session_management::SessionInput;
 #[test]
 fn coding_agents_inject_agent_prompt_without_persona_binding() {
     let project_root = find_project_root();
-    for (agent_name, agent_prompt_path) in [
-        (
-            "balanced",
-            project_root
-                .join("agents")
-                .join("src")
-                .join("balanced")
-                .join("prompt.md"),
-        ),
-        (
-            "thoughtful",
-            project_root
-                .join("agents")
-                .join("src")
-                .join("thoughtful")
-                .join("prompt.md"),
-        ),
-        (
-            "direct",
-            project_root
-                .join("agents")
-                .join("src")
-                .join("direct")
-                .join("prompt.md"),
-        ),
-        (
-            "direct-text-only",
-            project_root
-                .join("agents")
-                .join("src")
-                .join("direct-text-only")
-                .join("prompt.md"),
-        ),
-    ] {
+    for agent_name in ["balanced", "direct", "direct-text-only"] {
+        let agent_prompt_path = project_root
+            .join("agents")
+            .join("src")
+            .join(agent_name)
+            .join("prompt.md");
         let agent_prompt = read_prompt(&agent_prompt_path);
         let session = activate_session_with_directory(
             project_root.clone(),
@@ -85,7 +57,7 @@ fn find_project_root() -> PathBuf {
             candidate
                 .join("agents")
                 .join("src")
-                .join("thoughtful")
+                .join("balanced")
                 .join("agent_config.json")
                 .exists()
         })

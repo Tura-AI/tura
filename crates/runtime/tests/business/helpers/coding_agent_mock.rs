@@ -24,6 +24,7 @@ pub(crate) const MOCK_COMMAND_TIMEOUT_MS: u64 = 3_000;
 pub(crate) const MOCK_PROVIDER_TIMEOUT_MS: &str = "30000";
 pub(crate) const MOCK_PROVIDER_STREAM_TIMEOUT_MS: &str = "1000";
 pub(crate) const MOCK_MULTI_COMMAND_STREAM_TIMEOUT_MS: &str = "10000";
+pub(crate) const MOCK_OPENAI_TOKEN_EXPIRES: &str = "4102444800000";
 
 pub(crate) fn mock_command_run_router_addr() -> String {
     if let Some(addr) = MOCK_ROUTER_ADDR.get() {
@@ -325,6 +326,8 @@ pub(crate) fn write_codex_streaming_probe_response(
     workspace: &Path,
     first_command_observed_before_response_finished: &AtomicBool,
 ) {
+    let first_command = write_file_command("streamed-first.txt", "first");
+    let second_command = write_file_command("streamed-second.txt", "second");
     let _ = write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
@@ -359,7 +362,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                 "step": 1,
                 "command_type": "shell_command",
                 "command_line": json!({
-                    "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                    "command": first_command,
                     "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                 }).to_string()
             }).to_string() + ","
@@ -383,7 +386,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                 "step": 2,
                 "command_type": "shell_command",
                 "command_line": json!({
-                    "command": "python -c \"from pathlib import Path; Path('streamed-second.txt').write_text('second')\"",
+                    "command": second_command,
                     "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                 }).to_string()
             }).to_string() + "]}"
@@ -400,7 +403,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                         "step": 1,
                         "command_type": "shell_command",
                         "command_line": json!({
-                            "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                            "command": first_command,
                             "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                         }).to_string()
                     },
@@ -408,7 +411,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                         "step": 2,
                         "command_type": "shell_command",
                         "command_line": json!({
-                            "command": "python -c \"from pathlib import Path; Path('streamed-second.txt').write_text('second')\"",
+                            "command": second_command,
                             "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                         }).to_string()
                     }
@@ -433,7 +436,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                                 "step": 1,
                                 "command_type": "shell_command",
                                 "command_line": json!({
-                                    "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                                    "command": first_command,
                                     "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                                 }).to_string()
                             },
@@ -441,7 +444,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                                 "step": 2,
                                 "command_type": "shell_command",
                                 "command_line": json!({
-                                    "command": "python -c \"from pathlib import Path; Path('streamed-second.txt').write_text('second')\"",
+                                    "command": second_command,
                                     "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                                 }).to_string()
                             }
@@ -679,6 +682,14 @@ pub(crate) fn write_codex_sse_raw(stream: &mut TcpStream, data: &str) {
     let _ = stream.flush();
 }
 
+fn write_file_command(path: &str, content: &str) -> String {
+    if cfg!(windows) {
+        format!("Set-Content -LiteralPath '{path}' -Value '{content}'")
+    } else {
+        format!("printf '%s' '{content}' > {path}")
+    }
+}
+
 pub(crate) fn write_codex_final_response(stream: &mut TcpStream, content: &str) {
     let _ = write!(
         stream,
@@ -727,12 +738,29 @@ pub(crate) fn command_run_provider_response(index: usize) -> Value {
             json!({
                 "commands": [
                     { "command": "shell_command", "command_line": json!({"command":"pwd","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string(), "step": 1 },
-                    { "command": "shell_command", "command_line": json!({"command":"Write-Output 2","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string(), "step": 1 }
+                    { "command": "shell_command", "command_line": json!({"command":"echo 2","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string(), "step": 1 }
                 ],
                 "step_summary": "Call the command_run console tool as requested."
             }),
         ),
         1 => tool_response(
+            "call_task_status_before_apply_patch",
+            "command_run",
+            json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command": "task_status",
+                        "command_line": json!({
+                            "task_group": "runtime command run",
+                            "task_type": ["debug"]
+                        }).to_string()
+                    }
+                ],
+                "step_summary": "Set task status before editing files."
+            }),
+        ),
+        2 => tool_response(
             "call_apply_patch",
             "command_run",
             json!({
@@ -745,7 +773,7 @@ pub(crate) fn command_run_provider_response(index: usize) -> Value {
                     {
                         "step": 2,
                         "command": "shell_command",
-                        "command_line": json!({"command":"Get-Content src/lib.rs","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string()
+                        "command_line": json!({"command":"cat src/lib.rs","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string()
                     }
                 ],
                 "step_summary": "Patch src/lib.rs and verify the edited content."

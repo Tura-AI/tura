@@ -565,7 +565,11 @@ exit /b %ERRORLEVEL%
             r#"#!/usr/bin/env sh
 set -eu
 template=""
+is_video=0
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = "best[height<=540][ext=mp4]/best[height<=540]/best" ]; then
+    is_video=1
+  fi
   if [ "$1" = "-o" ]; then
     shift
     template="$1"
@@ -575,12 +579,6 @@ done
 if [ -z "$template" ]; then
   exit 2
 fi
-is_video=0
-for arg in "$@"; do
-  if [ "$arg" = "best[height<=540][ext=mp4]/best[height<=540]/best" ]; then
-    is_video=1
-  fi
-done
 if [ "$is_video" -eq 1 ]; then
   path=$(printf '%s' "$template" | sed 's/%(title).80s/business-video/g; s/%(id)s/local/g; s/%(ext)s/mp4/g')
 else

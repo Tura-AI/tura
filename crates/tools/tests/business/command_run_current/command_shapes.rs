@@ -8,7 +8,7 @@ fn pass_shell_command_output_matches_current_structured_code_mode() {
     let output = command_run::execute(
         &json!({
             "commands": [
-                { "command": "shell_command", "command_line": json!({ "command": "Write-Output current-backfill-ok" }).to_string() }
+                { "command": "shell_command", "command_line": json!({ "command": shell_echo("current-backfill-ok") }).to_string() }
             ]
         }),
         &root,
@@ -31,7 +31,7 @@ fn pass_model_backfill_matches_current_shape_except_command_type_key() {
     let output = command_run::execute(
         &json!({
             "commands": [
-                { "command": "shell_command", "command_line": json!({ "command": "Write-Output command-type-diff-only" }).to_string() }
+                { "command": "shell_command", "command_line": json!({ "command": shell_echo("command-type-diff-only") }).to_string() }
             ]
         }),
         &root,
@@ -69,7 +69,7 @@ fn pass_command_only_shell_text_is_mapped_to_active_shell_command() {
     let output = command_run::execute(
         &json!({
             "commands": [
-                { "command": "Write-Output ok", "step": 1 }
+                { "command": shell_echo("ok"), "step": 1 }
             ]
         }),
         &root,
@@ -91,7 +91,7 @@ fn pass_top_level_workdir_is_accepted_for_current_style_shell_items() {
         &json!({
             "workdir": ".",
             "commands": [
-                { "command": "Write-Output ok", "step": 1 }
+                { "command": shell_echo("ok"), "step": 1 }
             ]
         }),
         &root,
@@ -142,8 +142,8 @@ fn pass_unknown_command_with_shell_payload_is_mapped_to_active_shell_command() {
         &json!({
             "commands": [
                 {
-                    "command": "Get-Content src/app.py",
-                    "command_line": json!({ "command": "Write-Output mapped-ok" }).to_string(),
+                    "command": shell_cat("src/app.py"),
+                    "command_line": json!({ "command": shell_echo("mapped-ok") }).to_string(),
                     "step": 1
                 }
             ]
@@ -167,7 +167,7 @@ fn pass_unknown_command_without_payload_runs_command_text_as_shell() {
         &json!({
             "commands": [
                 {
-                    "command": "Write-Output raw-command-ok",
+                    "command": shell_echo("raw-command-ok"),
                     "command_line": "",
                     "step": 1
                 }
@@ -192,7 +192,7 @@ fn pass_command_line_without_command_defaults_to_active_shell_command() {
         &json!({
             "commands": [
                 {
-                    "command_line": json!({ "command": "Write-Output command-line-only-ok" }).to_string(),
+                    "command_line": json!({ "command": shell_echo("command-line-only-ok") }).to_string(),
                     "step": 1
                 }
             ]
@@ -219,7 +219,7 @@ fn pass_command_line_without_command_type_accepts_workdir_and_timeout() {
         &json!({
             "commands": [
                 {
-                    "command_line": json!({ "command": "Get-Location", "timeout_ms": 5000 }).to_string(),
+                    "command_line": json!({ "command": shell_pwd(), "timeout_ms": 5000 }).to_string(),
                     "workdir": "subdir",
                     "timeout_ms": 5000,
                     "step": 1
@@ -249,7 +249,7 @@ fn pass_legacy_steps_shape_is_accepted() {
             "steps": [
                 {
                     "tool_name": "shell_command",
-                    "command_code": json!({ "command": "Write-Output legacy-steps-ok" }).to_string(),
+                    "command_code": json!({ "command": shell_echo("legacy-steps-ok") }).to_string(),
                     "step": 1
                 }
             ]
@@ -271,7 +271,7 @@ fn pass_command_run_arguments_accept_requests_wrapper_and_json_fence() {
     let root = temp_workspace("json-fence");
     let output = command_run::execute(
         &Value::String(
-            "```json\n{\"requests\":{\"commands\":[{\"command\":\"shell_command\",\"command_line\":\"{\\\"command\\\":\\\"Write-Output fenced-ok\\\",\\\"timeout_ms\\\":5000}\",\"step\":1}]}}\n```"
+            format!("```json\n{{\"requests\":{{\"commands\":[{{\"command\":\"shell_command\",\"command_line\":{},\"step\":1}}]}}}}\n```", json!({ "command": shell_echo("fenced-ok"), "timeout_ms": 5000 }))
                 .to_string(),
         ),
         &root,

@@ -160,7 +160,6 @@ fn configure_platform_spawn(command: &mut Command) {
 
 #[cfg(unix)]
 fn configure_platform_spawn(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
     command.process_group(0);
     configure_parent_death_signal(command);
 }

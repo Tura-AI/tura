@@ -237,13 +237,20 @@ fn documents_directory_from_homes(homes: &[PathBuf]) -> Option<PathBuf> {
 }
 
 fn is_documents_directory(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|value| value.to_str())
-        .is_some_and(|name| {
-            DOCUMENTS_DIRECTORY_NAMES
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate))
-        })
+    path_leaf(path).is_some_and(|name| {
+        DOCUMENTS_DIRECTORY_NAMES
+            .iter()
+            .any(|candidate| name.eq_ignore_ascii_case(candidate))
+    })
+}
+
+fn path_leaf(path: &Path) -> Option<String> {
+    path.to_str()?
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .map(str::to_string)
 }
 
 fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {

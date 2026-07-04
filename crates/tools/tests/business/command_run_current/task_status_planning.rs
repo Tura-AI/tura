@@ -8,8 +8,8 @@ fn pass_missing_steps_default_to_original_order() {
     let output = command_run::execute(
         &json!({
             "commands": [
-                { "command": "shell_command", "command_line": "{\"command\":\"Write-Output one\"}" },
-                { "command": "shell_command", "command_line": "{\"command\":\"Write-Output two\"}" }
+                { "command": "shell_command", "command_line": json!({ "command": shell_echo("one") }).to_string() },
+                { "command": "shell_command", "command_line": json!({ "command": shell_echo("two") }).to_string() }
             ]
         }),
         &root,
@@ -29,7 +29,7 @@ fn pass_top_level_task_status_argument_is_not_model_visible() {
         &json!({
             "task_status": { "status": "done" },
             "commands": [
-                { "command": "shell_command", "command_line": json!({ "command": "Write-Output ok" }).to_string() }
+                { "command": "shell_command", "command_line": json!({ "command": shell_echo("ok") }).to_string() }
             ]
         }),
         &root,
@@ -230,7 +230,7 @@ fn pass_task_status_compact_context_routes_and_outputs_summary() {
                 {
                     "step": 1,
                     "command_type": "shell_command",
-                    "command_line": json!({ "command": "Write-Output before-compact" }).to_string()
+                    "command_line": json!({ "command": shell_echo("before-compact") }).to_string()
                 },
                 {
                     "step": 2,
@@ -266,7 +266,7 @@ fn fail_task_status_compact_context_must_be_final_highest_step() {
                 {
                     "step": 3,
                     "command_type": "shell_command",
-                    "command_line": json!({ "command": "Write-Output after" }).to_string()
+                    "command_line": json!({ "command": shell_echo("after") }).to_string()
                 }
             ]
         }),

@@ -1007,15 +1007,18 @@ mod tests {
 
         assert!(joined.contains("agent handoff D"), "{joined}");
         assert!(joined.contains("agent handoff C"), "{joined}");
-        assert!(joined.contains("agent handoff B"), "{joined}");
+        assert!(
+            !joined.contains("agent handoff B"),
+            "only the current compact handoff and one inherited compact summary should be carried forward: {joined}"
+        );
         assert!(
             !joined.contains("agent handoff A"),
-            "only two previous compact summaries should be inherited: {joined}"
+            "only the current compact handoff and one inherited compact summary should be carried forward: {joined}"
         );
         assert_eq!(
             joined.matches("[inherited_compact_context]").count(),
-            2,
-            "only the two previous compact summaries should be carried forward: {joined}"
+            1,
+            "only one previous compact summary should be inherited beside the current handoff: {joined}"
         );
     }
 

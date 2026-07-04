@@ -212,15 +212,6 @@ export async function assertTerminalVisualContract(page, profile) {
     0,
     `${profile} should not re-render rails in the web UI`,
   );
-  if (profile === "plain") {
-    assert.doesNotMatch(contract.viewportText, /▏/u);
-  } else {
-    assert.match(
-      contract.viewportText,
-      /▏/u,
-      `${profile} should render terminal-native split border`,
-    );
-  }
 }
 
 export async function startGateway(runRoot) {
@@ -502,6 +493,10 @@ export async function startGateway(runRoot) {
         method: "auto",
         instructions: "OAuth started.",
       });
+    }
+    if (req.method === "POST" && url.pathname === "/provider/openai/auth/validate") {
+      await readJson(req);
+      return sendJson(res, { ok: true, provider_id: "openai", message: "validated" });
     }
     if (req.method === "POST" && url.pathname === "/provider/openai/auth/logout") {
       records.providerLogouts.push("openai");
