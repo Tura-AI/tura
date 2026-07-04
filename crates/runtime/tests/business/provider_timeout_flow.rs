@@ -21,11 +21,11 @@ use tura_llm_rust::{
 
 static MOCK_ROUTER_ADDR: OnceLock<String> = OnceLock::new();
 static MOCK_ROUTER_INIT: Mutex<()> = Mutex::new(());
-static TEST_ENV: Mutex<()> = Mutex::new(());
+static TEST_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
 async fn runtime_provider_timeout_business_flow_marks_runtime_timed_out_without_success_output() {
-    let _guard = TEST_ENV.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = TEST_ENV.lock().await;
     let provider = DelayedProvider::start(Duration::from_millis(2_500));
     let _api_key = EnvGuard::set("LOCALTIMEOUT_API_KEY", "local-timeout-key");
     let settings = Arc::new(Settings {
@@ -59,6 +59,7 @@ async fn runtime_provider_timeout_business_flow_marks_runtime_timed_out_without_
             tool_choice: None,
             session_directory: std::env::temp_dir(),
             allowed_command_run_commands: Some(BTreeSet::new()),
+            require_startup_task_state: false,
         },
         settings,
         Arc::new(TuraConfig::new(".env.runtime-timeout-business-missing")),
@@ -102,7 +103,7 @@ async fn runtime_provider_timeout_business_flow_marks_runtime_timed_out_without_
 
 #[tokio::test]
 async fn streamed_command_run_waits_for_commands_after_provider_stream_completes() {
-    let _guard = TEST_ENV.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = TEST_ENV.lock().await;
     let workspace = tempfile::tempdir().expect("workspace");
     let output_path = workspace.path().join("completed-provider-command.txt");
     let provider = CompletedResponsesProvider::start(delayed_command(&output_path));
@@ -151,6 +152,7 @@ async fn streamed_command_run_waits_for_commands_after_provider_stream_completes
             tool_choice: None,
             session_directory: workspace.path().to_path_buf(),
             allowed_command_run_commands: Some(BTreeSet::from(["shell_command".to_string()])),
+            require_startup_task_state: false,
         },
         settings,
         Arc::new(TuraConfig::new(
@@ -223,7 +225,7 @@ async fn streamed_command_run_waits_for_commands_after_provider_stream_completes
 
 #[tokio::test]
 async fn streamed_command_run_gateway_callbacks_do_not_gate_command_execution_business_flow() {
-    let _guard = TEST_ENV.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = TEST_ENV.lock().await;
     let workspace = tempfile::tempdir().expect("workspace");
     let output_path = workspace.path().join("completed-with-hanging-gateway.txt");
     let provider = CompletedResponsesProvider::start(delayed_command(&output_path));
@@ -274,6 +276,7 @@ async fn streamed_command_run_gateway_callbacks_do_not_gate_command_execution_bu
             tool_choice: None,
             session_directory: workspace.path().to_path_buf(),
             allowed_command_run_commands: Some(BTreeSet::from(["shell_command".to_string()])),
+            require_startup_task_state: false,
         },
         settings,
         Arc::new(TuraConfig::new(

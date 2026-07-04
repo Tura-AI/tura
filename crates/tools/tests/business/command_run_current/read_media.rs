@@ -9,7 +9,7 @@ fn pass_current_style_command_run_output_shape() {
     let output = command_run::execute(
         &json!({
             "commands": [
-                { "command": "shell_command", "command_line": "{\"command\":\"Write-Output ok\",\"timeout_ms\":5000}" }
+                { "command": "shell_command", "command_line": json!({ "command": shell_echo("ok"), "timeout_ms": 5000 }).to_string() }
             ]
         }),
         &root,
@@ -36,7 +36,7 @@ async fn pass_internal_command_rebuilds_tool_call_and_dispatches_router_handler(
         tool_name: "shell_command".to_string(),
         call_id: "call_test".to_string(),
         payload: ToolPayload::Function {
-            arguments: json!({ "command": "Write-Output router-ok", "timeout_ms": 5000 }),
+            arguments: json!({ "command": shell_echo("router-ok"), "timeout_ms": 5000 }),
         },
     };
 

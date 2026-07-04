@@ -52,6 +52,30 @@ pub(crate) fn single_quoted_posix_path(path: &Path) -> String {
     path.to_string_lossy().replace('\'', r#"'\''"#)
 }
 
+pub(crate) fn shell_echo(text: &str) -> String {
+    if cfg!(windows) {
+        format!("Write-Output {text}")
+    } else {
+        format!("echo {text}")
+    }
+}
+
+pub(crate) fn shell_cat(path: &str) -> String {
+    if cfg!(windows) {
+        format!("Get-Content {path}")
+    } else {
+        format!("cat {path}")
+    }
+}
+
+pub(crate) fn shell_pwd() -> &'static str {
+    if cfg!(windows) {
+        "Get-Location"
+    } else {
+        "pwd"
+    }
+}
+
 pub(crate) fn find_ffmpeg() -> Option<String> {
     if let Ok(path) = std::env::var("FFMPEG_PATH") {
         if !path.trim().is_empty() && PathBuf::from(&path).exists() {

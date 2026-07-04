@@ -85,8 +85,15 @@ fn assert_blocked(output: &serde_json::Value) {
     );
 }
 
+fn assert_success(output: &serde_json::Value) {
+    assert_eq!(
+        output["results"][0]["success"], true,
+        "command should run successfully: {output}"
+    );
+}
+
 #[test]
-fn dangerous_rm_rf_is_blocked_and_target_survives() {
+fn workspace_rm_rf_is_allowed_and_target_is_deleted() {
     let root = workspace("rm-rf");
     let target = root.join("precious");
     fs::create_dir_all(&target).expect("create target");
@@ -94,15 +101,12 @@ fn dangerous_rm_rf_is_blocked_and_target_survives() {
 
     let output = run_bash(&root, "rm -rf precious");
 
-    assert_blocked(&output);
-    assert!(
-        target.join("keep.txt").exists(),
-        "dangerous rm must not have executed"
-    );
+    assert_success(&output);
+    assert!(!target.exists(), "workspace-local rm should have executed");
 }
 
 #[test]
-fn zsh_surface_blocks_dangerous_rm_rf_and_target_survives() {
+fn zsh_surface_allows_workspace_rm_rf_and_target_is_deleted() {
     if !zsh_available() {
         eprintln!("zsh unavailable; skipping zsh interceptor fixture");
         return;
@@ -114,15 +118,15 @@ fn zsh_surface_blocks_dangerous_rm_rf_and_target_survives() {
 
     let output = run_zsh(&root, "rm -rf precious-zsh");
 
-    assert_blocked(&output);
+    assert_success(&output);
     assert!(
-        target.join("keep.txt").exists(),
-        "dangerous zsh rm must not have executed"
+        !target.exists(),
+        "workspace-local zsh rm should have executed"
     );
 }
 
 #[test]
-fn sudo_wrapped_rm_is_blocked_and_target_survives() {
+fn sudo_wrapped_rm_inside_workspace_is_allowed() {
     let root = workspace("sudo-rm");
     let target = root.join("vault");
     fs::create_dir_all(&target).expect("create target");
@@ -130,12 +134,16 @@ fn sudo_wrapped_rm_is_blocked_and_target_survives() {
 
     let output = run_bash(&root, "sudo rm -rf vault");
 
-    assert_blocked(&output);
-    assert!(target.join("keep.txt").exists());
+    if result_text(&output).contains("sudo: command not found") {
+        eprintln!("sudo unavailable; skipping sudo workspace-delete execution assertion");
+        return;
+    }
+    assert_success(&output);
+    assert!(!target.exists());
 }
 
 #[test]
-fn timeout_wrapped_rm_is_blocked_and_target_survives() {
+fn timeout_wrapped_rm_inside_workspace_is_allowed() {
     let root = workspace("timeout-rm");
     let target = root.join("cache");
     fs::create_dir_all(&target).expect("create target");
@@ -143,12 +151,12 @@ fn timeout_wrapped_rm_is_blocked_and_target_survives() {
 
     let output = run_bash(&root, "timeout 5 rm -rf cache");
 
-    assert_blocked(&output);
-    assert!(target.join("keep.txt").exists());
+    assert_success(&output);
+    assert!(!target.exists());
 }
 
 #[test]
-fn chained_rm_after_safe_command_is_blocked_and_target_survives() {
+fn chained_workspace_rm_after_safe_command_is_allowed() {
     let root = workspace("chained-rm");
     let target = root.join("data");
     fs::create_dir_all(&target).expect("create target");
@@ -156,15 +164,15 @@ fn chained_rm_after_safe_command_is_blocked_and_target_survives() {
 
     let output = run_bash(&root, "echo starting && rm -rf data");
 
-    assert_blocked(&output);
+    assert_success(&output);
     assert!(
-        target.join("keep.txt").exists(),
-        "chained dangerous command must block the whole segment"
+        !target.exists(),
+        "workspace-local chained rm should execute"
     );
 }
 
 #[test]
-fn nested_bash_c_rm_is_blocked_and_target_survives() {
+fn nested_bash_c_workspace_rm_is_allowed() {
     let root = workspace("nested-rm");
     let target = root.join("inner");
     fs::create_dir_all(&target).expect("create target");
@@ -172,12 +180,12 @@ fn nested_bash_c_rm_is_blocked_and_target_survives() {
 
     let output = run_bash(&root, "bash -c \"rm -rf inner\"");
 
-    assert_blocked(&output);
-    assert!(target.join("keep.txt").exists());
+    assert_success(&output);
+    assert!(!target.exists());
 }
 
 #[test]
-fn python_library_smuggled_rm_is_blocked_and_target_survives() {
+fn python_library_workspace_rm_is_allowed() {
     let root = workspace("py-smuggle");
     let target = root.join("loot");
     fs::create_dir_all(&target).expect("create target");
@@ -185,15 +193,12 @@ fn python_library_smuggled_rm_is_blocked_and_target_survives() {
 
     let output = run_bash(&root, "python3 -c \"import os; os.system('rm -rf loot')\"");
 
-    assert_blocked(&output);
-    assert!(
-        target.join("keep.txt").exists(),
-        "library-smuggled dangerous command must not execute"
-    );
+    assert_success(&output);
+    assert!(!target.exists());
 }
 
 #[test]
-fn node_library_smuggled_rm_is_blocked_and_target_survives() {
+fn node_library_workspace_rm_is_allowed() {
     let root = workspace("node-smuggle");
     let target = root.join("stash");
     fs::create_dir_all(&target).expect("create target");
@@ -204,8 +209,26 @@ fn node_library_smuggled_rm_is_blocked_and_target_survives() {
         "node -e \"require('child_process').execSync('rm -rf stash')\"",
     );
 
+    assert_success(&output);
+    assert!(!target.exists());
+}
+
+#[test]
+fn outside_workspace_rm_rf_is_blocked_and_target_survives() {
+    let root = workspace("outside-rm-rf");
+    let outside = root
+        .parent()
+        .expect("workspace should have parent")
+        .join(format!("tura-interceptor-outside-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&outside);
+    fs::create_dir_all(&outside).expect("create outside target");
+    fs::write(outside.join("keep.txt"), "data").expect("write outside file");
+
+    let output = run_bash(&root, &format!("rm -rf {}", outside.display()));
+
     assert_blocked(&output);
-    assert!(target.join("keep.txt").exists());
+    assert!(outside.join("keep.txt").exists());
+    let _ = fs::remove_dir_all(outside);
 }
 
 #[test]

@@ -218,7 +218,8 @@ fn macos_user_posix_shell() -> Option<(PathBuf, &'static str)> {
 }
 
 pub(super) fn supported_posix_shell_kind(path: &Path) -> Option<&'static str> {
-    let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    let raw = path.to_string_lossy().replace('\\', "/");
+    let name = raw.rsplit('/').next()?.to_ascii_lowercase();
     match name.strip_suffix(".exe").unwrap_or(&name) {
         "zsh" => Some("zsh"),
         "bash" => Some("bash"),

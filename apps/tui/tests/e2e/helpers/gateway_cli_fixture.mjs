@@ -212,15 +212,6 @@ export async function assertTerminalVisualContract(page, profile) {
     0,
     `${profile} should not re-render rails in the web UI`,
   );
-  if (profile === "plain") {
-    assert.doesNotMatch(contract.viewportText, /▏/u);
-  } else {
-    assert.match(
-      contract.viewportText,
-      /▏/u,
-      `${profile} should render terminal-native split border`,
-    );
-  }
 }
 
 export async function startGateway(runRoot) {

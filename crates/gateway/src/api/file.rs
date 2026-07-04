@@ -441,6 +441,9 @@ fn workspace_root(directory: Option<String>) -> Option<PathBuf> {
 
 fn safe_join(root: &Path, relative: &str) -> Option<PathBuf> {
     let requested = PathBuf::from(relative);
+    if !requested.is_absolute() && looks_windows_absolute_path(relative) {
+        return None;
+    }
     if requested.is_absolute() {
         let canonical_root = root.canonicalize().ok()?;
         let canonical_requested = requested.canonicalize().ok()?;
@@ -458,6 +461,14 @@ fn safe_join(root: &Path, relative: &str) -> Option<PathBuf> {
         }
     }
     Some(path)
+}
+
+fn looks_windows_absolute_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
 }
 
 fn should_hide(name: &str) -> bool {
@@ -706,9 +717,11 @@ where
 }
 
 fn relative_display_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .map(display_path)
-        .unwrap_or_else(|_| display_path(path))
+    let root = display_path(root).trim_end_matches('/').to_string();
+    let path = display_path(path);
+    path.strip_prefix(&format!("{root}/"))
+        .map(str::to_string)
+        .unwrap_or(path)
 }
 
 fn display_path(path: &Path) -> String {
