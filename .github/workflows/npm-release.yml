@@ -89,6 +89,14 @@ jobs:
           node scripts/npm/prepack.mjs
           node scripts/npm/package-platform.mjs --pack --no-desktop
           node scripts/npm/package-release.mjs --no-desktop
+          $platformPackage = Get-ChildItem -LiteralPath release/npm-platform -Filter *.tgz -File | Select-Object -First 1
+          if (-not $platformPackage) {
+            $packageDir = Get-ChildItem -LiteralPath release/npm-platform -Directory | Select-Object -First 1
+            if (-not $packageDir) { throw "Platform package directory was not produced." }
+            npm pack $packageDir.FullName --json --pack-destination release/npm-platform | Out-Host
+          }
+          $platformPackage = Get-ChildItem -LiteralPath release/npm-platform -Filter *.tgz -File | Select-Object -First 1
+          if (-not $platformPackage) { throw "Platform package tarball was not produced." }
 
       - name: Verify npm install uses local platform package
         shell: pwsh
