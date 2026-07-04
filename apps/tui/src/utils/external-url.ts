@@ -21,6 +21,9 @@ async function defaultOpenExternalUrl(url: string): Promise<OpenExternalUrlResul
   if (!isSupportedExternalUrl(url)) {
     return { ok: false, reason: "Only http(s) URLs can be opened automatically." };
   }
+  if (process.env.TURA_DISABLE_OPEN_EXTERNAL_URL === "1") {
+    return { ok: true };
+  }
   const [command, args] = externalOpenCommand(url);
   try {
     const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });

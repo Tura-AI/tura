@@ -227,6 +227,50 @@ function html(profileId, profile, instance) {
         if (window.__turaHoveredLink === text) window.__turaHoveredLink = "";
       },
     };
+    const urlStartPattern = /https?:\\/\\/[^\\s]+/iu;
+    const urlContinuationPattern = /^[A-Za-z0-9\\-._~:/?#@!$&'()*+,;=%]+$/u;
+    const cleanTerminalUrlLine = (value) => String(value || "").replace(/^[▏|]\\s?/u, "").trim();
+    const collectWrappedUrl = (targetTerm, startLine, initial) => {
+      let url = initial;
+      const buffer = targetTerm.buffer?.active;
+      if (!buffer) return url;
+      for (let line = startLine + 1; line < Math.min(buffer.length, startLine + 12); line += 1) {
+        const segment = cleanTerminalUrlLine(buffer.getLine(line)?.translateToString(true) || "");
+        if (!segment || !urlContinuationPattern.test(segment)) break;
+        url += segment;
+        if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(segment) && !/^https?:/iu.test(segment)) break;
+      }
+      return url;
+    };
+    const installTuraLinkProvider = (targetTerm) => {
+      targetTerm.registerLinkProvider?.({
+        provideLinks: (lineNumber, callback) => {
+          const buffer = targetTerm.buffer?.active;
+          const lineIndex = lineNumber - 1;
+          const text = buffer?.getLine(lineIndex)?.translateToString(true) || "";
+          const match = text.match(urlStartPattern);
+          if (!match || match.index === undefined) {
+            callback([]);
+            return;
+          }
+          const url = collectWrappedUrl(targetTerm, lineIndex, match[0]);
+          const startColumn = match.index + 1;
+          const endColumn = Math.min(targetTerm.cols, match.index + match[0].length);
+          callback([
+            {
+              text: url,
+              range: {
+                start: { x: startColumn, y: lineNumber },
+                end: { x: endColumn, y: lineNumber },
+              },
+              activate: (event, text) => linkHandler.activate(event, text),
+              hover: (event, text) => linkHandler.hover(event, text),
+              leave: (event, text) => linkHandler.leave(event, text),
+            },
+          ]);
+        },
+      });
+    };
     const loadScript = (src, timeoutMs = 5000) =>
       new Promise((resolve, reject) => {
         const script = document.createElement("script");
@@ -279,6 +323,7 @@ function html(profileId, profile, instance) {
       const nextFit = new FitAddon.FitAddon();
       nextTerm.loadAddon(nextFit);
       nextTerm.open(terminalHost);
+      installTuraLinkProvider(nextTerm);
       enableUnicode11(nextTerm).then(() => window.__turaFit?.());
       nextFit.fit();
       nextTerm.onData((data) => send({ data }));

@@ -5,7 +5,8 @@ import { initialState, reducer, type AppState } from "../../../src/tui/reducer.j
 import { setExternalUrlOpenerForTests } from "../../../src/utils/external-url.js";
 import type { TuiGatewayClient } from "../../../src/tui/runtime.js";
 import { settingsLines } from "../../../src/tui/render/settings.js";
-import { stripAnsi } from "../../../src/tui/render-terminal.js";
+import { setActiveCapabilities, stripAnsi } from "../../../src/tui/render-terminal.js";
+import { plainCapabilities, richCapabilities } from "../../../src/tui/capabilities.js";
 
 test("provider OAuth setting opens the browser and starts callback input", async () => {
   let state = providerAuthState();
@@ -34,9 +35,10 @@ test("provider OAuth setting opens the browser and starts callback input", async
   assert.match(state.notice ?? "", /Open mock OAuth/u);
 });
 
-test("provider auto OAuth updates TUI state when the gateway callback completes", async () => {
+test("provider auto OAuth updates TUI state when gateway auth status completes", async () => {
   let state = providerAuthState();
   let statusCalls = 0;
+  let callbackCalls = 0;
   setExternalUrlOpenerForTests(async () => ({ ok: true }));
   try {
     await applySelectedSetting(
@@ -46,6 +48,17 @@ test("provider auto OAuth updates TUI state when the gateway callback completes"
           method: "auto",
           instructions: "Complete authorization in the browser",
         }),
+        providerOauthCallback: async () => {
+          callbackCalls += 1;
+          return {
+            ok: true,
+            provider_id: "mock",
+            code: "provider.oauth.completed",
+            message: "provider OAuth completed",
+            level: "valid",
+            status: authStatus(true),
+          };
+        },
         providerAuthStatus: async () => authStatus(++statusCalls > 1),
       }),
       () => state,
@@ -58,6 +71,48 @@ test("provider auto OAuth updates TUI state when the gateway callback completes"
     setExternalUrlOpenerForTests();
   }
 
+  assert.equal(callbackCalls, 0);
+  assert.equal(state.authStatuses.mock.authenticated, true);
+  assert.equal(state.settingInput, undefined);
+  assert.equal(state.notice, "connected");
+});
+
+test("provider auto OAuth waits for gateway status instead of submitting an empty callback", async () => {
+  let state = providerAuthState();
+  let callbackCalls = 0;
+  setExternalUrlOpenerForTests(async () => ({ ok: true }));
+  try {
+    await applySelectedSetting(
+      mockClient({
+        providerOauthAuthorize: async () => ({
+          url: "https://example.test/oauth",
+          method: "auto",
+          instructions: "Complete authorization in the browser",
+        }),
+        providerOauthCallback: async () => {
+          callbackCalls += 1;
+          return {
+            ok: false,
+            provider_id: "mock",
+            code: "provider.oauth.code_missing",
+            message: "Paste the copied authorization code before submitting",
+            level: "invalid",
+            status: authStatus(false),
+          };
+        },
+        providerAuthStatus: async () => authStatus(true),
+      }),
+      () => state,
+      (action) => {
+        state = reducer(state, action);
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    setExternalUrlOpenerForTests();
+  }
+
+  assert.equal(callbackCalls, 0);
   assert.equal(state.authStatuses.mock.authenticated, true);
   assert.equal(state.settingInput, undefined);
   assert.equal(state.notice, "connected");
@@ -77,9 +132,17 @@ test("provider OAuth input renders the complete authorization URL", () => {
     },
   };
 
-  const rendered = stripAnsi(settingsLines(state, 82, 20).join("\n")).replace(/\s+/g, "");
+  setActiveCapabilities(richCapabilities());
+  let output = "";
+  try {
+    output = settingsLines(state, 82, 20).join("\n");
+  } finally {
+    setActiveCapabilities(plainCapabilities());
+  }
+  const rendered = stripAnsi(output).replace(/[▏\s]/gu, "");
 
   assert.ok(rendered.includes(longUrl));
+  assert.ok(output.includes(`\x1b]8;;${longUrl}\x1b\\`));
 });
 
 test("API key input validates before saving and preserves invalid input", async () => {

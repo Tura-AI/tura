@@ -2,7 +2,7 @@ import { t } from "../../i18n.js";
 import { agentDescription } from "../../agent-display.js";
 import type { SettingDetail, AppState } from "../reducer.js";
 import { runtimeModelFromConfig } from "../model-config.js";
-import { activeCapabilities, wrap } from "../render-terminal.js";
+import { activeCapabilities, truncate, wrap } from "../render-terminal.js";
 import { secondaryText } from "../styles/text.js";
 import { SETTING_DETAILS } from "../settings-catalog.js";
 import {
@@ -91,10 +91,21 @@ function settingInputLines(state: AppState, cols: number): string[] {
   const lines = [sectionBodyLine(secondaryText(input.prompt), cols)];
   if (!input.oauthUrl) return lines;
   lines.push(sectionBodyLine(secondaryText(t("openUrl", { url: "" }).trim()), cols));
+  lines.push(sectionBodyLine(secondaryText(terminalLink(input.oauthUrl, oauthLinkLabel(cols))), cols));
   for (const line of wrap(input.oauthUrl, Math.max(24, cols - 4))) {
     lines.push(sectionBodyLine(secondaryText(line), cols));
   }
   return lines;
+}
+
+function oauthLinkLabel(cols: number): string {
+  return truncate("Open complete OAuth URL", Math.max(24, cols - 4));
+}
+
+function terminalLink(url: string, label: string): string {
+  const cleanUrl = url.replace(/[\x00-\x1f\x7f]/gu, "");
+  if (!cleanUrl || activeCapabilities.level === "plain" || !activeCapabilities.osc8) return label;
+  return `\x1b]8;;${cleanUrl}\x1b\\${label}\x1b]8;;\x1b\\`;
 }
 
 export function settingsPageInfo(
