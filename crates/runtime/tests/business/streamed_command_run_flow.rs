@@ -137,6 +137,15 @@ fn shell_command_with_timeout(command: &str, step: u64, timeout_ms: u64) -> Valu
     })
 }
 
+fn expected_shell_command_type() -> &'static str {
+    code_tools::commands::active_shell_command_name()
+}
+
+fn assert_shell_result(result: &Value, success: bool) {
+    assert_eq!(result["command_type"], expected_shell_command_type());
+    assert_eq!(result["success"], success);
+}
+
 fn text_at(path: &std::path::Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|error| {
         panic!("failed to read {}: {error}", path.display());
@@ -178,8 +187,7 @@ async fn streamed_provider_command_ready_event_executes_once_in_session_workspac
             .await
             .expect("command ready event should produce command_run output");
 
-    assert_eq!(output["results"][0]["command_type"], "shell_command");
-    assert_eq!(output["results"][0]["success"], true);
+    assert_shell_result(&output["results"][0], true);
     assert!(
         text_at(&workspace.path().join("streamed-event.txt")).contains("runtime-stream-event-ok")
     );
@@ -231,10 +239,8 @@ async fn streamed_command_batch_executes_multiple_ready_commands_in_ordered_resu
         results[1]["step"], 1,
         "command_run preserves duplicate dependency groups"
     );
-    assert_eq!(results[0]["command_type"], "shell_command");
-    assert_eq!(results[1]["command_type"], "shell_command");
-    assert_eq!(results[0]["success"], true);
-    assert_eq!(results[1]["success"], true);
+    assert_shell_result(&results[0], true);
+    assert_shell_result(&results[1], true);
     assert!(text_at(&workspace.path().join("streamed-batch-one.txt"))
         .contains("runtime-stream-batch-one"));
     assert!(text_at(&workspace.path().join("streamed-batch-two.txt"))
@@ -278,8 +284,7 @@ async fn streamed_command_batch_reports_shell_failures_without_masking_result_sh
         .expect("command_run output should contain results");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["step"], 1);
-    assert_eq!(results[0]["command_type"], "shell_command");
-    assert_eq!(results[0]["success"], false);
+    assert_shell_result(&results[0], false);
     assert_ne!(
         results[0]["exit_code"], 0,
         "shell failure should preserve a non-zero exit code"
@@ -312,10 +317,8 @@ async fn streamed_command_batch_continues_after_failure_and_keeps_result_order()
     assert_eq!(results.len(), 2);
     assert_eq!(results[0]["step"], 1);
     assert_eq!(results[1]["step"], 1);
-    assert_eq!(results[0]["command_type"], "shell_command");
-    assert_eq!(results[1]["command_type"], "shell_command");
-    assert_eq!(results[0]["success"], false);
-    assert_eq!(results[1]["success"], true);
+    assert_shell_result(&results[0], false);
+    assert_shell_result(&results[1], true);
     assert_ne!(results[0]["exit_code"], 0);
     assert!(
         text_at(&workspace.path().join("after-failure.txt")).contains("runtime-after-failure"),
@@ -346,8 +349,7 @@ async fn streamed_command_batch_reports_timeouts_without_success_side_effects() 
         .expect("command_run output should contain results");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["step"], 1);
-    assert_eq!(results[0]["command_type"], "shell_command");
-    assert_eq!(results[0]["success"], false);
+    assert_shell_result(&results[0], false);
     let timeout_text = results[0]["error"]
         .as_str()
         .or_else(|| results[0]["stderr"].as_str())
@@ -389,9 +391,9 @@ async fn streamed_command_batch_runs_same_step_macro_commands_without_result_cro
     assert_eq!(results[0]["step"], 1);
     assert_eq!(results[1]["step"], 1);
     assert_eq!(results[2]["step"], 1);
-    assert!(results
-        .iter()
-        .all(|result| { result["command_type"] == "shell_command" && result["success"] == true }));
+    assert!(results.iter().all(|result| {
+        result["command_type"] == expected_shell_command_type() && result["success"] == true
+    }));
     assert!(text_at(&workspace.path().join("alpha.txt")).contains("alpha-one"));
     assert!(text_at(&workspace.path().join("beta.txt")).contains("beta-one"));
     assert!(text_at(&workspace.path().join("gamma.txt")).contains("gamma-one"));
@@ -425,7 +427,7 @@ async fn streamed_command_batches_repeated_workspaces_do_not_cross_talk() {
         assert_eq!(results[0]["step"], 1);
         assert_eq!(results[1]["step"], 1);
         assert!(results.iter().all(|result| {
-            result["command_type"] == "shell_command" && result["success"] == true
+            result["command_type"] == expected_shell_command_type() && result["success"] == true
         }));
         assert!(text_at(&workspace.path().join(&first_file)).contains(&format!("{marker}-first")));
         assert!(text_at(&workspace.path().join(&second_file)).contains(&format!("{marker}-second")));
@@ -443,7 +445,7 @@ async fn streamed_command_batches_repeated_workspaces_do_not_cross_talk() {
     for (index, output) in completed {
         let serialized = output.to_string();
         assert!(
-            serialized.contains("shell_command"),
+            serialized.contains(expected_shell_command_type()),
             "batch {index} output should preserve command result shape: {output}"
         );
         for other in 0..batch_count {

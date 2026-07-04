@@ -325,6 +325,8 @@ pub(crate) fn write_codex_streaming_probe_response(
     workspace: &Path,
     first_command_observed_before_response_finished: &AtomicBool,
 ) {
+    let first_command = write_file_command("streamed-first.txt", "first");
+    let second_command = write_file_command("streamed-second.txt", "second");
     let _ = write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
@@ -359,7 +361,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                 "step": 1,
                 "command_type": "shell_command",
                 "command_line": json!({
-                    "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                    "command": first_command,
                     "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                 }).to_string()
             }).to_string() + ","
@@ -383,7 +385,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                 "step": 2,
                 "command_type": "shell_command",
                 "command_line": json!({
-                    "command": "python -c \"from pathlib import Path; Path('streamed-second.txt').write_text('second')\"",
+                    "command": second_command,
                     "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                 }).to_string()
             }).to_string() + "]}"
@@ -400,7 +402,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                         "step": 1,
                         "command_type": "shell_command",
                         "command_line": json!({
-                            "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                            "command": first_command,
                             "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                         }).to_string()
                     },
@@ -408,7 +410,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                         "step": 2,
                         "command_type": "shell_command",
                         "command_line": json!({
-                            "command": "python -c \"from pathlib import Path; Path('streamed-second.txt').write_text('second')\"",
+                            "command": second_command,
                             "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                         }).to_string()
                     }
@@ -433,7 +435,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                                 "step": 1,
                                 "command_type": "shell_command",
                                 "command_line": json!({
-                                    "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                                    "command": first_command,
                                     "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                                 }).to_string()
                             },
@@ -441,7 +443,7 @@ pub(crate) fn write_codex_streaming_probe_response(
                                 "step": 2,
                                 "command_type": "shell_command",
                                 "command_line": json!({
-                                    "command": "python -c \"from pathlib import Path; Path('streamed-second.txt').write_text('second')\"",
+                                    "command": second_command,
                                     "timeout_ms": MOCK_COMMAND_TIMEOUT_MS
                                 }).to_string()
                             }
@@ -677,6 +679,14 @@ pub(crate) fn write_codex_sse(stream: &mut TcpStream, value: Value) {
 pub(crate) fn write_codex_sse_raw(stream: &mut TcpStream, data: &str) {
     let _ = write!(stream, "{:X}\r\n{}\r\n", data.len(), data);
     let _ = stream.flush();
+}
+
+fn write_file_command(path: &str, content: &str) -> String {
+    if cfg!(windows) {
+        format!("Set-Content -LiteralPath '{path}' -Value '{content}'")
+    } else {
+        format!("printf '%s' '{content}' > {path}")
+    }
 }
 
 pub(crate) fn write_codex_final_response(stream: &mut TcpStream, content: &str) {

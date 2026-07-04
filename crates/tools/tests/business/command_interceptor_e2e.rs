@@ -67,10 +67,18 @@ fn run_zsh(root: &Path, command: &str) -> serde_json::Value {
 }
 
 fn result_text(output: &serde_json::Value) -> String {
-    output["results"][0]["output"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string()
+    let result = &output["results"][0];
+    [
+        result["error"].as_str(),
+        result["output"].as_str(),
+        result["output"]["error"].as_str(),
+        result["output"]["stderr"].as_str(),
+        result["output"]["stdout"].as_str(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn assert_blocked(output: &serde_json::Value) {
