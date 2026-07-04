@@ -26,7 +26,14 @@ function Invoke-Checked {
 function Stop-ProcessTree {
   param([int]$ProcessId)
   if ($env:OS -eq "Windows_NT") {
-    & taskkill.exe /PID $ProcessId /T /F *> $null
+    try {
+      & taskkill.exe /PID $ProcessId /T /F *> $null
+      if ($LASTEXITCODE -ne 0) {
+        Write-Host "warning: taskkill could not terminate process tree $ProcessId (exit $LASTEXITCODE)"
+      }
+    } catch {
+      Write-Host "warning: taskkill could not terminate process tree ${ProcessId}: $($_.Exception.Message)"
+    }
     return
   }
   Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
