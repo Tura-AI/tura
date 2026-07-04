@@ -3853,10 +3853,10 @@
       "login_env": "OPENAI_LOGIN",
       "provider": "codex",
       "refresh_env": "OPENAI_REFRESH_TOKEN",
-      "status": "connected",
+      "status": "revoked",
       "token_env": "OPENAI_API_KEY",
       "type": "oauth",
-      "updated_at": "2026-07-04T10:27:47.483530900+00:00"
+      "updated_at": "2026-07-04T10:28:05.732096200+00:00"
     },
     "openai": {
       "account_env": "OPENAI_ACCOUNT_ID",
