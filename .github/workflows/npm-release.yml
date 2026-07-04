@@ -126,26 +126,31 @@ jobs:
             $rustCliBinary = Join-Path $releaseDir (if ($IsWindows) { "tura_exec.exe" } else { "tura_exec" })
             $providerConfig = Join-Path $releaseDir "config/provider_config.json"
             $guiIndex = Join-Path $releaseDir "tura_gui/index.html"
-            foreach ($requiredPath in @($releaseBinary, $rustCliBinary, $providerConfig, $guiIndex)) {
+            $commandConfig = Join-Path $releaseDir "commands/web_discover/command.toml"
+            $releaseReadme = Join-Path $releaseDir "README.md"
+            $scriptsArchitecture = Join-Path $releaseDir "scripts/ARCHITECTURE.md"
+            foreach ($requiredPath in @($releaseBinary, $rustCliBinary, $providerConfig, $guiIndex, $commandConfig, $releaseReadme, $scriptsArchitecture)) {
               if (-not (Test-Path -LiteralPath $requiredPath)) { throw "Installed package is missing $requiredPath" }
             }
             if (-not $IsWindows) {
               $mode = (Get-Item -LiteralPath $releaseBinary).UnixFileMode
               if (-not ($mode -band [System.IO.UnixFileMode]::UserExecute)) { throw "Installed tura binary is not executable: $releaseBinary" }
+              $rustMode = (Get-Item -LiteralPath $rustCliBinary).UnixFileMode
+              if (-not ($rustMode -band [System.IO.UnixFileMode]::UserExecute)) { throw "Installed tura_exec binary is not executable: $rustCliBinary" }
             }
             $binName = if ($IsWindows) { "tura.cmd" } else { "tura" }
             $turaBin = Join-Path $installDir (Join-Path "node_modules/.bin" $binName)
             if (-not (Test-Path -LiteralPath $turaBin)) { throw "Installed tura bin was not found: $turaBin" }
             $PSNativeCommandUseErrorActionPreference = $false
-            $helpOutput = & $turaBin exec --help 2>&1
+            $helpOutput = & $rustCliBinary --help 2>&1
             if ($LASTEXITCODE -ne 0) {
               $helpOutput | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
-              throw "$turaBin exec --help failed with exit $LASTEXITCODE"
+              throw "$rustCliBinary --help failed with exit $LASTEXITCODE"
             }
             $helpText = $helpOutput -join "`n"
             if (-not $helpText.Contains("Tura Rust CLI")) {
               $helpOutput | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
-              throw "$turaBin exec --help did not return the Rust CLI help text."
+              throw "$rustCliBinary --help did not return the Rust CLI help text."
             }
             $helpOutput | Select-Object -First 8 | ForEach-Object { Write-Host $_ }
           } finally {
