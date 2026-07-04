@@ -1,0 +1,77 @@
+name: NPM Install Matrix
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/npm-install-matrix.yml"
+      - "npm/**"
+      - "scripts/npm/**"
+      - "package.json"
+      - "README.md"
+      - "scripts/ARCHITECTURE.md"
+  push:
+    branches:
+      - "codex/**"
+    paths:
+      - ".github/workflows/npm-install-matrix.yml"
+      - "npm/**"
+      - "scripts/npm/**"
+      - "package.json"
+      - "README.md"
+      - "scripts/ARCHITECTURE.md"
+
+permissions:
+  contents: read
+
+jobs:
+  npm-install:
+    name: npm install ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ubuntu-latest
+            runner: ubuntu-latest
+          - label: macos-15
+            runner: macos-15
+          - label: windows-2022
+            runner: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run npm installer regression tests
+        id: npm_install
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Continue"
+          New-Item -ItemType Directory -Path .ci-results -Force | Out-Null
+          node --test scripts/npm/cli-path.test.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log"
+          $testExit = $LASTEXITCODE
+          if ($testExit -eq 0) {
+            node scripts/npm/verify-npm-install-fixture.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log" -Append
+            $testExit = $LASTEXITCODE
+          }
+          "exit_code=$testExit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($testExit -ne 0) { exit $testExit }
+
+      - name: Upload npm install logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-install-${{ matrix.label }}-logs
+          path: .ci-results/npm-install-${{ matrix.label }}.log
+          if-no-files-found: warn
+
+      - name: Fail if npm install verification failed
+        if: steps.npm_install.outcome != 'success'
+        shell: pwsh
+        run: exit 1

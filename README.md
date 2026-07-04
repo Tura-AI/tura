@@ -25,7 +25,8 @@ The main `tura-ai` package installs the matching platform release package
 and falls back to GitHub Release archives under the same version tag. It exposes
 the `tura` CLI command and registers the release CLI directory during
 postinstall. Set `TURA_NPM_SKIP_CLI_REGISTRATION=1` before installing only when
-you need to suppress PATH/profile changes in automation.
+you need to suppress PATH/profile changes in automation. On Windows, set
+`TURA_POWERSHELL_PATH` only if PowerShell is installed in a nonstandard location.
 
 To remove the PATH/profile registration before uninstalling the npm package:
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { resolveWindowsPowerShellCommand } from "./cli-path.mjs";
 import {
   bundleCandidates,
   executableName,
@@ -130,7 +131,11 @@ try {
   mkdirSync(outDir, { recursive: true });
   rmSync(archivePath, { force: true });
   if (process.platform === "win32") {
-    run("powershell.exe", [
+    const powerShell = resolveWindowsPowerShellCommand();
+    if (!powerShell) {
+      fail("PowerShell was not found. Restore Windows PowerShell to PATH, set TURA_POWERSHELL_PATH, or install PowerShell 7.");
+    }
+    run(powerShell, [
       "-NoProfile",
       "-ExecutionPolicy",
       "Bypass",

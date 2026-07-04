@@ -15,7 +15,11 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { cliPathRegistrationSkipped, registerCliPath } from "./cli-path.mjs";
+import {
+  cliPathRegistrationSkipped,
+  registerCliPath,
+  resolveWindowsPowerShellCommand,
+} from "./cli-path.mjs";
 import {
   executableName,
   executableNames,
@@ -115,7 +119,11 @@ function extractArchive(archivePath) {
   mkdirSync(releaseDir, { recursive: true });
   if (archivePath.endsWith(".zip")) {
     if (process.platform === "win32") {
-      run("powershell.exe", [
+      const powerShell = resolveWindowsPowerShellCommand();
+      if (!powerShell) {
+        fail("PowerShell was not found. Restore Windows PowerShell to PATH, set TURA_POWERSHELL_PATH, or install PowerShell 7.");
+      }
+      run(powerShell, [
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
