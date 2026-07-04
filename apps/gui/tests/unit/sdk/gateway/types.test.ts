@@ -108,6 +108,8 @@ describe("gateway SDK contract types", () => {
       healthy: true,
       version: "test",
       root: "C:/workspace",
+      pid: 42,
+      process_start_time: 777,
     } satisfies HealthResponse;
     const agent = {
       agent_name: "coding_agent",
@@ -118,6 +120,7 @@ describe("gateway SDK contract types", () => {
 
     expect(event.payload.properties?.issue_id).toBe("issue-1");
     expect(health.root).toBe("C:/workspace");
+    expect(health.pid).toBe(42);
     expect(agent.avatar?.display_mode).toBe("dynamic");
   });
 });

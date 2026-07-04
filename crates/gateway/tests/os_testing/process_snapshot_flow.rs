@@ -138,6 +138,8 @@ fn spawn_long_running_child(workspace: &Path, runtime_shell_process: bool) -> Re
     };
     if runtime_shell_process {
         command.env("TURA_BACKGROUND_PROCESS_KIND", "runtime_shell");
+    } else {
+        command.env_remove("TURA_BACKGROUND_PROCESS_KIND");
     }
     command
         .current_dir(workspace)

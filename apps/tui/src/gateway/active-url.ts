@@ -6,6 +6,14 @@ export const DEV_GATEWAY_PORT = "4125";
 export const RELEASE_GATEWAY_PORT = "4126";
 const ACTIVE_GATEWAY_FILE = "gateway-active.env";
 const TURA_GATEWAY_URL = "TURA_GATEWAY_URL";
+const TURA_GATEWAY_PID = "TURA_GATEWAY_PID";
+const TURA_GATEWAY_PROCESS_START_TIME = "TURA_GATEWAY_PROCESS_START_TIME";
+
+export interface ActiveGatewayRecord {
+  url: string;
+  pid?: number;
+  processStartTime?: number;
+}
 
 export function defaultGatewayUrl(): string {
   return `http://127.0.0.1:${defaultGatewayPort()}`;
@@ -24,17 +32,30 @@ export function currentBuildMode(): "dev" | "release" {
 }
 
 export function readActiveGatewayUrl(home = instanceHome()): string | undefined {
+  return readActiveGatewayRecord(home)?.url;
+}
+
+export function readActiveGatewayRecord(home = instanceHome()): ActiveGatewayRecord | undefined {
   try {
-    return parseActiveGatewayUrl(readFileSync(activeGatewayEnvPath(home), "utf8"));
+    return parseActiveGatewayRecord(readFileSync(activeGatewayEnvPath(home), "utf8"));
   } catch {
     return undefined;
   }
 }
 
-export function writeActiveGatewayUrl(gatewayUrl: string, home = instanceHome()): void {
+export function writeActiveGatewayUrl(
+  gatewayUrl: string,
+  home = instanceHome(),
+  identity?: { pid?: number; processStartTime?: number },
+): void {
   const path = activeGatewayEnvPath(home);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${TURA_GATEWAY_URL}=${stripTrailingSlash(gatewayUrl)}\n`, "utf8");
+  let content = `${TURA_GATEWAY_URL}=${stripTrailingSlash(gatewayUrl)}\n`;
+  if (identity?.pid) content += `${TURA_GATEWAY_PID}=${identity.pid}\n`;
+  if (identity?.processStartTime) {
+    content += `${TURA_GATEWAY_PROCESS_START_TIME}=${identity.processStartTime}\n`;
+  }
+  writeFileSync(path, content, "utf8");
   process.env.TURA_GATEWAY_URL = stripTrailingSlash(gatewayUrl);
 }
 
@@ -47,17 +68,28 @@ export function instanceHome(root?: string): string {
   return canonical(fromEnv || root || findRuntimeRoot());
 }
 
-function parseActiveGatewayUrl(raw: string): string | undefined {
+function parseActiveGatewayRecord(raw: string): ActiveGatewayRecord | undefined {
+  let url: string | undefined;
+  let pid: number | undefined;
+  let processStartTime: number | undefined;
   for (const line of raw.split(/\r?\n/u)) {
     const trimmed = line.trim();
-    if (!trimmed.startsWith(`${TURA_GATEWAY_URL}=`)) continue;
-    const value = trimmed
-      .slice(TURA_GATEWAY_URL.length + 1)
-      .trim()
-      .replace(/^['"]|['"]$/gu, "");
-    if (value) return stripTrailingSlash(value);
+    const [key, rawValue] = trimmed.split("=", 2);
+    if (!key || rawValue === undefined) continue;
+    const value = rawValue.trim().replace(/^['"]|['"]$/gu, "");
+    if (key === TURA_GATEWAY_URL && value) url = stripTrailingSlash(value);
+    if (key === TURA_GATEWAY_PID) pid = parsePositiveInteger(value);
+    if (key === TURA_GATEWAY_PROCESS_START_TIME) {
+      processStartTime = parsePositiveInteger(value);
+    }
   }
-  return undefined;
+  return url ? { url, pid, processStartTime } : undefined;
+}
+
+function parsePositiveInteger(value: string): number | undefined {
+  if (!/^\d+$/u.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function findRuntimeRoot(): string {

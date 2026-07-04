@@ -29,10 +29,13 @@ const requiredFiles = [
   "apps/tauri/package.json",
   "apps/tauri/bun.lock",
   "npm/tura.mjs",
+  "scripts/npm/cli-path.mjs",
   "scripts/npm/release-artifacts.mjs",
   "scripts/npm/install-release.mjs",
   "scripts/npm/package-platform.mjs",
   "scripts/npm/package-release.mjs",
+  "scripts/npm/stage-main-package.mjs",
+  "scripts/npm/restore-main-package.mjs",
   "scripts/npm/verify-platform-install.mjs"
 ];
 
@@ -59,6 +62,11 @@ if (packageJson.license !== "AGPL-3.0-or-later") {
 
 if (!packageJson.bin?.tura) {
   console.error("npm package check failed; bin.tura is required.");
+  process.exit(1);
+}
+
+if (!packageJson.scripts?.postinstall || !packageJson.scripts?.prepack || !packageJson.scripts?.postpack) {
+  console.error("npm package check failed; postinstall, prepack, and postpack scripts are required.");
   process.exit(1);
 }
 

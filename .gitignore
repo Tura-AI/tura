@@ -61,6 +61,7 @@ priority-param-probe-results.json
 *.sqlite3-*
 *.tmp
 *.init.lock
+.npm-package-json.backup
 
 # Editors and OS metadata
 .idea/
