@@ -97,6 +97,10 @@ impl TuraConfig {
         self.read_values().clone()
     }
 
+    pub fn env_values(&self) -> HashMap<String, String> {
+        self.values_snapshot()
+    }
+
     pub fn env_path(&self) -> &Path {
         &self.env_path
     }

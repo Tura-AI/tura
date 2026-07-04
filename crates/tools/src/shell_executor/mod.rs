@@ -92,6 +92,7 @@ pub fn execute(
         command
     };
     command.current_dir(&request.cwd);
+    apply_current_dotenv_env(&mut command);
     command.env(
         BACKGROUND_PROCESS_KIND_ENV,
         RUNTIME_SHELL_BACKGROUND_PROCESS_KIND,
@@ -163,6 +164,7 @@ pub async fn execute_async(
         command
     };
     command.current_dir(&request.cwd);
+    apply_current_dotenv_env_async(&mut command);
     command.env(
         BACKGROUND_PROCESS_KIND_ENV,
         RUNTIME_SHELL_BACKGROUND_PROCESS_KIND,
@@ -172,6 +174,18 @@ pub async fn execute_async(
 
 pub fn looks_read_only(command_line: &str) -> bool {
     readonly::looks_read_only(command_line)
+}
+
+fn apply_current_dotenv_env(command: &mut Command) {
+    for (key, value) in tura_llm_rust::TuraConfig::default().env_values() {
+        command.env(key, value);
+    }
+}
+
+fn apply_current_dotenv_env_async(command: &mut tokio::process::Command) {
+    for (key, value) in tura_llm_rust::TuraConfig::default().env_values() {
+        command.env(key, value);
+    }
 }
 
 pub fn looks_read_only_with_root(command_line: &str, root: &Path) -> bool {
@@ -205,6 +219,7 @@ mod tests {
     use shell::{looks_posix_shell_script, normalize_bash_command};
     use std::ffi::OsString;
     use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn restore_env(name: &str, value: Option<OsString>) {
         if let Some(value) = value {
@@ -490,6 +505,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn async_shell_executor_injects_updated_dotenv_values() {
+        let previous_env_path = std::env::var_os("TURA_ENV_PATH");
+        let previous_key = std::env::var_os("TURA_SHELL_DOTENV_TEST_KEY");
+        std::env::remove_var("TURA_SHELL_DOTENV_TEST_KEY");
+        let root = std::env::temp_dir().join(format!(
+            "tura-shell-dotenv-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time after unix epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create dotenv temp dir");
+        let env_path = root.join(".env");
+        std::fs::write(&env_path, "TURA_SHELL_DOTENV_TEST_KEY=first\n")
+            .expect("write first dotenv");
+        std::env::set_var("TURA_ENV_PATH", &env_path);
+
+        let context = ToolContext::new(std::env::current_dir().expect("current dir"));
+        let first = execute_async(
+            &dotenv_test_command(),
+            Path::new("."),
+            10,
+            ShellKind::ShellCommand,
+            &context,
+        )
+        .await;
+        std::fs::write(&env_path, "TURA_SHELL_DOTENV_TEST_KEY=second\n")
+            .expect("write second dotenv");
+        let second = execute_async(
+            &dotenv_test_command(),
+            Path::new("."),
+            10,
+            ShellKind::ShellCommand,
+            &context,
+        )
+        .await;
+
+        restore_env("TURA_ENV_PATH", previous_env_path);
+        restore_env("TURA_SHELL_DOTENV_TEST_KEY", previous_key);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(first.success, "{first:?}");
+        assert_eq!(first.stdout.trim(), "first");
+        assert!(second.success, "{second:?}");
+        assert_eq!(second.stdout.trim(), "second");
+    }
+
+    #[tokio::test]
     async fn async_shell_executor_marks_spawned_processes_as_runtime_shell_background_processes() {
         let context = ToolContext::new(std::env::current_dir().expect("current dir"));
         let response = execute_async(
@@ -516,6 +580,15 @@ mod tests {
             )
         } else {
             format!("printf '%s' \"${}\"", super::BACKGROUND_PROCESS_KIND_ENV)
+        }
+    }
+
+    fn dotenv_test_command() -> String {
+        if cfg!(windows) {
+            "[Environment]::GetEnvironmentVariable('TURA_SHELL_DOTENV_TEST_KEY', 'Process')"
+                .to_string()
+        } else {
+            "printf '%s' \"$TURA_SHELL_DOTENV_TEST_KEY\"".to_string()
         }
     }
 
