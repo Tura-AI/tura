@@ -23,7 +23,9 @@ npm install tura-ai
 The main `tura-ai` package installs the matching platform release package
 (`tura-linux-x64`, `tura-darwin-x64`, `tura-darwin-arm64`, or `tura-win32-x64`)
 and falls back to GitHub Release archives under the same version tag. It exposes
-the `tura` CLI command.
+the `tura` CLI command and runs the release CLI registration script during
+postinstall. Set `TURA_NPM_SKIP_CLI_REGISTRATION=1` before installing only when
+you need to suppress PATH/profile changes in automation.
 
 ## Try It
 

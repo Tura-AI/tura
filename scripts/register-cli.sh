@@ -49,6 +49,7 @@ add_path_block() {
   [ "$QUIET" -eq 1 ] || echo "Updated PATH in $profile"
 }
 
+ensure_profile_file "$HOME/.profile"
 if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ]; then
   ensure_profile_file "$HOME/.zprofile"
   ensure_profile_file "$HOME/.zshrc"

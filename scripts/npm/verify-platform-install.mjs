@@ -95,6 +95,8 @@ if (!existsSync(mainPackage)) {
 const suffix = packageJson.version.replaceAll(/[^a-zA-Z0-9_.-]/g, "-");
 const platformInstallDir = safeTempDir(`tura-platform-package-check-${suffix}`);
 const installDir = safeTempDir(`tura-npm-install-check-${suffix}`);
+const registrationHome = path.join(installDir, "home");
+mkdirSync(registrationHome, { recursive: true });
 
 run(npmCommand(), ["init", "-y", "--silent"], { cwd: platformInstallDir });
 run(npmCommand(), ["install", "--omit=optional", platformPackage], {
@@ -106,12 +108,16 @@ if (!platformPackageDir) {
 }
 
 run(npmCommand(), ["init", "-y", "--silent"], { cwd: installDir });
+const installEnv = {
+  ...process.env,
+  TURA_NPM_PLATFORM_PACKAGE_DIR: platformPackageDir
+};
+if (process.platform !== "win32") {
+  installEnv.HOME = registrationHome;
+}
 run(npmCommand(), ["install", "--foreground-scripts", "--omit=optional", mainPackage], {
   cwd: installDir,
-  env: {
-    ...process.env,
-    TURA_NPM_PLATFORM_PACKAGE_DIR: platformPackageDir
-  }
+  env: installEnv
 });
 
 const mainPackageDir = path.join(installDir, "node_modules", packageJson.name);
@@ -137,4 +143,59 @@ if (missing.length > 0) {
   fail(`installed package is missing required release files:\n${missing.join("\n")}`);
 }
 
+function pathContains(value, entry) {
+  const normalize = (item) => path.resolve(item.trim()).replaceAll("\\", "/").replace(/\/$/, "").toLowerCase();
+  const expected = normalize(entry);
+  return (value || "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .some((item) => normalize(item) === expected);
+}
+
+function verifyCliRegistration() {
+  if (process.platform === "win32") {
+    const userPath = run(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "[Environment]::GetEnvironmentVariable('Path', 'User')"],
+      { capture: true }
+    );
+    if (!pathContains(userPath, installedReleaseDir)) {
+      fail(`CLI registration did not add release directory to the user PATH: ${installedReleaseDir}`);
+    }
+    return;
+  }
+
+  const profiles = [".profile", ".bash_profile", ".bashrc", ".zprofile", ".zshrc"]
+    .map((name) => path.join(registrationHome, name))
+    .filter((profile) => existsSync(profile));
+  const registered = profiles.some((profile) => readFileSync(profile, "utf8").includes(installedReleaseDir));
+  if (!registered) {
+    fail(`CLI registration did not add release directory to a shell profile: ${installedReleaseDir}`);
+  }
+}
+
+function cleanupCliRegistration() {
+  const script = path.join(
+    mainPackageDir,
+    "scripts",
+    process.platform === "win32" ? "unregister-cli.ps1" : "unregister-cli.sh"
+  );
+  if (!existsSync(script)) {
+    return;
+  }
+  const args = process.platform === "win32"
+    ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Quiet"]
+    : [script];
+  const command = process.platform === "win32" ? "powershell.exe" : "sh";
+  spawnSync(command, args, {
+    cwd: mainPackageDir,
+    env: process.platform === "win32" ? process.env : { ...process.env, HOME: registrationHome },
+    shell: process.platform === "win32",
+    stdio: "ignore",
+    windowsHide: false
+  });
+}
+
+verifyCliRegistration();
+cleanupCliRegistration();
 console.log(`[tura verify-platform-install] installed release files verified in ${installedReleaseDir}`);
