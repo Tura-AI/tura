@@ -111,6 +111,7 @@
   "jsonOrFileRequired": "{option} must be JSON or a readable JSON file: {error}",
   "loginNeeded": "login needed",
   "loginProvider": "/login <provider> [method]",
+  "loginPending": "Login is still pending. Paste the callback page URL, auth code, or token here if the browser flow did not finish automatically.",
   "loginState": "login",
   "languageEn": "English",
   "languageZhCN": "Simplified Chinese",

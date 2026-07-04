@@ -34,7 +34,11 @@ import {
   refreshOpenSessionPicker,
   SESSION_PICKER_REFRESH_MS,
 } from "./session-picker.js";
-import { applySelectedSetting, submitSettingInput } from "./settings-actions.js";
+import {
+  applySelectedSetting,
+  startProviderOauthLogin,
+  submitSettingInput,
+} from "./settings-actions.js";
 import { hasActiveAnimation } from "./busy-state.js";
 import {
   createAndSelectSession,
@@ -44,7 +48,6 @@ import {
 } from "./session-actions.js";
 import { createResizeDrawGate, createTerminalResizeHandler } from "./resize.js";
 import { mediaTokenForInputPath, saveClipboardImageInput } from "./clipboard-image.js";
-import { openExternalUrl } from "../utils/external-url.js";
 
 const GATEWAY_SHUTDOWN_POLL_MS = 1_000;
 const GATEWAY_SHUTDOWN_PROBE_TIMEOUT_MS = 1_500;
@@ -633,38 +636,13 @@ async function slashCommand(
       if (name === "login" && !providerID) dispatch({ type: "notice", value: t("usageLogin") });
     } else {
       const method = Number(args[1] ?? "0");
-      const auth = await client.providerOauthAuthorize(
+      await startProviderOauthLogin(
+        client,
+        getState,
+        dispatch,
         providerID,
         Number.isFinite(method) ? method : 0,
       );
-      const openResult = auth.url ? await openExternalUrl(auth.url) : undefined;
-      const status = await client.providerAuthStatus(providerID).catch(() => undefined);
-      dispatch({
-        type: "auth",
-        statuses: status
-          ? { ...getState().authStatuses, [providerID]: status }
-          : getState().authStatuses,
-        open: true,
-      });
-      dispatch({
-        type: "setting-input",
-        value: {
-          kind: "oauth-callback",
-          providerID,
-          method: Number.isFinite(method) ? method : 0,
-          prompt: t("oauthCallbackInputHint"),
-        },
-      });
-      dispatch({
-        type: "notice",
-        value: [
-          auth.instructions,
-          auth.url ? t("openUrl", { url: auth.url }) : undefined,
-          openResult && !openResult.ok ? openResult.reason : undefined,
-        ]
-          .filter(Boolean)
-          .join(" "),
-      });
     }
   } else if (name === "logout") {
     const providerID = args[0];

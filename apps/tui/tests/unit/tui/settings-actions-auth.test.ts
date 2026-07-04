@@ -4,6 +4,8 @@ import { applySelectedSetting, submitSettingInput } from "../../../src/tui/setti
 import { initialState, reducer, type AppState } from "../../../src/tui/reducer.js";
 import { setExternalUrlOpenerForTests } from "../../../src/utils/external-url.js";
 import type { TuiGatewayClient } from "../../../src/tui/runtime.js";
+import { settingsLines } from "../../../src/tui/render/settings.js";
+import { stripAnsi } from "../../../src/tui/render-terminal.js";
 
 test("provider OAuth setting opens the browser and starts callback input", async () => {
   let state = providerAuthState();
@@ -28,7 +30,56 @@ test("provider OAuth setting opens the browser and starts callback input", async
   assert.equal(state.settingInput?.kind, "oauth-callback");
   assert.equal(state.settingInput?.providerID, "mock");
   assert.equal(state.settingInput?.method, 0);
+  assert.equal(state.settingInput?.oauthUrl, "https://example.test/oauth");
   assert.match(state.notice ?? "", /Open mock OAuth/u);
+});
+
+test("provider auto OAuth updates TUI state when the gateway callback completes", async () => {
+  let state = providerAuthState();
+  let statusCalls = 0;
+  setExternalUrlOpenerForTests(async () => ({ ok: true }));
+  try {
+    await applySelectedSetting(
+      mockClient({
+        providerOauthAuthorize: async () => ({
+          url: "https://example.test/oauth",
+          method: "auto",
+          instructions: "Complete authorization in the browser",
+        }),
+        providerAuthStatus: async () => authStatus(++statusCalls > 1),
+      }),
+      () => state,
+      (action) => {
+        state = reducer(state, action);
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    setExternalUrlOpenerForTests();
+  }
+
+  assert.equal(state.authStatuses.mock.authenticated, true);
+  assert.equal(state.settingInput, undefined);
+  assert.equal(state.notice, "connected");
+});
+
+test("provider OAuth input renders the complete authorization URL", () => {
+  const longUrl =
+    "https://auth.example.test/oauth/authorize?client_id=tura-client&redirect_uri=http%3A%2F%2F127.0.0.1%3A32123%2Fprovider%2Fopenai%2Foauth%2Fcallback&scope=openid%20profile%20email%20offline_access&state=state-value&code_challenge=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~&code_challenge_method=S256";
+  const state = {
+    ...providerAuthState(),
+    settingInput: {
+      kind: "oauth-callback" as const,
+      providerID: "mock",
+      method: 0,
+      oauthUrl: longUrl,
+      prompt: "Waiting for callback",
+    },
+  };
+
+  const rendered = stripAnsi(settingsLines(state, 82, 20).join("\n")).replace(/\s+/g, "");
+
+  assert.ok(rendered.includes(longUrl));
 });
 
 test("API key input validates before saving and preserves invalid input", async () => {

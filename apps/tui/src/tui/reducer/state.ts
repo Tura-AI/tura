@@ -20,6 +20,7 @@ export interface SettingInputState {
   providerID: string;
   prompt: string;
   method?: number;
+  oauthUrl?: string;
 }
 
 export interface SessionLoadingState {

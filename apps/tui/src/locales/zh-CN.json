@@ -111,6 +111,7 @@
   "jsonOrFileRequired": "{option} 必须是 JSON 或可读取的 JSON 文件：{error}",
   "loginNeeded": "需要登录",
   "loginProvider": "/login <服务商> [方式]",
+  "loginPending": "登录仍在等待中。如果浏览器流程没有自动完成，请在这里粘贴回调页面 URL、授权 code 或 token。",
   "loginState": "登录",
   "languageEn": "英文",
   "languageZhCN": "简体中文",
