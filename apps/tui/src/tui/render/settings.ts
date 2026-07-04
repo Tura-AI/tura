@@ -91,7 +91,9 @@ function settingInputLines(state: AppState, cols: number): string[] {
   const lines = [sectionBodyLine(secondaryText(input.prompt), cols)];
   if (!input.oauthUrl) return lines;
   lines.push(sectionBodyLine(secondaryText(t("openUrl", { url: "" }).trim()), cols));
-  lines.push(sectionBodyLine(secondaryText(terminalLink(input.oauthUrl, oauthLinkLabel(cols))), cols));
+  lines.push(
+    sectionBodyLine(secondaryText(terminalLink(input.oauthUrl, oauthLinkLabel(cols))), cols),
+  );
   for (const line of wrap(input.oauthUrl, Math.max(24, cols - 4))) {
     lines.push(sectionBodyLine(secondaryText(line), cols));
   }

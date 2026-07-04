@@ -706,12 +706,14 @@ function cloneMessagesForSession(sessionID: string, messages: Message[]): Messag
       id,
       sessionID,
       parentID: message.parentID ? (idMap.get(message.parentID) ?? null) : null,
-      parts: (message.parts ?? []).map((part, partIndex): MessagePart => ({
-        ...part,
-        id: `mock-copy-${now}-${index}-${partIndex}`,
-        sessionID,
-        messageID: part.messageID ? id : part.messageID,
-      })),
+      parts: (message.parts ?? []).map(
+        (part, partIndex): MessagePart => ({
+          ...part,
+          id: `mock-copy-${now}-${index}-${partIndex}`,
+          sessionID,
+          messageID: part.messageID ? id : part.messageID,
+        }),
+      ),
     };
   });
 }
