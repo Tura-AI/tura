@@ -12,6 +12,7 @@
     "test": "npm run test:unit",
     "test:unit": "npm run build && node -e \"require('node:fs').rmSync('test-results/unit-dist',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test \"test-results/unit-dist/tests/**/*.test.js\"",
     "test:e2e": "npm run build && node ./tests/e2e/tui_gateway_cli_e2e.mjs",
+    "test:e2e:provider-auth": "npm run build && node ./tests/e2e/tui_provider_auth_debug_playwright.mjs",
     "test:e2e:session-name": "npm run build && node ./tests/e2e/tui_session_name_update_playwright.mjs",
     "test:e2e:profiles": "node ./tests/e2e/tui_web_terminal_profiles_playwright.mjs",
     "test:e2e:drop": "npm run build && node ./tests/e2e/tui_web_terminal_drop_playwright.mjs",
