@@ -29,6 +29,13 @@ jobs:
             echo "::error title=NPM token missing::Configure one repository secret named NPM_TOKEN, NODE_AUTH_TOKEN, or NPM_AUTH_TOKEN before publishing to npm." >&2
             exit 1
           fi
+          printf '%s\n' \
+            "registry=https://registry.npmjs.org/" \
+            "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          if ! npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "::error title=NPM token invalid::The configured npm token is not accepted by registry.npmjs.org. Use a current granular access token with read/write publish permission and bypass 2FA enabled, or configure npm trusted publishing." >&2
+            exit 1
+          fi
 
   build-platform:
     name: Build ${{ matrix.package }}
@@ -197,9 +204,10 @@ jobs:
             exit 1
           fi
           node scripts/npm/prepack.mjs
+          package_name="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).name")"
           version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
-          if npm view "tura@${version}" version >/dev/null 2>&1; then
-            echo "tura@${version} already exists on npm; skipping publish."
+          if npm view "${package_name}@${version}" version >/dev/null 2>&1; then
+            echo "${package_name}@${version} already exists on npm; skipping publish."
             exit 0
           fi
           npm publish --access public --provenance

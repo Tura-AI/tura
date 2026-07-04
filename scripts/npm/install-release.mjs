@@ -59,6 +59,41 @@ function run(command, args, cwd = packageRoot) {
   }
 }
 
+function registrationSkipped() {
+  return (
+    process.env.TURA_NPM_SKIP_CLI_REGISTRATION === "1" ||
+    process.env.TURA_NPM_SKIP_CLI_REGISTRATION === "true"
+  );
+}
+
+function registerCli() {
+  if (registrationSkipped()) {
+    log("CLI registration skipped by TURA_NPM_SKIP_CLI_REGISTRATION");
+    return;
+  }
+  const script = path.join(
+    packageRoot,
+    "scripts",
+    process.platform === "win32" ? "register-cli.ps1" : "register-cli.sh",
+  );
+  if (!existsSync(script)) {
+    fail(`CLI registration script was not found: ${path.relative(packageRoot, script)}`);
+  }
+  if (process.platform === "win32") {
+    run("powershell.exe", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      script,
+      "-Quiet",
+    ]);
+  } else {
+    run("sh", [script, "--quiet"]);
+  }
+  log("CLI command registered");
+}
+
 function releaseUrl() {
   if (process.env.TURA_NPM_RELEASE_URL) {
     return process.env.TURA_NPM_RELEASE_URL;
@@ -186,6 +221,7 @@ function installFromPlatformPackage() {
   });
   markReleaseExecutablesRunnable();
   verifyInstall();
+  registerCli();
   log(`release binaries installed from ${platformPackageName()}`);
   return true;
 }
@@ -212,6 +248,7 @@ if (
 const existingMissing = missingReleaseFiles(packageRoot);
 if (existingMissing.length === 0) {
   verifyInstall();
+  registerCli();
   log("release binaries already present");
   process.exit(0);
 }
@@ -225,6 +262,7 @@ if (localArchive) {
   extractArchive(localArchive);
   markReleaseExecutablesRunnable();
   verifyInstall();
+  registerCli();
   log(
     `release binaries installed from ${path.relative(packageRoot, localArchive)}`,
   );
@@ -243,6 +281,7 @@ try {
   extractArchive(archivePath);
   markReleaseExecutablesRunnable();
   verifyInstall();
+  registerCli();
   log("release binaries installed");
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });

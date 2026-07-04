@@ -34,7 +34,7 @@ Important scripts:
   `tura_gui` desktop process. If a frontend executable is locked, close it
   explicitly and rerun. Pass `-BackendOnly` or `--backend-only` when a CI job only
   needs Rust release artifacts.
-- `register-cli.*`: add `target/release` to the user PATH. No wrapper directory is created; the registered CLI command is `tura exec`. The POSIX script updates `.profile`, `.bash_profile`, `.bashrc`, `.zprofile`, and `.zshrc` when present, and creates `.zprofile`/`.zshrc` on macOS so new Terminal sessions work.
+- `register-cli.*`: add `target/release` to the user PATH. No wrapper directory is created; the registered CLI command is `tura exec`. The POSIX script ensures `.profile` exists, updates shell profiles when present, and creates `.zprofile`/`.zshrc` on macOS so new Terminal sessions work.
 - `unregister-cli.*`: remove `target/release` from PATH and delete a stale `cli-bin` directory if present.
 - `start.*`: convenience runner for `target/debug` by default, or `target/release` with `--release`. The runner repeats the same shell coverage checks before launching; set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` when optional zsh/PowerShell gaps should fail the run.
 - `check-backend-quality.*`: CI smell gate. It runs backend Rust test-layout
@@ -47,13 +47,16 @@ Important scripts:
 - `run-release-dry-run.*`: release dry-run orchestrator. It runs install, the CI
   flow, and release artifact build without publishing.
 - `scripts/npm/install-release.mjs`: npm postinstall release installer for the
-  public `tura` package. It first uses an installed platform package such as
+  public `tura-ai` package. It first uses an installed platform package such as
   `tura-win32-x64`, then a local archive from `release/`, and finally a GitHub
   Release archive. The installed runtime layout is `target/release` with
   `config/provider_config.json`, backend binaries, TUI, GUI dist, and Tauri
-  bundle artifacts. The npm release workflow builds CLI/backend/TUI and web GUI
+  bundle artifacts. After verifying the release files it runs the matching
+  `register-cli.*` script so npm installs register the `tura` command on the
+  current OS; set `TURA_NPM_SKIP_CLI_REGISTRATION=1` to suppress this in
+  automation. The npm release workflow builds CLI/backend/TUI and web GUI
   artifacts with Tauri packaging skipped, so desktop installer failures do not
-  block publishing the platform npm packages used by `npm install tura`. Its
+  block publishing the platform npm packages used by `npm install tura-ai`. Its
   local install verifier stages the freshly packed platform tarball outside the
   main install tree and points `TURA_NPM_PLATFORM_PACKAGE_DIR` at it, avoiding
   npm registry lookups for optional platform packages before those packages are
@@ -135,10 +138,10 @@ GitHub Actions:
   tests.
 - `.github/workflows/npm-release.yml` builds the four npm platform releases
   (`tura-linux-x64`, `tura-darwin-x64`, `tura-darwin-arm64`, and
-  `tura-win32-x64`), verifies a local `npm install` of the main `tura` package
-  against the platform package, uploads release archives, and publishes npm
-  packages when `NPM_TOKEN` is configured.
+  `tura-win32-x64`), verifies a local `npm install` of the main `tura-ai` package
+  against the platform package, verifies postinstall CLI registration, uploads
+  release archives, and publishes npm packages when `NPM_TOKEN` is configured.
 
 Local source builds still resolve directly from `target/release`. Published npm
-installs resolve through the main `tura` package plus the matching platform
+installs resolve through the main `tura-ai` package plus the matching platform
 package, with GitHub Release archives as the fallback install route.
