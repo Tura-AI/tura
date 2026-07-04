@@ -42,6 +42,7 @@ pub async fn call_runtime(
     tura_config: Arc<tura_llm_rust::TuraConfig>,
 ) -> Result<RuntimeManagement, String> {
     let mut runtime = input.runtime;
+    tura_config.reload();
     let now = Utc::now();
     let profiling = profile_timings::enabled();
     let normalize_start = Instant::now();

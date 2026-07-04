@@ -450,6 +450,92 @@ async fn runtime_prompt_cache_key_reuses_root_session_for_forked_sessions() {
     );
 }
 
+#[tokio::test]
+async fn runtime_llm_call_reloads_dotenv_between_turns() {
+    let _guard = ASYNC_ENV_LOCK.lock().await;
+    let workspace = tempfile::tempdir().expect("workspace");
+    let env_path = workspace.path().join(".env");
+    std::fs::write(&env_path, "ENVRELOAD_API_KEY=runtime-env-first\n")
+        .expect("write initial dotenv");
+    let env_path_text = env_path.to_string_lossy().to_string();
+    let _env = EnvGuard::set_and_remove(
+        &[("TURA_ENV_PATH", env_path_text.as_str())],
+        &["ENVRELOAD_API_KEY"],
+    );
+    let provider = LocalProvider::start(vec![
+        ProviderReply::Json {
+            status: "200 OK",
+            request_id: Some("req-runtime-env-first"),
+            body: openai_chat_response("runtime env first"),
+        },
+        ProviderReply::Json {
+            status: "200 OK",
+            request_id: Some("req-runtime-env-second"),
+            body: openai_chat_response("runtime env second"),
+        },
+    ]);
+    let settings = Arc::new(settings_for_route(
+        "envreload-route",
+        "envreload",
+        &provider.endpoint,
+        "gpt-env-reload-local",
+    ));
+    let config = Arc::new(TuraConfig::new(".env.runtime-env-reload-missing"));
+
+    for (runtime_id, prompt) in [
+        ("runtime-env-reload-first", "use first key"),
+        ("runtime-env-reload-second", "use second key"),
+    ] {
+        if runtime_id.ends_with("second") {
+            std::fs::write(&env_path, "ENVRELOAD_API_KEY=runtime-env-second\n")
+                .expect("write updated dotenv");
+        }
+        let runtime = runtime_for_provider(
+            runtime_id,
+            "session-env-reload",
+            "envreload-route",
+            "envreload",
+            "gpt-env-reload-local",
+            false,
+        );
+        call_runtime(
+            CallRuntimeInput {
+                runtime,
+                messages: vec![json!({"role": "user", "content": prompt})],
+                tools: Vec::new(),
+                provider_name: "envreload-route".to_string(),
+                stream: false,
+                max_tokens: 128,
+                tool_choice: None,
+                session_directory: workspace.path().to_path_buf(),
+                allowed_command_run_commands: None,
+                require_startup_task_state: false,
+            },
+            Arc::clone(&settings),
+            Arc::clone(&config),
+        )
+        .await
+        .expect("runtime call should succeed");
+    }
+
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[0]
+            .headers
+            .contains("authorization: bearer runtime-env-first"),
+        "first runtime call should use initial dotenv key; headers={}",
+        requests[0].headers
+    );
+    assert!(
+        requests[1]
+            .headers
+            .contains("authorization: bearer runtime-env-second"),
+        "second runtime call should reload the updated dotenv key; headers={}",
+        requests[1].headers
+    );
+}
+
 fn mock_command_run_router_addr() -> String {
     if let Some(addr) = MOCK_ROUTER_ADDR.get() {
         return addr.clone();
@@ -684,6 +770,17 @@ fn create_marker_command(path: &str, content: &str) -> String {
     }
 }
 
+fn openai_chat_response(text: &str) -> Value {
+    json!({
+        "id": "chatcmpl-runtime-env-reload",
+        "choices": [{
+            "message": {"role": "assistant", "content": text},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+    })
+}
+
 #[derive(Debug, Clone)]
 struct CapturedHttpRequest {
     path: String,
@@ -821,6 +918,23 @@ impl EnvGuard {
                 (*key, previous)
             })
             .collect();
+        Self { previous }
+    }
+
+    fn set_and_remove(vars: &[(&'static str, &str)], remove: &[&'static str]) -> Self {
+        let mut previous = vars
+            .iter()
+            .map(|(key, value)| {
+                let previous = std::env::var_os(key);
+                std::env::set_var(key, value);
+                (*key, previous)
+            })
+            .collect::<Vec<_>>();
+        previous.extend(remove.iter().map(|key| {
+            let previous = std::env::var_os(key);
+            std::env::remove_var(key);
+            (*key, previous)
+        }));
         Self { previous }
     }
 }
