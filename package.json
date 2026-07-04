@@ -1,6 +1,6 @@
 {
   "name": "tura-ai",
-  "version": "0.1.16",
+  "version": "0.1.18",
   "description": "Local AI coding system with Rust services, command packages, TUI, and GUI workspaces.",
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -125,10 +125,10 @@
     "publish:dry-run": "npm publish --dry-run --access public"
   },
   "optionalDependencies": {
-    "tura-darwin-arm64": "0.1.16",
-    "tura-darwin-x64": "0.1.16",
-    "tura-linux-x64": "0.1.16",
-    "tura-win32-x64": "0.1.16"
+    "tura-darwin-arm64": "0.1.18",
+    "tura-darwin-x64": "0.1.18",
+    "tura-linux-x64": "0.1.18",
+    "tura-win32-x64": "0.1.18"
   },
   "publishConfig": {
     "access": "public",

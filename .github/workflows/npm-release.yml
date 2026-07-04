@@ -210,4 +210,7 @@ jobs:
             echo "${package_name}@${version} already exists on npm; skipping publish."
             exit 0
           fi
-          npm publish --access public --provenance
+          mkdir -p release/npm-main
+          pack_json="$(npm pack --json --pack-destination release/npm-main)"
+          package_file="$(PACK_JSON="$pack_json" node -e "const info = JSON.parse(process.env.PACK_JSON); console.log('release/npm-main/' + info[0].filename)")"
+          npm publish "$package_file" --access public --provenance

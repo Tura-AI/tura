@@ -73,7 +73,9 @@ Important scripts:
   `scripts/npm/restore-main-package.mjs`: temporarily replace the repository
   `package.json` during `npm pack`/`npm publish` so the published main package
   contains only runtime files and the real `postinstall` lifecycle script. The
-  repository package metadata is restored in `postpack`.
+  repository package metadata is restored in `postpack`; the release workflow
+  publishes the resulting packed tarball so npm registry metadata also reflects
+  the slim runtime manifest.
 - `scripts/npm/package-platform.mjs`: stages the current OS release into a
   platform npm package: `tura-linux-x64`, `tura-darwin-x64`,
   `tura-darwin-arm64`, or `tura-win32-x64`.
