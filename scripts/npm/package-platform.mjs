@@ -31,6 +31,12 @@ const platformName = platformPackageName();
 const packageDir = path.join(outDir, platformName);
 const sourceRelease = releaseRoot(repoRoot);
 const stageRelease = path.join(packageDir, "target", "release");
+const npmPlatformRuntimeExcludedFiles = new Set([
+  "scripts/register-cli.ps1",
+  "scripts/register-cli.sh",
+  "scripts/unregister-cli.ps1",
+  "scripts/unregister-cli.sh"
+]);
 
 function fail(message) {
   console.error(`[tura package-platform] ${message}`);
@@ -128,6 +134,9 @@ for (const [sourceRelative, releaseRelative] of releaseConfigFiles) {
 
 if (!binaryOnly) {
   for (const [releaseRelative] of releaseRuntimeFiles) {
+    if (npmPlatformRuntimeExcludedFiles.has(releaseRelative)) {
+      continue;
+    }
     copyRuntimePath(
       path.join(sourceRelease, releaseRelative),
       path.join(stageRelease, releaseRelative),
