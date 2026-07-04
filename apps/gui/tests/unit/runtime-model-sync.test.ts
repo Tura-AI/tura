@@ -6,10 +6,7 @@ import { promptRuntimeSelection } from "../../../tui/src/tui/logic/selection";
 import { initialState, reducer } from "../../../tui/src/tui/reducer";
 import { render } from "../../../tui/src/tui/render";
 import { stripAnsi } from "../../../tui/src/tui/render-terminal";
-import {
-  agentRuntimeConfig,
-  applyAgentRuntimeConfig,
-} from "../../../tui/src/agent-runtime-config";
+import { agentRuntimeConfig, applyAgentRuntimeConfig } from "../../../tui/src/agent-runtime-config";
 
 describe("GUI/TUI runtime model config sync", () => {
   test("tier names resolve to the configured model instead of rendering thinking", () => {

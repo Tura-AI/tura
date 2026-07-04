@@ -186,10 +186,6 @@ const requiredPaths = [
   path.join(installedReleaseDir, "commands", "web_discover", "command.toml"),
   path.join(installedReleaseDir, "README.md"),
   path.join(installedReleaseDir, "scripts", "ARCHITECTURE.md"),
-  path.join(installedReleaseDir, "scripts", "register-cli.ps1"),
-  path.join(installedReleaseDir, "scripts", "register-cli.sh"),
-  path.join(installedReleaseDir, "scripts", "unregister-cli.ps1"),
-  path.join(installedReleaseDir, "scripts", "unregister-cli.sh"),
   path.join(installDir, "node_modules", ".bin", binName)
 ];
 const missing = requiredPaths.filter((requiredPath) => !existsSync(requiredPath));

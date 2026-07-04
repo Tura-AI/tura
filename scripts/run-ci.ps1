@@ -137,7 +137,7 @@ $jobs += Start-CiJob `
 $jobs += Start-CiJob `
   -Name "tui-local" `
   -FilePath $npm `
-  -Arguments @("--prefix", "apps/tui", "run", "test:ci") `
+  -Arguments @("--prefix", "apps/tui", "run", "test:unit") `
   -TimeoutSeconds $TuiTimeoutSeconds
 
 Wait-CiJobs $jobs

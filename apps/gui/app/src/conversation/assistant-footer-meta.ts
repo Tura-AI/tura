@@ -35,4 +35,3 @@ function numericField(record: Record<string, unknown>, key: string) {
   const value = record[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
-
