@@ -10,6 +10,7 @@ import {
   type TuiGatewayClient,
   type TuiGetState,
 } from "./runtime.js";
+import { openExternalUrl } from "../utils/external-url.js";
 
 export async function applySelectedSetting(
   client: TuiGatewayClient,
@@ -108,30 +109,7 @@ async function applyProviderAuthAction(
   const providerID = action.providerID;
   if (!providerID) return;
   if (action.action === "oauth") {
-    const auth = await client.providerOauthAuthorize(providerID, action.method ?? 0);
-    const status = await client.providerAuthStatus(providerID).catch(() => undefined);
-    dispatch({
-      type: "auth",
-      statuses: status
-        ? { ...getState().authStatuses, [providerID]: status }
-        : getState().authStatuses,
-      open: false,
-    });
-    dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID });
-    dispatch({
-      type: "setting-input",
-      value: {
-        kind: "oauth-callback",
-        providerID,
-        prompt: t("oauthCallbackInputHint"),
-      },
-    });
-    dispatch({
-      type: "notice",
-      value: [auth.instructions, auth.url ? t("openUrl", { url: auth.url }) : undefined]
-        .filter(Boolean)
-        .join(" "),
-    });
+    await startProviderOauthLogin(client, getState, dispatch, providerID, action.method ?? 0);
     return;
   }
   if (action.action === "logout") {
@@ -174,6 +152,71 @@ async function applyProviderAuthAction(
   }
 }
 
+export async function startProviderOauthLogin(
+  client: TuiGatewayClient,
+  getState: TuiGetState,
+  dispatch: TuiDispatch,
+  providerID: string,
+  methodIndex = 0,
+): Promise<void> {
+  const auth = await client.providerOauthAuthorize(providerID, methodIndex);
+  const openResult = auth.url ? await openExternalUrl(auth.url) : undefined;
+  const status = await client.providerAuthStatus(providerID).catch(() => undefined);
+  dispatchAuthStatus(dispatch, getState, providerID, status);
+  dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID });
+  dispatch({
+    type: "setting-input",
+    value: {
+      kind: "oauth-callback",
+      providerID,
+      method: methodIndex,
+      oauthUrl: auth.url || undefined,
+      prompt:
+        auth.method === "auto"
+          ? t("waitingOauthCallback")
+          : providerID === "github-copilot"
+            ? auth.instructions
+            : t("oauthCallbackInputHint"),
+    },
+  });
+  dispatch({
+    type: "notice",
+    value: [auth.instructions, openResult && !openResult.ok ? openResult.reason : undefined]
+      .filter(Boolean)
+      .join(" "),
+  });
+  if (auth.method === "auto") {
+    void waitForProviderAuthenticated(client, getState, dispatch, providerID);
+  } else if (providerID === "github-copilot") {
+    void completeProviderOauthCallback(client, getState, dispatch, providerID, methodIndex, "");
+  }
+}
+
+async function waitForProviderAuthenticated(
+  client: TuiGatewayClient,
+  getState: TuiGetState,
+  dispatch: TuiDispatch,
+  providerID: string,
+  timeoutMs = 5 * 60_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = await client.providerAuthStatus(providerID).catch(() => undefined);
+    if (status) {
+      dispatchAuthStatus(dispatch, getState, providerID, status);
+      if (status.authenticated) {
+        dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID });
+        dispatch({ type: "setting-input", value: undefined });
+        dispatch({ type: "composer", value: "" });
+        dispatch({ type: "notice", value: t("connected") });
+        return;
+      }
+    }
+    await sleep(1000);
+  }
+  dispatch({ type: "notice", value: t("loginPending") });
+}
+
 export async function submitSettingInput(
   client: TuiGatewayClient,
   getState: TuiGetState,
@@ -184,24 +227,80 @@ export async function submitSettingInput(
   const value = state.composer.trim();
   if (!input || !value) return;
   if (input.kind === "api-key") {
-    await client.setProviderAuth(input.providerID, { type: "api_key", key: value });
-  } else {
-    await client.setProviderAuth(input.providerID, {
-      type: "oauth",
+    const method = (getState().authMethods?.[input.providerID] ?? []).find((item) =>
+      /key|token|api/i.test(
+        [item.type, item.kind, item.login, item.label].filter(Boolean).join(" "),
+      ),
+    );
+    const validation = await client.providerAuthValidate(input.providerID, {
+      type: method?.type ?? "api_key",
+      kind: method?.kind ?? "api_key",
+      login: method?.login ?? "api",
+      token_env: method?.token_env,
+      key: value,
       access: value,
-      metadata: { callback_url_or_token: value },
     });
+    if (!validation.ok) {
+      dispatchAuthStatus(dispatch, getState, input.providerID, validation.status);
+      dispatch({ type: "notice", value: validation.message });
+      return;
+    }
+    await client.setProviderAuth(input.providerID, { type: "api_key", key: value });
+    const status = await client.providerAuthStatus(input.providerID).catch(() => validation.status);
+    dispatchAuthStatus(dispatch, getState, input.providerID, status);
+    dispatch({ type: "setting-input", value: undefined });
+    dispatch({ type: "composer", value: "" });
+    dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID: input.providerID });
+    dispatch({ type: "notice", value: validation.message });
+    return;
+  } else {
+    await completeProviderOauthCallback(
+      client,
+      getState,
+      dispatch,
+      input.providerID,
+      input.method ?? 0,
+      value,
+    );
+    return;
   }
-  const status = await client.providerAuthStatus(input.providerID).catch(() => undefined);
+}
+
+async function completeProviderOauthCallback(
+  client: TuiGatewayClient,
+  getState: TuiGetState,
+  dispatch: TuiDispatch,
+  providerID: string,
+  method: number,
+  code: string,
+): Promise<void> {
+  const result = await client.providerOauthCallback(providerID, {
+    method,
+    code: code.trim() || undefined,
+  });
+  dispatchAuthStatus(dispatch, getState, providerID, result.status);
+  dispatch({ type: "notice", value: result.ok ? t("connected") : result.message });
+  if (!result.ok) return;
+  dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID });
+  dispatch({ type: "setting-input", value: undefined });
+  dispatch({ type: "composer", value: "" });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function dispatchAuthStatus(
+  dispatch: TuiDispatch,
+  getState: TuiGetState,
+  providerID: string,
+  status: Awaited<ReturnType<TuiGatewayClient["providerAuthStatus"]>> | null | undefined,
+): void {
   dispatch({
     type: "auth",
     statuses: status
-      ? { ...getState().authStatuses, [input.providerID]: status }
+      ? { ...getState().authStatuses, [providerID]: status }
       : getState().authStatuses,
     open: false,
   });
-  dispatch({ type: "setting-input", value: undefined });
-  dispatch({ type: "composer", value: "" });
-  dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID: input.providerID });
-  dispatch({ type: "notice", value: undefined });
 }

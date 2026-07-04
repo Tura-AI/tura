@@ -65,7 +65,7 @@ function releaseUrl() {
   }
   const baseUrl = (
     process.env.TURA_NPM_RELEASE_BASE_URL ||
-    "https://github.com/Tura-AI/tura/releases/download"
+    "https://github.com/Tura-AI/test-tura/releases/download"
   ).replace(/\/$/, "");
   const tag = releaseTag(packageJson.version);
   return `${baseUrl}/${tag}/${releaseArchiveName(packageJson.version)}`;

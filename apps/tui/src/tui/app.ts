@@ -34,7 +34,11 @@ import {
   refreshOpenSessionPicker,
   SESSION_PICKER_REFRESH_MS,
 } from "./session-picker.js";
-import { applySelectedSetting, submitSettingInput } from "./settings-actions.js";
+import {
+  applySelectedSetting,
+  startProviderOauthLogin,
+  submitSettingInput,
+} from "./settings-actions.js";
 import { hasActiveAnimation } from "./busy-state.js";
 import {
   createAndSelectSession,
@@ -632,24 +636,13 @@ async function slashCommand(
       if (name === "login" && !providerID) dispatch({ type: "notice", value: t("usageLogin") });
     } else {
       const method = Number(args[1] ?? "0");
-      const auth = await client.providerOauthAuthorize(
+      await startProviderOauthLogin(
+        client,
+        getState,
+        dispatch,
         providerID,
         Number.isFinite(method) ? method : 0,
       );
-      const status = await client.providerAuthStatus(providerID).catch(() => undefined);
-      dispatch({
-        type: "auth",
-        statuses: status
-          ? { ...getState().authStatuses, [providerID]: status }
-          : getState().authStatuses,
-        open: true,
-      });
-      dispatch({
-        type: "notice",
-        value: [auth.instructions, auth.url ? t("openUrl", { url: auth.url }) : undefined]
-          .filter(Boolean)
-          .join(" "),
-      });
     }
   } else if (name === "logout") {
     const providerID = args[0];
@@ -717,8 +710,19 @@ async function slashCommand(
       if (!providerID || !key) {
         dispatch({ type: "notice", value: t("providerKeyHint", { provider: providerID ?? "" }) });
       } else {
-        await client.setProviderAuth(providerID, { type: "api_key", key });
-        const status = await client.providerAuthStatus(providerID).catch(() => undefined);
+        const validation = await client.providerAuthValidate(providerID, {
+          type: "api_key",
+          kind: "api_key",
+          login: "api",
+          key,
+          access: key,
+        });
+        if (validation.ok) {
+          await client.setProviderAuth(providerID, { type: "api_key", key });
+        }
+        const status = validation.ok
+          ? await client.providerAuthStatus(providerID).catch(() => validation.status ?? undefined)
+          : validation.status;
         dispatch({
           type: "auth",
           statuses: status
@@ -726,7 +730,7 @@ async function slashCommand(
             : getState().authStatuses,
           open: false,
         });
-        dispatch({ type: "notice", value: undefined });
+        dispatch({ type: "notice", value: validation.message });
       }
     } else if (!args[0]) {
       dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });

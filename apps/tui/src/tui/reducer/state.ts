@@ -19,6 +19,8 @@ export interface SettingInputState {
   kind: SettingInputKind;
   providerID: string;
   prompt: string;
+  method?: number;
+  oauthUrl?: string;
 }
 
 export interface SessionLoadingState {

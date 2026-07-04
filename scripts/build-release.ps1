@@ -126,7 +126,11 @@ function Copy-ReleaseRuntimeFiles {
     @{ Source = "commands\read_media"; Destination = "commands\read_media" },
     @{ Source = "commands\web_discover"; Destination = "commands\web_discover" },
     @{ Source = "README.md"; Destination = "README.md" },
-    @{ Source = "scripts\ARCHITECTURE.md"; Destination = "scripts\ARCHITECTURE.md" }
+    @{ Source = "scripts\ARCHITECTURE.md"; Destination = "scripts\ARCHITECTURE.md" },
+    @{ Source = "scripts\register-cli.ps1"; Destination = "scripts\register-cli.ps1" },
+    @{ Source = "scripts\register-cli.sh"; Destination = "scripts\register-cli.sh" },
+    @{ Source = "scripts\unregister-cli.ps1"; Destination = "scripts\unregister-cli.ps1" },
+    @{ Source = "scripts\unregister-cli.sh"; Destination = "scripts\unregister-cli.sh" }
   )
   $ExcludeDirs = @(".venv", "tests", "target", "node_modules", "__pycache__", ".pytest_cache")
 

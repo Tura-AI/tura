@@ -2,7 +2,7 @@ import { t } from "../../i18n.js";
 import { agentDescription } from "../../agent-display.js";
 import type { SettingDetail, AppState } from "../reducer.js";
 import { runtimeModelFromConfig } from "../model-config.js";
-import { activeCapabilities } from "../render-terminal.js";
+import { activeCapabilities, wrap } from "../render-terminal.js";
 import { secondaryText } from "../styles/text.js";
 import { SETTING_DETAILS } from "../settings-catalog.js";
 import {
@@ -56,8 +56,7 @@ export function settingsLines(state: AppState, cols: number, maxLines: number): 
     return lines;
   }
   lines.push(sectionBodyLine(secondaryText(settingHint(state)), cols));
-  if (state.settingInput)
-    lines.push(sectionBodyLine(secondaryText(state.settingInput.prompt), cols));
+  if (state.settingInput) lines.push(...settingInputLines(state, cols));
   if (state.settingDetail) {
     lines.push(...settingDetailLines(state, cols, maxLines - lines.length - 1));
     lines.push(sectionBlankLine(cols));
@@ -86,13 +85,25 @@ export function settingsLines(state: AppState, cols: number, maxLines: number): 
   return lines.slice(0, maxLines);
 }
 
+function settingInputLines(state: AppState, cols: number): string[] {
+  const input = state.settingInput;
+  if (!input) return [];
+  const lines = [sectionBodyLine(secondaryText(input.prompt), cols)];
+  if (!input.oauthUrl) return lines;
+  lines.push(sectionBodyLine(secondaryText(t("openUrl", { url: "" }).trim()), cols));
+  for (const line of wrap(input.oauthUrl, Math.max(24, cols - 4))) {
+    lines.push(sectionBodyLine(secondaryText(line), cols));
+  }
+  return lines;
+}
+
 export function settingsPageInfo(
   state: AppState,
   maxLines: number,
 ): { label: string; current: number; total: number } {
   if (!state.sessionConfig) return { label: t("sessionSettingsPage"), current: 1, total: 1 };
   const headerLines = sectionLines(settingTitle(state), 80).length;
-  const promptLines = 1 + (state.settingInput ? 1 : 0);
+  const promptLines = 1 + settingInputLines(state, 80).length;
   if (state.settingDetail) {
     const pageSize = Math.max(1, maxLines - headerLines - promptLines - 1);
     return {

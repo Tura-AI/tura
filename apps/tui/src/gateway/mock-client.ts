@@ -5,9 +5,12 @@ import type { ListMessagesOptions } from "./client.js";
 import type { StoredPersona, TuraConfigResponse, TuraConfigUpdate } from "../types/gateway.js";
 import type {
   OAuthAuthorizeResponse,
+  OAuthCallbackInput,
+  ProviderAuthActionResponse,
   ProviderAuthMethodsResponse,
   ProviderAuthStatus,
   ProviderAuthUpsert,
+  ProviderAuthValidationInput,
   ProviderListResponse,
 } from "../types/provider.js";
 import type {
@@ -274,9 +277,37 @@ export class MockGatewayClient {
 
   async providerOauthAuthorize(providerID: string): Promise<OAuthAuthorizeResponse> {
     return {
-      url: "",
+      url: "https://example.test/mock-oauth",
       method: "mock",
       instructions: `${providerID} uses mock auth in TUI mock mode.`,
+    };
+  }
+
+  async providerOauthCallback(
+    providerID: string,
+    _payload: OAuthCallbackInput,
+  ): Promise<ProviderAuthActionResponse> {
+    return {
+      ok: true,
+      provider_id: providerID,
+      code: "provider.oauth.completed",
+      message: "provider OAuth completed",
+      level: "valid",
+      status: await this.providerAuthStatus(providerID),
+    };
+  }
+
+  async providerAuthValidate(
+    providerID: string,
+    _payload: ProviderAuthValidationInput = {},
+  ): Promise<ProviderAuthActionResponse> {
+    return {
+      ok: true,
+      provider_id: providerID,
+      code: "provider.auth.valid",
+      message: "provider auth is valid",
+      level: "valid",
+      status: await this.providerAuthStatus(providerID),
     };
   }
 
@@ -675,14 +706,12 @@ function cloneMessagesForSession(sessionID: string, messages: Message[]): Messag
       id,
       sessionID,
       parentID: message.parentID ? (idMap.get(message.parentID) ?? null) : null,
-      parts: (message.parts ?? []).map(
-        (part, partIndex): MessagePart => ({
-          ...part,
-          id: `mock-copy-${now}-${index}-${partIndex}`,
-          sessionID,
-          messageID: part.messageID ? id : part.messageID,
-        }),
-      ),
+      parts: (message.parts ?? []).map((part, partIndex): MessagePart => ({
+        ...part,
+        id: `mock-copy-${now}-${index}-${partIndex}`,
+        sessionID,
+        messageID: part.messageID ? id : part.messageID,
+      })),
     };
   });
 }

@@ -188,13 +188,6 @@ export function providerAuthDisplayState(
       configured: true,
     };
   }
-  if (state.providers?.connected.includes(providerId)) {
-    return {
-      label: t("connected"),
-      level: "neutral",
-      configured: true,
-    };
-  }
   return {
     label: t("notConfigured"),
     level: "neutral",

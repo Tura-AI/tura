@@ -109,6 +109,10 @@ copy_release_runtime_files() {
   copy_runtime_path commands/web_discover commands/web_discover
   copy_runtime_path README.md README.md
   copy_runtime_path scripts/ARCHITECTURE.md scripts/ARCHITECTURE.md
+  copy_runtime_path scripts/register-cli.ps1 scripts/register-cli.ps1
+  copy_runtime_path scripts/register-cli.sh scripts/register-cli.sh
+  copy_runtime_path scripts/unregister-cli.ps1 scripts/unregister-cli.ps1
+  copy_runtime_path scripts/unregister-cli.sh scripts/unregister-cli.sh
 }
 
 copy_runtime_path() {

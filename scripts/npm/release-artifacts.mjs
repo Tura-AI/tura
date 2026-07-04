@@ -36,7 +36,11 @@ export const releaseRuntimeFiles = [
   ["commands/read_media", "commands/read_media"],
   ["commands/web_discover", "commands/web_discover"],
   ["README.md", "README.md"],
-  ["scripts/ARCHITECTURE.md", "scripts/ARCHITECTURE.md"]
+  ["scripts/ARCHITECTURE.md", "scripts/ARCHITECTURE.md"],
+  ["scripts/register-cli.ps1", "scripts/register-cli.ps1"],
+  ["scripts/register-cli.sh", "scripts/register-cli.sh"],
+  ["scripts/unregister-cli.ps1", "scripts/unregister-cli.ps1"],
+  ["scripts/unregister-cli.sh", "scripts/unregister-cli.sh"]
 ];
 
 export const releaseRuntimeExcludedDirs = [

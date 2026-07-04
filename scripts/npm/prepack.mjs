@@ -11,6 +11,10 @@ const requiredFiles = [
   "README.md",
   "scripts/install.ps1",
   "scripts/install.sh",
+  "scripts/register-cli.ps1",
+  "scripts/register-cli.sh",
+  "scripts/unregister-cli.ps1",
+  "scripts/unregister-cli.sh",
   "commands/read_media/install.ps1",
   "commands/read_media/install.sh",
   "commands/generate_media/install.ps1",
@@ -28,7 +32,8 @@ const requiredFiles = [
   "scripts/npm/release-artifacts.mjs",
   "scripts/npm/install-release.mjs",
   "scripts/npm/package-platform.mjs",
-  "scripts/npm/package-release.mjs"
+  "scripts/npm/package-release.mjs",
+  "scripts/npm/verify-platform-install.mjs"
 ];
 
 const missing = requiredFiles.filter((file) => !existsSync(path.join(repoRoot, file)));

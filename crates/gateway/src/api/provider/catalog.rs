@@ -41,10 +41,6 @@ pub async fn list_providers_value() -> ProviderListResponse {
         }
 
         defaults.insert(provider.id.clone(), default_model.id);
-        if provider.enabled {
-            connected.push(provider.id.clone());
-        }
-
         all.push(SdkProvider {
             id: provider.id.clone(),
             name: provider_display_name_from_settings(settings.as_deref(), &provider.id)
@@ -92,7 +88,6 @@ pub(super) fn provider_list_for_route(
                 let index = all.len();
                 indexes.insert(provider.provider.clone(), index);
                 defaults.insert(provider.provider.clone(), model_id.clone());
-                connected.push(provider.provider.clone());
                 all.push(SdkProvider {
                     id: provider.provider.clone(),
                     name: provider_display_name_from_settings(Some(settings), &provider.provider)
@@ -676,7 +671,9 @@ pub(super) fn enrich_provider_list(
         } else {
             "config".to_string()
         };
-        if has_key && !connected.iter().any(|id| id == &provider.id) {
+        if (has_key || store_connected.contains(&provider.id))
+            && !connected.iter().any(|id| id == &provider.id)
+        {
             connected.push(provider.id.clone());
         }
     }
@@ -1008,7 +1005,7 @@ mod tests {
             .expect("local provider");
 
         assert_eq!(response.default["local"], "model-a");
-        assert!(response
+        assert!(!response
             .connected
             .iter()
             .any(|provider| provider == "local"));
