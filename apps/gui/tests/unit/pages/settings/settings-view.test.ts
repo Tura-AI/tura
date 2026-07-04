@@ -2,9 +2,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { SdkProvider } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
+import { initialAppState } from "../../../../app/src/state/global-store";
 import { mainTabEntries } from "../../../../app/src/pages/settings/main-tabs";
 import { providerDomains } from "../../../../app/src/pages/settings/provider-domain";
-import { configDraftToPatch } from "../../../../app/src/utils/settings";
+import {
+  configDraftToPatch,
+  providerAuthDisplayState,
+  providerConfigured,
+} from "../../../../app/src/utils/settings";
 
 const settingsViewSource = readFileSync(
   resolve(import.meta.dir, "../../../../app/src/pages/settings/settings-view.tsx"),
@@ -170,5 +175,41 @@ describe("settings config patches", () => {
     expect(settingsViewSource).toContain("value={props.state.cornerRadius}");
     expect(appShellSource).toContain("cornerRadiusScale(state().cornerRadius)");
     expect(appShellSource).toContain('"--corner-radius-scale"');
+  });
+});
+
+describe("provider auth display state", () => {
+  test("does not treat catalog connected providers as authenticated credentials", () => {
+    const state = initialAppState();
+    state.providers = {
+      all: [],
+      default: {},
+      connected: ["openai"],
+      enums: { domains: [], capabilities: [], api_styles: [], auth_methods: [], statuses: [] },
+    };
+
+    expect(providerAuthDisplayState(state, "openai")).toMatchObject({
+      label: "Not configured",
+      configured: false,
+    });
+    expect(providerConfigured(state, "openai")).toBe(false);
+  });
+
+  test("uses auth status as the credential source of truth", () => {
+    const state = initialAppState();
+    state.providerAuthStatus.openai = {
+      provider_id: "openai",
+      display_name: "OpenAI",
+      configured: true,
+      authenticated: true,
+      auth_state: "authenticated",
+      runtime_state: "ready",
+    };
+
+    expect(providerAuthDisplayState(state, "openai")).toMatchObject({
+      label: "Connected",
+      configured: true,
+    });
+    expect(providerConfigured(state, "openai")).toBe(true);
   });
 });

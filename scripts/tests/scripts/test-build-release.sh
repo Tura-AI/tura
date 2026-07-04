@@ -114,6 +114,10 @@ if [ "$BINARY" -eq 0 ]; then
   require_path "$TARGET_DIR/crates/runtime/src/runtime_prompt/debug/prompt.md" "Missing release runtime prompt."
   require_path "$TARGET_DIR/crates/tools/src/commands/shell_command/schema.json" "Missing release tool command schema."
   require_path "$TARGET_DIR/commands/read_media/prompt.md" "Missing release external command prompt."
+  require_path "$TARGET_DIR/scripts/register-cli.ps1" "Missing release CLI registration script."
+  require_path "$TARGET_DIR/scripts/register-cli.sh" "Missing release CLI registration script."
+  require_path "$TARGET_DIR/scripts/unregister-cli.ps1" "Missing release CLI unregistration script."
+  require_path "$TARGET_DIR/scripts/unregister-cli.sh" "Missing release CLI unregistration script."
 fi
 
 if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TUI" -eq 0 ]; then

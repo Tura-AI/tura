@@ -44,6 +44,7 @@ import {
 } from "./session-actions.js";
 import { createResizeDrawGate, createTerminalResizeHandler } from "./resize.js";
 import { mediaTokenForInputPath, saveClipboardImageInput } from "./clipboard-image.js";
+import { openExternalUrl } from "../utils/external-url.js";
 
 const GATEWAY_SHUTDOWN_POLL_MS = 1_000;
 const GATEWAY_SHUTDOWN_PROBE_TIMEOUT_MS = 1_500;
@@ -636,6 +637,7 @@ async function slashCommand(
         providerID,
         Number.isFinite(method) ? method : 0,
       );
+      const openResult = auth.url ? await openExternalUrl(auth.url) : undefined;
       const status = await client.providerAuthStatus(providerID).catch(() => undefined);
       dispatch({
         type: "auth",
@@ -645,8 +647,21 @@ async function slashCommand(
         open: true,
       });
       dispatch({
+        type: "setting-input",
+        value: {
+          kind: "oauth-callback",
+          providerID,
+          method: Number.isFinite(method) ? method : 0,
+          prompt: t("oauthCallbackInputHint"),
+        },
+      });
+      dispatch({
         type: "notice",
-        value: [auth.instructions, auth.url ? t("openUrl", { url: auth.url }) : undefined]
+        value: [
+          auth.instructions,
+          auth.url ? t("openUrl", { url: auth.url }) : undefined,
+          openResult && !openResult.ok ? openResult.reason : undefined,
+        ]
           .filter(Boolean)
           .join(" "),
       });
@@ -717,8 +732,19 @@ async function slashCommand(
       if (!providerID || !key) {
         dispatch({ type: "notice", value: t("providerKeyHint", { provider: providerID ?? "" }) });
       } else {
-        await client.setProviderAuth(providerID, { type: "api_key", key });
-        const status = await client.providerAuthStatus(providerID).catch(() => undefined);
+        const validation = await client.providerAuthValidate(providerID, {
+          type: "api_key",
+          kind: "api_key",
+          login: "api",
+          key,
+          access: key,
+        });
+        if (validation.ok) {
+          await client.setProviderAuth(providerID, { type: "api_key", key });
+        }
+        const status = validation.ok
+          ? await client.providerAuthStatus(providerID).catch(() => validation.status ?? undefined)
+          : validation.status;
         dispatch({
           type: "auth",
           statuses: status
@@ -726,7 +752,7 @@ async function slashCommand(
             : getState().authStatuses,
           open: false,
         });
-        dispatch({ type: "notice", value: undefined });
+        dispatch({ type: "notice", value: validation.message });
       }
     } else if (!args[0]) {
       dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });

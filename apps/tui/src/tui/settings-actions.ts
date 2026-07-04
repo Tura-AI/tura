@@ -10,6 +10,7 @@ import {
   type TuiGatewayClient,
   type TuiGetState,
 } from "./runtime.js";
+import { openExternalUrl } from "../utils/external-url.js";
 
 export async function applySelectedSetting(
   client: TuiGatewayClient,
@@ -108,7 +109,9 @@ async function applyProviderAuthAction(
   const providerID = action.providerID;
   if (!providerID) return;
   if (action.action === "oauth") {
-    const auth = await client.providerOauthAuthorize(providerID, action.method ?? 0);
+    const methodIndex = action.method ?? 0;
+    const auth = await client.providerOauthAuthorize(providerID, methodIndex);
+    const openResult = auth.url ? await openExternalUrl(auth.url) : undefined;
     const status = await client.providerAuthStatus(providerID).catch(() => undefined);
     dispatch({
       type: "auth",
@@ -123,12 +126,17 @@ async function applyProviderAuthAction(
       value: {
         kind: "oauth-callback",
         providerID,
+        method: methodIndex,
         prompt: t("oauthCallbackInputHint"),
       },
     });
     dispatch({
       type: "notice",
-      value: [auth.instructions, auth.url ? t("openUrl", { url: auth.url }) : undefined]
+      value: [
+        auth.instructions,
+        auth.url ? t("openUrl", { url: auth.url }) : undefined,
+        openResult && !openResult.ok ? openResult.reason : undefined,
+      ]
         .filter(Boolean)
         .join(" "),
     });
@@ -184,24 +192,58 @@ export async function submitSettingInput(
   const value = state.composer.trim();
   if (!input || !value) return;
   if (input.kind === "api-key") {
-    await client.setProviderAuth(input.providerID, { type: "api_key", key: value });
-  } else {
-    await client.setProviderAuth(input.providerID, {
-      type: "oauth",
+    const method = (getState().authMethods?.[input.providerID] ?? []).find((item) =>
+      /key|token|api/i.test(
+        [item.type, item.kind, item.login, item.label].filter(Boolean).join(" "),
+      ),
+    );
+    const validation = await client.providerAuthValidate(input.providerID, {
+      type: method?.type ?? "api_key",
+      kind: method?.kind ?? "api_key",
+      login: method?.login ?? "api",
+      token_env: method?.token_env,
+      key: value,
       access: value,
-      metadata: { callback_url_or_token: value },
     });
+    if (!validation.ok) {
+      dispatchAuthStatus(dispatch, getState, input.providerID, validation.status);
+      dispatch({ type: "notice", value: validation.message });
+      return;
+    }
+    await client.setProviderAuth(input.providerID, { type: "api_key", key: value });
+    const status = await client.providerAuthStatus(input.providerID).catch(() => validation.status);
+    dispatchAuthStatus(dispatch, getState, input.providerID, status);
+    dispatch({ type: "setting-input", value: undefined });
+    dispatch({ type: "composer", value: "" });
+    dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID: input.providerID });
+    dispatch({ type: "notice", value: validation.message });
+    return;
+  } else {
+    const result = await client.providerOauthCallback(input.providerID, {
+      method: input.method ?? 0,
+      code: value,
+    });
+    dispatchAuthStatus(dispatch, getState, input.providerID, result.status);
+    dispatch({ type: "notice", value: result.message });
+    if (!result.ok) return;
+    dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID: input.providerID });
+    dispatch({ type: "setting-input", value: undefined });
+    dispatch({ type: "composer", value: "" });
+    return;
   }
-  const status = await client.providerAuthStatus(input.providerID).catch(() => undefined);
+}
+
+function dispatchAuthStatus(
+  dispatch: TuiDispatch,
+  getState: TuiGetState,
+  providerID: string,
+  status: Awaited<ReturnType<TuiGatewayClient["providerAuthStatus"]>> | null | undefined,
+): void {
   dispatch({
     type: "auth",
     statuses: status
-      ? { ...getState().authStatuses, [input.providerID]: status }
+      ? { ...getState().authStatuses, [providerID]: status }
       : getState().authStatuses,
     open: false,
   });
-  dispatch({ type: "setting-input", value: undefined });
-  dispatch({ type: "composer", value: "" });
-  dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID: input.providerID });
-  dispatch({ type: "notice", value: undefined });
 }

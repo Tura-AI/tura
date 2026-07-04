@@ -116,6 +116,10 @@ if (-not $Binary) {
   Assert-Path (Join-Path $TargetDir "crates\runtime\src\runtime_prompt\debug\prompt.md") "Missing release runtime prompt."
   Assert-Path (Join-Path $TargetDir "crates\tools\src\commands\shell_command\schema.json") "Missing release tool command schema."
   Assert-Path (Join-Path $TargetDir "commands\read_media\prompt.md") "Missing release external command prompt."
+  Assert-Path (Join-Path $TargetDir "scripts\register-cli.ps1") "Missing release CLI registration script."
+  Assert-Path (Join-Path $TargetDir "scripts\register-cli.sh") "Missing release CLI registration script."
+  Assert-Path (Join-Path $TargetDir "scripts\unregister-cli.ps1") "Missing release CLI unregistration script."
+  Assert-Path (Join-Path $TargetDir "scripts\unregister-cli.sh") "Missing release CLI unregistration script."
 }
 
 if ($BuildTui) {

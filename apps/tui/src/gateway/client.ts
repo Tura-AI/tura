@@ -18,9 +18,12 @@ import type {
 } from "../types/gateway.js";
 import type {
   OAuthAuthorizeResponse,
+  OAuthCallbackInput,
+  ProviderAuthActionResponse,
   ProviderAuthMethodsResponse,
   ProviderAuthStatus,
   ProviderAuthUpsert,
+  ProviderAuthValidationInput,
   ProviderListResponse,
 } from "../types/provider.js";
 import type {
@@ -201,6 +204,22 @@ export class GatewayClient {
       { method },
       { directory: this.directory },
     );
+  }
+
+  async providerOauthCallback(
+    providerID: string,
+    payload: OAuthCallbackInput,
+  ): Promise<ProviderAuthActionResponse> {
+    return this.post(`/provider/${encodeURIComponent(providerID)}/oauth/callback`, payload, {
+      directory: this.directory,
+    });
+  }
+
+  async providerAuthValidate(
+    providerID: string,
+    payload: ProviderAuthValidationInput = {},
+  ): Promise<ProviderAuthActionResponse> {
+    return this.post(`/provider/${encodeURIComponent(providerID)}/auth/validate`, payload);
   }
 
   async providerLogout(providerID: string): Promise<unknown> {

@@ -19,6 +19,7 @@ export interface SettingInputState {
   kind: SettingInputKind;
   providerID: string;
   prompt: string;
+  method?: number;
 }
 
 export interface SessionLoadingState {
