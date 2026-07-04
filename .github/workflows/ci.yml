@@ -139,6 +139,9 @@ jobs:
           cache-dependency-path: apps/tui/package-lock.json
       - name: Install TUI dependencies
         run: npm ci --prefix apps/tui
+      - name: Install TUI Playwright browser
+        working-directory: apps/tui
+        run: npx playwright install --with-deps chromium
       - name: Run TUI unit tests
         run: npm --prefix apps/tui run test:unit
       - name: Run TUI e2e tests

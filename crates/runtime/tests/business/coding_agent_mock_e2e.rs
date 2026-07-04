@@ -25,7 +25,7 @@ fn coding_agent_can_call_command_run_tool_e2e() {
         ("OPENAI_API_KEY", "test-key"),
         ("TURA_ROUTER_ADDR", router_addr.as_str()),
         ("TURA_GATEWAY_CALLBACKS", "0"),
-        ("TURA_MANAS_MAX_TURNS", "4"),
+        ("TURA_MANAS_MAX_TURNS", "5"),
         ("TURA_NO_TOOL_RETRY_LIMIT", "0"),
         ("TURA_PROVIDER_TOTAL_TIMEOUT_MS", MOCK_PROVIDER_TIMEOUT_MS),
         (
@@ -95,8 +95,8 @@ fn coding_agent_can_call_command_run_tool_e2e() {
     let patched_content = std::fs::read_to_string(workspace.join("src/lib.rs"))
         .expect("patched file should be readable");
     assert!(
-        !patched_content.trim().is_empty(),
-        "patched file was empty; tool_results={tool_results:#?}"
+        patched_content.contains("processed verified {input}"),
+        "patched file should contain verified output; tool_results={tool_results:#?}"
     );
 
     let requests = provider

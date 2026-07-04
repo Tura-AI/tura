@@ -727,12 +727,29 @@ pub(crate) fn command_run_provider_response(index: usize) -> Value {
             json!({
                 "commands": [
                     { "command": "shell_command", "command_line": json!({"command":"pwd","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string(), "step": 1 },
-                    { "command": "shell_command", "command_line": json!({"command":"Write-Output 2","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string(), "step": 1 }
+                    { "command": "shell_command", "command_line": json!({"command":"echo 2","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string(), "step": 1 }
                 ],
                 "step_summary": "Call the command_run console tool as requested."
             }),
         ),
         1 => tool_response(
+            "call_task_status_before_apply_patch",
+            "command_run",
+            json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command": "task_status",
+                        "command_line": json!({
+                            "task_group": "runtime command run",
+                            "task_type": ["debug"]
+                        }).to_string()
+                    }
+                ],
+                "step_summary": "Set task status before editing files."
+            }),
+        ),
+        2 => tool_response(
             "call_apply_patch",
             "command_run",
             json!({
@@ -745,7 +762,7 @@ pub(crate) fn command_run_provider_response(index: usize) -> Value {
                     {
                         "step": 2,
                         "command": "shell_command",
-                        "command_line": json!({"command":"Get-Content src/lib.rs","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string()
+                        "command_line": json!({"command":"cat src/lib.rs","timeout_ms":MOCK_COMMAND_TIMEOUT_MS}).to_string()
                     }
                 ],
                 "step_summary": "Patch src/lib.rs and verify the edited content."

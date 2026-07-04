@@ -620,7 +620,7 @@ fn open_with_system_file_manager(path: &Path) -> std::io::Result<()> {
         } else {
             path
         };
-        return spawn_first_open_command(
+        spawn_first_open_command(
             [
                 OpenAttempt::new("xdg-open", &[], Some(target)),
                 OpenAttempt::new("gio", &["open"], Some(target)),
@@ -628,7 +628,7 @@ fn open_with_system_file_manager(path: &Path) -> std::io::Result<()> {
                 OpenAttempt::new("exo-open", &[], Some(target)),
             ],
             "system file manager",
-        );
+        )
     }
 }
 

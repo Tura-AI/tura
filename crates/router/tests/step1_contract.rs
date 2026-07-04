@@ -75,7 +75,7 @@ fn gateway_uses_router_enqueue_and_direct_session_db_client() {
 fn gateway_abort_and_delete_force_stop_runtime_before_session_db_delete() {
     let session_api = read("crates/gateway/src/api/session.rs");
     assert!(
-        session_api.contains("let abort = abort_session_scope(&session_id);")
+        session_api.contains("let abort = abort_session_value(&session_id);")
             && session_api.contains("SessionLogCommand::DeleteSession"),
         "delete_session must abort the session scope before deleting session DB state"
     );
@@ -247,22 +247,23 @@ fn runtime_acks_streamed_command_checkpoints_through_session_db() {
 
 #[test]
 fn gui_dev_gateway_tracks_active_url_and_refuses_unknown_port_owner() {
-    let vite = read("apps/gui/app/vite.config.ts");
+    let tauri = read("apps/tauri/src-tauri/src/main.rs");
+    let path = read("crates/path/src/lib.rs");
     assert!(
-        vite.contains("ACTIVE_GATEWAY_ENV_FILE")
-            && vite.contains("TURA_GATEWAY_URL_ENV")
-            && vite.contains("writeActiveGatewayUrl")
-            && vite.contains("readActiveGatewayUrl"),
-        "GUI dev must persist and reuse the active gateway URL across dev-server requests"
+        path.contains("ACTIVE_GATEWAY_ENV_FILE")
+            && path.contains("TURA_GATEWAY_URL_ENV")
+            && tauri.contains("write_active_gateway_url")
+            && tauri.contains("read_active_gateway_url_for_home"),
+        "GUI/Tauri must persist and reuse the active gateway URL across startup requests"
     );
     assert!(
-        !vite.contains("detached: true") && !vite.contains("child.unref()"),
-        "GUI dev gateway must not be detached or unrefed"
+        tauri.contains("write_active_gateway_process_for_home")
+            && tauri.contains("terminate_active_gateway_process")
+            && tauri.contains("read_active_gateway_process_record"),
+        "GUI/Tauri must track and terminate stale active gateway processes before relaunch"
     );
     assert!(
-        vite.contains("canBindGatewayUrl")
-            && vite.contains("terminateGatewayFromLock")
-            && vite.contains("unknown or foreign process"),
-        "GUI dev must fail rather than spawn when the gateway port is occupied by an unknown process"
+        !tauri.contains("detached: true") && !tauri.contains("child.unref()"),
+        "GUI/Tauri gateway must not be detached or unrefed"
     );
 }
