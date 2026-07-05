@@ -228,70 +228,73 @@ export function useAppGatewayLifecycle(options: {
       setState((previous) => {
         const nextState: AppState = {
           ...previous,
-        health,
-        serviceStatus,
-        productConfig,
-        me,
-        workspaces,
-        productIssues,
-        productProjects,
-        paths,
-        config,
-        modelConfig,
-        configDraft: configToDraft(config),
-        workspaceConfig: effectiveWorkspaceConfig,
-        workspaceConfigDraft: recordToDraft(effectiveWorkspaceConfig),
-        currentProject,
-        projects: workspaceProjects,
-        directory,
-        sessions: mergeSessions(sessions, previous.sessions),
-        providers,
-        providerAuthMethods,
-        providerAuthStatus,
-        agents,
-        personas,
-        commands,
-        files,
-        selectedSessionId: forceNewSession
-          ? undefined
-          : (previous.selectedSessionId ?? selectedSessionId),
-        selectedAgent: previous.selectedAgent ?? configuredAgent ?? DEFAULT_AGENT_ID,
-        selectedModel:
-          previous.selectedModel ?? configuredModel ?? defaultModel(providers) ?? DEFAULT_MODEL_ID,
-        selectedProviderId:
-          previous.selectedProviderId ??
-          providerIdFromModel(configuredModel) ??
-          providerIdFromModel(previous.selectedModel) ??
-          providers?.connected[0] ??
-          providers?.all[0]?.id,
-        themeMode: previous.bootstrapped ? previous.themeMode : normalizeThemeMode(config.theme),
-        cornerRadius: previous.bootstrapped
-          ? previous.cornerRadius
-          : normalizeCornerRadiusMode(config.corner_radius),
-        mainFont: previous.bootstrapped
-          ? previous.mainFont
-          : (config.main_font ?? previous.mainFont),
-        codeFont: previous.bootstrapped
-          ? previous.codeFont
-          : (config.code_font ?? previous.codeFont),
-        mainFontSize: previous.bootstrapped
-          ? previous.mainFontSize
-          : clampNumber(config.main_font_size, 11, 15, 12),
-        codeFontSize: previous.bootstrapped
-          ? previous.codeFontSize
-          : clampNumber(config.code_font_size, 10, 15, 12),
-        modelVariant: previous.bootstrapped
-          ? previous.modelVariant
-          : (configuredVariant ?? previous.modelVariant ?? "medium"),
-        accelerationEnabled: previous.bootstrapped
-          ? previous.accelerationEnabled
-          : (configuredAcceleration ?? previous.accelerationEnabled ?? false),
-        loading: false,
-        sessionsLoading: false,
-        bootstrapped: true,
-        connection: "connected",
-        gatewayStartupNotice: undefined,
-        settingsNotice: undefined,
+          health,
+          serviceStatus,
+          productConfig,
+          me,
+          workspaces,
+          productIssues,
+          productProjects,
+          paths,
+          config,
+          modelConfig,
+          configDraft: configToDraft(config),
+          workspaceConfig: effectiveWorkspaceConfig,
+          workspaceConfigDraft: recordToDraft(effectiveWorkspaceConfig),
+          currentProject,
+          projects: workspaceProjects,
+          directory,
+          sessions: mergeSessions(sessions, previous.sessions),
+          providers,
+          providerAuthMethods,
+          providerAuthStatus,
+          agents,
+          personas,
+          commands,
+          files,
+          selectedSessionId: forceNewSession
+            ? undefined
+            : (previous.selectedSessionId ?? selectedSessionId),
+          selectedAgent: previous.selectedAgent ?? configuredAgent ?? DEFAULT_AGENT_ID,
+          selectedModel:
+            previous.selectedModel ??
+            configuredModel ??
+            defaultModel(providers) ??
+            DEFAULT_MODEL_ID,
+          selectedProviderId:
+            previous.selectedProviderId ??
+            providerIdFromModel(configuredModel) ??
+            providerIdFromModel(previous.selectedModel) ??
+            providers?.connected[0] ??
+            providers?.all[0]?.id,
+          themeMode: previous.bootstrapped ? previous.themeMode : normalizeThemeMode(config.theme),
+          cornerRadius: previous.bootstrapped
+            ? previous.cornerRadius
+            : normalizeCornerRadiusMode(config.corner_radius),
+          mainFont: previous.bootstrapped
+            ? previous.mainFont
+            : (config.main_font ?? previous.mainFont),
+          codeFont: previous.bootstrapped
+            ? previous.codeFont
+            : (config.code_font ?? previous.codeFont),
+          mainFontSize: previous.bootstrapped
+            ? previous.mainFontSize
+            : clampNumber(config.main_font_size, 11, 15, 12),
+          codeFontSize: previous.bootstrapped
+            ? previous.codeFontSize
+            : clampNumber(config.code_font_size, 10, 15, 12),
+          modelVariant: previous.bootstrapped
+            ? previous.modelVariant
+            : (configuredVariant ?? previous.modelVariant ?? "medium"),
+          accelerationEnabled: previous.bootstrapped
+            ? previous.accelerationEnabled
+            : (configuredAcceleration ?? previous.accelerationEnabled ?? false),
+          loading: false,
+          sessionsLoading: false,
+          bootstrapped: true,
+          connection: "connected",
+          gatewayStartupNotice: undefined,
+          settingsNotice: undefined,
         };
         return {
           ...nextState,

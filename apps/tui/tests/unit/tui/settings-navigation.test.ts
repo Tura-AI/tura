@@ -287,16 +287,16 @@ function hydrateClient(options: {
     all: options.emptyProviders
       ? []
       : [
-      {
-        id: "mock",
-        name: "Mock",
-        source: "mock",
-        options: { domains: ["llm"] },
-        models: {
-          "mock-fast": { id: "mock-fast", name: "Mock Fast" },
-        },
-      },
-    ],
+          {
+            id: "mock",
+            name: "Mock",
+            source: "mock",
+            options: { domains: ["llm"] },
+            models: {
+              "mock-fast": { id: "mock-fast", name: "Mock Fast" },
+            },
+          },
+        ],
     default: { mock: "mock-fast" },
     connected: options.connected,
     enums: {

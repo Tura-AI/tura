@@ -156,10 +156,7 @@ function settingProviders(state: AppState): NonNullable<AppState["providers"]>["
   return (state.providers?.all ?? []).filter(isLlmProvider);
 }
 
-function configuredProviderCount(
-  state: AppState,
-  providers = settingProviders(state),
-): number {
+function configuredProviderCount(state: AppState, providers = settingProviders(state)): number {
   const ids = new Set<string>();
   for (const id of state.providers?.connected ?? []) ids.add(id);
   for (const [id, status] of Object.entries(state.authStatuses)) {
