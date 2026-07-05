@@ -6,6 +6,8 @@ import { renderFrame } from "../../../src/tui/render.js";
 import { richCapabilities } from "../../../src/tui/capabilities.js";
 import { setActiveCapabilities, stripAnsi } from "../../../src/tui/render-terminal.js";
 import { initialState, reducer, type AppState } from "../../../src/tui/reducer.js";
+import { hydrate } from "../../../src/tui/runtime.js";
+import type { TuiGatewayClient } from "../../../src/tui/runtime.js";
 import type { Session } from "../../../src/types/session.js";
 
 test("opening a setting detail starts selection at the active config option", () => {
@@ -20,6 +22,29 @@ test("opening a setting detail starts selection at the active config option", ()
 
   assert.equal(next.settingDetail, "variant");
   assert.equal(next.selectedSettingOptionIndex, 2);
+});
+
+test("initial hydrate opens provider settings when no LLM provider is configured", async () => {
+  const next = await hydrate(
+    initialState("C:/repo"),
+    hydrateClient({ connected: [], configured: false }),
+    session("sess-settings"),
+  );
+
+  assert.equal(next.settingsOpen, true);
+  assert.equal(next.settingDetail, "provider");
+  assert.equal(next.selectedProviderID, undefined);
+});
+
+test("initial hydrate keeps the chat surface when an LLM provider is configured", async () => {
+  const next = await hydrate(
+    initialState("C:/repo"),
+    hydrateClient({ connected: ["mock"], configured: true }),
+    session("sess-settings"),
+  );
+
+  assert.equal(next.settingsOpen, false);
+  assert.equal(next.settingDetail, undefined);
 });
 
 test("setting detail rendering pages when selection moves past visible rows", () => {
@@ -240,6 +265,49 @@ function storedAgent(id: string): AppState["agents"][number] {
     },
     config: { agent_name: id },
   };
+}
+
+function hydrateClient(options: { connected: string[]; configured: boolean }): TuiGatewayClient {
+  const providers: NonNullable<AppState["providers"]> = {
+    all: [
+      {
+        id: "mock",
+        name: "Mock",
+        source: "mock",
+        options: { domains: ["llm"] },
+        models: {
+          "mock-fast": { id: "mock-fast", name: "Mock Fast" },
+        },
+      },
+    ],
+    default: { mock: "mock-fast" },
+    connected: options.connected,
+    enums: {
+      domains: ["llm"],
+      capabilities: [],
+      api_styles: [],
+      auth_methods: [],
+      statuses: [],
+    },
+  };
+  return {
+    listMessages: async () => [],
+    listProviders: async () => providers,
+    getSessionConfig: async () => baseState().sessionConfig!,
+    modelConfig: async () => ({ path: "C:/repo/.tura/config.conf", tiers: [] }),
+    listAgents: async () => [],
+    listPersonas: async () => [],
+    listProviderAuthMethods: async () => ({ mock: [] }),
+    providerAuthStatus: async () => ({
+      provider_id: "mock",
+      display_name: "Mock",
+      configured: options.configured,
+      authenticated: options.configured,
+      auth_state: options.configured ? "authenticated" : "missing",
+      runtime_state: options.configured ? "ready" : "missing",
+    }),
+    listSessions: async () => [session("sess-settings")],
+  } as unknown as TuiGatewayClient;
 }
 
 function captureDrawWrites(run: () => void): string[] {

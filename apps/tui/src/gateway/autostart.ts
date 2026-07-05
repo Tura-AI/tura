@@ -344,6 +344,7 @@ function stopUnreadyChild(child: ChildProcess): void {
   } catch {
     // Best effort: the gateway may have already detached or exited.
   }
+}
 
 function gatewayLogStdio(instanceHome: string): ["ignore", number, number] {
   const logDir = join(instanceHome, ".tura", "logs");
@@ -356,14 +357,13 @@ function gatewayLogStdio(instanceHome: string): ["ignore", number, number] {
 }
 
 function closeGatewayLogStdio(stdio: ["ignore", number, number]): void {
-  for (const fd of stdio.slice(1)) {
+  for (const fd of [stdio[1], stdio[2]]) {
     try {
       closeSync(fd);
     } catch {
       // Best effort: the child process may already own or close the handle.
     }
   }
-}
 }
 
 async function terminateGatewayProcess(

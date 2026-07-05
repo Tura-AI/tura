@@ -18,6 +18,7 @@ import {
   mergeSessions,
   normalizeCornerRadiusMode,
   normalizeThemeMode,
+  providerStartupSettingsRedirect,
 } from "../app-state-utils";
 import { DEFAULT_AGENT_ID, DEFAULT_MODEL_ID } from "../config/defaults";
 import { setLanguage, t } from "../i18n";
@@ -48,6 +49,7 @@ export function useAppGatewayLifecycle(options: {
   gatewayUrlExplicit: boolean;
   rootClient: Accessor<GatewayClient>;
   forceNewSession: boolean;
+  hasExplicitInitialTab?: boolean;
   disableGatewayAutostart?: boolean;
   e2eFixture?: string;
   openSession: (sessionId: string) => Promise<void>;
@@ -59,6 +61,7 @@ export function useAppGatewayLifecycle(options: {
     gatewayUrlExplicit,
     rootClient,
     forceNewSession,
+    hasExplicitInitialTab = false,
     disableGatewayAutostart,
     e2eFixture,
     openSession,
@@ -222,8 +225,9 @@ export function useAppGatewayLifecycle(options: {
         "model_acceleration_enabled",
       );
       setLanguage(configuredLanguage);
-      setState((previous) => ({
-        ...previous,
+      setState((previous) => {
+        const nextState: AppState = {
+          ...previous,
         health,
         serviceStatus,
         productConfig,
@@ -288,7 +292,12 @@ export function useAppGatewayLifecycle(options: {
         connection: "connected",
         gatewayStartupNotice: undefined,
         settingsNotice: undefined,
-      }));
+        };
+        return {
+          ...nextState,
+          ...providerStartupSettingsRedirect(nextState, hasExplicitInitialTab),
+        };
+      });
       if (selectedSessionId) {
         await openSession(selectedSessionId);
       }

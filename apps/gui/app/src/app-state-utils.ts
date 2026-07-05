@@ -4,11 +4,13 @@ import {
   systemThemeMode,
   type AppState,
   type CornerRadiusMode,
+  type MainTab,
+  type SettingsSection,
   type ThemeMode,
 } from "./state/global-store";
 import { mergeMessageForCache } from "./state/message-cache";
 import { samePath } from "./utils/app-format";
-import { providerIdFromAuthError, providerIdFromModel } from "./utils/settings";
+import { providerConfigured, providerIdFromAuthError, providerIdFromModel } from "./utils/settings";
 
 const LAST_SESSION_OPENED_STORAGE_KEY = "last_session_opened";
 const LEGACY_LAST_SESSION_OPENED_STORAGE_KEY = "last cession oppend";
@@ -76,6 +78,43 @@ export function providerIssueIdFromError(error: unknown, state: AppState): strin
       `${bodyText} ${messageText}`,
     );
   return billingLike ? providerIdFromModel(state.selectedModel) : undefined;
+}
+
+export function providerStartupSettingsRedirect(
+  state: AppState,
+  hasExplicitInitialTab: boolean,
+): Pick<AppState, "activeTab" | "previousMainTab" | "settingsSection"> | undefined {
+  if (hasExplicitInitialTab || !state.providers) {
+    return undefined;
+  }
+  const llmProviders = state.providers.all.filter(isLlmProvider);
+  if (llmProviders.length === 0 || llmProviders.some((provider) => providerConfigured(state, provider.id))) {
+    return undefined;
+  }
+  return {
+    activeTab: "settings" satisfies MainTab,
+    previousMainTab: state.activeTab === "settings" ? state.previousMainTab : state.activeTab,
+    settingsSection: "providers" satisfies SettingsSection,
+  };
+}
+
+function isLlmProvider(provider: NonNullable<AppState["providers"]>["all"][number]): boolean {
+  const domains = stringArrayField(provider.options, "domains");
+  if (domains.length) {
+    return domains.some((domain) => domain.toLowerCase() === "llm");
+  }
+  const capabilities = stringArrayField(provider.options, "capabilities");
+  if (capabilities.some((capability) => capability.toLowerCase().startsWith("llm."))) {
+    return true;
+  }
+  return Object.keys(provider.models ?? {}).length > 0;
+}
+
+function stringArrayField(value: Record<string, unknown> | undefined, key: string): string[] {
+  const item = value?.[key];
+  return Array.isArray(item)
+    ? item.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 export function mergeSessions(remoteSessions: Session[], localSessions: Session[]) {

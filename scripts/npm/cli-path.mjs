@@ -151,6 +151,460 @@ function pathEntries(env) {
     : [];
 }
 
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function normalizeWindowsPathEntry(entry) {
+  return path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const known = new Set(existing.map(normalizeWindowsPathEntry));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalized = normalizeWindowsPathEntry(entry);
+    if (!known.has(normalized)) {
+      next.push(entry);
+      known.add(normalized);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
+function setPathEntries(env, entries) {
+  const key = env.Path !== undefined ? "Path" : env.PATH !== undefined ? "PATH" : "Path";
+  env[key] = entries.join(path.win32.delimiter);
+}
+
+function prependPathEntries(env, entries) {
+  const existing = pathEntries(env);
+  const normalized = new Set(
+    existing.map((entry) => path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase()),
+  );
+  const next = [];
+  for (const entry of entries) {
+    if (!entry) continue;
+    const normalizedEntry = path.win32.normalize(entry).replace(/[\\/]+$/, "").toLowerCase();
+    if (!normalized.has(normalizedEntry)) {
+      next.push(entry);
+      normalized.add(normalizedEntry);
+    }
+  }
+  setPathEntries(env, [...next, ...existing]);
+}
+
 function windowsExecutableNames(name, env) {
   if (path.win32.extname(name)) {
     return [name];
@@ -165,6 +619,692 @@ function pushUnique(candidates, value) {
   }
 }
 
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return (
+    result.stdout
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .find(Boolean) ?? null
+  );
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
+  const commandName = path.win32.extname(name) ? name : `${name}.exe`;
+  const result = spawnSyncFn("where.exe", [commandName], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (result.error || (result.status ?? 1) !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]) || "C:\\Program Files";
+  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
+  for (const root of [programFiles, programFilesX86]) {
+    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  for (const candidate of powerShell7InstallCandidates(env)) {
+    pushUnique(candidates, candidate);
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  for (const candidate of powerShell7InstallCandidates(env)) {
+    pushUnique(candidates, candidate);
+  }
+  return candidates;
+}
+
+function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
+  for (const entry of pathEntries(env)) {
+    for (const executable of windowsExecutableNames(name, env)) {
+      const candidate = path.win32.join(entry, executable);
+      if (pathExists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function powerShell7InstallCandidates(env) {
+  const candidates = [];
+  for (const candidate of powerShell7InstallCandidates(env)) {
+    pushUnique(candidates, candidate);
+  }
+  return candidates;
+}
+
 export function resolveWindowsPowerShellCommand({ env = process.env, pathExists = existsSync } = {}) {
   const candidates = [];
   pushUnique(candidates, env.TURA_POWERSHELL_PATH);
@@ -177,10 +1317,8 @@ export function resolveWindowsPowerShellCommand({ env = process.env, pathExists 
     }
   }
 
-  const programFiles = envValue(env, ["ProgramFiles", "PROGRAMFILES"]);
-  const programFilesX86 = envValue(env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
-  for (const root of [programFiles, programFilesX86]) {
-    pushUnique(candidates, root && path.win32.join(root, "PowerShell", "7", "pwsh.exe"));
+  for (const candidate of powerShell7InstallCandidates(env)) {
+    pushUnique(candidates, candidate);
   }
 
   const systemRoot = envValue(env, ["SystemRoot", "SYSTEMROOT", "windir", "WINDIR"]) || "C:\\Windows";
@@ -190,8 +1328,125 @@ export function resolveWindowsPowerShellCommand({ env = process.env, pathExists 
   return candidates.find((candidate) => path.win32.isAbsolute(candidate) && pathExists(candidate)) || null;
 }
 
+function persistWindowsPathEntries(powerShell, entries, env, spawnSyncFn) {
+  if (!entries.length) {
+    return;
+  }
+  const script = String.raw`
+$ErrorActionPreference = "Stop"
+$entriesToAdd = ConvertFrom-Json -InputObject $env:TURA_POWERSHELL_PATH_ENTRIES
+function Normalize-PathEntry {
+  param([string]$PathEntry)
+  if ([string]::IsNullOrWhiteSpace($PathEntry)) { return "" }
+  try {
+    return (Resolve-Path -LiteralPath $PathEntry).ProviderPath.TrimEnd('\').ToLowerInvariant()
+  } catch {
+    return ([System.IO.Path]::GetFullPath($PathEntry)).TrimEnd('\').ToLowerInvariant()
+  }
+}
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$pathEntries = @()
+if (-not [string]::IsNullOrWhiteSpace($userPath)) {
+  $pathEntries = @($userPath -split [IO.Path]::PathSeparator | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+$known = @{}
+foreach ($entry in $pathEntries) { $known[(Normalize-PathEntry $entry)] = $true }
+foreach ($entry in $entriesToAdd) {
+  if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+  $normalized = Normalize-PathEntry $entry
+  if (-not $known.ContainsKey($normalized)) {
+    $pathEntries = @($entry) + $pathEntries
+    $known[$normalized] = $true
+  }
+}
+[Environment]::SetEnvironmentVariable("Path", ($pathEntries -join [IO.Path]::PathSeparator), "User")
+`;
+  const result = spawnSyncFn(
+    powerShell,
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+    {
+      env: { ...process.env, ...env, TURA_POWERSHELL_PATH_ENTRIES: JSON.stringify(entries) },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  );
+  if (result.error) {
+    fail(result.error.message);
+  }
+  if ((result.status ?? 1) !== 0) {
+    fail((result.stderr || result.stdout || "PowerShell PATH update failed").trim());
+  }
+}
+
+function installPowerShell7WithWinget({ env, spawnSyncFn }) {
+  const result = spawnSyncFn(
+    "winget",
+    [
+      "install",
+      "--id",
+      "Microsoft.PowerShell",
+      "--exact",
+      "--source",
+      "winget",
+      "--accept-package-agreements",
+      "--accept-source-agreements",
+      "--disable-interactivity",
+    ],
+    {
+      env,
+      stdio: "inherit",
+      shell: true,
+      windowsHide: false,
+    },
+  );
+  if (result.error) {
+    fail(result.error.message);
+  }
+  if ((result.status ?? 1) !== 0) {
+    fail(`winget install Microsoft.PowerShell failed with exit ${result.status ?? result.signal}`);
+  }
+}
+
+export function ensureWindowsPowerShellCommand({
+  env = process.env,
+  pathExists = existsSync,
+  spawnSyncFn = spawnSync,
+  platform = process.platform,
+  quiet = false,
+} = {}) {
+  const resolved = resolveWindowsPowerShellCommand({ env, pathExists });
+  if (platform !== "win32") {
+    return resolved;
+  }
+
+  const pathPwsh = windowsPathCommand("pwsh", { env, pathExists });
+  if (pathPwsh) {
+    return pathPwsh;
+  }
+
+  if (env.TURA_NPM_SKIP_POWERSHELL_INSTALL === "1" || env.TURA_NPM_SKIP_POWERSHELL_INSTALL === "true") {
+    return resolved;
+  }
+
+  if (!quiet) {
+    say("PowerShell 7 (pwsh) was not found on PATH; installing Microsoft.PowerShell with winget.", quiet);
+  }
+  installPowerShell7WithWinget({ env, spawnSyncFn });
+
+  const installed = powerShell7InstallCandidates(env).find((candidate) => pathExists(candidate));
+  if (!installed) {
+    fail("Microsoft.PowerShell installed, but pwsh.exe was not found under Program Files.");
+  }
+  const installDir = path.win32.dirname(installed);
+  prependPathEntries(env, [installDir]);
+  persistWindowsPathEntries(installed, [installDir], env, spawnSyncFn);
+  return installed;
+}
+
 function runPowerShell(script, env) {
-  const powerShell = resolveWindowsPowerShellCommand({ env: { ...process.env, ...env } });
+  const mergedEnv = { ...process.env, ...env };
+  const powerShell = ensureWindowsPowerShellCommand({ env: mergedEnv, quiet: true });
   if (!powerShell) {
     fail("PowerShell was not found. Restore Windows PowerShell to PATH, set TURA_POWERSHELL_PATH, or install PowerShell 7.");
   }
@@ -199,7 +1454,7 @@ function runPowerShell(script, env) {
     powerShell,
     ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
     {
-      env: { ...process.env, ...env },
+      env: mergedEnv,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,

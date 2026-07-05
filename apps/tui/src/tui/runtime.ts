@@ -47,7 +47,7 @@ export async function hydrate(
       )
     : {};
   const sessions = await client.listSessions({ includeChildren: true }).catch(() => []);
-  return reducer(
+  const hydrated = reducer(
     reducer(state, {
       type: "hydrate",
       session,
@@ -67,6 +67,9 @@ export async function hydrate(
       value: [],
     },
   );
+  return shouldOpenProviderSettingsOnStartup(hydrated)
+    ? reducer(hydrated, { type: "open-setting-detail", detail: "provider" })
+    : hydrated;
 }
 
 export async function eventLoop(
@@ -142,4 +145,42 @@ export async function fetchAuthSurface(
 
 export function eventMatchesWorkspace(directory: string, cwd: string): boolean {
   return directory === "global" || sameDirectory(directory, cwd);
+}
+
+function shouldOpenProviderSettingsOnStartup(state: AppState): boolean {
+  const providers = settingProviders(state);
+  return providers.length > 0 && configuredProviderCount(state, providers) === 0;
+}
+
+function settingProviders(state: AppState): NonNullable<AppState["providers"]>["all"] {
+  return (state.providers?.all ?? []).filter(isLlmProvider);
+}
+
+function configuredProviderCount(
+  state: AppState,
+  providers = settingProviders(state),
+): number {
+  const ids = new Set<string>();
+  for (const id of state.providers?.connected ?? []) ids.add(id);
+  for (const [id, status] of Object.entries(state.authStatuses)) {
+    if (status.configured || status.authenticated) ids.add(id);
+  }
+  return providers.filter((provider) => ids.has(provider.id)).length;
+}
+
+function isLlmProvider(provider: NonNullable<AppState["providers"]>["all"][number]): boolean {
+  const domains = stringArrayField(provider.options, "domains");
+  if (domains.length) return domains.some((domain) => domain.toLowerCase() === "llm");
+  const capabilities = stringArrayField(provider.options, "capabilities");
+  if (capabilities.some((capability) => capability.toLowerCase().startsWith("llm."))) {
+    return true;
+  }
+  return Object.keys(provider.models ?? {}).length > 0;
+}
+
+function stringArrayField(value: Record<string, unknown> | undefined, key: string): string[] {
+  const item = value?.[key];
+  return Array.isArray(item)
+    ? item.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }

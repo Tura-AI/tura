@@ -679,6 +679,7 @@ export function App() {
     gatewayUrlExplicit,
     rootClient,
     forceNewSession,
+    hasExplicitInitialTab: initialTab !== undefined,
     disableGatewayAutostart,
     e2eFixture,
     openSession,

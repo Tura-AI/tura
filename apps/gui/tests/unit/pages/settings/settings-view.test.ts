@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { SdkProvider } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import { initialAppState } from "../../../../app/src/state/global-store";
+import { providerStartupSettingsRedirect } from "../../../../app/src/app-state-utils";
 import { mainTabEntries } from "../../../../app/src/pages/settings/main-tabs";
 import { providerDomains } from "../../../../app/src/pages/settings/provider-domain";
 import {
@@ -213,3 +214,71 @@ describe("provider auth display state", () => {
     expect(providerConfigured(state, "openai")).toBe(true);
   });
 });
+
+describe("provider startup routing", () => {
+  test("opens the provider settings page when no LLM provider is configured", () => {
+    const state = initialAppState();
+    state.providers = {
+      all: [provider({ id: "openai", name: "OpenAI", models: llmModels() })],
+      default: {},
+      connected: [],
+      enums: { domains: ["llm"], capabilities: [], api_styles: [], auth_methods: [], statuses: [] },
+    };
+
+    expect(providerStartupSettingsRedirect(state, false)).toEqual({
+      activeTab: "settings",
+      settingsSection: "providers",
+      previousMainTab: "conversation",
+    });
+  });
+
+  test("does not override an explicit startup tab", () => {
+    const state = initialAppState();
+    state.providers = {
+      all: [provider({ id: "openai", name: "OpenAI", models: llmModels() })],
+      default: {},
+      connected: [],
+      enums: { domains: ["llm"], capabilities: [], api_styles: [], auth_methods: [], statuses: [] },
+    };
+
+    expect(providerStartupSettingsRedirect(state, true)).toBeUndefined();
+  });
+
+  test("keeps the current tab when an LLM provider is configured", () => {
+    const state = initialAppState();
+    state.providers = {
+      all: [provider({ id: "openai", name: "OpenAI", models: llmModels() })],
+      default: {},
+      connected: [],
+      enums: { domains: ["llm"], capabilities: [], api_styles: [], auth_methods: [], statuses: [] },
+    };
+    state.providerAuthStatus.openai = {
+      provider_id: "openai",
+      display_name: "OpenAI",
+      configured: true,
+      authenticated: true,
+      auth_state: "authenticated",
+      runtime_state: "ready",
+    };
+
+    expect(providerStartupSettingsRedirect(state, false)).toBeUndefined();
+  });
+});
+
+function llmModels(): SdkProvider["models"] {
+  return {
+    "gpt-5.5": {
+      id: "gpt-5.5",
+      name: "GPT-5.5",
+      family: "gpt",
+      release_date: "2026-05-01",
+      attachment: true,
+      reasoning: true,
+      temperature: true,
+      tool_call: true,
+      limit: { context: 1, input: 1, output: 1 },
+      modalities: { input: ["text"], output: ["text"] },
+      options: {},
+    },
+  };
+}
