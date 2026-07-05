@@ -149,7 +149,7 @@ export function eventMatchesWorkspace(directory: string, cwd: string): boolean {
 
 function shouldOpenProviderSettingsOnStartup(state: AppState): boolean {
   const providers = settingProviders(state);
-  return providers.length > 0 && configuredProviderCount(state, providers) === 0;
+  return Boolean(state.providers) && configuredProviderCount(state, providers) === 0;
 }
 
 function settingProviders(state: AppState): NonNullable<AppState["providers"]>["all"] {

@@ -47,6 +47,17 @@ test("initial hydrate keeps the chat surface when an LLM provider is configured"
   assert.equal(next.settingDetail, undefined);
 });
 
+test("initial hydrate opens provider settings when the provider list is empty", async () => {
+  const next = await hydrate(
+    initialState("C:/repo"),
+    hydrateClient({ connected: [], configured: false, emptyProviders: true }),
+    session("sess-settings"),
+  );
+
+  assert.equal(next.settingsOpen, true);
+  assert.equal(next.settingDetail, "provider");
+});
+
 test("setting detail rendering pages when selection moves past visible rows", () => {
   setActiveCapabilities(richCapabilities());
   const state = {
@@ -267,9 +278,15 @@ function storedAgent(id: string): AppState["agents"][number] {
   };
 }
 
-function hydrateClient(options: { connected: string[]; configured: boolean }): TuiGatewayClient {
+function hydrateClient(options: {
+  connected: string[];
+  configured: boolean;
+  emptyProviders?: boolean;
+}): TuiGatewayClient {
   const providers: NonNullable<AppState["providers"]> = {
-    all: [
+    all: options.emptyProviders
+      ? []
+      : [
       {
         id: "mock",
         name: "Mock",

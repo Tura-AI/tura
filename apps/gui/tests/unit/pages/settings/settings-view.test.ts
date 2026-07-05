@@ -244,6 +244,22 @@ describe("provider startup routing", () => {
     expect(providerStartupSettingsRedirect(state, true)).toBeUndefined();
   });
 
+  test("opens the provider settings page when the provider list is empty", () => {
+    const state = initialAppState();
+    state.providers = {
+      all: [],
+      default: {},
+      connected: [],
+      enums: { domains: [], capabilities: [], api_styles: [], auth_methods: [], statuses: [] },
+    };
+
+    expect(providerStartupSettingsRedirect(state, false)).toEqual({
+      activeTab: "settings",
+      settingsSection: "providers",
+      previousMainTab: "conversation",
+    });
+  });
+
   test("keeps the current tab when an LLM provider is configured", () => {
     const state = initialAppState();
     state.providers = {

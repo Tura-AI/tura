@@ -88,7 +88,7 @@ export function providerStartupSettingsRedirect(
     return undefined;
   }
   const llmProviders = state.providers.all.filter(isLlmProvider);
-  if (llmProviders.length === 0 || llmProviders.some((provider) => providerConfigured(state, provider.id))) {
+  if (llmProviders.some((provider) => providerConfigured(state, provider.id))) {
     return undefined;
   }
   return {
