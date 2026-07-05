@@ -116,6 +116,10 @@ impl RouteConfig {
             {
                 Ok(result) => return Ok(result),
                 Err(err) => {
+                    if err.is_non_retryable_provider_failure() {
+                        warn!(provider = %provider.provider, model = %provider.model, error = %err, "provider failure is not retryable; returning without route fallback");
+                        return Err(err);
+                    }
                     warn!(provider = %provider.provider, model = %provider.model, error = %err, "route fallback to next provider");
                     failures.push(format!(
                         "{}:{} => {}",

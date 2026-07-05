@@ -286,6 +286,41 @@ fn auth_expired_error_detects_401_and_403_only() {
 }
 
 #[test]
+fn provider_failure_retry_classifier_rejects_auth_billing_and_missing_model_errors() {
+    for status in [401, 402, 403, 404] {
+        assert!(super::TuraError::HttpStatus {
+            status,
+            body: "provider rejected request".to_string(),
+        }
+        .is_non_retryable_provider_failure());
+    }
+
+    assert!(super::TuraError::Config {
+        message: "API Key not found for provider 'openai'".to_string(),
+    }
+    .is_non_retryable_provider_failure());
+    assert!(super::TuraError::AllProvidersFailed {
+        message: "openai:gpt => http status 404: model not found".to_string(),
+    }
+    .is_non_retryable_provider_failure());
+    assert!(super::TuraError::ProviderRequest {
+        provider: "openai".to_string(),
+        message: "billing quota is not enabled".to_string(),
+    }
+    .is_non_retryable_provider_failure());
+
+    assert!(!super::TuraError::HttpStatus {
+        status: 429,
+        body: "slow down".to_string(),
+    }
+    .is_non_retryable_provider_failure());
+    assert!(!super::TuraError::Network {
+        message: "connection reset".to_string(),
+    }
+    .is_non_retryable_provider_failure());
+}
+
+#[test]
 fn persist_env_var_upserts_and_appends_preserving_other_keys() {
     let dir = unique_temp_dir("persist-env");
     let path = dir.join(".env");

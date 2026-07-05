@@ -359,6 +359,67 @@ async fn runtime_openai_business_flow_replays_final_command_run_once_and_records
 }
 
 #[tokio::test]
+async fn runtime_http_auth_failure_is_not_retryable() {
+    let _guard = ASYNC_ENV_LOCK.lock().await;
+    let provider = LocalProvider::start(vec![ProviderReply::Json {
+        status: "401 Unauthorized",
+        request_id: Some("req-runtime-auth-failure"),
+        body: json!({
+            "error": {
+                "message": "missing or invalid api key",
+                "type": "invalid_request_error"
+            }
+        }),
+    }]);
+    let _env = EnvGuard::set(&[("LOCALAUTHFAIL_API_KEY", "runtime-auth-fail-key")]);
+    let settings = settings_for_route(
+        "authfail-route",
+        "localauthfail",
+        &provider.endpoint,
+        "gpt-auth-fail-local",
+    );
+    let runtime = runtime_for_provider(
+        "runtime-auth-failure",
+        "session-auth-failure",
+        "authfail-route",
+        "localauthfail",
+        "gpt-auth-fail-local",
+        false,
+    );
+
+    let result = call_runtime(
+        CallRuntimeInput {
+            runtime,
+            messages: vec![json!({"role": "user", "content": "trigger auth failure"})],
+            tools: Vec::new(),
+            provider_name: "authfail-route".to_string(),
+            stream: false,
+            max_tokens: 128,
+            tool_choice: None,
+            session_directory: std::env::temp_dir(),
+            allowed_command_run_commands: None,
+            require_startup_task_state: false,
+        },
+        Arc::new(settings),
+        Arc::new(TuraConfig::new(".env.runtime-auth-failure-missing")),
+    )
+    .await
+    .expect("runtime auth failure should be captured on the runtime");
+
+    assert_eq!(result.state, RuntimeState::Failed);
+    assert_eq!(result.call_result_status, RuntimeCallResultStatus::Failed);
+    let runtime_error = result.error.as_ref().expect("runtime error");
+    assert_eq!(runtime_error.error_code.as_deref(), Some("CALL_FAILED"));
+    assert!(!runtime_error.retry_allowed);
+    assert!(!runtime_error.fallback_allowed);
+    assert!(runtime_error
+        .error_text
+        .as_deref()
+        .is_some_and(|text| text.contains("http status 401")));
+    assert_eq!(provider.requests().len(), 1);
+}
+
+#[tokio::test]
 async fn runtime_prompt_cache_key_reuses_root_session_for_forked_sessions() {
     let _guard = ASYNC_ENV_LOCK.lock().await;
     let _session_db = session_db_support::SessionDbTestService::start(&ENV_LOCK);
