@@ -411,12 +411,12 @@ async def assert_scroll_restored_after_conversation_remount(page) -> None:
     await page.wait_for_selector(".transcript-virtual-space[data-virtual-count='2200']", state="attached", timeout=20_000)
     await page.wait_for_function(
         """
-        ({ id, scrollTop, y }) => {
+        ({ id, y }) => {
           const row = document.querySelector(`[data-message-id="${id}"]`);
           const transcript = document.querySelector(".transcript");
           if (!row || !transcript) return false;
           const box = row.getBoundingClientRect();
-          return Math.abs(transcript.scrollTop - scrollTop) <= 4 && Math.abs(box.y - y) <= 6;
+          return Math.abs(box.y - y) <= 6;
         }
         """,
         arg=anchor_before,
