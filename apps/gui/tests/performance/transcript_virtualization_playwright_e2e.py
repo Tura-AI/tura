@@ -101,10 +101,10 @@ async def mounted_count(page) -> int:
 
 async def assert_mounted_bounded(page, label: str) -> None:
     count = await mounted_count(page)
-    if count <= 0 or count > 400:
+    if count <= 0 or count > 100:
         raise AssertionError(f"{label}: expected bounded mounted messages, got {count}")
     dom_count = await page.locator(".transcript .message").count()
-    if dom_count <= 0 or dom_count > 400:
+    if dom_count <= 0 or dom_count > 100:
         raise AssertionError(f"{label}: expected bounded message DOM nodes, got {dom_count}")
 
 

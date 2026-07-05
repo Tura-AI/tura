@@ -594,8 +594,14 @@ function Transcript(props: {
         height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
       }))
       .filter((entry) => entry.top + entry.height >= start && entry.top <= end);
-    return boundedVirtualWindow(visibleEntries, scrollTop() + clientHeight() / 2)
-      .map((entry) => virtualEntryFor(virtualEntryCache, entry.item, entry.index, entry.top));
+    const windowEntries = boundedVirtualWindow(visibleEntries, scrollTop() + clientHeight() / 2);
+    pruneVirtualEntryCache(
+      virtualEntryCache,
+      new Set(windowEntries.map((entry) => entry.item.message.id)),
+    );
+    return windowEntries.map((entry) =>
+      virtualEntryFor(virtualEntryCache, entry.item, entry.index, entry.top),
+    );
   });
 
   const showTranscriptLoadingTransition = createMemo(
@@ -951,8 +957,6 @@ function Transcript(props: {
     }
     measuredSessionId = sessionId;
     virtualEntryCache.clear();
-    mountedMessageIds = cachedMountedMessageIdsForSession(sessionId);
-    setMountedRowsVersion((version) => version + 1);
     setTranscriptRenderReady(false);
     measuredHeights.clear();
     for (const [messageId, height] of cachedMeasuredHeightsForSession(sessionId)) {
@@ -1101,35 +1105,6 @@ function cacheMeasuredHeight(sessionId: string | undefined, messageId: string, h
   cached.set(messageId, height);
 }
 
-function cachedMountedMessageIdsForSession(sessionId: string | undefined): Set<string> {
-  if (!sessionId) {
-    return new Set();
-  }
-  const cached = transcriptMountedRowsBySession.get(sessionId);
-  if (cached) {
-    transcriptMountedRowsBySession.delete(sessionId);
-    transcriptMountedRowsBySession.set(sessionId, cached);
-    return cached;
-  }
-  const mounted = new Set<string>();
-  transcriptMountedRowsBySession.set(sessionId, mounted);
-  while (transcriptMountedRowsBySession.size > MAX_TRANSCRIPT_HEIGHT_CACHE_SESSIONS) {
-    const oldest = transcriptMountedRowsBySession.keys().next().value;
-    if (!oldest) break;
-    transcriptMountedRowsBySession.delete(oldest);
-  }
-  return mounted;
-}
-
-function syncMountedTranscriptRows(mountedIds: Set<string>, items: ConversationReactionItem[]) {
-  const currentIds = new Set(items.map((item) => item.message.id));
-  for (const id of mountedIds) {
-    if (!currentIds.has(id)) {
-      mountedIds.delete(id);
-    }
-  }
-}
-
 type VirtualMessageEntry = {
   id: string;
   item: Accessor<ConversationReactionItem>;
@@ -1139,6 +1114,43 @@ type VirtualMessageEntry = {
   setIndex: Setter<number>;
   setTop: Setter<number>;
 };
+
+type VirtualWindowEntry = {
+  item: ConversationReactionItem;
+  index: number;
+  top: number;
+  height: number;
+};
+
+function boundedVirtualWindow<T extends VirtualWindowEntry>(entries: T[], center: number): T[] {
+  if (entries.length <= MAX_TRANSCRIPT_RENDERED_MESSAGES) {
+    return entries;
+  }
+  let nearestIndex = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const [index, entry] of entries.entries()) {
+    const midpoint = entry.top + entry.height / 2;
+    const distance = Math.abs(midpoint - center);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  }
+  const halfWindow = Math.floor(MAX_TRANSCRIPT_RENDERED_MESSAGES / 2);
+  const start = Math.min(
+    Math.max(0, nearestIndex - halfWindow),
+    entries.length - MAX_TRANSCRIPT_RENDERED_MESSAGES,
+  );
+  return entries.slice(start, start + MAX_TRANSCRIPT_RENDERED_MESSAGES);
+}
+
+function pruneVirtualEntryCache(cache: Map<string, VirtualMessageEntry>, activeIds: Set<string>) {
+  for (const id of cache.keys()) {
+    if (!activeIds.has(id)) {
+      cache.delete(id);
+    }
+  }
+}
 
 function virtualEntryFor(
   cache: Map<string, VirtualMessageEntry>,
