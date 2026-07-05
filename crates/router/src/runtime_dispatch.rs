@@ -7,7 +7,7 @@ use crate::services::manager::{ServiceManager, WorkerAlreadyRunning};
 use crate::services::models::{CallContext, WorkerSpec};
 use crate::services::runtime_workers::MAX_ACTIVE_RUNTIME_WORKERS;
 use crate::{app::AppState, ipc};
-use tura_router::registry::resolve_binary_target;
+use tura_router::registry::{binary_target_diagnostics, resolve_binary_target};
 
 /// Maximum recursion depth for child sub-sessions (fork-bomb guard, T5.4).
 const MAX_PLANNING_DEPTH: usize = 3;
@@ -158,7 +158,8 @@ async fn dispatch_run_agent_inner(
         );
     }
 
-    let worker_binary = match resolve_runtime_worker_binary(&repo_root()) {
+    let root = repo_root();
+    let worker_binary = match resolve_runtime_worker_binary(&root) {
         Some(path) => path,
         None => {
             return (
@@ -166,7 +167,10 @@ async fn dispatch_run_agent_inner(
                 json!({
                     "ok": false,
                     "session_id": session_id,
-                    "error": "runtime worker binary (tura_runtime) not found in bin/ or target/{release,debug}"
+                    "error": format!(
+                        "runtime worker binary (tura_runtime) not found; checked {}",
+                        binary_target_diagnostics(&root, "tura_runtime")
+                    )
                 }),
             );
         }
