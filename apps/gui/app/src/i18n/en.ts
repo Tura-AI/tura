@@ -303,6 +303,7 @@ export const en = {
   scrollToBottom: "Scroll to bottom",
   settings: "Settings",
   showMore: "Show {count} more",
+  showEarlierRecords: "Show earlier records",
   skillFolders: "Skill folders",
   size: "Size",
   source: "Source",

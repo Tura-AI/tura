@@ -71,7 +71,6 @@ const AGENT_AVATAR_BOTTOM_SETTLE_MS = 0;
 const VIRTUAL_MESSAGE_ESTIMATED_HEIGHT = 64;
 const VIRTUAL_MESSAGE_OVERSCAN = 300;
 const MAX_TRANSCRIPT_RENDERED_MESSAGES = 100;
-const LOAD_EARLIER_SCROLL_TOP = 480;
 const TRANSCRIPT_BOTTOM_SETTLE_FRAMES = 6;
 const SCROLL_RESTORE_FRAMES = 8;
 const MAX_TRANSCRIPT_HEIGHT_CACHE_SESSIONS = 20;
@@ -91,6 +90,8 @@ export function ConversationView(props: {
   onScrollToBottomRequestConsumed?: (token: number) => void;
   onTranscriptScroll?: (scrollTop: number) => void;
   onLoadEarlierMessages?: () => Promise<boolean>;
+  hasEarlierMessages?: boolean;
+  loadingEarlierMessages?: boolean;
   slashCommands: Command[];
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
@@ -427,6 +428,8 @@ export function ConversationView(props: {
             initialScrollTop={props.initialScrollTop}
             onScrollPosition={props.onTranscriptScroll}
             onLoadEarlierMessages={props.onLoadEarlierMessages}
+            hasEarlierMessages={props.hasEarlierMessages}
+            loadingEarlierMessages={props.loadingEarlierMessages}
             loading={props.state.loading}
             activeToolId={selectedToolId()}
             conversationNotice={props.conversationNotice}
@@ -509,6 +512,8 @@ function Transcript(props: {
   initialScrollTop?: number;
   onScrollPosition?: (scrollTop: number) => void;
   onLoadEarlierMessages?: () => Promise<boolean>;
+  hasEarlierMessages?: boolean;
+  loadingEarlierMessages?: boolean;
   loading: boolean;
   activeToolId?: string;
   conversationNotice?: JSX.Element;
@@ -641,13 +646,9 @@ function Transcript(props: {
           (row) => row.dataset.messageId === targetMessageId,
         )
       : undefined;
-    const targetAnchors = targetRow
+    const anchors = targetRow
       ? Array.from(targetRow.querySelectorAll<HTMLElement>("[data-agent-avatar-anchor]"))
       : [];
-    const anchors =
-      targetAnchors.length > 0
-        ? targetAnchors
-        : Array.from(transcriptEl.querySelectorAll<HTMLElement>("[data-agent-avatar-anchor]"));
 
     let selected:
       | {
@@ -866,12 +867,8 @@ function Transcript(props: {
     measuredHeightFrame = requestAnimationFrame(flushMeasuredHeights);
   }
 
-  function maybeLoadEarlierMessages() {
-    if (
-      !transcriptEl ||
-      !props.onLoadEarlierMessages ||
-      transcriptEl.scrollTop > LOAD_EARLIER_SCROLL_TOP
-    ) {
+  function requestEarlierMessages() {
+    if (!transcriptEl || !props.onLoadEarlierMessages || !props.hasEarlierMessages) {
       return;
     }
     if (loadEarlierPromise) {
@@ -1020,7 +1017,6 @@ function Transcript(props: {
           cacheTranscriptScroll();
         }
         props.onScroll();
-        maybeLoadEarlierMessages();
         queueFloatingAvatarUpdate();
       }}
       onWheel={(event) => {
@@ -1057,6 +1053,18 @@ function Transcript(props: {
               when={displayMessages().length > 0}
               fallback={<div class="center-state">{sessionTitle(props.session!)}</div>}
             >
+              <Show when={props.hasEarlierMessages}>
+                <div class="transcript-history-control">
+                  <button
+                    type="button"
+                    class="secondary transcript-history-button"
+                    disabled={props.loadingEarlierMessages || Boolean(loadEarlierPromise)}
+                    onClick={requestEarlierMessages}
+                  >
+                    {props.loadingEarlierMessages ? t("loading") : t("showEarlierRecords")}
+                  </button>
+                </div>
+              </Show>
               <div
                 class={classNames(
                   "transcript-virtual-space",
@@ -1073,9 +1081,12 @@ function Transcript(props: {
                       entry={entry}
                       activeToolId={props.activeToolId}
                       latestId={latestId()}
+                      latestAssistantId={latestAssistantId()}
                       sessionStatus={props.session?.status}
                       workspaceDirectory={props.workspaceDirectory}
-                      showAvatarSpace={avatarMode() !== "hidden"}
+                      showAvatarSpace={
+                        avatarMode() !== "hidden" && entry.item().message.id === latestAssistantId()
+                      }
                       onTool={props.onTool}
                       onMeasure={updateMeasuredHeight}
                     />
@@ -1223,6 +1234,7 @@ function VirtualMessageCell(props: {
   entry: VirtualMessageEntry;
   activeToolId?: string;
   latestId?: string;
+  latestAssistantId?: string;
   sessionStatus?: Session["status"];
   workspaceDirectory?: string;
   showAvatarSpace: boolean;
@@ -1267,6 +1279,7 @@ function VirtualMessageCell(props: {
         reactions={props.entry.item().reactions}
         activeToolId={props.activeToolId}
         isLatest={props.latestId === props.entry.item().message.id}
+        isLatestAssistant={props.latestAssistantId === props.entry.item().message.id}
         sessionStatus={props.sessionStatus}
         workspaceDirectory={props.workspaceDirectory}
         showAvatarSpace={props.showAvatarSpace}
@@ -1281,6 +1294,7 @@ function MessageCell(props: {
   reactions?: string[];
   activeToolId?: string;
   isLatest: boolean;
+  isLatestAssistant: boolean;
   sessionStatus?: Session["status"];
   workspaceDirectory?: string;
   showAvatarSpace: boolean;
@@ -1406,7 +1420,7 @@ function MessageCell(props: {
                 "assistant-stack assistant-text",
                 isAgentWorking() && !hasSummary() && "assistant-thinking-anchor",
               )}
-              data-agent-avatar-anchor
+              data-agent-avatar-anchor={props.isLatestAssistant ? "" : undefined}
               data-agent-text-block={hasSummary() || isAgentWorking() ? "" : undefined}
             >
               <Index each={assistantBlocks()}>

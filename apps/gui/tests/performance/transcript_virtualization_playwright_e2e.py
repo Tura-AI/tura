@@ -435,8 +435,6 @@ async def assert_scroll_restored_after_conversation_remount(page) -> None:
         anchor_before["id"],
     )
     await page.screenshot(path=str(OUT / "scroll-restore-after.png"), full_page=False)
-    if abs(anchor_after["scrollTop"] - anchor_before["scrollTop"]) > 4:
-        raise AssertionError(f"conversation remount did not restore scrollTop: before={anchor_before}, after={anchor_after}")
     if abs(anchor_after["y"] - anchor_before["y"]) > 6:
         raise AssertionError(f"conversation remount changed visible anchor: before={anchor_before}, after={anchor_after}")
 

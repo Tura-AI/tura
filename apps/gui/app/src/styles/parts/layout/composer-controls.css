@@ -133,6 +133,19 @@
   pointer-events: none;
 }
 
+.transcript-history-control {
+  display: flex;
+  justify-content: center;
+  padding: 0 0 var(--space-3);
+}
+
+.transcript-history-button {
+  min-height: 30px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-small);
+}
+
 .transcript-virtual-row {
   position: absolute;
   top: 0;

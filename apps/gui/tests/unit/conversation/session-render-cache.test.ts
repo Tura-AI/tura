@@ -44,4 +44,22 @@ describe("session render cache", () => {
     expect(composerLayoutCss).toContain(".transcript-virtual-space.transcript-render-preparing");
     expect(composerLayoutCss).toContain("visibility: hidden;");
   });
+
+  test("transcript exposes explicit earlier-history loading instead of auto-loading on top scroll", () => {
+    expect(conversationSource).toContain("transcript-history-button");
+    expect(conversationSource).toContain("showEarlierRecords");
+    expect(conversationSource).toContain("requestEarlierMessages");
+    expect(conversationSource).not.toContain("maybeLoadEarlierMessages");
+    expect(conversationSource).not.toContain("LOAD_EARLIER_SCROLL_TOP");
+  });
+
+  test("agent avatar anchor is limited to the latest assistant message", () => {
+    expect(conversationSource).toContain("latestAssistantId={latestAssistantId()}");
+    expect(conversationSource).toContain(
+      "isLatestAssistant={props.latestAssistantId === props.entry.item().message.id}",
+    );
+    expect(conversationSource).toContain(
+      'data-agent-avatar-anchor={props.isLatestAssistant ? "" : undefined}',
+    );
+  });
 });

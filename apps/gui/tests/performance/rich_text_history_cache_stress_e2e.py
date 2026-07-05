@@ -551,7 +551,7 @@ async def load_transcript_until_count(page, expected: int, timeout_ms: int = 30_
     while time.perf_counter() < deadline:
         if last_metrics["virtualCount"] >= expected and last_metrics["renderReady"]:
             return last_metrics
-        await scroll_to_top(page)
+        await click_show_earlier_records(page)
         await page.wait_for_timeout(120)
         last_metrics = await transcript_metrics(page)
     raise AssertionError(
@@ -568,6 +568,11 @@ async def scroll_to_top(page) -> None:
         }
         """
     )
+
+
+async def click_show_earlier_records(page) -> None:
+    await page.wait_for_selector(".transcript-history-button", timeout=30_000)
+    await page.locator(".transcript-history-button").click()
 
 
 async def click_workspace(page, directory: str) -> None:
