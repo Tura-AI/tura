@@ -1085,7 +1085,7 @@ function Transcript(props: {
                       sessionStatus={props.session?.status}
                       workspaceDirectory={props.workspaceDirectory}
                       showAvatarSpace={
-                        avatarMode() !== "hidden" && entry.item().message.id === latestAssistantId()
+                        avatarMode() !== "hidden" && entry.item().message.role !== "user"
                       }
                       onTool={props.onTool}
                       onMeasure={updateMeasuredHeight}

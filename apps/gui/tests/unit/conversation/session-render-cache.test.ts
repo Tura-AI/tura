@@ -46,6 +46,8 @@ describe("session render cache", () => {
   });
 
   test("transcript exposes explicit earlier-history loading instead of auto-loading on top scroll", () => {
+    expect(appSource).toContain("const MESSAGE_PAGE_SIZE = 100");
+    expect(appSource).toContain("const MESSAGE_PAGE_FETCH_LIMIT = MESSAGE_PAGE_SIZE + 1");
     expect(conversationSource).toContain("transcript-history-button");
     expect(conversationSource).toContain("showEarlierRecords");
     expect(conversationSource).toContain("requestEarlierMessages");
@@ -55,6 +57,10 @@ describe("session render cache", () => {
 
   test("agent avatar anchor is limited to the latest assistant message", () => {
     expect(conversationSource).toContain("latestAssistantId={latestAssistantId()}");
+    expect(conversationSource).toContain("showAvatarSpace={");
+    expect(conversationSource).toContain(
+      'avatarMode() !== "hidden" && entry.item().message.role !== "user"',
+    );
     expect(conversationSource).toContain(
       "isLatestAssistant={props.latestAssistantId === props.entry.item().message.id}",
     );

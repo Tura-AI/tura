@@ -62,7 +62,8 @@ import { safe } from "./utils/safe";
 
 const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
 const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
-const MESSAGE_PAGE_SIZE = 200;
+const MESSAGE_PAGE_SIZE = 100;
+const MESSAGE_PAGE_FETCH_LIMIT = MESSAGE_PAGE_SIZE + 1;
 
 declare global {
   interface Window {
@@ -137,7 +138,7 @@ export function App() {
     );
   }
 
-  if (e2eFixture && typeof window !== "undefined") {
+  if ((e2eFixture || disableGatewayAutostart) && typeof window !== "undefined") {
     window.__turaGuiE2E = {
       applyGatewayEvent: (event) => setState((previous) => applyGatewayEvent(previous, event)),
       snapshot: () => state(),
@@ -223,9 +224,11 @@ export function App() {
       }));
       return;
     }
-    const [messages] = await Promise.all([
-      safe(() => client.messages(sessionId, { limit: MESSAGE_PAGE_SIZE }), existingMessages),
+    const [messagePage] = await Promise.all([
+      safe(() => client.messages(sessionId, { limit: MESSAGE_PAGE_FETCH_LIMIT }), existingMessages),
     ]);
+    const hasEarlier = !e2eFixture && messagePage.length > MESSAGE_PAGE_SIZE;
+    const messages = hasEarlier ? messagePage.slice(-MESSAGE_PAGE_SIZE) : messagePage;
     setState((previous) => ({
       ...previous,
       messagesBySession: {
@@ -235,7 +238,7 @@ export function App() {
       messagePagingBySession: {
         ...previous.messagePagingBySession,
         [sessionId]: {
-          hasEarlier: !e2eFixture && messages.length >= MESSAGE_PAGE_SIZE,
+          hasEarlier,
           loadingEarlier: false,
         },
       },
@@ -264,27 +267,29 @@ export function App() {
     }));
     try {
       const earlier = await directoryClient().messages(sessionId, {
-        limit: MESSAGE_PAGE_SIZE,
+        limit: MESSAGE_PAGE_FETCH_LIMIT,
         before,
       });
+      const hasEarlier = earlier.length > MESSAGE_PAGE_SIZE;
+      const earlierMessages = hasEarlier ? earlier.slice(1) : earlier;
       setState((previous) => {
         const existing = previous.messagesBySession[sessionId] ?? [];
         return {
           ...previous,
           messagesBySession: {
             ...previous.messagesBySession,
-            [sessionId]: mergeMessagePages(earlier, existing),
+            [sessionId]: mergeMessagePages(earlierMessages, existing),
           },
           messagePagingBySession: {
             ...previous.messagePagingBySession,
             [sessionId]: {
-              hasEarlier: earlier.length >= MESSAGE_PAGE_SIZE,
+              hasEarlier,
               loadingEarlier: false,
             },
           },
         };
       });
-      return earlier.length > 0;
+      return earlierMessages.length > 0;
     } catch (error) {
       setState((previous) => ({
         ...previous,
