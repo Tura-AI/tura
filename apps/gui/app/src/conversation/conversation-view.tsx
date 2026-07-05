@@ -70,13 +70,13 @@ const AGENT_AVATAR_BOTTOM_SNAP = 48;
 const AGENT_AVATAR_BOTTOM_SETTLE_MS = 0;
 const VIRTUAL_MESSAGE_ESTIMATED_HEIGHT = 64;
 const VIRTUAL_MESSAGE_OVERSCAN = 300;
+const MAX_TRANSCRIPT_RENDERED_MESSAGES = 100;
 const LOAD_EARLIER_SCROLL_TOP = 480;
 const TRANSCRIPT_BOTTOM_SETTLE_FRAMES = 6;
 const SCROLL_RESTORE_FRAMES = 8;
 const MAX_TRANSCRIPT_HEIGHT_CACHE_SESSIONS = 20;
 const ASSISTANT_THINKING_TEXT_ICON = "✦";
 const transcriptHeightCacheBySession = new Map<string, Map<string, number>>();
-const transcriptMountedRowsBySession = new Map<string, Set<string>>();
 
 function scrollElementToBottom(element: HTMLElement, behavior: ScrollBehavior = "auto") {
   element.scrollTo({ top: element.scrollHeight, behavior });
@@ -548,7 +548,6 @@ function Transcript(props: {
   const [scrollTop, setScrollTop] = createSignal(0);
   const [clientHeight, setClientHeight] = createSignal(0);
   const [heightVersion, setHeightVersion] = createSignal(0);
-  const [mountedRowsVersion, setMountedRowsVersion] = createSignal(0);
   const [transcriptRenderReady, setTranscriptRenderReady] = createSignal(false);
   const [floatingAvatar, setFloatingAvatar] = createSignal<
     { left: number; top: number } | undefined
@@ -565,7 +564,6 @@ function Transcript(props: {
   let measuredSessionId = props.session?.id;
   const pendingMeasuredHeights = new Map<string, { height: number; top: number }>();
   const measuredHeights = cachedMeasuredHeightsForSession(measuredSessionId);
-  let mountedMessageIds = cachedMountedMessageIdsForSession(measuredSessionId);
   const virtualEntryCache = new Map<string, VirtualMessageEntry>();
   let pendingScrollRestore: { sessionId: string; top: number; attempts: number } | undefined;
   let lastScrollUpdateAt = 0;
@@ -584,34 +582,19 @@ function Transcript(props: {
   });
 
   const virtualItems = createMemo(() => {
-    mountedRowsVersion();
     const items = displayMessages();
     const layout = virtualLayout();
     const start = Math.max(0, scrollTop() - VIRTUAL_MESSAGE_OVERSCAN);
     const end = scrollTop() + clientHeight() + VIRTUAL_MESSAGE_OVERSCAN;
-    syncMountedTranscriptRows(mountedMessageIds, items);
-    const visibleEntries = items.map((item, index) => ({
-      item,
-      index,
-      top: layout.offsets[index] ?? 0,
-      height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
-    }));
-    let mountedChanged = false;
-    for (const entry of visibleEntries) {
-      if (
-        entry.top + entry.height >= start &&
-        entry.top <= end &&
-        !mountedMessageIds.has(entry.item.message.id)
-      ) {
-        mountedMessageIds.add(entry.item.message.id);
-        mountedChanged = true;
-      }
-    }
-    if (mountedChanged) {
-      requestAnimationFrame(() => setMountedRowsVersion((version) => version + 1));
-    }
-    return visibleEntries
-      .filter((entry) => mountedMessageIds.has(entry.item.message.id))
+    const visibleEntries = items
+      .map((item, index) => ({
+        item,
+        index,
+        top: layout.offsets[index] ?? 0,
+        height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
+      }))
+      .filter((entry) => entry.top + entry.height >= start && entry.top <= end);
+    return boundedVirtualWindow(visibleEntries, scrollTop() + clientHeight() / 2)
       .map((entry) => virtualEntryFor(virtualEntryCache, entry.item, entry.index, entry.top));
   });
 
