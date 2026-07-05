@@ -545,6 +545,20 @@ async def wait_for_transcript_count(page, expected: int, timeout_ms: int = 30_00
     return await transcript_metrics(page)
 
 
+async def load_transcript_until_count(page, expected: int, timeout_ms: int = 30_000) -> dict:
+    deadline = time.perf_counter() + timeout_ms / 1000
+    last_metrics = await transcript_metrics(page)
+    while time.perf_counter() < deadline:
+        if last_metrics["virtualCount"] >= expected and last_metrics["renderReady"]:
+            return last_metrics
+        await scroll_to_top(page)
+        await page.wait_for_timeout(120)
+        last_metrics = await transcript_metrics(page)
+    raise AssertionError(
+        f"timed out loading transcript history to {expected}: {json.dumps(last_metrics, ensure_ascii=False)}"
+    )
+
+
 async def scroll_to_top(page) -> None:
     await page.locator(".transcript").evaluate(
         """
@@ -677,8 +691,7 @@ async def load_full_history(page, session: dict) -> dict:
     started = time.perf_counter()
     await start_frame_probe(page, f"full-history:{session['id']}")
     for expected in sorted({min(400, MESSAGES_PER_SESSION), MESSAGES_PER_SESSION}):
-        await scroll_to_top(page)
-        await wait_for_transcript_count(page, expected)
+        await load_transcript_until_count(page, expected, FULL_HISTORY_BUDGET_MS)
     metrics = await transcript_metrics(page)
     frame = await stop_frame_probe(page)
     return {"ms": (time.perf_counter() - started) * 1000, "metrics": metrics, "frame": frame}
@@ -732,7 +745,29 @@ async def run_flow() -> dict:
             )
             await page.goto(f"{GUI_URL}/?{query}", wait_until="domcontentloaded")
             await install_frame_probe(page)
-            await page.wait_for_selector(".workspace-row", timeout=30_000)
+            try:
+                await page.wait_for_selector(".workspace-row", timeout=30_000)
+            except Exception:
+                (OUT / "workspace-timeout.html").write_text(await page.content(), encoding="utf-8")
+                await page.screenshot(path=str(OUT / "workspace-timeout.png"), full_page=True)
+                state = await page.evaluate(
+                    """
+                    () => ({
+                      title: document.title,
+                      bodyText: document.body?.innerText?.slice(0, 4000) ?? '',
+                      workbenchClass: document.querySelector('.workbench')?.className ?? null,
+                      railClass: document.querySelector('.rail')?.className ?? null,
+                      workspaceRows: document.querySelectorAll('.workspace-row').length,
+                      sessionRows: document.querySelectorAll('.session-row').length,
+                      errorStrip: document.querySelector('.error-strip')?.textContent ?? null,
+                    })
+                    """
+                )
+                (OUT / "workspace-timeout-state.json").write_text(
+                    json.dumps(state, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                raise
             if await page.locator(".session-row").count() == 0:
                 await click_workspace(page, current_directory)
             await page.wait_for_selector(".session-row", timeout=30_000)

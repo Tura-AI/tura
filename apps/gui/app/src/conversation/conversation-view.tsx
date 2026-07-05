@@ -434,6 +434,8 @@ export function ConversationView(props: {
             avatarSettings={selectedAgentAvatar()}
             expressionEmoji={latestStickerEmoji()}
             workspaceDirectory={props.state.directory}
+            followBottom={transcriptPinned()}
+            onFollowBottom={() => scrollTranscriptToBottom("auto")}
             onTranscript={(element) => {
               transcriptEl = element;
               scrollFollowObserver?.observe(element);
@@ -514,6 +516,8 @@ function Transcript(props: {
   avatarSettings: AgentAvatarConfig;
   expressionEmoji?: string;
   workspaceDirectory?: string;
+  followBottom: boolean;
+  onFollowBottom: () => void;
   onTranscript: (element: HTMLElement) => void;
   onScroll: () => void;
   onTool: (part: MessagePart, parts: MessagePart[]) => void;
@@ -567,7 +571,9 @@ function Transcript(props: {
   const virtualEntryCache = new Map<string, VirtualMessageEntry>();
   let pendingScrollRestore: { sessionId: string; top: number; attempts: number } | undefined;
   let lastScrollUpdateAt = 0;
-  let lastScrolledAwayFromBottomAt = 0;
+  let lastScrolledAwayFromBottomAt = Number.NEGATIVE_INFINITY;
+  let lastNearBottomAt = Number.NEGATIVE_INFINITY;
+  let pointerScrollActive = false;
 
   const virtualLayout = createMemo(() => {
     heightVersion();
@@ -788,13 +794,23 @@ function Transcript(props: {
     }
   }
 
+  function markNearBottomIfNeeded() {
+    if (transcriptEl && transcriptNearBottom(transcriptEl)) {
+      lastNearBottomAt = performance.now();
+    }
+  }
+
   function flushMeasuredHeights() {
     measuredHeightFrame = undefined;
     if (pendingMeasuredHeights.size === 0) {
       return;
     }
     const wasAtBottom = transcriptEl ? transcriptNearBottom(transcriptEl) : false;
+    if (wasAtBottom) {
+      lastNearBottomAt = performance.now();
+    }
     const recentlyScrolledAway = performance.now() - lastScrolledAwayFromBottomAt < 500;
+    const recentlyNearBottom = performance.now() - lastNearBottomAt < 500;
     let scrollDelta = 0;
     let changed = false;
     for (const [messageId, measurement] of pendingMeasuredHeights) {
@@ -820,13 +836,10 @@ function Transcript(props: {
     if (!transcriptEl) {
       return;
     }
-    if (wasAtBottom && !recentlyScrolledAway) {
+    if (!recentlyScrolledAway && (props.followBottom || wasAtBottom || recentlyNearBottom)) {
       let remainingFrames = TRANSCRIPT_BOTTOM_SETTLE_FRAMES;
       const scroll = () => {
-        if (!transcriptEl) {
-          return;
-        }
-        scrollElementToBottom(transcriptEl);
+        props.onFollowBottom();
         if (remainingFrames <= 0) {
           return;
         }
@@ -950,6 +963,17 @@ function Transcript(props: {
     }
     queueFloatingAvatarUpdate();
   });
+
+  createEffect(() => {
+    virtualItems().length;
+    virtualLayout().totalHeight;
+    const recentlyScrolledAway = performance.now() - lastScrolledAwayFromBottomAt < 500;
+    const recentlyNearBottom = performance.now() - lastNearBottomAt < 500;
+    if ((props.followBottom || recentlyNearBottom) && !props.loading && !recentlyScrolledAway) {
+      requestAnimationFrame(() => props.onFollowBottom());
+    }
+  });
+
   createEffect(() => {
     const sessionId = props.session?.id;
     if (sessionId === measuredSessionId) {
@@ -988,11 +1012,14 @@ function Transcript(props: {
       onScroll={() => {
         lastScrollUpdateAt = performance.now();
         updateTranscriptViewport();
+        markNearBottomIfNeeded();
+        if (pointerScrollActive) {
+          markManualScrollAwayFromBottom();
+        }
         if (!pendingScrollRestore) {
           cacheTranscriptScroll();
         }
         props.onScroll();
-        markManualScrollAwayFromBottom();
         maybeLoadEarlierMessages();
         queueFloatingAvatarUpdate();
       }}
@@ -1001,7 +1028,17 @@ function Transcript(props: {
           lastScrolledAwayFromBottomAt = performance.now();
         }
       }}
-      onPointerDown={markManualScrollAwayFromBottom}
+      onPointerDown={() => {
+        pointerScrollActive = true;
+        markManualScrollAwayFromBottom();
+      }}
+      onPointerCancel={() => {
+        pointerScrollActive = false;
+      }}
+      onPointerUp={() => {
+        markManualScrollAwayFromBottom();
+        pointerScrollActive = false;
+      }}
     >
       <div
         ref={(element) => {

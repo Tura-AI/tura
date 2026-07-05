@@ -280,9 +280,8 @@ async def assert_scrollbar_drag_not_pulled_by_delta(page) -> None:
     await page.locator(".transcript").dispatch_event("scroll")
     await page.wait_for_selector(STREAM_ROOT_SELECTOR, state="attached", timeout=20_000)
     await page.wait_for_timeout(120)
-    await page.locator(".transcript").evaluate(
-        "(el) => { el.dataset.e2eManualScrollbarDrag = '1'; el.scrollTop = el.scrollHeight; }"
-    )
+    await page.locator(".transcript").dispatch_event("pointerdown")
+    await page.locator(".transcript").evaluate("(el) => { el.scrollTop = el.scrollHeight; }")
     for step in range(8):
         await page.locator(".transcript").evaluate(
             """
@@ -297,6 +296,7 @@ async def assert_scrollbar_drag_not_pulled_by_delta(page) -> None:
         )
         await page.wait_for_timeout(25)
         await page.screenshot(path=str(OUT / f"scrollbar-drag-{step:02d}.png"), full_page=False)
+    await page.locator(".transcript").dispatch_event("pointerup")
     await page.wait_for_timeout(120)
     geometry = await page.locator(".transcript").evaluate(
         """
@@ -405,9 +405,9 @@ async def assert_scroll_restored_after_conversation_remount(page) -> None:
         """
     )
     await page.screenshot(path=str(OUT / "scroll-restore-before.png"), full_page=False)
-    await page.get_by_role("button", name="File browser").click()
-    await page.wait_for_selector(".files-view", state="attached", timeout=20_000)
-    await page.get_by_role("button", name="Session").click()
+    await page.locator(".settings-entry").click()
+    await page.wait_for_selector(".settings-view", state="attached", timeout=20_000)
+    await page.locator(".settings-back").click()
     await page.wait_for_selector(".transcript-virtual-space[data-virtual-count='2200']", state="attached", timeout=20_000)
     await page.wait_for_function(
         """
