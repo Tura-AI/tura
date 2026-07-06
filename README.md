@@ -67,6 +67,7 @@ The organized documentation set lives in [`doc/`](doc/SUMMARY.md). Older Markdow
 - [Task Status](docs/core/task-status.md) - task_status is an internal state update command for doing, question, done, task_group, task_type, and compact_context; it is not a substitute for user-visible replies.
 - [Context Management](docs/core/context-management.md) - Context management keeps long tasks oriented by storing session records, compacting crowded transcripts, and reinserting active runtime manuals.
 - [Runtime Prompt](docs/core/runtime-prompt.md) - Runtime prompts are Tura-owned operating manuals selected by task_type; they differ from external skills because they shape discipline, tools, and completion rules.
+- [Prompt Style](docs/core/prompt-style.md) - Prompt style is Tura's dynamic prompt injection layer for state-driven persona, task, retry, compaction, and capability prompt fragments.
 - [Command Run](docs/core/command-run.md) - command_run is the compact macro tool surface for batching shell commands, patches, media/web commands, and task-state updates into ordered steps.
 - [Commands](docs/core/commands.md) - Commands are local tool implementations exposed through command_run or router registry entries, with schemas, policies, prompts, timeouts, and output shaping.
 - [HTML Rich Text](docs/core/html-rich-text.md) - HTML rich text explains the normal messaging-app rich protocol, the separate CLI plain-text style, Markdown compatibility, and the GUI/TUI rendering entry points.
