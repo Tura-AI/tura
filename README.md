@@ -1,76 +1,197 @@
 # Tura
 
-Tura is a terminal-native developer tool for turning intent into verified code
-changes with disciplined motion, audit trails, and repo-aware control.
+Tura is a terminal-native coding agent built for long-horizon repository work:
+inspect the repo, reason backward from the target outcome, make narrow changes,
+verify them, and leave an audit trail instead of a pile of hopeful chat.
 
-It is built for long-horizon repository work: inspect the workspace, reason from
-the desired outcome back to the next necessary step, make narrow changes, run the
-checks, preserve context, and attach evidence before calling the work done.
+## Benchmark-first agent work
 
-```bash
-npm install tura-ai
-tura
-```
+Tura is designed around the kind of tasks where coding agents usually start to
+look expensive: multi-turn debugging, real repository refactors, broad context,
+tool-heavy investigation, and verification that cannot be guessed from one file.
+
+The benchmark story in [`i18n.js`](i18n.js) is blunt: Tura targets long-horizon
+tasks, token discipline, and verified outcomes. The benchmark set emphasizes:
+
+| Benchmark focus | Why it matters |
+| --- | --- |
+| Long-horizon repository tasks | Agents have to keep intent, files, commands, and evidence aligned for many turns. |
+| Diversified debug tasks | Real fixes require reproduction, trace inspection, root-cause analysis, and validation. |
+| High-resolution challenge tests | Hard tasks separate agents better than easy prompt demos with narrow score bands. |
+| Real repo and refactoring tasks | Production-scale codebases expose context drift, brittle edits, and weak verification. |
+| Token discipline | Strong agents should preserve context and avoid spending tokens on redundant tool chatter. |
+
+In the benchmark copy, Tura is positioned against other agents and extensions on
+performance under pressure: higher verified capability, fewer wasted tokens, and
+better persistence on broad tasks. Treat the exact numbers as benchmark output,
+not decoration. The important point is the design target: Tura is optimized for
+measured long-horizon work, not for looking clever in a short prompt clip.
+
+Read the benchmark system notes in [Benchmark](docs/development/benchmark.md).
+
+## Built from eval, not claims
+
+Tura's core claim is not "the model is smart." Models are already smart. The
+failure mode is the harness around them: vague prompts, scattered tools, weak
+state, loose completion criteria, and no durable proof that the change actually
+worked.
+
+Tura is built as an evaluation-driven harness:
+
+- `command_run` keeps tool use compact and auditable;
+- runtime prompt manuals load only for the active task type;
+- session DB keeps durable context, task state, todos, and command evidence;
+- providers and models are routed through explicit config instead of ad hoc env
+  guesses;
+- verification is part of the completion path, not a nice-to-have epilogue.
+
+The result is a local engineering runtime for agent work. Less magic. Fewer
+fireworks. Better chance your repo survives contact with ambition.
+
+## 1. Macro Command
+
+Tura's macro command surface is `command_run`: one compact tool interface that
+can batch reads, searches, patches, task-state updates, media/web commands, and
+validation into ordered steps. Instead of paying for a large list of provider
+visible tools every turn, Tura exposes a smaller execution surface and records
+what happened.
+
+Example: a repo inspection task can batch independent reads first, then run the
+dependent check only after the relevant files are known.
 
 ```text
-dev@linux:~/workspace$ tura
-▏build a website for yourself
-thinking
-I'll inspect the workspace and assemble the smallest page first.
+Goal: inspect a workspace before editing.
 
-◇ Commands
-├─ □ #1 shell_command running $ rg --files .
-└─ □ #1 shell_command pending $ rg -n "TODO" .
+step 1:
+  rg --files
+  rg -n "TODO|FIXME|panic|unwrap" crates apps docs
+  Get-Content docs/SUMMARY.md
+
+step 2:
+  run the focused test or build command discovered from the files
+
+step 3:
+  update task_status with the active work area and task type
 ```
 
-## Why Tura exists
+That is not just convenience. It reduces repeated tool schemas, keeps output
+grouped by intent, and makes command history easier to audit when a task goes
+long.
 
-Most coding agents look strong on short prompts and then leak discipline on real
-engineering work: too much tool chatter, too much irrelevant context, weak
-session continuity, and a suspicious habit of declaring victory before
-verification. Charming. Expensive, too.
+Docs:
 
-Tura's answer is structural:
+- [Command run](docs/core/command-run.md)
+- [Commands](docs/core/commands.md)
+- [Tool architecture](docs/architecture/tool.md)
 
-- a compact macro command surface instead of scattered tool schemas;
-- runtime-selected operation manuals instead of one giant prompt blob;
-- durable session records instead of chat-only memory;
-- backward reasoning from outcome to root cause;
-- test-driven repair flows that reproduce before patching;
-- CLI, TUI, GUI, gateway, router, runtime, provider, tool, and session DB pieces
-  that share one backend pipeline.
+## 2. Backward Thinking
 
-The landing copy in [`i18n.js`](i18n.js) frames the system around four operating
-ideas: **Macro CLI**, **Reasoning**, **Prompt**, and **TDD**. The source tree is
-organized around the same ideas, not around brochure confetti.
+Tura pushes the agent to reason from the required verified end state backward to
+the current move. For debugging, that means the finish line is not "change a
+file"; it is "the smallest reproduction fails before the patch and passes after
+the patch."
 
-## Core features
+Example: a duplicated stream-message bug should not be fixed first in the GUI.
+The safer path is backward:
 
-| Feature | What it means |
-| --- | --- |
-| Macro CLI | `command_run` batches ordered reads, edits, validation, media/web commands, and task-state updates through one compact tool surface. |
-| Backward reasoning | Tura works from the verified end state back to the cause, reproduction, smallest safe edit, and evidence. |
-| Runtime context | Runtime prompt manuals are selected by `task_type`, persisted as session records, and reinserted after compaction. |
-| Test-driven repair | Debug work starts with reproduction and ends with a check, not vibes wearing a lab coat. |
-| Durable sessions | Session DB stores workspace sessions, messages, task state, todos, compact handoffs, and command evidence. |
-| Provider routing | Provider configuration, model tiers, auth metadata, routes, fallback, and logs are first-class. |
-| Multiple fronts | Use the direct CLI, terminal UI, local gateway, web GUI, or Tauri desktop client. |
-| Customizable runtime | Add providers, personas, agents, runtime prompts, and commands from release or source layouts. |
+```text
+Desired end state:
+  session replay shows each provider stream chunk once.
 
-## Benchmark direction
+Previous necessary state:
+  session_db appends each event id once.
 
-Tura is built from evaluation data, not just claims. The benchmark copy in
-[`i18n.js`](i18n.js) focuses on long-horizon repository tasks, diversified debug
-workflows, high-resolution challenge tests, real repo refactoring, token
-discipline, and scored outcomes.
+Previous necessary state:
+  runtime and gateway preserve provider event identity.
 
-The benchmark system is intentionally separate from ordinary CI because it can
-launch real agents, consume provider quota, clone or rebuild fixtures, collect
-artifacts, normalize token and command usage, and score outcomes.
+Current move:
+  replay provider stream chunks and assert the duplicate in a focused test.
 
-Read more in [Benchmark](docs/development/benchmark.md).
+Wrong direction to avoid:
+  add frontend dedupe before proving the root cause.
+```
 
-## Quick start
+That pattern is why Tura treats issue text, user suggestions, and symptoms as
+clues rather than proof. It is slower than guessing for about five minutes, then
+faster for the rest of the task. Annoying how often that wins.
+
+Docs:
+
+- [Task status](docs/core/task-status.md)
+- [Context management](docs/core/context-management.md)
+- [Testing](docs/development/testing.md)
+
+## 3. Runtime Context
+
+Tura does not paste every possible instruction into every request. Runtime
+prompt manuals are selected by `task_status.task_type`, persisted as session
+records, and reinserted after compaction. That keeps the task mode active
+without dragging every manual through every turn.
+
+Example: a visual frontend task can activate the frontend and visual manuals; a
+release failure can activate devops; a document rewrite can activate editorial.
+The session records preserve the active mode when context is compacted.
+
+```text
+User asks:
+  "Fix the GUI transcript rendering and verify it visually."
+
+Runtime state:
+  task_group = "GUI transcript"
+  task_type = ["visual", "frontend", "debug"]
+
+Effect:
+  visual verification rules apply;
+  frontend behavior rules apply;
+  debug reproduction rules apply;
+  command_run gains any capabilities required by the active manuals;
+  compaction re-adds the active manuals instead of forgetting the task mode.
+```
+
+This is the practical difference between a runtime and a motivational prompt.
+The model gets the instructions that match the job, at the time they matter.
+
+Docs:
+
+- [Runtime prompt](docs/core/runtime-prompt.md)
+- [Dynamic prompt injection](docs/core/dynamic-prompt-injection.md)
+- [Runtime architecture](docs/architecture/runtime.md)
+
+## 4. Test Driven Development
+
+Tura treats a prompt as the start of an investigation, not permission to patch
+blindly. Debug and repair tasks should reproduce the problem first, identify the
+smallest safe edit, then run the check that proves the outcome.
+
+Example: a failing provider startup path should become a focused test before it
+becomes a broad fallback.
+
+```text
+Task:
+  provider config starts empty and runtime crashes.
+
+Tura flow:
+  1. find the provider config load path;
+  2. create or run the smallest test that starts with an empty provider set;
+  3. observe the failure at the stable boundary;
+  4. patch the config handling without hiding unrelated errors;
+  5. rerun the focused test;
+  6. run the broader relevant suite only after the focused test passes.
+
+Completion evidence:
+  exact command, passing result, changed files, and any remaining test gap.
+```
+
+That completion evidence matters. "Looks fixed" is not a release strategy; it is
+a genre of future incident report.
+
+Docs:
+
+- [Testing](docs/development/testing.md)
+- [Sessions](docs/start/sessions.md)
+- [Command run](docs/core/command-run.md)
+
+## Install and run
 
 ### NPM release
 
@@ -80,16 +201,13 @@ tura
 tura exec "Inspect this workspace and summarize the risky parts"
 ```
 
-On Windows:
+Windows:
 
 ```powershell
 npm install -g tura-ai
 tura
 tura exec "Inspect this workspace and summarize the risky parts"
 ```
-
-The npm entrypoint resolves the platform release binary, sets the runtime root,
-and forwards arguments to the real Tura executable.
 
 ### Source checkout
 
@@ -111,10 +229,7 @@ cd tura
 tura exec "Inspect this workspace"
 ```
 
-For OS-specific PATH and executor requirements, see
-[How to start](docs/start/how-to-start.md).
-
-## Ways to run Tura
+### Common entrypoints
 
 | Entry | Use it for |
 | --- | --- |
@@ -126,18 +241,9 @@ For OS-specific PATH and executor requirements, see
 | `tura_gateway` | Local HTTP/SSE gateway and optional web GUI serving. |
 | `tura_gui` | Desktop GUI workspace client. |
 
-See [CLI parameters](docs/start/cli-parameters.md) for the full command surface.
-
-## What makes it different
-
-| Problem in ordinary agent stacks | Tura mechanism | Docs |
-| --- | --- | --- |
-| Repeated tool schemas and noisy tool traffic | One compact `command_run` macro surface with ordered steps | [Command Run](docs/core/command-run.md) |
-| Every task receives every instruction | Runtime prompt manuals selected by `task_type` | [Runtime Prompt](docs/core/runtime-prompt.md) |
-| Long tasks lose state | `task_status`, session records, compact handoffs | [Task Status](docs/core/task-status.md), [Context Management](docs/core/context-management.md) |
-| CLI, TUI, and GUI split history | Shared gateway/router/session DB pipeline | [Sessions](docs/start/sessions.md), [Session DB](docs/architecture/session-db.md) |
-| Model/provider routing becomes ad hoc | Provider catalog, routes, auth metadata, latency policy | [Providers](docs/start/providers.md) |
-| Success is asserted, not verified | Business, OS, live, release, performance, and benchmark checks | [Testing](docs/development/testing.md), [Benchmark](docs/development/benchmark.md) |
+For OS-specific PATH and executor requirements, see
+[How to start](docs/start/how-to-start.md). For command options, see
+[CLI parameters](docs/start/cli-parameters.md).
 
 ## Documentation
 
@@ -191,31 +297,6 @@ The organized documentation lives in [docs/SUMMARY.md](docs/SUMMARY.md).
 - [Environment](docs/development/environment.md)
 - [Architecture](docs/development/architecture.md)
 - [Benchmark](docs/development/benchmark.md)
-
-## Architecture at a glance
-
-| Area | Owner |
-| --- | --- |
-| Runtime turn loop, prompt assembly, manuals, compaction, provider streaming | `crates/runtime` |
-| Tool contracts, `command_run`, patches, shell execution, locks, output shaping | `crates/tools` |
-| Durable SQLite-backed sessions, messages, task state, todos, checkpoints | `crates/session_log` |
-| Per-home daemon, runtime worker dispatch, registry and IPC routing | `crates/router` |
-| HTTP/SSE API for TUI and GUI clients | `crates/gateway` |
-| Provider config, model routing, auth, logs, usage extraction | `crates/provider` |
-| Terminal client and CLI command layer | `apps/tui` |
-| GUI workspace client and Tauri shell | `apps/gui`, `apps/tauri` |
-
-## Development checks
-
-```powershell
-.\scripts\check-backend-quality.ps1
-npm --prefix apps\tui test
-bun run --cwd apps\gui test
-```
-
-Use focused subsystem checks while editing, then broader checks before packaging
-or release work. Live provider tests are intentionally separate from deterministic
-business tests because bills are not a testing strategy.
 
 ## License
 
