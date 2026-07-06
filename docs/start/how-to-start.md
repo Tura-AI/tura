@@ -2,7 +2,8 @@
 
 This page covers the ways to start and run Tura after the executable is already
 available on your machine. It does not cover setup, removal, provider details, or
-a full CLI parameter reference.
+a full CLI parameter reference. For the full command surface, see
+[CLI Parameters](cli-parameters.md).
 
 Use the smallest front end that fits the job:
 
@@ -90,8 +91,8 @@ tura run "Fix the failing test and verify it"
 ```
 
 Keep prompt text quoted when it contains spaces. For full command details, use
-`tura --help` or the dedicated CLI parameter documentation; this page stays on
-startup paths, not every knob in the cockpit.
+`tura --help` or [CLI Parameters](cli-parameters.md); this page stays on startup
+paths, not every knob in the cockpit.
 
 ## Invoke Tura with a specific shell surface
 
