@@ -86,16 +86,20 @@ stickers, reactions, and final-delivery expectations.
 Relevant source:
 
 - [`personas/src/communication_style/communication_style.md`](../../personas/src/communication_style/communication_style.md)
-  lines 28-63 define the HTML, media, reaction, and sticker conventions.
-- [`personas/src/store.rs`](../../personas/src/store.rs) lines 11-13 name the
-  shared communication style files.
-- [`personas/src/store.rs`](../../personas/src/store.rs) lines 118-120 store
-  `communication_style` and `cli_communication_style` separately.
-- [`personas/src/store.rs`](../../personas/src/store.rs) lines 403-422 load
-  shared and persona-local communication style files.
+  uses the "Rich Text Formatting", "Attachments", and "Stickers And Reactions"
+  sections to define the HTML, media, reaction, and sticker conventions.
+- [`personas/src/store.rs`](../../personas/src/store.rs) defines
+  `COMMUNICATION_STYLE_DIR`, `COMMUNICATION_STYLE_FILE`, and
+  `CLI_COMMUNICATION_STYLE_FILE` for shared communication style discovery.
+- [`personas/src/store.rs`](../../personas/src/store.rs) stores
+  `communication_style` and `cli_communication_style` separately on
+  `StoredPersona`.
+- [`personas/src/store.rs`](../../personas/src/store.rs) uses
+  `read_communication_style` and `read_cli_communication_style` to load shared
+  and persona-local communication style files.
 - [`crates/runtime/src/manas/agent_prompts.rs`](../../crates/runtime/src/manas/agent_prompts.rs)
-  lines 58-80 append the active persona and normal communication style as system
-  prompt messages when the frontend is not CLI.
+  uses `load_session_persona_messages` to append the active persona and normal
+  communication style as system prompt messages when the frontend is not CLI.
 
 In this mode, the assistant's final answer can contain HTML tags and protocol
 tokens. The client is responsible for rendering them safely.
@@ -109,16 +113,18 @@ loads the shared CLI communication style instead.
 Relevant source:
 
 - [`personas/src/communication_style/cli_communication_style.md`](../../personas/src/communication_style/cli_communication_style.md)
-  lines 24-25 explicitly say not to use HTML and to avoid complex Markdown.
+  uses its "Sending Text" section to explicitly forbid HTML and complex
+  Markdown.
 - [`crates/runtime/src/manas/agent_prompts.rs`](../../crates/runtime/src/manas/agent_prompts.rs)
-  lines 61-66 choose the CLI communication style when the frontend source is
-  CLI.
+  uses `load_session_persona_messages` to choose the CLI communication style
+  when the frontend source is CLI.
 - [`crates/runtime/src/manas/agent_prompts.rs`](../../crates/runtime/src/manas/agent_prompts.rs)
-  lines 92-99 skip persona loading for CLI sessions.
+  uses `active_session_persona` to skip persona loading for CLI sessions.
 - [`crates/runtime/src/manas/agent_prompts.rs`](../../crates/runtime/src/manas/agent_prompts.rs)
-  lines 117-129 load `cli_communication_style.md` from the shared persona root.
+  uses `load_shared_cli_communication_style` to load
+  `cli_communication_style.md` from the shared persona root.
 - [`crates/runtime/src/manas/agent_prompts.rs`](../../crates/runtime/src/manas/agent_prompts.rs)
-  lines 135-140 detect CLI mode from `TURA_FRONTEND_SOURCE`.
+  uses `frontend_source_is_cli` to detect CLI mode from `TURA_FRONTEND_SOURCE`.
 
 That separation matters because terminal output must be script-friendly and
 quiet. Raw HTML tags in a pipe, CI log, or plain terminal are not rich text; they
@@ -137,20 +143,22 @@ The TUI detects terminal capability and chooses one of three rich text levels:
 Relevant source:
 
 - [`apps/tui/src/tui/capabilities.ts`](../../apps/tui/src/tui/capabilities.ts)
-  lines 16-41 detect terminal capability.
+  uses `detectTerminalCapabilities` to detect terminal capability.
 - [`apps/tui/src/tui/capabilities.ts`](../../apps/tui/src/tui/capabilities.ts)
-  lines 44-77 define `plainCapabilities`, `ansiCapabilities`, and
-  `richCapabilities`.
+  defines `plainCapabilities`, `ansiCapabilities`, and `richCapabilities` for
+  renderer selection.
 - [`apps/tui/src/tui/render-rich-text.ts`](../../apps/tui/src/tui/render-rich-text.ts)
-  lines 77-91 route rich text rendering by active capability.
+  uses `renderRichText` to route rich text rendering by active capability.
 - [`apps/tui/src/tui/render-rich-text.ts`](../../apps/tui/src/tui/render-rich-text.ts)
-  lines 97-128 implement plain and basic rich downgrades.
+  uses `plainRichText` and `basicRichText` for downgrade behavior.
 - [`apps/tui/src/tui/render-rich-text.ts`](../../apps/tui/src/tui/render-rich-text.ts)
-  lines 133-173 render the HTML subset.
+  uses `renderHtmlSubset` to render the allowed HTML subset.
 - [`apps/tui/src/tui/render-rich-text.ts`](../../apps/tui/src/tui/render-rich-text.ts)
-  lines 514-550 render media tokens, links, and OSC 8 terminal links.
+  uses `renderMediaToken`, `renderLinkTarget`, and `terminalLink` for media
+  tokens, links, and OSC 8 terminal links.
 - [`apps/tui/src/tui/render-rich-text.ts`](../../apps/tui/src/tui/render-rich-text.ts)
-  lines 560-621 define and enforce the supported HTML tag set.
+  defines `supportedHtmlTags` and `stripUnsupportedHtml` to enforce the allowed
+  HTML tag set.
 
 The TUI is intentionally conservative with links. Web URLs can become OSC 8
 links in capable terminals. Local paths are displayed as paths, not silently
@@ -165,20 +173,20 @@ allowed elements into internal node types.
 Relevant source:
 
 - [`apps/gui/app/src/conversation/message-rich-protocol.ts`](../../apps/gui/app/src/conversation/message-rich-protocol.ts)
-  line 1 defines the shared `[MEDIA:...:MEDIA]` and `[EMOJI:...:EMOJI]` token
-  pattern.
+  defines `RICH_TOKEN_PATTERN` for shared `[MEDIA:...:MEDIA]` and
+  `[EMOJI:...:EMOJI]` tokens.
 - [`apps/gui/app/src/conversation/message-rich-text.tsx`](../../apps/gui/app/src/conversation/message-rich-text.tsx)
-  lines 64-65 expose the `RichText` component and call `parseRichText`.
+  exposes the `RichText` component and calls `parseRichText`.
 - [`apps/gui/app/src/conversation/message-rich-text.tsx`](../../apps/gui/app/src/conversation/message-rich-text.tsx)
-  lines 527-567 tokenize media/emoji, parse Markdown tables, and parse inline
-  HTML with `DOMParser`.
+  uses `parseRichText` and `parseInlineRichText` to tokenize media/emoji, parse
+  Markdown tables, and parse inline HTML with `DOMParser`.
 - [`apps/gui/app/src/conversation/message-rich-text.tsx`](../../apps/gui/app/src/conversation/message-rich-text.tsx)
-  lines 581-631 define the supported HTML tags and escape unsupported tags.
+  defines `SUPPORTED_HTML_TAGS` and escapes unsupported tags before parsing.
 - [`apps/gui/app/src/conversation/message-rich-text.tsx`](../../apps/gui/app/src/conversation/message-rich-text.tsx)
-  lines 712-806 map DOM nodes into internal rich nodes, including tables and
-  code blocks.
+  uses `readDomNode` and `readTableElement` to map DOM nodes into internal rich
+  nodes, including tables and code blocks.
 - [`apps/gui/app/src/conversation/message-rich-text.tsx`](../../apps/gui/app/src/conversation/message-rich-text.tsx)
-  line 892 restricts safe links to `http` and `https` URLs.
+  uses `isSafeUrl` to restrict safe links to `http` and `https` URLs.
 
 The GUI can also group adjacent media nodes into galleries and open image media
 in a lightbox. That behavior depends on explicit media tokens, not Markdown image
@@ -192,7 +200,7 @@ The practical authoring surface is:
 | --- | --- |
 | Strong emphasis | `<b>important</b>` |
 | Emphasis | `<i>note</i>` |
-| Inline code or paths | `<code>C:/repo/src/main.rs:42</code>` |
+| Inline code or paths | `<code>C:/repo/src/main.rs</code>` |
 | Web link | `<a href='https://example.com'>Example</a>` |
 | Quote or cited excerpt | `<blockquote>quoted text</blockquote>` |
 | Code block | `<pre><code class='language-rust'>fn main() {}</code></pre>` |
@@ -210,15 +218,17 @@ message looks like a festival poster.
 The TUI has focused unit coverage for the protocol:
 
 - [`apps/tui/tests/unit/tui/render-rich-content.test.ts`](../../apps/tui/tests/unit/tui/render-rich-content.test.ts)
-  line 88 checks that communication-style HTML, media, links, and emoji render
-  without leaking protocol markup.
+  has a `render applies communication style rich text without leaking protocol
+  markup` test for communication-style HTML, media, links, and emoji rendering.
 - [`apps/tui/tests/unit/tui/render-rich-content.test.ts`](../../apps/tui/tests/unit/tui/render-rich-content.test.ts)
-  line 146 checks downgrade behavior across display levels.
+  has a `render gracefully downgrades rich text across display levels` test for
+  downgrade behavior.
 - [`apps/tui/tests/unit/tui/render-rich-content.test.ts`](../../apps/tui/tests/unit/tui/render-rich-content.test.ts)
-  line 240 checks HTML code tags and Markdown fence metadata.
+  has a `render recognizes common code tag attributes and markdown fence info
+  strings` test for HTML code tags and Markdown fence metadata.
 - [`apps/tui/tests/unit/tui/render-rich-content.test.ts`](../../apps/tui/tests/unit/tui/render-rich-content.test.ts)
-  line 319 checks Markdown table support and verifies local paths are not made
-  clickable.
+  has a `render supports markdown tables while keeping markdown and local paths
+  non-clickable` test for Markdown table support and local-path safety.
 
 When changing the rich text protocol, update the persona prompt, the GUI parser,
 the TUI renderer, and the tests together. Changing only the prompt creates a
