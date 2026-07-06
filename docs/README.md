@@ -11,7 +11,7 @@ source-owned references instead of duplicating long implementation notes.
 
 - [Start navigation](start/navigation.md) - the shortest path through user-facing docs.
 - [GitBook summary](SUMMARY.md) - the full table of contents.
-- [Development architecture](development/architecture.md) - how the repository is owned and built.
+- [Development architecture](../ARCHITECTURE.md) - how the repository is owned and built.
 
 ## Documentation policy
 

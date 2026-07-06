@@ -27,7 +27,7 @@ better persistence on broad tasks. Treat the exact numbers as benchmark output,
 not decoration. The important point is the design target: Tura is optimized for
 measured long-horizon work, not for looking clever in a short prompt clip.
 
-Read the benchmark system notes in [Benchmark](docs/development/benchmark.md).
+Read the benchmark system notes in [Benchmark](benchmark/README.md).
 
 ## Built from eval, not claims
 
@@ -82,7 +82,7 @@ Docs:
 
 - [Command run](docs/core/command-run.md)
 - [Commands](docs/core/commands.md)
-- [Tool architecture](docs/architecture/tool.md)
+- [Tool architecture](crates/tools/ARCHITECTURE.md)
 
 ## 2. Backward Thinking
 
@@ -119,7 +119,7 @@ Docs:
 
 - [Task status](docs/core/task-status.md)
 - [Context management](docs/core/context-management.md)
-- [Testing](docs/development/testing.md)
+- [Testing](scripts/ARCHITECTURE.md#xtask-test-collection-scripts)
 
 ## 3. Runtime Context
 
@@ -154,8 +154,8 @@ The model gets the instructions that match the job, at the time they matter.
 Docs:
 
 - [Runtime prompt](docs/core/runtime-prompt.md)
-- [Dynamic prompt injection](docs/core/dynamic-prompt-injection.md)
-- [Runtime architecture](docs/architecture/runtime.md)
+- [Dynamic prompt injection](docs/core/prompt-style.md)
+- [Runtime architecture](crates/runtime/ARCHITECTURE.md)
 
 ## 4. Test Driven Development
 
@@ -187,7 +187,7 @@ a genre of future incident report.
 
 Docs:
 
-- [Testing](docs/development/testing.md)
+- [Testing](scripts/ARCHITECTURE.md#xtask-test-collection-scripts)
 - [Sessions](docs/start/sessions.md)
 - [Command run](docs/core/command-run.md)
 
@@ -269,18 +269,18 @@ The organized documentation lives in [docs/SUMMARY.md](docs/SUMMARY.md).
 - [Commands](docs/core/commands.md)
 - [Agents](docs/core/agents.md)
 - [Personas](docs/core/personas.md)
-- [Rich text](docs/core/rich-text.md)
-- [Dynamic prompt injection](docs/core/dynamic-prompt-injection.md)
+- [Rich text](docs/core/html-rich-text.md)
+- [Dynamic prompt injection](docs/core/prompt-style.md)
 
 ### Architecture
 
-- [Session DB](docs/architecture/session-db.md)
-- [Gateway](docs/architecture/gateway.md)
-- [Router](docs/architecture/router.md)
-- [Runtime](docs/architecture/runtime.md)
-- [Tool](docs/architecture/tool.md)
-- [Terminal user interface](docs/architecture/terminal-user-interface.md)
-- [Graphic user interface](docs/architecture/graphic-user-interface.md)
+- [Session DB](crates/session_log/ARCHITECTURE.md)
+- [Gateway](crates/gateway/ARCHITECTURE.md)
+- [Router](crates/router/ARCHITECTURE.md)
+- [Runtime](crates/runtime/ARCHITECTURE.md)
+- [Tool](crates/tools/ARCHITECTURE.md)
+- [Terminal user interface](apps/tui/ARCHITECTURE.md)
+- [Graphic user interface](apps/gui/ARCHITECTURE.md)
 
 ### Customization
 
@@ -292,11 +292,11 @@ The organized documentation lives in [docs/SUMMARY.md](docs/SUMMARY.md).
 
 ### Development
 
-- [Scripts](docs/development/scripts.md)
-- [Testing](docs/development/testing.md)
-- [Environment](docs/development/environment.md)
-- [Architecture](docs/development/architecture.md)
-- [Benchmark](docs/development/benchmark.md)
+- [Scripts](scripts/ARCHITECTURE.md)
+- [Testing](scripts/ARCHITECTURE.md#xtask-test-collection-scripts)
+- [Environment](docs/start/settings.md)
+- [Architecture](ARCHITECTURE.md)
+- [Benchmark](benchmark/README.md)
 
 ## License
 

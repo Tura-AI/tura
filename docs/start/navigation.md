@@ -11,5 +11,5 @@ Use this page as the front door for the user-facing documentation.
 7. [Sessions](sessions.md) - durable workspace-scoped session history.
 
 After the start path, continue with [Core](../core/task-status.md),
-[Architecture](../architecture/session-db.md), [Customization](../customization/custom-providers.md),
-or [Development](../development/scripts.md).
+[Architecture](../../ARCHITECTURE.md), [Customization](../customization/custom-providers.md),
+or [Development scripts](../../scripts/ARCHITECTURE.md).

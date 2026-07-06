@@ -18,9 +18,9 @@ claiming success.
 
 ## Main components
 
-- [Runtime](../architecture/runtime.md) owns the agent turn loop and prompt assembly.
+- [Runtime](../../crates/runtime/ARCHITECTURE.md) owns the agent turn loop and prompt assembly.
 - [Command run](../core/command-run.md) is the compact tool surface.
-- [Session DB](../architecture/session-db.md) keeps durable workspace history.
+- [Session DB](../../crates/session_log/ARCHITECTURE.md) keeps durable workspace history.
 - [Providers](providers.md) resolve model routes and credentials.
 - [Agents](../core/agents.md) choose model defaults, prompt resources, and command capabilities.
 - [Personas](../core/personas.md) control user-facing communication style.
