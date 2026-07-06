@@ -6,6 +6,46 @@ It stores raw session events, builds provider messages from them, caches compact
 tool-result context, and replaces crowded history with structured compaction
 records when needed.
 
+## Practical difference from ordinary agent context
+
+Many agent stacks treat context as a growing transcript plus a pile of reusable
+instructions. The next provider call receives the old chat, recent tool output,
+the base agent prompt, every broadly relevant project rule, and often every
+"skill" whose trigger might apply. That works for short demos. On real code
+tasks it degenerates into prompt hoarding: stale stdout, full manuals, and weak
+skill instructions are replayed again and again.
+
+Tura does not manage context as "paste everything and hope". It records the raw
+session log, but rebuilds provider messages from structured records. Tool
+results can keep a compact context view, active Runtime Prompt manuals are
+tracked as records, and crowded history is replaced by a `context_compaction`
+checkpoint with the goal, evidence, workspace snapshot, environment context, and
+next action.
+
+Example: a long refactor already searched the repo, patched three files, and ran
+tests with a 3,000-line failure log.
+
+| Context problem | Ordinary agent behavior | Tura behavior |
+| --- | --- | --- |
+| Tool output | Replay large raw stdout until the context window hurts. | Store raw output for audit, but replay compact tool-result context when possible. |
+| Prompt manuals | Paste all generally useful instructions or rely on a low-priority skill trigger. | Reinsert only active Runtime Prompt manuals selected by `task_status.task_type`. |
+| Task memory | Depend on the model remembering the old chat. Quaint. | Persist `current_objective`, `task_type`, task state, and compaction records in session state. |
+| Reset after crowding | Summarize the chat loosely, often losing files, commands, and validation state. | Create a structured `context_compaction` record with workspace and environment context. |
+
+This matters for token cost and correctness. If a normal agent carries a 20k
+base prompt, 15k of skills/manuals, and 30k of old tool output into every call,
+each follow-up starts around 65k input tokens before the new user request. Tura's
+goal is to keep durable facts as structured state and replay only the pieces
+needed for the next step. Compaction is not a shorter chat transcript; it is a
+runtime checkpoint.
+
+The actual compact-context prompt is intentionally operational, not literary. It
+requires the assistant to call `command_run`, put any required final checks
+first, then finish the highest step with `task_status.compact_context`. The
+handoff must preserve the goal, completed work, incomplete work, deliverables,
+relevant files, validation state, and next steps. That is the difference between
+"summarize our chat" and "make the next model able to continue the job".
+
 The implementation lives mostly under
 [`crates/runtime/src/context`](../../crates/runtime/src/context), with session
 state fields defined in

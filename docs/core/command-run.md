@@ -6,20 +6,62 @@ internal commands such as `shell_command`, `bash`, `zsh`, `apply_patch`,
 `web_discover`, `read_media`, `generate_media`, `task_status`, and optional
 `planning`.
 
-The landing-page copy in `i18n.js` calls this "macro commands". That is the
-practical shape: the model describes a batch of already-known local actions, and
-the runtime handles ordering, parallelism, locks, streaming updates, output
-normalization, and audit records. Ordinary tool calling makes every file read,
-patch, test, and status update compete for another provider-visible turn.
+The GUI i18n text exposes the product shape directly: command blocks are shown
+with labels such as `runCommands` / `runningCommands`, and individual command
+items are rendered as `commandTypeShell`, `commandTypePatch`,
+`commandTypeReadMedia`, `commandTypeWebDiscover`, or
+`commandTypeCompactContext`. In other words, the user sees one command run, not
+a pile of disconnected tool calls.
+
+## Practical difference from ordinary agent tooling
+
+Ordinary tool calling makes every file read, patch, test, and status update
+compete for another provider-visible turn. Tura's difference is not a nicer JSON
+shape; it is fewer LLM round trips around the same local work.
+
+Example: fix a small documentation bug safely.
+
+| Work item | Ordinary agent loop | Tura with `command_run` |
+| --- | --- | --- |
+| Read files and references | Turn 1: the model calls search/read tools, then waits for results. | Step 1: run `rg --files`, targeted `rg -n`, and `Get-Content` together. |
+| Decide the edit | Turn 2: the model sees search output and asks for more reads or prepares a patch. | Same provider turn when the needed reads were already known and batched. |
+| Apply the patch | Turn 3: the model calls an edit tool. | Step 2: `apply_patch` runs after step 1. |
+| Validate | Turn 4: the model calls tests, build, or lint after the patch result returns. | Step 3: known validation runs after the patch. |
+| Persist task state | Often another tool call or prose-only bookkeeping. | The same batch can include `task_status` when state actually changes. |
+
+In that common case, ordinary tooling needs about four provider-visible LLM
+turns. `command_run` can execute the same bounded local sequence in one provider
+turn when the dependencies are already known. If the active prompt is 40k input
+tokens, four ordinary turns replay roughly 160k input tokens before counting
+tool schemas and result payloads; one `command_run` turn replays that base
+context once. The exact multiplier depends on the task, but the waste is easy to
+spot: repeated context, repeated tool-choice latency, and repeated model
+planning for work the runtime can schedule deterministically.
+
+The second difference is scheduling. Ordinary agents usually serialize tool
+calls because the model has to wait after each call. Tura's `step` groups let
+the runtime run independent reads together and only serialize real dependencies.
+That is why the command schema says same-step commands must have no output
+dependency on each other. It is not decoration. It is the difference between
+using the machine and politely asking the machine four times.
+
+The actual model-facing prompt reinforces this behavior. The checked-in
+`command_run` schema tells the model to "complete all currently needed steps in
+one batch", to prefer five or more commands during real task execution, to put
+independent reads/searches/lists in the same step, and not to invent probes that
+depend on unknown earlier output. Command-specific prompts then add the sharp
+edges: `apply_patch` must be a raw patch body, shell commands need bounded
+service readiness checks, and `task_status.compact_context` belongs after the
+work it summarizes.
 
 Source of truth:
 
-- [provider schema](../crates/tools/src/command_run/schema.json)
-- [argument parser](../crates/tools/src/command_run/handler_parse.rs)
-- [executor and scheduler](../crates/tools/src/command_run/handler.rs)
-- [agent command injection](../crates/runtime/src/manas/tool_catalog.rs)
-- [streamed execution](../crates/runtime/src/provider_flow/command_run_streaming.rs)
-- [streamed records](../crates/runtime/src/provider_flow/streamed_command_run.rs)
+- [provider schema](../../crates/tools/src/command_run/schema.json)
+- [argument parser](../../crates/tools/src/command_run/handler_parse.rs)
+- [executor and scheduler](../../crates/tools/src/command_run/handler.rs)
+- [agent command injection](../../crates/runtime/src/manas/tool_catalog.rs)
+- [streamed execution](../../crates/runtime/src/provider_flow/command_run_streaming.rs)
+- [streamed records](../../crates/runtime/src/provider_flow/streamed_command_run.rs)
 
 ## Why Tura Uses One Tool
 
@@ -305,7 +347,7 @@ before running it. Sharp tools remain sharp.
 The current behavior is covered by tests around command shape compatibility,
 patch handling, locking, sandbox checks, streaming, and pressure scheduling:
 
-- [command shape compatibility](../crates/tools/tests/business/command_run_current/command_shapes.rs)
-- [apply_patch, streaming, and locks](../crates/tools/tests/business/command_run_current/apply_patch_streaming_locks.rs)
-- [shell process hooks](../crates/tools/tests/os_testing/command_run_shell_process_hooks.rs)
-- [command-run pressure test](../crates/tools/tests/performance/command_run_pressure_test.rs)
+- [command shape compatibility](../../crates/tools/tests/business/command_run_current/command_shapes.rs)
+- [apply_patch, streaming, and locks](../../crates/tools/tests/business/command_run_current/apply_patch_streaming_locks.rs)
+- [shell process hooks](../../crates/tools/tests/os_testing/command_run_shell_process_hooks.rs)
+- [command-run pressure test](../../crates/tools/tests/performance/command_run_pressure_test.rs)

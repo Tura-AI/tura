@@ -9,6 +9,46 @@ It is deliberately not a user-visible response channel. The assistant still has
 to answer the user normally before marking a task `done` or asking a `question`.
 State is not prose. Useful boundary, that one.
 
+## Practical difference from ordinary agent state
+
+Ordinary agents often store task state as chat prose: "I'm working on the
+frontend", "tests failed", "next I should run lint". The next turn then relies
+on the model to infer whether work is active, blocked, complete, or operating
+under a special workflow. If a skill is involved, the skill usually contributes
+instructions with lower practical weight than the system/developer prompt, and
+it may not persist as the active mode after context trimming.
+
+Tura makes that state explicit. `task_status` writes structured fields into the
+session: `task_group`, `status`, `task_type`, and optional `compact_context`.
+Those fields drive Runtime Prompt manual selection, completion gates, task-plan
+state, and context compaction. The result is a control plane, not a note to the
+model's future self.
+
+Example: the user asks for a frontend visual fix.
+
+| State question | Ordinary agent behavior | Tura behavior |
+| --- | --- | --- |
+| What kind of work is this? | Infer from chat or hope the right skill triggers. | Set `task_type` to the complete manual set, for example `visual` and `frontend`. |
+| Which instructions apply? | Load broad prompt text or a skill with weak persistence. | Runtime appends active Operation Manuals and command capabilities as session records. |
+| May the agent edit yet? | Usually yes, even before the workflow is identified. | Startup gate requires `task_type` before `apply_patch` or write-producing shell commands when missing. |
+| Is the task finished? | The model says so in prose. | `status: "done"` is allowed only after required verification and media inspection rules are satisfied. |
+| How does work survive compaction? | Summarize loosely. | `compact_context` becomes a structured handoff consumed by context management. |
+
+That explicit state also reduces prompt bloat. Instead of fully loading every
+manual and every possible skill into the base prompt, Tura selects the manuals
+for the current task through `task_type`, expands parent manuals only when
+needed, and re-adds them after compaction. Less junk in the prompt; fewer weird
+instructions fighting in the corner.
+
+The actual `task_status` prompt is strict for the same reason. It says
+`task_status` is never a substitute for the user-visible assistant reply;
+`task_group` must be a broad work area, not a progress report; `task_type` is the
+complete Operation Manual set for the current task; `doing` is only for work
+that still needs more `command_run` calls; and `done` is only valid after the
+task is complete and verified. When the session has no `task_type`, the startup
+gate explicitly requires setting it before `apply_patch` or any write-producing
+shell command.
+
 ## What it updates
 
 The command accepts four fields:
