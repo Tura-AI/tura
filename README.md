@@ -1,115 +1,209 @@
 # Tura
 
-Tura is a terminal-native developer tool for turning intent into verified code changes with disciplined motion, audit trails, and repo-aware control.
+Tura is a terminal-native developer tool for turning intent into verified code
+changes with disciplined motion, audit trails, and repo-aware control.
 
-The short version: Tura tries to make agent work less like a chat box throwing patches at a wall and more like a local engineering runtime with state, tools, manuals, and evidence. Still glamorous, in the way a torque wrench is glamorous.
+It is built for long-horizon repository work: inspect the workspace, reason from
+the desired outcome back to the next necessary step, make narrow changes, run the
+checks, preserve context, and attach evidence before calling the work done.
 
-## What Tura is
+```bash
+npm install tura-ai
+tura
+```
 
-Tura combines a Rust backend pipeline, a compact `command_run` tool surface, runtime prompt manuals, durable session history, provider/model routing, and CLI/TUI/GUI clients. The landing-page copy in `i18n.js` frames it around macro CLI execution, backward reasoning, prompt/runtime control, and test-driven development. The repository code backs that up with real components:
+```text
+dev@linux:~/workspace$ tura
+▏build a website for yourself
+thinking
+I'll inspect the workspace and assemble the smallest page first.
 
-- `crates/runtime` owns the agent turn loop, prompt assembly, runtime manuals, provider streaming, command callbacks, context compaction, and final response shaping.
-- `crates/tools` owns `command_run`, concrete commands, shell execution, patches, task status, locks, cancellation, and tool output shaping.
-- `crates/session_log` owns durable SQLite-backed session, message, task, todo, checkpoint, and workspace history.
-- `crates/router` owns the per-home daemon, session_db startup/adoption, runtime worker dispatch, registry operations, and router-owned command execution.
-- `crates/gateway` exposes HTTP/SSE APIs used by the TUI and GUI.
-- `crates/provider` owns provider configuration, auth metadata, model routing, response extraction, streaming, logging, and usage data.
-- `apps/tui` is the terminal client and CLI command layer.
-- `apps/gui` and `apps/tauri` provide the graphical workspace client.
+◇ Commands
+├─ □ #1 shell_command running $ rg --files .
+└─ □ #1 shell_command pending $ rg -n "TODO" .
+```
 
-## Install and start
+## Why Tura exists
+
+Most coding agents look strong on short prompts and then leak discipline on real
+engineering work: too much tool chatter, too much irrelevant context, weak
+session continuity, and a suspicious habit of declaring victory before
+verification. Charming. Expensive, too.
+
+Tura's answer is structural:
+
+- a compact macro command surface instead of scattered tool schemas;
+- runtime-selected operation manuals instead of one giant prompt blob;
+- durable session records instead of chat-only memory;
+- backward reasoning from outcome to root cause;
+- test-driven repair flows that reproduce before patching;
+- CLI, TUI, GUI, gateway, router, runtime, provider, tool, and session DB pieces
+  that share one backend pipeline.
+
+The landing copy in [`i18n.js`](i18n.js) frames the system around four operating
+ideas: **Macro CLI**, **Reasoning**, **Prompt**, and **TDD**. The source tree is
+organized around the same ideas, not around brochure confetti.
+
+## Core features
+
+| Feature | What it means |
+| --- | --- |
+| Macro CLI | `command_run` batches ordered reads, edits, validation, media/web commands, and task-state updates through one compact tool surface. |
+| Backward reasoning | Tura works from the verified end state back to the cause, reproduction, smallest safe edit, and evidence. |
+| Runtime context | Runtime prompt manuals are selected by `task_type`, persisted as session records, and reinserted after compaction. |
+| Test-driven repair | Debug work starts with reproduction and ends with a check, not vibes wearing a lab coat. |
+| Durable sessions | Session DB stores workspace sessions, messages, task state, todos, compact handoffs, and command evidence. |
+| Provider routing | Provider configuration, model tiers, auth metadata, routes, fallback, and logs are first-class. |
+| Multiple fronts | Use the direct CLI, terminal UI, local gateway, web GUI, or Tauri desktop client. |
+| Customizable runtime | Add providers, personas, agents, runtime prompts, and commands from release or source layouts. |
+
+## Benchmark direction
+
+Tura is built from evaluation data, not just claims. The benchmark copy in
+[`i18n.js`](i18n.js) focuses on long-horizon repository tasks, diversified debug
+workflows, high-resolution challenge tests, real repo refactoring, token
+discipline, and scored outcomes.
+
+The benchmark system is intentionally separate from ordinary CI because it can
+launch real agents, consume provider quota, clone or rebuild fixtures, collect
+artifacts, normalize token and command usage, and score outcomes.
+
+Read more in [Benchmark](docs/development/benchmark.md).
+
+## Quick start
+
+### NPM release
+
+```bash
+npm install tura-ai
+tura
+tura exec "Inspect this workspace and summarize the risky parts"
+```
+
+On Windows:
 
 ```powershell
+npm install -g tura-ai
+tura
+tura exec "Inspect this workspace and summarize the risky parts"
+```
+
+The npm entrypoint resolves the platform release binary, sets the runtime root,
+and forwards arguments to the real Tura executable.
+
+### Source checkout
+
+```powershell
+git clone https://github.com/Tura-AI/tura.git
+cd tura
 .\scripts\install.ps1
 .\scripts\build-release.ps1
 .\scripts\register-cli.ps1
-tura exec "Inspect this workspace and summarize the risky parts"
+tura exec "Inspect this workspace"
 ```
 
 ```bash
+git clone https://github.com/Tura-AI/tura.git
+cd tura
 ./scripts/install.sh
 ./scripts/build-release.sh
 ./scripts/register-cli.sh
-tura exec "Inspect this workspace and summarize the risky parts"
+tura exec "Inspect this workspace"
 ```
 
-If installed from npm, the package entry is `npm/tura.mjs`; it locates the platform release binary, sets `TURA_PROJECT_ROOT`, optionally sets `TURA_PROVIDER_CONFIG`, and forwards arguments to the real binary.
+For OS-specific PATH and executor requirements, see
+[How to start](docs/start/how-to-start.md).
 
-## Why it is built this way
+## Ways to run Tura
 
-Most coding agents pay too much token overhead for scattered tools, forget long tasks, and declare success before verification. Tura's answer is structural rather than motivational posters:
+| Entry | Use it for |
+| --- | --- |
+| `tura` | Interactive terminal UI. |
+| `tura "prompt"` | Open the TUI with an initial prompt. |
+| `tura exec "prompt"` | Direct Rust CLI prompt runner. |
+| `tura run "prompt"` | Gateway-backed prompt with streaming/history. |
+| `tura bash`, `tura zsh`, `tura shel` | Prompt with a selected command-run shell surface. |
+| `tura_gateway` | Local HTTP/SSE gateway and optional web GUI serving. |
+| `tura_gui` | Desktop GUI workspace client. |
 
-| Problem | Tura mechanism | Main docs |
+See [CLI parameters](docs/start/cli-parameters.md) for the full command surface.
+
+## What makes it different
+
+| Problem in ordinary agent stacks | Tura mechanism | Docs |
 | --- | --- | --- |
-| Repeated tool schemas and command chatter | One compact `command_run` macro surface with ordered steps | [Command Run](docs/core/command-run.md) |
-| Prompt bloat from every manual every turn | Runtime prompt manuals selected by `task_type` | [Runtime Prompt](docs/core/runtime-prompt.md) |
-| Long tasks losing state | `task_status`, session records, compact context handoffs | [Task Status](docs/core/task-status.md), [Context Management](docs/core/context-management.md) |
-| CLI, TUI, and GUI splitting history | Shared gateway/router/session_db pipeline | [Sessions](docs/start/sessions.md), [Session DB](docs/architecture/session-db.md) |
-| Provider and model routing chaos | Provider catalog, routes, auth metadata, latency policy | [Providers](docs/start/providers.md) |
-| Weak verification | Business tests, OS tests, live tests, benchmarks, command evidence | [Testing](docs/development/testing.md), [Benchmark](docs/development/benchmark.md) |
+| Repeated tool schemas and noisy tool traffic | One compact `command_run` macro surface with ordered steps | [Command Run](docs/core/command-run.md) |
+| Every task receives every instruction | Runtime prompt manuals selected by `task_type` | [Runtime Prompt](docs/core/runtime-prompt.md) |
+| Long tasks lose state | `task_status`, session records, compact handoffs | [Task Status](docs/core/task-status.md), [Context Management](docs/core/context-management.md) |
+| CLI, TUI, and GUI split history | Shared gateway/router/session DB pipeline | [Sessions](docs/start/sessions.md), [Session DB](docs/architecture/session-db.md) |
+| Model/provider routing becomes ad hoc | Provider catalog, routes, auth metadata, latency policy | [Providers](docs/start/providers.md) |
+| Success is asserted, not verified | Business, OS, live, release, performance, and benchmark checks | [Testing](docs/development/testing.md), [Benchmark](docs/development/benchmark.md) |
 
-## Documentation map
+## Documentation
 
-The organized documentation set lives in [`docs/`](docs/SUMMARY.md). Crate-local README/ARCHITECTURE files are preserved as source-owned references.
+The organized documentation lives in [docs/SUMMARY.md](docs/SUMMARY.md).
 
 ### Start
 
-- [Overview](docs/start/overview.md) - Tura is a terminal-native coding agent system built for long-horizon engineering work, verified edits, durable context, and a compact command surface.
-- [Install](docs/start/install.md) - Installation prepares Rust, Node or Bun client dependencies, command packages, release binaries, and the registered CLI path.
-- [How to Start](docs/start/how-to-start.md) - Start from the smallest front that fits the job: CLI for direct work, TUI for terminal conversation, GUI for workspace session management.
-- [CLI Parameters](docs/start/cli-parameters.md) - CLI parameters choose workspace, model, agent, output mode, streaming behavior, command-run shell, session reuse, and low-level gateway access.
-- [Settings](docs/start/settings.md) - Settings are split between provider configuration, workspace session configuration, UI preferences, and environment overrides.
-- [Sessions](docs/start/sessions.md) - Sessions are durable workspace-scoped conversations with messages, task state, todos, compact handoffs, and replayable command records.
-- [Providers](docs/start/providers.md) - Providers are catalog entries, auth methods, model routes, latency policies, and runtime model tiers used by the provider crate and clients.
+- [Overview](docs/start/overview.md)
+- [Install](docs/start/install.md)
+- [How to start](docs/start/how-to-start.md)
+- [CLI parameters](docs/start/cli-parameters.md)
+- [Settings](docs/start/settings.md)
+- [Providers](docs/start/providers.md)
+- [Sessions](docs/start/sessions.md)
+- [Navigation](docs/start/navigation.md)
 
 ### Core
 
-- [Task Status](docs/core/task-status.md) - task_status is an internal state update command for doing, question, done, task_group, task_type, and compact_context; it is not a substitute for user-visible replies.
-- [Context Management](docs/core/context-management.md) - Context management keeps long tasks oriented by storing session records, compacting crowded transcripts, and reinserting active runtime manuals.
-- [Runtime Prompt](docs/core/runtime-prompt.md) - Runtime prompts are Tura-owned operating manuals selected by task_type; they differ from external skills because they shape discipline, tools, and completion rules.
-- [Dynamic Prompt Injection](docs/core/dynamic-prompt-injection.md) - Dynamic prompt injection covers state-driven persona, task, retry, compaction, and capability prompt fragments.
-- [Command Run](docs/core/command-run.md) - command_run is the compact macro tool surface for batching shell commands, patches, media/web commands, and task-state updates into ordered steps.
-- [Commands](docs/core/commands.md) - Commands are local tool implementations exposed through command_run or router registry entries, with schemas, policies, prompts, timeouts, and output shaping.
-- [Rich Text](docs/core/rich-text.md) - Rich text explains the messaging-app HTML protocol, the separate CLI plain-text style, Markdown compatibility, and the GUI/TUI rendering entry points.
-- [Agents](docs/core/agents.md) - Agents define prompt identity, provider defaults, capabilities, reporting behavior, validation behavior, aliases, and whether operation manuals are active.
-- [Personas](docs/core/personas.md) - Personas control communication style, visible identity, optional media expressions, and prompt fragments without changing the agent's engineering capabilities.
+- [Task status](docs/core/task-status.md)
+- [Context management](docs/core/context-management.md)
+- [Runtime prompt](docs/core/runtime-prompt.md)
+- [Command run](docs/core/command-run.md)
+- [Commands](docs/core/commands.md)
+- [Agents](docs/core/agents.md)
+- [Personas](docs/core/personas.md)
+- [Rich text](docs/core/rich-text.md)
+- [Dynamic prompt injection](docs/core/dynamic-prompt-injection.md)
 
 ### Architecture
 
-- [Session DB](docs/architecture/session-db.md) - Session DB is the single SQLite owner per TURA_HOME and the durable store for workspace sessions, records, task state, todos, and queued writes.
-- [Gateway](docs/architecture/gateway.md) - Gateway is the HTTP/SSE front used by TUI and GUI for health, config, providers, sessions, prompt streaming, files, projects, and product routes.
-- [Router](docs/architecture/router.md) - Router is the per-home daemon that owns session_db startup, runtime worker dispatch, command_run execution, registry operations, and IPC routing.
-- [Runtime](docs/architecture/runtime.md) - Runtime owns the agent turn loop: session bootstrap, prompt assembly, provider streaming, tool callbacks, runtime manuals, checkpoints, and final response shaping.
-- [Tool](docs/architecture/tool.md) - The tool crate defines ToolCall, ToolPayload, ToolContext, cancellation, file locks, command routing, and concrete command implementations.
-- [Terminal User Interface](docs/architecture/terminal-user-interface.md) - The TypeScript TUI is a thin terminal client that talks to gateway APIs for sessions, prompts, providers, agents, personas, config, and streaming events.
-- [Graphic User Interface](docs/architecture/graphic-user-interface.md) - The GUI is a Solid/Vite application hosted by Tauri or gateway static serving; it manages workspace navigation, sessions, settings, files, plans, and provider auth.
+- [Session DB](docs/architecture/session-db.md)
+- [Gateway](docs/architecture/gateway.md)
+- [Router](docs/architecture/router.md)
+- [Runtime](docs/architecture/runtime.md)
+- [Tool](docs/architecture/tool.md)
+- [Terminal user interface](docs/architecture/terminal-user-interface.md)
+- [Graphic user interface](docs/architecture/graphic-user-interface.md)
 
 ### Customization
 
-- [Custom Providers](docs/customization/custom-providers.md) - Custom providers extend provider_config.json, auth registry behavior, model tiers, route fallback, latency policy, and client-visible catalog metadata.
-- [Custom Personas](docs/customization/custom-personas.md) - Custom personas add prompt fragments, communication style, display metadata, and optional media expression manifests under personas/src.
-- [Custom Agents](docs/customization/custom-agents.md) - Custom agents define model defaults, capabilities, prompts, validator behavior, aliases, operation manual policy, and reporting style.
-- [Custom Runtime Prompt](docs/customization/custom-runtime-prompt.md) - Runtime prompt customization changes the task_type catalog, manual dependency graph, capability injection, and manual append rules in runtime_prompt_manual.rs.
-- [Custom Commands](docs/customization/custom-commands.md) - Custom commands add new tool handlers, schemas, policies, prompts, router metadata, tests, and agent capability exposure.
+- [Custom providers](docs/customization/custom-providers.md)
+- [Custom personas](docs/customization/custom-personas.md)
+- [Custom agents](docs/customization/custom-agents.md)
+- [Custom runtime prompt](docs/customization/custom-runtime-prompt.md)
+- [Custom commands](docs/customization/custom-commands.md)
 
 ### Development
 
-- [Scripts](docs/development/scripts.md) - Scripts install dependencies, build debug/release binaries, register CLI paths, run CI, create release packages, and verify NPM platform artifacts.
-- [Testing](docs/development/testing.md) - Testing is split into business, OS, live, performance, release, app, and benchmark-style checks, with business tests kept local and deterministic.
-- [Environment](docs/development/environment.md) - Environment variables select home directories, release binaries, provider config, provider keys, logs, benchmark agents, and command-run shell behavior.
-- [Development Architecture](docs/development/architecture.md) - Development architecture explains crate ownership, binary topology, package boundaries, process roles, file locks, and documentation ownership.
-- [Benchmark](docs/development/benchmark.md) - Benchmarks are manual long-horizon comparison suites that launch real agents, collect artifacts, normalize token and command usage, and score outcomes.
+- [Scripts](docs/development/scripts.md)
+- [Testing](docs/development/testing.md)
+- [Environment](docs/development/environment.md)
+- [Architecture](docs/development/architecture.md)
+- [Benchmark](docs/development/benchmark.md)
 
-## Main executable paths
+## Architecture at a glance
 
-| Entry | Purpose | Source owner |
-| --- | --- | --- |
-| `tura exec` | Rust one-shot coding prompt | `runRustCliExec` in `apps/tui/src/cli.ts`, `tura_exec::main` in `crates/gateway/src/bin/tura_exec.rs` |
-| `tura` / `tura run` | Interactive or non-interactive terminal client | `runCli` in `apps/tui/src/cli.ts`, `runPrompt` in `apps/tui/src/commands/run.ts` |
-| `tura_gateway` | HTTP/SSE API and static GUI serving | `build_router` and `run_server` in `crates/gateway/src/web/server.rs` |
-| `tura_router` | Per-home router daemon and registry CLI | `run_router_command` in `crates/router/src/cli.rs` |
-| `tura_runtime` | Per-session runtime worker | `main` in `crates/runtime/src/bin/tura_runtime.rs` |
-| `tura_session_db` | SQLite session-log owner | `run_socket_service` in `crates/session_log/src/service.rs` |
+| Area | Owner |
+| --- | --- |
+| Runtime turn loop, prompt assembly, manuals, compaction, provider streaming | `crates/runtime` |
+| Tool contracts, `command_run`, patches, shell execution, locks, output shaping | `crates/tools` |
+| Durable SQLite-backed sessions, messages, task state, todos, checkpoints | `crates/session_log` |
+| Per-home daemon, runtime worker dispatch, registry and IPC routing | `crates/router` |
+| HTTP/SSE API for TUI and GUI clients | `crates/gateway` |
+| Provider config, model routing, auth, logs, usage extraction | `crates/provider` |
+| Terminal client and CLI command layer | `apps/tui` |
+| GUI workspace client and Tauri shell | `apps/gui`, `apps/tauri` |
 
 ## Development checks
 
@@ -119,8 +213,10 @@ npm --prefix apps\tui test
 bun run --cwd apps\gui test
 ```
 
-Use focused crate checks while editing a single subsystem, then run broader checks before packaging or release work. Live provider tests are intentionally separate from deterministic business tests because bills are not a testing strategy.
+Use focused subsystem checks while editing, then broader checks before packaging
+or release work. Live provider tests are intentionally separate from deterministic
+business tests because bills are not a testing strategy.
 
 ## License
 
-Tura is licensed under AGPL-3.0-or-later. See `LICENSE`.
+Tura is licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE).
