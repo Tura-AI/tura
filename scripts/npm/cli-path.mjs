@@ -355,6 +355,13 @@ export function resolveWindowsPowerShellCommand({ env = process.env, pathExists 
   return candidates.find((candidate) => path.win32.isAbsolute(candidate) && pathExists(candidate)) || null;
 }
 
+function registerPowerShellCommandPath(powerShell, env, spawnSyncFn) {
+  const installDir = path.win32.dirname(powerShell);
+  prependPathEntries(env, [installDir]);
+  persistWindowsPathEntries(powerShell, [installDir], env, spawnSyncFn);
+  return powerShell;
+}
+
 function persistWindowsPathEntries(powerShell, entries, env, spawnSyncFn) {
   if (!entries.length) {
     return;
@@ -447,13 +454,20 @@ export function ensureWindowsPowerShellCommand({
     return resolved;
   }
 
-  const pathPwsh = windowsPathCommand("pwsh", { env, pathExists });
-  if (pathPwsh) {
-    return pathPwsh;
+  for (const name of ["pwsh", "powershell"]) {
+    const whereHit = whereWindowsCommand(name, { env, spawnSyncFn });
+    if (whereHit && pathExists(whereHit)) {
+      prependPathEntries(env, [path.win32.dirname(whereHit)]);
+      return whereHit;
+    }
+  }
+
+  if (resolved) {
+    return registerPowerShellCommandPath(resolved, env, spawnSyncFn);
   }
 
   if (env.TURA_NPM_SKIP_POWERSHELL_INSTALL === "1" || env.TURA_NPM_SKIP_POWERSHELL_INSTALL === "true") {
-    return resolved;
+    return null;
   }
 
   if (!quiet) {
@@ -465,10 +479,7 @@ export function ensureWindowsPowerShellCommand({
   if (!installed) {
     fail("Microsoft.PowerShell installed, but pwsh.exe was not found under Program Files.");
   }
-  const installDir = path.win32.dirname(installed);
-  prependPathEntries(env, [installDir]);
-  persistWindowsPathEntries(installed, [installDir], env, spawnSyncFn);
-  return installed;
+  return registerPowerShellCommandPath(installed, env, spawnSyncFn);
 }
 
 function runPowerShell(script, env) {
