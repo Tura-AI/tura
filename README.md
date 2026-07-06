@@ -17,7 +17,7 @@ extensions in real development workflows: inspect a production repository, hold
 the task objective for many turns, run the right commands, patch the right owner
 code, recover from failed validation, and prove the result.
 
-| Benchmark dimension | Benchamrk | Why it matters |
+| Benchmark dimension | Benchmark | Why it matters |
 | --- | --- | --- |
 | Long-horizon task set | 150+ long-horizon benchmark tasks | Measures persistence across multi-step repository work instead of one-shot answers. |
 | Diversified debug tasks | Tasks require 20+ turns on average | Forces reproduction, trace inspection, patching, reruns, and follow-up decisions. |
