@@ -10,6 +10,7 @@
 use std::path::{Path, PathBuf};
 
 pub mod process_hardening;
+pub mod shell_fallback;
 
 /// Directory name used for the embedded database, kept stable for back-compat.
 pub const DB_DIR_NAME: &str = "session_log";

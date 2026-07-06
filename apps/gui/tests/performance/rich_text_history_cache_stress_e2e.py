@@ -47,7 +47,8 @@ REOPEN_BUDGET_MS = int(os.environ.get("TURA_RICH_TEXT_HISTORY_REOPEN_BUDGET_MS",
 MIN_AVG_FPS = float(os.environ.get("TURA_RICH_TEXT_HISTORY_MIN_AVG_FPS", "18"))
 MAX_FRAME_GAP_MS = float(os.environ.get("TURA_RICH_TEXT_HISTORY_MAX_FRAME_GAP_MS", "1200"))
 MAX_LONG_FRAMES = int(os.environ.get("TURA_RICH_TEXT_HISTORY_MAX_LONG_FRAMES", "240"))
-MAX_MOUNTED_MESSAGES = int(os.environ.get("TURA_RICH_TEXT_HISTORY_MAX_MOUNTED", "400"))
+MAX_MOUNTED_MESSAGES = int(os.environ.get("TURA_RICH_TEXT_HISTORY_MAX_MOUNTED", "100"))
+LIVE_FIRST_SESSION = os.environ.get("TURA_RICH_TEXT_HISTORY_LIVE_FIRST_SESSION", "0") == "1"
 
 
 def free_port() -> int:
@@ -76,7 +77,10 @@ def ready(url: str) -> bool:
     try:
         with urlopen(url, timeout=1) as response:
             body = response.read(2048).decode("utf-8", errors="ignore")
-            return 200 <= response.status < 500 and "<title>Tura</title>" in body
+            if not (200 <= response.status < 500 and "<title>Tura</title>" in body):
+                return False
+        with urlopen(f"{url.rstrip('/')}/src/app.tsx", timeout=3) as response:
+            return response.status == 200
     except Exception:
         return False
 
@@ -219,7 +223,7 @@ class RichHistoryGateway(ThreadingHTTPServer):
                 "directory": directory,
                 "model": "openai/gpt-5.5",
                 "agent": "coding_agent",
-                "status": "idle",
+                "status": "busy" if LIVE_FIRST_SESSION and session_index == 0 else "idle",
                 "message_count": MESSAGES_PER_SESSION,
                 "created_at": updated - 500_000,
                 "updated_at": updated,
@@ -227,7 +231,7 @@ class RichHistoryGateway(ThreadingHTTPServer):
                 "task_management": {
                     "task_id": f"rich-history-task-{session_index + 1}",
                     "task_summary": f"Rich history stress session {session_index + 1}",
-                    "status": "done",
+                    "status": "doing" if LIVE_FIRST_SESSION and session_index == 0 else "done",
                     "start_condition": "user_action",
                 },
             }
@@ -530,6 +534,42 @@ async def transcript_metrics(page) -> dict:
     )
 
 
+async def cached_message_ids(page, session_id: str) -> list[str]:
+    return await page.evaluate(
+        """
+        sessionId => {
+          const snapshot = window.__turaGuiE2E?.snapshot?.();
+          if (!snapshot) throw new Error('missing e2e snapshot');
+          return (snapshot.messagesBySession[sessionId] || []).map((message) => message.id);
+        }
+        """,
+        session_id,
+    )
+
+
+async def transcript_paging_state(page) -> dict:
+    return await page.evaluate(
+        """
+        () => ({
+          historyButtonCount: document.querySelectorAll('.transcript-history-button').length,
+          historyButtonDisabled: Boolean(document.querySelector('.transcript-history-button')?.disabled),
+          assistantRows: Array.from(document.querySelectorAll('.transcript-virtual-row .message.assistant')).length,
+          assistantRowsWithoutMargin: Array.from(document.querySelectorAll('.transcript-virtual-row .message.assistant.avatar-hidden')).length,
+          avatarAnchors: Array.from(document.querySelectorAll('[data-agent-avatar-anchor]')).map((node) => node.closest('.transcript-virtual-row')?.getAttribute('data-message-id')).filter(Boolean),
+        })
+        """
+    )
+
+
+async def assert_avatar_margin_contract(page, phase: str) -> dict:
+    state = await transcript_paging_state(page)
+    if state["assistantRows"] > 0 and state["assistantRowsWithoutMargin"]:
+        raise AssertionError(f"{phase} assistant rows lost avatar margin: {state}")
+    if len(state["avatarAnchors"]) > 1:
+        raise AssertionError(f"{phase} rendered more than one avatar anchor: {state}")
+    return state
+
+
 async def wait_for_transcript_count(page, expected: int, timeout_ms: int = 30_000) -> dict:
     await page.wait_for_function(
         """
@@ -545,6 +585,62 @@ async def wait_for_transcript_count(page, expected: int, timeout_ms: int = 30_00
     return await transcript_metrics(page)
 
 
+def expected_message_ids(session_id: str, count: int) -> list[str]:
+    start = MESSAGES_PER_SESSION - count
+    return [f"{session_id}-message-{index:03d}" for index in range(start, MESSAGES_PER_SESSION)]
+
+
+def assert_contiguous_message_ids(session_id: str, actual: list[str], expected_count: int, phase: str) -> None:
+    expected = expected_message_ids(session_id, expected_count)
+    duplicates = sorted({message_id for message_id in actual if actual.count(message_id) > 1})
+    if duplicates:
+        raise AssertionError(f"{phase} duplicated message ids: {duplicates[:8]}")
+    if actual != expected:
+        missing = [message_id for message_id in expected if message_id not in actual]
+        extra = [message_id for message_id in actual if message_id not in expected]
+        raise AssertionError(
+            f"{phase} message ids are not contiguous: count={len(actual)} expected={expected_count} "
+            f"first={actual[:3]} last={actual[-3:]} missing={missing[:8]} extra={extra[:8]}"
+        )
+
+
+async def assert_cached_history(page, session_id: str, expected_count: int, phase: str) -> None:
+    actual = await cached_message_ids(page, session_id)
+    assert_contiguous_message_ids(session_id, actual, expected_count, phase)
+
+
+async def load_transcript_until_count(page, session_id: str, expected: int, timeout_ms: int = 30_000) -> dict:
+    deadline = time.perf_counter() + timeout_ms / 1000
+    last_metrics = await transcript_metrics(page)
+    while time.perf_counter() < deadline:
+        if last_metrics["virtualCount"] >= expected and last_metrics["renderReady"]:
+            await assert_cached_history(page, session_id, expected, f"loaded-{expected}")
+            await assert_avatar_margin_contract(page, f"loaded-{expected}")
+            return last_metrics
+        before_count = last_metrics["virtualCount"]
+        state = await transcript_paging_state(page)
+        if state["historyButtonCount"] != 1 or state["historyButtonDisabled"]:
+            raise AssertionError(f"history button unavailable before loading {expected}: {state}")
+        await click_show_earlier_records(page)
+        await page.wait_for_function(
+            """
+            beforeCount => {
+              const space = document.querySelector('.transcript-virtual-space');
+              return Number(space?.getAttribute('data-virtual-count') || 0) > beforeCount &&
+                space?.getAttribute('data-render-ready') === 'true';
+            }
+            """,
+            arg=before_count,
+            timeout=timeout_ms,
+        )
+        last_metrics = await transcript_metrics(page)
+        await assert_cached_history(page, session_id, last_metrics["virtualCount"], f"after-click-{last_metrics['virtualCount']}")
+        await assert_avatar_margin_contract(page, f"after-click-{last_metrics['virtualCount']}")
+    raise AssertionError(
+        f"timed out loading transcript history to {expected}: {json.dumps(last_metrics, ensure_ascii=False)}"
+    )
+
+
 async def scroll_to_top(page) -> None:
     await page.locator(".transcript").evaluate(
         """
@@ -554,6 +650,11 @@ async def scroll_to_top(page) -> None:
         }
         """
     )
+
+
+async def click_show_earlier_records(page) -> None:
+    await page.wait_for_selector(".transcript-history-button", timeout=30_000)
+    await page.locator(".transcript-history-button").click()
 
 
 async def click_workspace(page, directory: str) -> None:
@@ -652,6 +753,7 @@ async def open_session(page, session: dict, current_directory: str | None, initi
     started = time.perf_counter()
     await start_frame_probe(page, f"open:{session['id']}")
     workspace_changed = False
+    cached_before_open = len(await cached_message_ids(page, session["id"]))
     if not initial:
         if current_directory and normalized_path(current_directory) != normalized_path(session["directory"]):
             workspace_changed = True
@@ -661,7 +763,14 @@ async def open_session(page, session: dict, current_directory: str | None, initi
         else:
             await click_session(page, session["name"])
     opened_count = min(MESSAGE_PAGE_SIZE, MESSAGES_PER_SESSION)
-    metrics = await wait_for_transcript_count(page, opened_count)
+    expected_count = max(opened_count, cached_before_open)
+    metrics = await wait_for_transcript_count(page, expected_count)
+    await assert_cached_history(page, session["id"], expected_count, "open-session")
+    state = await assert_avatar_margin_contract(page, "first-open")
+    if expected_count < MESSAGES_PER_SESSION and state["historyButtonCount"] != 1:
+        raise AssertionError(f"history button missing at {expected_count} messages: {state}")
+    if expected_count >= MESSAGES_PER_SESSION and state["historyButtonCount"] != 0:
+        raise AssertionError(f"history button visible after cached full history: {state}")
     await page.wait_for_timeout(80)
     frame = await stop_frame_probe(page)
     return {
@@ -677,9 +786,12 @@ async def load_full_history(page, session: dict) -> dict:
     started = time.perf_counter()
     await start_frame_probe(page, f"full-history:{session['id']}")
     for expected in sorted({min(400, MESSAGES_PER_SESSION), MESSAGES_PER_SESSION}):
-        await scroll_to_top(page)
-        await wait_for_transcript_count(page, expected)
+        await load_transcript_until_count(page, session["id"], expected, FULL_HISTORY_BUDGET_MS)
     metrics = await transcript_metrics(page)
+    await assert_cached_history(page, session["id"], MESSAGES_PER_SESSION, "full-history")
+    state = await assert_avatar_margin_contract(page, "full-history")
+    if state["historyButtonCount"] != 0:
+        raise AssertionError(f"history button remained after full history loaded: {state}")
     frame = await stop_frame_probe(page)
     return {"ms": (time.perf_counter() - started) * 1000, "metrics": metrics, "frame": frame}
 
@@ -732,7 +844,29 @@ async def run_flow() -> dict:
             )
             await page.goto(f"{GUI_URL}/?{query}", wait_until="domcontentloaded")
             await install_frame_probe(page)
-            await page.wait_for_selector(".workspace-row", timeout=30_000)
+            try:
+                await page.wait_for_selector(".workspace-row", timeout=30_000)
+            except Exception:
+                (OUT / "workspace-timeout.html").write_text(await page.content(), encoding="utf-8")
+                await page.screenshot(path=str(OUT / "workspace-timeout.png"), full_page=True)
+                state = await page.evaluate(
+                    """
+                    () => ({
+                      title: document.title,
+                      bodyText: document.body?.innerText?.slice(0, 4000) ?? '',
+                      workbenchClass: document.querySelector('.workbench')?.className ?? null,
+                      railClass: document.querySelector('.rail')?.className ?? null,
+                      workspaceRows: document.querySelectorAll('.workspace-row').length,
+                      sessionRows: document.querySelectorAll('.session-row').length,
+                      errorStrip: document.querySelector('.error-strip')?.textContent ?? null,
+                    })
+                    """
+                )
+                (OUT / "workspace-timeout-state.json").write_text(
+                    json.dumps(state, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                raise
             if await page.locator(".session-row").count() == 0:
                 await click_workspace(page, current_directory)
             await page.wait_for_selector(".session-row", timeout=30_000)
@@ -793,6 +927,7 @@ async def run_flow() -> dict:
             "maxFrameGapMs": MAX_FRAME_GAP_MS,
             "maxLongFrames": MAX_LONG_FRAMES,
             "maxMountedMessages": MAX_MOUNTED_MESSAGES,
+            "liveFirstSession": LIVE_FIRST_SESSION,
         },
         "guiUrl": GUI_URL,
         "gatewayUrl": GATEWAY_URL,
@@ -835,6 +970,7 @@ async def main() -> None:
                 "workspaces": WORKSPACE_COUNT,
                 "sessions_per_workspace": SESSIONS_PER_WORKSPACE,
                 "messages_per_session": MESSAGES_PER_SESSION,
+        "live_first_session": LIVE_FIRST_SESSION,
                 "request_stats": summary["requestStats"],
                 "results": [
                     {

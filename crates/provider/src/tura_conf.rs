@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use dotenvy::{from_path_iter, vars};
 use tracing::{debug, warn};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TuraConfig {
     env_path: PathBuf,
-    values: HashMap<String, String>,
+    values: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl TuraConfig {
@@ -33,15 +34,27 @@ impl TuraConfig {
             project_root.join(env_file)
         };
 
-        let mut this = Self {
+        let this = Self {
             env_path,
-            values: HashMap::new(),
+            values: Arc::new(RwLock::new(HashMap::new())),
         };
-        this.load();
+        this.reload();
         this
     }
 
-    fn load(&mut self) {
+    pub fn reload(&self) {
+        let values = self.load_values();
+        let mut guard = match self.values.write() {
+            Ok(guard) => guard,
+            Err(err) => {
+                warn!("configuration cache lock was poisoned while reloading env file");
+                err.into_inner()
+            }
+        };
+        *guard = values;
+    }
+
+    fn load_values(&self) -> HashMap<String, String> {
         let mut values = HashMap::new();
         if self.env_path.exists() {
             match from_path_iter(&self.env_path) {
@@ -67,7 +80,25 @@ impl TuraConfig {
         }
 
         values.extend(vars());
-        self.values = values;
+        values
+    }
+
+    fn read_values(&self) -> RwLockReadGuard<'_, HashMap<String, String>> {
+        match self.values.read() {
+            Ok(guard) => guard,
+            Err(err) => {
+                warn!("configuration cache lock was poisoned while reading env values");
+                err.into_inner()
+            }
+        }
+    }
+
+    fn values_snapshot(&self) -> HashMap<String, String> {
+        self.read_values().clone()
+    }
+
+    pub fn env_values(&self) -> HashMap<String, String> {
+        self.values_snapshot()
     }
 
     pub fn env_path(&self) -> &Path {
@@ -75,7 +106,7 @@ impl TuraConfig {
     }
 
     pub fn get_available_keys(&self) -> Vec<String> {
-        self.values
+        self.read_values()
             .iter()
             .filter_map(|(k, v)| {
                 if v.trim().len() > 1 {
@@ -88,14 +119,14 @@ impl TuraConfig {
     }
 
     pub fn get_all_keys(&self) -> Vec<String> {
-        self.values.keys().cloned().collect()
+        self.read_values().keys().cloned().collect()
     }
 
     pub fn get(&self, key: &str) -> Option<String> {
         let upper = key.to_uppercase();
         env::var(&upper)
             .ok()
-            .or_else(|| self.values.get(&upper).cloned())
+            .or_else(|| self.read_values().get(&upper).cloned())
     }
 
     pub fn docker_run(&self) -> bool {
@@ -116,6 +147,15 @@ impl TuraConfig {
                     self.env_path.display()
                 ),
             })
+    }
+}
+
+impl Clone for TuraConfig {
+    fn clone(&self) -> Self {
+        Self {
+            env_path: self.env_path.clone(),
+            values: Arc::new(RwLock::new(self.values_snapshot())),
+        }
     }
 }
 
@@ -156,6 +196,15 @@ mod tests {
             std::env::remove_var(key);
             Self { key, value }
         }
+
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self {
+                key,
+                value: previous,
+            }
+        }
     }
 
     impl Drop for EnvRestore {
@@ -179,6 +228,36 @@ mod tests {
         );
 
         std::env::remove_var("TURA_CONF_TEST_KEY");
+    }
+
+    #[test]
+    fn reload_refreshes_cached_dotenv_values() {
+        let _key = EnvRestore::remove("TURA_CONF_RELOAD_TEST_KEY");
+        let temp = tempfile::tempdir().expect("temp env dir");
+        let env_path = temp.path().join(".env");
+        std::fs::write(&env_path, "TURA_CONF_RELOAD_TEST_KEY=first\n").expect("write first dotenv");
+        let env_path = env_path.to_string_lossy().to_string();
+        let _env_path = EnvRestore::set("TURA_ENV_PATH", &env_path);
+        let conf = TuraConfig::new(".env.missing-for-test");
+
+        assert_eq!(
+            conf.get("TURA_CONF_RELOAD_TEST_KEY").as_deref(),
+            Some("first")
+        );
+
+        std::fs::write(&env_path, "TURA_CONF_RELOAD_TEST_KEY=second\n")
+            .expect("write second dotenv");
+        assert_eq!(
+            conf.get("TURA_CONF_RELOAD_TEST_KEY").as_deref(),
+            Some("first")
+        );
+
+        conf.reload();
+
+        assert_eq!(
+            conf.get("TURA_CONF_RELOAD_TEST_KEY").as_deref(),
+            Some("second")
+        );
     }
 
     #[test]

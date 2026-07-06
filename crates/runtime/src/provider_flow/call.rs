@@ -7,7 +7,9 @@ use tracing::error;
 
 use crate::profile_timings;
 use crate::provider_flow::checkpointing;
-use crate::provider_flow::errors::{finish_runtime_failure, runtime_timeout};
+use crate::provider_flow::errors::{
+    finish_provider_call_failure, finish_runtime_failure, runtime_timeout,
+};
 use crate::provider_flow::provider_response::apply_provider_response;
 use crate::provider_flow::provider_streaming::{call_runtime_streaming, RuntimeStreamingInput};
 pub use crate::provider_flow::request_options::route_by_name;
@@ -42,6 +44,7 @@ pub async fn call_runtime(
     tura_config: Arc<tura_llm_rust::TuraConfig>,
 ) -> Result<RuntimeManagement, String> {
     let mut runtime = input.runtime;
+    tura_config.reload();
     let now = Utc::now();
     let profiling = profile_timings::enabled();
     let normalize_start = Instant::now();
@@ -289,11 +292,10 @@ async fn call_runtime_non_streaming(
             runtime.set_output(serde_json::json!({
                 "error": e.to_string()
             }));
-            finish_runtime_failure(
+            finish_provider_call_failure(
                 runtime,
                 finished_at,
-                "CALL_FAILED",
-                e.to_string(),
+                &e,
                 RuntimeCallResultStatus::Failed,
             )?;
         }
@@ -436,6 +438,8 @@ mod tests {
         );
         let runtime_error = runtime.error.expect("runtime error should be set");
         assert_eq!(runtime_error.error_code.as_deref(), Some("CALL_FAILED"));
+        assert!(!runtime_error.retry_allowed);
+        assert!(!runtime_error.fallback_allowed);
         assert!(runtime_error
             .error_text
             .as_deref()

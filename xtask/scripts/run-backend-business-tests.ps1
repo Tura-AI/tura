@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
+$ScriptStartedAt = Get-Date
 
 Set-Location $RepoRoot
 
@@ -80,7 +81,14 @@ function Start-CargoTestProcess {
 function Stop-ProcessTree {
   param([int]$ProcessId)
   if ($IsWindows -or $env:OS -eq "Windows_NT") {
-    & taskkill /PID $ProcessId /T /F *> $null
+    try {
+      & taskkill.exe /PID $ProcessId /T /F *> $null
+      if ($LASTEXITCODE -ne 0) {
+        Write-Host "warning: taskkill could not terminate process tree $ProcessId (exit $LASTEXITCODE)"
+      }
+    } catch {
+      Write-Host "warning: taskkill could not terminate process tree ${ProcessId}: $($_.Exception.Message)"
+    }
   } else {
     Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
   }
@@ -104,9 +112,14 @@ function Stop-RepoTuraProcesses {
   $names = @("tura", "tura_gui", "tura_gateway", "tura_router", "tura_session_db", "tura_runtime", "tura_exec")
   foreach ($process in (Get-Process -Name $names -ErrorAction SilentlyContinue)) {
     $path = $null
+    $startedAt = $null
     try {
       $path = $process.Path
+      $startedAt = $process.StartTime
     } catch {
+      continue
+    }
+    if ($startedAt -and $startedAt -lt $ScriptStartedAt) {
       continue
     }
     if (Test-IsRepoTargetProcess $path) {

@@ -22,17 +22,19 @@ describe("session render cache", () => {
     expect(appSource).not.toContain("e2eFixture && existingMessages.length > 0");
   });
 
-  test("transcript keeps already mounted rows and only expands the rendered set", () => {
-    expect(conversationSource).toContain("transcriptMountedRowsBySession");
-    expect(conversationSource).toContain("cachedMountedMessageIdsForSession");
-    expect(conversationSource).toContain("syncMountedTranscriptRows(mountedMessageIds, items)");
-    expect(conversationSource).toContain("mountedMessageIds.add(entry.item.message.id)");
+  test("transcript renders a bounded virtual window instead of keeping visited rows mounted", () => {
+    expect(conversationSource).toContain("MAX_TRANSCRIPT_RENDERED_MESSAGES = 100");
+    expect(conversationSource).toContain("boundedVirtualWindow(visibleEntries");
+    expect(conversationSource).toContain("pruneVirtualEntryCache");
+    expect(conversationSource).not.toContain("transcriptMountedRowsBySession");
+    expect(conversationSource).not.toContain("cachedMountedMessageIdsForSession");
+    expect(conversationSource).not.toContain("syncMountedTranscriptRows");
 
     const virtualItemsStart = conversationSource.indexOf("const virtualItems = createMemo");
     const virtualItemsEnd = conversationSource.indexOf("const showTranscriptLoadingTransition");
     const virtualItemsBlock = conversationSource.slice(virtualItemsStart, virtualItemsEnd);
-    expect(virtualItemsBlock).not.toContain(".filter((entry) => entry.top + entry.height >= start");
-    expect(virtualItemsBlock).toContain(".filter((entry) => mountedMessageIds.has");
+    expect(virtualItemsBlock).toContain(".filter((entry) => entry.top + entry.height >= start");
+    expect(virtualItemsBlock).not.toContain("mountedMessageIds");
   });
 
   test("transcript hides preparing rows behind the existing text loading transition", () => {
@@ -41,5 +43,29 @@ describe("session render cache", () => {
     expect(conversationSource).toContain("transcript-render-preparing");
     expect(composerLayoutCss).toContain(".transcript-virtual-space.transcript-render-preparing");
     expect(composerLayoutCss).toContain("visibility: hidden;");
+  });
+
+  test("transcript exposes explicit earlier-history loading instead of auto-loading on top scroll", () => {
+    expect(appSource).toContain("const MESSAGE_PAGE_SIZE = 100");
+    expect(appSource).toContain("const MESSAGE_PAGE_FETCH_LIMIT = MESSAGE_PAGE_SIZE + 1");
+    expect(conversationSource).toContain("transcript-history-button");
+    expect(conversationSource).toContain("showEarlierRecords");
+    expect(conversationSource).toContain("requestEarlierMessages");
+    expect(conversationSource).not.toContain("maybeLoadEarlierMessages");
+    expect(conversationSource).not.toContain("LOAD_EARLIER_SCROLL_TOP");
+  });
+
+  test("agent avatar anchor is limited to the latest assistant message", () => {
+    expect(conversationSource).toContain("latestAssistantId={latestAssistantId()}");
+    expect(conversationSource).toContain("showAvatarSpace={");
+    expect(conversationSource).toContain(
+      'avatarMode() !== "hidden" && entry.item().message.role !== "user"',
+    );
+    expect(conversationSource).toContain(
+      "isLatestAssistant={props.latestAssistantId === props.entry.item().message.id}",
+    );
+    expect(conversationSource).toContain(
+      'data-agent-avatar-anchor={props.isLatestAssistant ? "" : undefined}',
+    );
   });
 });

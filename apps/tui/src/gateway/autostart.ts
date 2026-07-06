@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -267,12 +267,14 @@ async function launchGatewayProcess(request: GatewayLaunchRequest): Promise<stri
   if (!executable) throw new Error(t("gatewayMissingBinary"));
   const targetUrl = stripTrailingSlash(request.targetUrl);
   let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  const stdio = gatewayLogStdio(request.instanceHome);
   const child = spawn(executable, [], {
     detached: true,
     env: gatewayProcessEnv(request),
-    stdio: "ignore",
+    stdio,
     windowsHide: true,
   });
+  closeGatewayLogStdio(stdio);
   child.once("exit", (code, signal) => {
     exited = { code, signal };
   });
@@ -341,6 +343,26 @@ function stopUnreadyChild(child: ChildProcess): void {
     if (child.exitCode === null && child.signalCode === null) child.kill();
   } catch {
     // Best effort: the gateway may have already detached or exited.
+  }
+}
+
+function gatewayLogStdio(instanceHome: string): ["ignore", number, number] {
+  const logDir = join(instanceHome, ".tura", "logs");
+  mkdirSync(logDir, { recursive: true });
+  return [
+    "ignore",
+    openSync(join(logDir, "gateway-autostart.stdout.log"), "a"),
+    openSync(join(logDir, "gateway-autostart.stderr.log"), "a"),
+  ];
+}
+
+function closeGatewayLogStdio(stdio: ["ignore", number, number]): void {
+  for (const fd of [stdio[1], stdio[2]]) {
+    try {
+      closeSync(fd);
+    } catch {
+      // Best effort: the child process may already own or close the handle.
+    }
   }
 }
 
@@ -452,10 +474,16 @@ function packageRoot(): string {
 
 function canonical(value: string): string {
   try {
-    return realpathSync(value);
+    return stripVerbatimPrefix(realpathSync.native(value));
   } catch {
-    return resolve(value);
+    return stripVerbatimPrefix(resolve(value));
   }
+}
+
+function stripVerbatimPrefix(value: string): string {
+  if (value.startsWith("\\\\?\\UNC\\")) return `\\\\${value.slice("\\\\?\\UNC\\".length)}`;
+  if (value.startsWith("\\\\?\\")) return value.slice("\\\\?\\".length);
+  return value;
 }
 
 async function runWithSpinner(options: {

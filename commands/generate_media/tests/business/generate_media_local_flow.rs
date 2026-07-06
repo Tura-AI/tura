@@ -2,6 +2,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::json;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::thread;
 use tura_command_generate_media::{access, execute};
 
@@ -412,6 +413,7 @@ fn generate_media_business_flow_returns_provider_errors_when_all_fallbacks_fail(
 #[test]
 fn generate_media_business_flow_reports_media_generation_key_help_when_no_provider_is_available() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _dotenv = DotenvIsolation::new();
     let dir = tempfile::tempdir().expect("tempdir");
     let saved_replicate = std::env::var("REPLICATE_API_TOKEN").ok();
     let saved_replicate_key = std::env::var("REPLICATE_API_KEY").ok();
@@ -441,6 +443,7 @@ fn generate_media_business_flow_reports_media_generation_key_help_when_no_provid
 #[test]
 fn generate_media_business_flow_reports_speech_key_help_when_no_provider_is_available() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _dotenv = DotenvIsolation::new();
     let dir = tempfile::tempdir().expect("tempdir");
     let saved_elevenlabs = std::env::var("ELEVENLABS_API_KEY").ok();
     let saved_xi = std::env::var("XI_API_KEY").ok();
@@ -522,6 +525,7 @@ fn generate_media_business_flow_speech_provider_matrix_saves_audio() {
 #[test]
 fn generate_media_business_flow_speech_falls_back_after_missing_key() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _dotenv = DotenvIsolation::new();
     let dir = tempfile::tempdir().expect("tempdir");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -804,6 +808,39 @@ fn restore_env(key: &str, value: Option<String>) {
     match value {
         Some(value) => std::env::set_var(key, value),
         None => std::env::remove_var(key),
+    }
+}
+
+struct DotenvIsolation {
+    previous_env_path: Option<std::ffi::OsString>,
+    previous_current_dir: PathBuf,
+    _temp: tempfile::TempDir,
+}
+
+impl DotenvIsolation {
+    fn new() -> Self {
+        let temp = tempfile::tempdir().expect("dotenv isolation tempdir");
+        let env_path = temp.path().join(".env");
+        std::fs::write(&env_path, "").expect("write isolated dotenv");
+        let previous_env_path = std::env::var_os("TURA_ENV_PATH");
+        let previous_current_dir = std::env::current_dir().expect("current dir");
+        std::env::set_var("TURA_ENV_PATH", &env_path);
+        std::env::set_current_dir(temp.path()).expect("set isolated current dir");
+        Self {
+            previous_env_path,
+            previous_current_dir,
+            _temp: temp,
+        }
+    }
+}
+
+impl Drop for DotenvIsolation {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.previous_current_dir);
+        match &self.previous_env_path {
+            Some(value) => std::env::set_var("TURA_ENV_PATH", value),
+            None => std::env::remove_var("TURA_ENV_PATH"),
+        }
     }
 }
 

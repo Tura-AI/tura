@@ -32,14 +32,22 @@ pub(super) fn run_session_shell_command(directory: &str, input: &str) -> Result<
     }
 
     let mut command = if cfg!(windows) {
-        let mut command = ProcessCommand::new("powershell");
-        command.args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            trimmed,
-        ]);
+        let shell = tura_path::shell_fallback::resolve_windows_shell();
+        let mut command = ProcessCommand::new(shell.executable);
+        match shell.kind {
+            tura_path::shell_fallback::WindowsShellKind::PowerShell => {
+                command.args([
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    trimmed,
+                ]);
+            }
+            tura_path::shell_fallback::WindowsShellKind::Cmd => {
+                command.args(["/c", trimmed]);
+            }
+        }
         command
     } else {
         let mut command = ProcessCommand::new("sh");

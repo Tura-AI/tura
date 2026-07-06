@@ -79,6 +79,35 @@ impl TuraError {
             message: err.to_string(),
         }
     }
+
+    pub fn is_non_retryable_provider_failure(&self) -> bool {
+        match self {
+            Self::HttpStatus { status, .. } => matches!(*status, 401 | 402 | 403 | 404),
+            Self::Config { message } => is_missing_provider_key_message(message),
+            Self::ProviderRequest { message, .. } => is_billing_or_key_failure_text(message),
+            Self::AllProvidersFailed { message } => is_billing_or_key_failure_text(message),
+            _ => false,
+        }
+    }
+}
+
+fn is_missing_provider_key_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("api key not found") || lower.contains("configuration key")
+}
+
+fn is_billing_or_key_failure_text(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("http status 401")
+        || lower.contains("http status 402")
+        || lower.contains("http status 403")
+        || lower.contains("http status 404")
+        || lower.contains("api key not found")
+        || lower.contains("configuration key")
+        || lower.contains("invalid api key")
+        || lower.contains("missing api key")
+        || lower.contains("payment required")
+        || lower.contains("billing")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

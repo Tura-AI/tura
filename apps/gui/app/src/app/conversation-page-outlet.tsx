@@ -151,6 +151,12 @@ export function ConversationPageOutlet(props: {
           }
           onTranscriptScroll={(scrollTop) => setTranscriptScroll(session().id, scrollTop)}
           onLoadEarlierMessages={() => props.loadEarlierMessages(session().id)}
+          hasEarlierMessages={
+            props.state().messagePagingBySession[session().id]?.hasEarlier ?? false
+          }
+          loadingEarlierMessages={
+            props.state().messagePagingBySession[session().id]?.loadingEarlier ?? false
+          }
           slashCommands={props.slashCommands()}
           onComposerText={setComposerText}
           onComposerImages={setComposerImages}

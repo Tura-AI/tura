@@ -70,13 +70,12 @@ const AGENT_AVATAR_BOTTOM_SNAP = 48;
 const AGENT_AVATAR_BOTTOM_SETTLE_MS = 0;
 const VIRTUAL_MESSAGE_ESTIMATED_HEIGHT = 64;
 const VIRTUAL_MESSAGE_OVERSCAN = 300;
-const LOAD_EARLIER_SCROLL_TOP = 480;
+const MAX_TRANSCRIPT_RENDERED_MESSAGES = 100;
 const TRANSCRIPT_BOTTOM_SETTLE_FRAMES = 6;
 const SCROLL_RESTORE_FRAMES = 8;
 const MAX_TRANSCRIPT_HEIGHT_CACHE_SESSIONS = 20;
 const ASSISTANT_THINKING_TEXT_ICON = "✦";
 const transcriptHeightCacheBySession = new Map<string, Map<string, number>>();
-const transcriptMountedRowsBySession = new Map<string, Set<string>>();
 
 function scrollElementToBottom(element: HTMLElement, behavior: ScrollBehavior = "auto") {
   element.scrollTo({ top: element.scrollHeight, behavior });
@@ -91,6 +90,8 @@ export function ConversationView(props: {
   onScrollToBottomRequestConsumed?: (token: number) => void;
   onTranscriptScroll?: (scrollTop: number) => void;
   onLoadEarlierMessages?: () => Promise<boolean>;
+  hasEarlierMessages?: boolean;
+  loadingEarlierMessages?: boolean;
   slashCommands: Command[];
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
@@ -427,6 +428,8 @@ export function ConversationView(props: {
             initialScrollTop={props.initialScrollTop}
             onScrollPosition={props.onTranscriptScroll}
             onLoadEarlierMessages={props.onLoadEarlierMessages}
+            hasEarlierMessages={props.hasEarlierMessages}
+            loadingEarlierMessages={props.loadingEarlierMessages}
             loading={props.state.loading}
             activeToolId={selectedToolId()}
             conversationNotice={props.conversationNotice}
@@ -434,6 +437,8 @@ export function ConversationView(props: {
             avatarSettings={selectedAgentAvatar()}
             expressionEmoji={latestStickerEmoji()}
             workspaceDirectory={props.state.directory}
+            followBottom={transcriptPinned()}
+            onFollowBottom={() => scrollTranscriptToBottom("auto")}
             onTranscript={(element) => {
               transcriptEl = element;
               scrollFollowObserver?.observe(element);
@@ -507,6 +512,8 @@ function Transcript(props: {
   initialScrollTop?: number;
   onScrollPosition?: (scrollTop: number) => void;
   onLoadEarlierMessages?: () => Promise<boolean>;
+  hasEarlierMessages?: boolean;
+  loadingEarlierMessages?: boolean;
   loading: boolean;
   activeToolId?: string;
   conversationNotice?: JSX.Element;
@@ -514,6 +521,8 @@ function Transcript(props: {
   avatarSettings: AgentAvatarConfig;
   expressionEmoji?: string;
   workspaceDirectory?: string;
+  followBottom: boolean;
+  onFollowBottom: () => void;
   onTranscript: (element: HTMLElement) => void;
   onScroll: () => void;
   onTool: (part: MessagePart, parts: MessagePart[]) => void;
@@ -548,7 +557,6 @@ function Transcript(props: {
   const [scrollTop, setScrollTop] = createSignal(0);
   const [clientHeight, setClientHeight] = createSignal(0);
   const [heightVersion, setHeightVersion] = createSignal(0);
-  const [mountedRowsVersion, setMountedRowsVersion] = createSignal(0);
   const [transcriptRenderReady, setTranscriptRenderReady] = createSignal(false);
   const [floatingAvatar, setFloatingAvatar] = createSignal<
     { left: number; top: number } | undefined
@@ -565,11 +573,12 @@ function Transcript(props: {
   let measuredSessionId = props.session?.id;
   const pendingMeasuredHeights = new Map<string, { height: number; top: number }>();
   const measuredHeights = cachedMeasuredHeightsForSession(measuredSessionId);
-  let mountedMessageIds = cachedMountedMessageIdsForSession(measuredSessionId);
   const virtualEntryCache = new Map<string, VirtualMessageEntry>();
   let pendingScrollRestore: { sessionId: string; top: number; attempts: number } | undefined;
   let lastScrollUpdateAt = 0;
-  let lastScrolledAwayFromBottomAt = 0;
+  let lastScrolledAwayFromBottomAt = Number.NEGATIVE_INFINITY;
+  let lastNearBottomAt = Number.NEGATIVE_INFINITY;
+  let pointerScrollActive = false;
 
   const virtualLayout = createMemo(() => {
     heightVersion();
@@ -584,35 +593,26 @@ function Transcript(props: {
   });
 
   const virtualItems = createMemo(() => {
-    mountedRowsVersion();
     const items = displayMessages();
     const layout = virtualLayout();
     const start = Math.max(0, scrollTop() - VIRTUAL_MESSAGE_OVERSCAN);
     const end = scrollTop() + clientHeight() + VIRTUAL_MESSAGE_OVERSCAN;
-    syncMountedTranscriptRows(mountedMessageIds, items);
-    const visibleEntries = items.map((item, index) => ({
-      item,
-      index,
-      top: layout.offsets[index] ?? 0,
-      height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
-    }));
-    let mountedChanged = false;
-    for (const entry of visibleEntries) {
-      if (
-        entry.top + entry.height >= start &&
-        entry.top <= end &&
-        !mountedMessageIds.has(entry.item.message.id)
-      ) {
-        mountedMessageIds.add(entry.item.message.id);
-        mountedChanged = true;
-      }
-    }
-    if (mountedChanged) {
-      requestAnimationFrame(() => setMountedRowsVersion((version) => version + 1));
-    }
-    return visibleEntries
-      .filter((entry) => mountedMessageIds.has(entry.item.message.id))
-      .map((entry) => virtualEntryFor(virtualEntryCache, entry.item, entry.index, entry.top));
+    const visibleEntries = items
+      .map((item, index) => ({
+        item,
+        index,
+        top: layout.offsets[index] ?? 0,
+        height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
+      }))
+      .filter((entry) => entry.top + entry.height >= start && entry.top <= end);
+    const windowEntries = boundedVirtualWindow(visibleEntries, scrollTop() + clientHeight() / 2);
+    pruneVirtualEntryCache(
+      virtualEntryCache,
+      new Set(windowEntries.map((entry) => entry.item.message.id)),
+    );
+    return windowEntries.map((entry) =>
+      virtualEntryFor(virtualEntryCache, entry.item, entry.index, entry.top),
+    );
   });
 
   const showTranscriptLoadingTransition = createMemo(
@@ -646,13 +646,9 @@ function Transcript(props: {
           (row) => row.dataset.messageId === targetMessageId,
         )
       : undefined;
-    const targetAnchors = targetRow
+    const anchors = targetRow
       ? Array.from(targetRow.querySelectorAll<HTMLElement>("[data-agent-avatar-anchor]"))
       : [];
-    const anchors =
-      targetAnchors.length > 0
-        ? targetAnchors
-        : Array.from(transcriptEl.querySelectorAll<HTMLElement>("[data-agent-avatar-anchor]"));
 
     let selected:
       | {
@@ -799,13 +795,23 @@ function Transcript(props: {
     }
   }
 
+  function markNearBottomIfNeeded() {
+    if (transcriptEl && transcriptNearBottom(transcriptEl)) {
+      lastNearBottomAt = performance.now();
+    }
+  }
+
   function flushMeasuredHeights() {
     measuredHeightFrame = undefined;
     if (pendingMeasuredHeights.size === 0) {
       return;
     }
     const wasAtBottom = transcriptEl ? transcriptNearBottom(transcriptEl) : false;
+    if (wasAtBottom) {
+      lastNearBottomAt = performance.now();
+    }
     const recentlyScrolledAway = performance.now() - lastScrolledAwayFromBottomAt < 500;
+    const recentlyNearBottom = performance.now() - lastNearBottomAt < 500;
     let scrollDelta = 0;
     let changed = false;
     for (const [messageId, measurement] of pendingMeasuredHeights) {
@@ -831,13 +837,10 @@ function Transcript(props: {
     if (!transcriptEl) {
       return;
     }
-    if (wasAtBottom && !recentlyScrolledAway) {
+    if (!recentlyScrolledAway && (props.followBottom || wasAtBottom || recentlyNearBottom)) {
       let remainingFrames = TRANSCRIPT_BOTTOM_SETTLE_FRAMES;
       const scroll = () => {
-        if (!transcriptEl) {
-          return;
-        }
-        scrollElementToBottom(transcriptEl);
+        props.onFollowBottom();
         if (remainingFrames <= 0) {
           return;
         }
@@ -864,12 +867,8 @@ function Transcript(props: {
     measuredHeightFrame = requestAnimationFrame(flushMeasuredHeights);
   }
 
-  function maybeLoadEarlierMessages() {
-    if (
-      !transcriptEl ||
-      !props.onLoadEarlierMessages ||
-      transcriptEl.scrollTop > LOAD_EARLIER_SCROLL_TOP
-    ) {
+  function requestEarlierMessages() {
+    if (!transcriptEl || !props.onLoadEarlierMessages || !props.hasEarlierMessages) {
       return;
     }
     if (loadEarlierPromise) {
@@ -961,6 +960,17 @@ function Transcript(props: {
     }
     queueFloatingAvatarUpdate();
   });
+
+  createEffect(() => {
+    virtualItems().length;
+    virtualLayout().totalHeight;
+    const recentlyScrolledAway = performance.now() - lastScrolledAwayFromBottomAt < 500;
+    const recentlyNearBottom = performance.now() - lastNearBottomAt < 500;
+    if ((props.followBottom || recentlyNearBottom) && !props.loading && !recentlyScrolledAway) {
+      requestAnimationFrame(() => props.onFollowBottom());
+    }
+  });
+
   createEffect(() => {
     const sessionId = props.session?.id;
     if (sessionId === measuredSessionId) {
@@ -968,8 +978,6 @@ function Transcript(props: {
     }
     measuredSessionId = sessionId;
     virtualEntryCache.clear();
-    mountedMessageIds = cachedMountedMessageIdsForSession(sessionId);
-    setMountedRowsVersion((version) => version + 1);
     setTranscriptRenderReady(false);
     measuredHeights.clear();
     for (const [messageId, height] of cachedMeasuredHeightsForSession(sessionId)) {
@@ -1001,12 +1009,14 @@ function Transcript(props: {
       onScroll={() => {
         lastScrollUpdateAt = performance.now();
         updateTranscriptViewport();
+        markNearBottomIfNeeded();
+        if (pointerScrollActive) {
+          markManualScrollAwayFromBottom();
+        }
         if (!pendingScrollRestore) {
           cacheTranscriptScroll();
         }
         props.onScroll();
-        markManualScrollAwayFromBottom();
-        maybeLoadEarlierMessages();
         queueFloatingAvatarUpdate();
       }}
       onWheel={(event) => {
@@ -1014,7 +1024,17 @@ function Transcript(props: {
           lastScrolledAwayFromBottomAt = performance.now();
         }
       }}
-      onPointerDown={markManualScrollAwayFromBottom}
+      onPointerDown={() => {
+        pointerScrollActive = true;
+        markManualScrollAwayFromBottom();
+      }}
+      onPointerCancel={() => {
+        pointerScrollActive = false;
+      }}
+      onPointerUp={() => {
+        markManualScrollAwayFromBottom();
+        pointerScrollActive = false;
+      }}
     >
       <div
         ref={(element) => {
@@ -1033,6 +1053,18 @@ function Transcript(props: {
               when={displayMessages().length > 0}
               fallback={<div class="center-state">{sessionTitle(props.session!)}</div>}
             >
+              <Show when={props.hasEarlierMessages}>
+                <div class="transcript-history-control">
+                  <button
+                    type="button"
+                    class="secondary transcript-history-button"
+                    disabled={props.loadingEarlierMessages || Boolean(loadEarlierPromise)}
+                    onClick={requestEarlierMessages}
+                  >
+                    {props.loadingEarlierMessages ? t("loading") : t("showEarlierRecords")}
+                  </button>
+                </div>
+              </Show>
               <div
                 class={classNames(
                   "transcript-virtual-space",
@@ -1049,9 +1081,12 @@ function Transcript(props: {
                       entry={entry}
                       activeToolId={props.activeToolId}
                       latestId={latestId()}
+                      latestAssistantId={latestAssistantId()}
                       sessionStatus={props.session?.status}
                       workspaceDirectory={props.workspaceDirectory}
-                      showAvatarSpace={avatarMode() !== "hidden"}
+                      showAvatarSpace={
+                        avatarMode() !== "hidden" && entry.item().message.role !== "user"
+                      }
                       onTool={props.onTool}
                       onMeasure={updateMeasuredHeight}
                     />
@@ -1118,35 +1153,6 @@ function cacheMeasuredHeight(sessionId: string | undefined, messageId: string, h
   cached.set(messageId, height);
 }
 
-function cachedMountedMessageIdsForSession(sessionId: string | undefined): Set<string> {
-  if (!sessionId) {
-    return new Set();
-  }
-  const cached = transcriptMountedRowsBySession.get(sessionId);
-  if (cached) {
-    transcriptMountedRowsBySession.delete(sessionId);
-    transcriptMountedRowsBySession.set(sessionId, cached);
-    return cached;
-  }
-  const mounted = new Set<string>();
-  transcriptMountedRowsBySession.set(sessionId, mounted);
-  while (transcriptMountedRowsBySession.size > MAX_TRANSCRIPT_HEIGHT_CACHE_SESSIONS) {
-    const oldest = transcriptMountedRowsBySession.keys().next().value;
-    if (!oldest) break;
-    transcriptMountedRowsBySession.delete(oldest);
-  }
-  return mounted;
-}
-
-function syncMountedTranscriptRows(mountedIds: Set<string>, items: ConversationReactionItem[]) {
-  const currentIds = new Set(items.map((item) => item.message.id));
-  for (const id of mountedIds) {
-    if (!currentIds.has(id)) {
-      mountedIds.delete(id);
-    }
-  }
-}
-
 type VirtualMessageEntry = {
   id: string;
   item: Accessor<ConversationReactionItem>;
@@ -1156,6 +1162,43 @@ type VirtualMessageEntry = {
   setIndex: Setter<number>;
   setTop: Setter<number>;
 };
+
+type VirtualWindowEntry = {
+  item: ConversationReactionItem;
+  index: number;
+  top: number;
+  height: number;
+};
+
+function boundedVirtualWindow<T extends VirtualWindowEntry>(entries: T[], center: number): T[] {
+  if (entries.length <= MAX_TRANSCRIPT_RENDERED_MESSAGES) {
+    return entries;
+  }
+  let nearestIndex = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const [index, entry] of entries.entries()) {
+    const midpoint = entry.top + entry.height / 2;
+    const distance = Math.abs(midpoint - center);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  }
+  const halfWindow = Math.floor(MAX_TRANSCRIPT_RENDERED_MESSAGES / 2);
+  const start = Math.min(
+    Math.max(0, nearestIndex - halfWindow),
+    entries.length - MAX_TRANSCRIPT_RENDERED_MESSAGES,
+  );
+  return entries.slice(start, start + MAX_TRANSCRIPT_RENDERED_MESSAGES);
+}
+
+function pruneVirtualEntryCache(cache: Map<string, VirtualMessageEntry>, activeIds: Set<string>) {
+  for (const id of cache.keys()) {
+    if (!activeIds.has(id)) {
+      cache.delete(id);
+    }
+  }
+}
 
 function virtualEntryFor(
   cache: Map<string, VirtualMessageEntry>,
@@ -1191,6 +1234,7 @@ function VirtualMessageCell(props: {
   entry: VirtualMessageEntry;
   activeToolId?: string;
   latestId?: string;
+  latestAssistantId?: string;
   sessionStatus?: Session["status"];
   workspaceDirectory?: string;
   showAvatarSpace: boolean;
@@ -1235,6 +1279,7 @@ function VirtualMessageCell(props: {
         reactions={props.entry.item().reactions}
         activeToolId={props.activeToolId}
         isLatest={props.latestId === props.entry.item().message.id}
+        isLatestAssistant={props.latestAssistantId === props.entry.item().message.id}
         sessionStatus={props.sessionStatus}
         workspaceDirectory={props.workspaceDirectory}
         showAvatarSpace={props.showAvatarSpace}
@@ -1249,6 +1294,7 @@ function MessageCell(props: {
   reactions?: string[];
   activeToolId?: string;
   isLatest: boolean;
+  isLatestAssistant: boolean;
   sessionStatus?: Session["status"];
   workspaceDirectory?: string;
   showAvatarSpace: boolean;
@@ -1374,7 +1420,7 @@ function MessageCell(props: {
                 "assistant-stack assistant-text",
                 isAgentWorking() && !hasSummary() && "assistant-thinking-anchor",
               )}
-              data-agent-avatar-anchor
+              data-agent-avatar-anchor={props.isLatestAssistant ? "" : undefined}
               data-agent-text-block={hasSummary() || isAgentWorking() ? "" : undefined}
             >
               <Index each={assistantBlocks()}>

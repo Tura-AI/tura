@@ -298,6 +298,7 @@ export const zhCN = {
   scrollToBottom: "滚动到底部",
   settings: "设置",
   showMore: "展开显示 {count} 个",
+  showEarlierRecords: "显示更早记录",
   skillFolders: "技能目录",
   size: "大小",
   source: "来源",

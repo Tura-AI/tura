@@ -101,10 +101,10 @@ async def mounted_count(page) -> int:
 
 async def assert_mounted_bounded(page, label: str) -> None:
     count = await mounted_count(page)
-    if count <= 0 or count > 400:
+    if count <= 0 or count > 100:
         raise AssertionError(f"{label}: expected bounded mounted messages, got {count}")
     dom_count = await page.locator(".transcript .message").count()
-    if dom_count <= 0 or dom_count > 400:
+    if dom_count <= 0 or dom_count > 100:
         raise AssertionError(f"{label}: expected bounded message DOM nodes, got {dom_count}")
 
 
@@ -280,9 +280,8 @@ async def assert_scrollbar_drag_not_pulled_by_delta(page) -> None:
     await page.locator(".transcript").dispatch_event("scroll")
     await page.wait_for_selector(STREAM_ROOT_SELECTOR, state="attached", timeout=20_000)
     await page.wait_for_timeout(120)
-    await page.locator(".transcript").evaluate(
-        "(el) => { el.dataset.e2eManualScrollbarDrag = '1'; el.scrollTop = el.scrollHeight; }"
-    )
+    await page.locator(".transcript").dispatch_event("pointerdown")
+    await page.locator(".transcript").evaluate("(el) => { el.scrollTop = el.scrollHeight; }")
     for step in range(8):
         await page.locator(".transcript").evaluate(
             """
@@ -297,6 +296,7 @@ async def assert_scrollbar_drag_not_pulled_by_delta(page) -> None:
         )
         await page.wait_for_timeout(25)
         await page.screenshot(path=str(OUT / f"scrollbar-drag-{step:02d}.png"), full_page=False)
+    await page.locator(".transcript").dispatch_event("pointerup")
     await page.wait_for_timeout(120)
     geometry = await page.locator(".transcript").evaluate(
         """
@@ -405,18 +405,18 @@ async def assert_scroll_restored_after_conversation_remount(page) -> None:
         """
     )
     await page.screenshot(path=str(OUT / "scroll-restore-before.png"), full_page=False)
-    await page.get_by_role("button", name="File browser").click()
-    await page.wait_for_selector(".files-view", state="attached", timeout=20_000)
-    await page.get_by_role("button", name="Session").click()
+    await page.locator(".settings-entry").click()
+    await page.wait_for_selector(".settings-view", state="attached", timeout=20_000)
+    await page.locator(".settings-back").click()
     await page.wait_for_selector(".transcript-virtual-space[data-virtual-count='2200']", state="attached", timeout=20_000)
     await page.wait_for_function(
         """
-        ({ id, scrollTop, y }) => {
+        ({ id, y }) => {
           const row = document.querySelector(`[data-message-id="${id}"]`);
           const transcript = document.querySelector(".transcript");
           if (!row || !transcript) return false;
           const box = row.getBoundingClientRect();
-          return Math.abs(transcript.scrollTop - scrollTop) <= 4 && Math.abs(box.y - y) <= 6;
+          return Math.abs(box.y - y) <= 6;
         }
         """,
         arg=anchor_before,
@@ -435,8 +435,6 @@ async def assert_scroll_restored_after_conversation_remount(page) -> None:
         anchor_before["id"],
     )
     await page.screenshot(path=str(OUT / "scroll-restore-after.png"), full_page=False)
-    if abs(anchor_after["scrollTop"] - anchor_before["scrollTop"]) > 4:
-        raise AssertionError(f"conversation remount did not restore scrollTop: before={anchor_before}, after={anchor_after}")
     if abs(anchor_after["y"] - anchor_before["y"]) > 6:
         raise AssertionError(f"conversation remount changed visible anchor: before={anchor_before}, after={anchor_after}")
 

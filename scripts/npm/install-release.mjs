@@ -17,8 +17,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   cliPathRegistrationSkipped,
+  ensureWindowsPowerShellCommand,
   registerCliPath,
-  resolveWindowsPowerShellCommand,
 } from "./cli-path.mjs";
 import {
   executableName,
@@ -72,6 +72,16 @@ function registerCli() {
   log("CLI command registered");
 }
 
+function ensurePowerShellCliPath() {
+  if (process.platform !== "win32") {
+    return;
+  }
+  const powerShell = ensureWindowsPowerShellCommand({ quiet: true });
+  if (!powerShell) {
+    fail("PowerShell was not found. Restore Windows PowerShell to PATH, set TURA_POWERSHELL_PATH, or install PowerShell 7.");
+  }
+}
+
 function releaseUrl() {
   if (process.env.TURA_NPM_RELEASE_URL) {
     return process.env.TURA_NPM_RELEASE_URL;
@@ -119,7 +129,7 @@ function extractArchive(archivePath) {
   mkdirSync(releaseDir, { recursive: true });
   if (archivePath.endsWith(".zip")) {
     if (process.platform === "win32") {
-      const powerShell = resolveWindowsPowerShellCommand();
+      const powerShell = ensureWindowsPowerShellCommand();
       if (!powerShell) {
         fail("PowerShell was not found. Restore Windows PowerShell to PATH, set TURA_POWERSHELL_PATH, or install PowerShell 7.");
       }
@@ -217,9 +227,12 @@ if (
   process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "1" ||
   process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "true"
 ) {
+  ensurePowerShellCliPath();
   log("release download skipped by TURA_NPM_SKIP_RELEASE_DOWNLOAD");
   process.exit(0);
 }
+
+ensurePowerShellCliPath();
 
 const existingMissing = missingReleaseFiles(packageRoot);
 if (existingMissing.length === 0) {

@@ -29,11 +29,52 @@ pub(crate) fn finish_runtime_failure_with_usage(
     status: RuntimeCallResultStatus,
     usage: Option<UsageReport>,
 ) -> Result<(), String> {
+    finish_runtime_failure_with_policy(
+        runtime,
+        finished_at,
+        error_code,
+        error_text,
+        status,
+        usage,
+        true,
+        true,
+    )
+}
+
+pub(crate) fn finish_provider_call_failure(
+    runtime: &mut RuntimeManagement,
+    finished_at: DateTime<Utc>,
+    error: &tura_llm_rust::TuraError,
+    status: RuntimeCallResultStatus,
+) -> Result<(), String> {
+    let retry_allowed = !error.is_non_retryable_provider_failure();
+    finish_runtime_failure_with_policy(
+        runtime,
+        finished_at,
+        "CALL_FAILED",
+        error.to_string(),
+        status,
+        None,
+        retry_allowed,
+        retry_allowed,
+    )
+}
+
+fn finish_runtime_failure_with_policy(
+    runtime: &mut RuntimeManagement,
+    finished_at: DateTime<Utc>,
+    error_code: &str,
+    error_text: String,
+    status: RuntimeCallResultStatus,
+    usage: Option<UsageReport>,
+    retry_allowed: bool,
+    fallback_allowed: bool,
+) -> Result<(), String> {
     let err = RuntimeError {
         error_code: Some(error_code.to_string()),
         error_text: Some(error_text),
-        retry_allowed: true,
-        fallback_allowed: true,
+        retry_allowed,
+        fallback_allowed,
         fallback_to_id: None,
     };
     runtime

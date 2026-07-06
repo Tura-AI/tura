@@ -140,10 +140,16 @@ function isRuntimeRoot(candidate: string): boolean {
 
 function canonical(value: string): string {
   try {
-    return realpathSync(value);
+    return stripVerbatimPrefix(realpathSync.native(value));
   } catch {
-    return resolve(value);
+    return stripVerbatimPrefix(resolve(value));
   }
+}
+
+function stripVerbatimPrefix(value: string): string {
+  if (value.startsWith("\\\\?\\UNC\\")) return `\\\\${value.slice("\\\\?\\UNC\\".length)}`;
+  if (value.startsWith("\\\\?\\")) return value.slice("\\\\?\\".length);
+  return value;
 }
 
 function stripTrailingSlash(value: string): string {

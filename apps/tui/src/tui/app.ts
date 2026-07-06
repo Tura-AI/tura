@@ -271,6 +271,13 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
         sessionConfig: next.sessionConfig,
         modelConfig: next.modelConfig,
       });
+      if (next.settingsOpen && next.settingDetail) {
+        dispatch({
+          type: "open-setting-detail",
+          detail: next.settingDetail,
+          providerID: next.selectedProviderID,
+        });
+      }
       const mockInitialComposer = context.mock ? process.env.TURA_TUI_MOCK_INITIAL_COMPOSER : "";
       if (mockInitialComposer) dispatch({ type: "composer", value: mockInitialComposer });
       dispatch({ type: "questions", value: next.questions });

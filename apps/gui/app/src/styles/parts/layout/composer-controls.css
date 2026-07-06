@@ -109,6 +109,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
   padding: 0;
   scrollbar-gutter: stable both-edges;
 }
@@ -130,6 +131,19 @@
 .transcript-virtual-space.transcript-render-preparing {
   visibility: hidden;
   pointer-events: none;
+}
+
+.transcript-history-control {
+  display: flex;
+  justify-content: center;
+  padding: 0 0 var(--space-3);
+}
+
+.transcript-history-button {
+  min-height: 30px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-small);
 }
 
 .transcript-virtual-row {

@@ -13,7 +13,9 @@ use crate::provider_flow::command_run_streaming::{
     ensure_streamed_command_run_tool_record, spawn_streamed_command_run_task,
     SpawnStreamedCommandRunTask, StreamedCommandRunState,
 };
-use crate::provider_flow::errors::{finish_runtime_failure, runtime_timeout};
+use crate::provider_flow::errors::{
+    finish_provider_call_failure, finish_runtime_failure, runtime_timeout,
+};
 use crate::provider_flow::provider_response::apply_provider_response_with_options;
 use crate::provider_flow::streamed_command_run::{
     command_run_stream_events_from_provider_content, streamed_command_run_call_id,
@@ -152,13 +154,7 @@ pub(crate) async fn call_runtime_streaming(
                         runtime.set_output(serde_json::json!({
                             "error": e.to_string()
                         }));
-                        finish_runtime_failure(
-                            runtime,
-                            finished_at,
-                            "CALL_FAILED",
-                            e.to_string(),
-                            RuntimeCallResultStatus::Failed,
-                        )?;
+                        finish_provider_call_failure(runtime, finished_at, &e, RuntimeCallResultStatus::Failed)?;
                         drop(final_response_stream_tx);
                         let _ = command_task.join();
                         return Ok(());
