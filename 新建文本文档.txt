@@ -1,0 +1,32 @@
+start:
+-overview
+-install
+-how to start
+-CLI parameters
+-settings
+-sessions
+-providers
+
+core：
+-task status
+-runtime prompt
+-command run
+-commands
+-agents
+-personas
+
+framework：
+-session db
+-gateway
+-router
+-runtime
+-tool
+-Terminal user interface
+-Graphic user interface
+
+customization
+-Custom providers
+-Custom personas
+-Custom agents
+-Custom runtime prompt
+-Custom commands
