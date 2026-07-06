@@ -204,7 +204,10 @@ runtime is less impressionable.
 
 Use the active shell command name exposed in the schema. On Windows the default
 is `shell_command`; on macOS it defaults to `zsh`; on Linux it defaults to
-`bash`. `TURA_COMMAND_RUN_SHELL` can force `shell_command`, `bash`, or `zsh`.
+`bash`. On Windows, `shell_command` resolves PowerShell through PATH or the
+standard system install paths before falling back to `cmd.exe`; it does not
+trust an unresolved bare `pwsh`/`powershell` name. `TURA_COMMAND_RUN_SHELL` can
+force `shell_command`, `bash`, or `zsh`.
 
 Plain text is accepted:
 

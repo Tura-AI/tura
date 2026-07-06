@@ -72,20 +72,8 @@ pub(super) fn default_posix_shell_executable() -> (PathBuf, &'static str) {
     (PathBuf::from("sh"), "sh")
 }
 
-pub(super) fn powershell_executable() -> PathBuf {
-    if !cfg!(windows) {
-        return PathBuf::from("pwsh");
-    }
-    [
-        r"C:\Program Files\PowerShell\7\pwsh.exe",
-        "pwsh",
-        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-        "powershell",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .find(|path| path == Path::new("pwsh") || path == Path::new("powershell") || path.exists())
-    .unwrap_or_else(|| PathBuf::from("powershell"))
+pub(super) fn windows_shell_executable() -> tura_path::shell_fallback::WindowsShell {
+    tura_path::shell_fallback::resolve_windows_shell()
 }
 
 pub(super) fn normalize_bash_command(command: &str) -> String {
@@ -232,10 +220,10 @@ pub(super) fn supported_posix_shell_kind(path: &Path) -> Option<&'static str> {
 mod tests {
     use super::{
         default_posix_shell_executable, looks_posix_shell_script, normalize_bash_command,
-        powershell_executable, prefix_powershell_script_with_utf8, supported_posix_shell_kind,
+        prefix_powershell_script_with_utf8, supported_posix_shell_kind, windows_shell_executable,
         zsh_candidate_paths,
     };
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     #[test]
     fn utf8_prefix_is_idempotent() {
@@ -254,9 +242,9 @@ mod tests {
         assert!(matches!(kind, "bash" | "zsh" | "sh"));
         assert!(!posix_path.as_os_str().is_empty());
 
-        let powershell = powershell_executable();
-        assert!(!powershell.as_os_str().is_empty());
         if cfg!(windows) {
+            let powershell = windows_shell_executable().executable;
+            assert!(!powershell.as_os_str().is_empty());
             let name = powershell
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -264,11 +252,9 @@ mod tests {
             assert!(
                 matches!(
                     name.to_ascii_lowercase().as_str(),
-                    "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe"
+                    "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe" | "cmd.exe"
                 ) || powershell.is_absolute()
             );
-        } else {
-            assert_eq!(powershell, PathBuf::from("pwsh"));
         }
     }
 

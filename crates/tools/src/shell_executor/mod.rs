@@ -80,8 +80,16 @@ pub fn execute(
             .arg(shell::normalize_bash_command(&command_text));
         command
     } else if cfg!(windows) {
-        let mut command = Command::new(shell::powershell_executable());
-        command.arg("-NoProfile").arg("-Command").arg(&command_text);
+        let windows_shell = shell::windows_shell_executable();
+        let mut command = Command::new(windows_shell.executable);
+        match windows_shell.kind {
+            tura_path::shell_fallback::WindowsShellKind::PowerShell => {
+                command.arg("-NoProfile").arg("-Command").arg(&command_text);
+            }
+            tura_path::shell_fallback::WindowsShellKind::Cmd => {
+                command.arg("/c").arg(&command_text);
+            }
+        }
         command
     } else {
         let (executable, kind) = shell::default_posix_shell_executable();
@@ -149,11 +157,19 @@ pub async fn execute_async(
             .arg(shell::normalize_bash_command(&command_text));
         command
     } else if cfg!(windows) {
-        let mut command = tokio::process::Command::new(shell::powershell_executable());
-        command
-            .arg("-NoProfile")
-            .arg("-Command")
-            .arg(shell::prefix_powershell_script_with_utf8(&command_text));
+        let windows_shell = shell::windows_shell_executable();
+        let mut command = tokio::process::Command::new(windows_shell.executable);
+        match windows_shell.kind {
+            tura_path::shell_fallback::WindowsShellKind::PowerShell => {
+                command
+                    .arg("-NoProfile")
+                    .arg("-Command")
+                    .arg(shell::prefix_powershell_script_with_utf8(&command_text));
+            }
+            tura_path::shell_fallback::WindowsShellKind::Cmd => {
+                command.arg("/c").arg(&command_text);
+            }
+        }
         command
     } else {
         let (executable, kind) = shell::default_posix_shell_executable();
