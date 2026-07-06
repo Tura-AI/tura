@@ -7,7 +7,7 @@ ending with a confident shrug. Computers already do enough shrugging.
 
 ## Benchmark advantage first
 
-The homepage copy in `i18n.js` makes the claim in measurable terms:
+
 Tura is built to solve problems other coding agents cannot reliably finish. In
 150+ long-horizon benchmark tasks, the copy reports Tura saving 75% of tokens and
 scoring 89%, 24% higher than Claude Code.
@@ -17,7 +17,7 @@ extensions in real development workflows: inspect a production repository, hold
 the task objective for many turns, run the right commands, patch the right owner
 code, recover from failed validation, and prove the result.
 
-| Benchmark dimension | Concrete shape from `i18n.js` | Why it matters |
+| Benchmark dimension | Benchamrk | Why it matters |
 | --- | --- | --- |
 | Long-horizon task set | 150+ long-horizon benchmark tasks | Measures persistence across multi-step repository work instead of one-shot answers. |
 | Diversified debug tasks | Tasks require 20+ turns on average | Forces reproduction, trace inspection, patching, reruns, and follow-up decisions. |
