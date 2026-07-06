@@ -241,8 +241,7 @@ Runtime prompts differ from environment skills:
 | Command capability impact | Directly extends `command_run` commands | Indirect, if the skill provides tools or instructions |
 | Best use | Task-mode discipline and completion criteria | External workflows, specialized assets, connector knowledge |
 
-See also
-[`docs/runtime-prompts-vs-skills.md`](../runtime-prompts-vs-skills.md).
+See also the [Runtime prompts vs skills](#runtime-prompts-vs-skills) section.
 
 ## Customization
 

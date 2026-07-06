@@ -9,7 +9,7 @@ The whole-project owner reference is [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 | Area | Owner reference |
 | --- | --- |
-| Session DB | [doc/architecture/session-db.md](../architecture/session-db.md) |
+| Session DB | [docs/architecture/session-db.md](../architecture/session-db.md) |
 | Gateway | [crates/gateway/ARCHITECTURE.md](../../crates/gateway/ARCHITECTURE.md) |
 | Router | [crates/router/ARCHITECTURE.md](../../crates/router/ARCHITECTURE.md) |
 | Runtime | [crates/runtime/ARCHITECTURE.md](../../crates/runtime/ARCHITECTURE.md) |

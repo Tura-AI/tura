@@ -3,8 +3,8 @@
 Tura is a terminal-native developer tool for turning intent into verified code
 changes with disciplined motion, audit trails, and repo-aware control.
 
-This `doc/` tree is the GitBook-oriented documentation entry. It organizes the
-existing repository documentation into a stable reading path and links to deeper
+This `docs/` tree is the GitBook-oriented documentation entry. It organizes the
+repository documentation into a stable reading path and links to deeper
 source-owned references instead of duplicating long implementation notes.
 
 ## Main paths
@@ -15,7 +15,7 @@ source-owned references instead of duplicating long implementation notes.
 
 ## Documentation policy
 
-- User-facing docs live in `doc/`.
-- Existing deep references under `docs/`, crate `README.md`, and crate
-  `ARCHITECTURE.md` stay linked from the matching `doc/` page.
+- User-facing docs live in `docs/`.
+- Existing deep references, crate `README.md`, and crate `ARCHITECTURE.md` stay
+  linked from the matching `docs/` page.
 - Do not copy large sections when a link to the owner document is clearer.
