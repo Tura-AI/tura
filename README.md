@@ -42,8 +42,8 @@ Most coding agents pay too much token overhead for scattered tools, forget long 
 | Problem | Tura mechanism | Main docs |
 | --- | --- | --- |
 | Repeated tool schemas and command chatter | One compact `command_run` macro surface with ordered steps | [Command Run](doc/core/command-run.md) |
-| Prompt bloat from every manual every turn | Runtime prompt manuals selected by `task_type` | [Runtime Prompt](doc/core/runtime-prompt.md) |
-| Long tasks losing state | `task_status`, session records, compact context handoffs | [Task Status](doc/core/task-status.md), [Context Management](doc/core/context-management.md) |
+| Prompt bloat from every manual every turn | Runtime prompt manuals selected by `task_type` | [Runtime Prompt](docs/core/runtime-prompt.md) |
+| Long tasks losing state | `task_status`, session records, compact context handoffs | [Task Status](docs/core/task-status.md), [Context Management](docs/core/context-management.md) |
 | CLI, TUI, and GUI splitting history | Shared gateway/router/session_db pipeline | [Sessions](doc/start/sessions.md), [Session DB](doc/architecture/session-db.md) |
 | Provider and model routing chaos | Provider catalog, routes, auth metadata, latency policy | [Providers](doc/start/providers.md) |
 | Weak verification | Business tests, OS tests, live tests, benchmarks, command evidence | [Testing](doc/development/testing.md), [Benchmark](doc/development/benchmark.md) |
@@ -64,9 +64,9 @@ The organized documentation set lives in [`doc/`](doc/SUMMARY.md). Older Markdow
 
 ### Core
 
-- [Task Status](doc/core/task-status.md) - task_status is an internal state update command for doing, question, done, task_group, task_type, and compact_context; it is not a substitute for user-visible replies.
-- [Context Management](doc/core/context-management.md) - Context management keeps long tasks oriented by storing session records, compacting crowded transcripts, and reinserting active runtime manuals.
-- [Runtime Prompt](doc/core/runtime-prompt.md) - Runtime prompts are Tura-owned operating manuals selected by task_type; they differ from external skills because they shape discipline, tools, and completion rules.
+- [Task Status](docs/core/task-status.md) - task_status is an internal state update command for doing, question, done, task_group, task_type, and compact_context; it is not a substitute for user-visible replies.
+- [Context Management](docs/core/context-management.md) - Context management keeps long tasks oriented by storing session records, compacting crowded transcripts, and reinserting active runtime manuals.
+- [Runtime Prompt](docs/core/runtime-prompt.md) - Runtime prompts are Tura-owned operating manuals selected by task_type; they differ from external skills because they shape discipline, tools, and completion rules.
 - [Command Run](doc/core/command-run.md) - command_run is the compact macro tool surface for batching shell commands, patches, media/web commands, and task-state updates into ordered steps.
 - [Commands](doc/core/commands.md) - Commands are local tool implementations exposed through command_run or router registry entries, with schemas, policies, prompts, timeouts, and output shaping.
 - [Agents](doc/core/agents.md) - Agents define prompt identity, provider defaults, capabilities, reporting behavior, validation behavior, aliases, and whether operation manuals are active.
