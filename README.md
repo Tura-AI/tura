@@ -1,166 +1,124 @@
 # Tura
 
-Tura is a local AI coding system for long, tool-heavy engineering work. It is
-built around a Rust runtime, a single compact `command_run` tool surface,
-runtime operation manuals, durable task state, local session history, and
-first-class CLI/TUI/GUI clients.
+Tura is a terminal-native AI coding system for long-horizon engineering work: repository inspection, code changes, verification, session continuity, provider routing, and UI-assisted operation.
 
-It is not trying to be another chat box that sprays code into a repo and calls
-that progress. Tura is aimed at the parts of agentic coding people complain
-about most: loops that forget the goal, prompt bloat, scattered tool calls,
-"AI slop" patches, weak verification, and assistants that have no maintenance
-sense.
+The short version: Tura tries to make agent work less like a chat box throwing patches at a wall and more like a local engineering runtime with state, tools, manuals, and evidence. Still glamorous, in the way a torque wrench is glamorous.
 
-Rust builds use the pinned toolchain in `rust-toolchain.toml`. The repository is
-licensed under AGPL-3.0-or-later; see `LICENSE`.
+## What Tura is
 
-## Try It
+Tura combines a Rust backend pipeline, a compact `command_run` tool surface, runtime prompt manuals, durable session history, provider/model routing, and CLI/TUI/GUI clients. The landing-page copy in `i18n.js` describes it as an open-source coding agent built around macro CLI execution, reasoning discipline, prompt/runtime control, and test-driven development. The repository code backs that up with real components:
 
-Full setup, build, launcher, CI, and release commands live in the dedicated
-[install and start guide](docs/getting-started.md). The shortest local path is:
+- `crates/runtime` owns the agent turn loop, prompt assembly, runtime manuals, provider streaming, command callbacks, context compaction, and final response shaping.
+- `crates/tools` owns `command_run`, concrete commands, shell execution, patches, task status, locks, cancellation, and tool output shaping.
+- `crates/session_log` owns durable SQLite-backed session, message, task, todo, checkpoint, and workspace history.
+- `crates/router` owns the per-home daemon, session_db startup/adoption, runtime worker dispatch, registry operations, and router-owned command execution.
+- `crates/gateway` exposes HTTP/SSE APIs used by the TUI and GUI.
+- `crates/provider` owns provider configuration, auth metadata, model routing, response extraction, streaming, logging, and usage data.
+- `apps/tui` is the terminal client and CLI command layer.
+- `apps/gui` and `apps/tauri` provide the graphical workspace client.
+
+## Install and start
 
 ```powershell
 .\scripts\install.ps1
 .\scripts\build-release.ps1
 .\scripts\register-cli.ps1
-tura exec "Inspect this workspace and summarize what makes it unusual"
+tura exec "Inspect this workspace and summarize the risky parts"
 ```
 
 ```bash
 ./scripts/install.sh
 ./scripts/build-release.sh
-scripts/register-cli.sh
-tura exec "Inspect this workspace and summarize what makes it unusual"
+./scripts/register-cli.sh
+tura exec "Inspect this workspace and summarize the risky parts"
 ```
 
-## Why Tura Exists
+If installed from npm, the package entry is `npm/tura.mjs`; it locates the platform release binary, sets `TURA_PROJECT_ROOT`, optionally sets `TURA_PROVIDER_CONFIG`, and forwards arguments to the real binary.
 
-Most coding agents expose too much raw machinery to the model, keep enormous
-prompt surfaces alive forever, and rely on the model to remember how to be a
-good engineer. Tura moves the boring but important parts into runtime structure.
+## Why it is built this way
 
-The shape is:
+Most coding agents pay too much token overhead for scattered tools, forget long tasks, and declare success before verification. Tura's answer is structural rather than motivational posters:
 
-- A compact `command_run` surface for shell, patch, media, web, and task-state
-  operations, with internal scheduling for multi-step work.
-- Runtime prompt manuals selected by task type, so a frontend task gets
-  frontend guidance and a debug task gets debug discipline without pasting every
-  manual into every prompt.
-- Dynamic context and session management across CLI/TUI/GUI. CLI runs do not
-  have to start from empty memory, and a desktop workspace does not become a
-  graveyard of hundreds of disconnected new sessions.
-- Structured task state for active work, open questions, compact handoffs, and
-  completion, so long tasks can pause, compress, and resume with the useful
-  context still attached.
-- Repo-aware guardrails for file locks, command safety, schema normalization,
-  shell process handling, media reading, web discovery, command output shaping,
-  business tests, and benchmarks.
-
-The result is a coding assistant that is designed to be cheaper in tokens,
-faster in command-heavy loops, harder to derail, and more useful on work that
-needs taste, verification, and maintenance judgement.
-
-## Feature Map
-
-| Problem people complain about | Tura answer | Details |
+| Problem | Tura mechanism | Main docs |
 | --- | --- | --- |
-| Tool-call spam and repeated schema overhead | `command_run` exposes one compact tool, then schedules many internal commands by step | [Command Run](docs/command-run.md) |
-| Prompt bloat from every skill, every time | Runtime prompt manuals are selected by `task_type` and persisted as session records | [Runtime Prompts vs Skills](docs/runtime-prompts-vs-skills.md) |
-| Long tasks that loop, forget, or declare victory early | Structured task state, explicit completion rules, retry prompts, and compact handoffs | [Long Task Loop](docs/long-task-loop.md) |
-| CLI starts from nothing, desktop piles up too many fresh sessions | Dynamic context and workspace session management reuse the useful history, task state, and handoffs across fronts | [Operational overview](docs/overview.md), [Long Task Loop](docs/long-task-loop.md) |
-| "AI slop" code that only satisfies the visible prompt | Repo rules, business tests, typed runners, command safety, and verification pressure | [Rules](docs/rules.md), [Tests](tests/README.md) |
-| Agents that cannot inspect media, web pages, or reusable assets without bloating context | `read_media`, `web_discover`, and `generate_media` return compact artifacts, summaries, and downloaded asset folders | [Tools Crate](crates/tools/ARCHITECTURE.md) |
-| Benchmarks nobody can reproduce | Benchmark harnesses collect usage, command counts, wall time, provider time, and artifacts | [Benchmarks](benchmark/README.md) |
+| Repeated tool schemas and command chatter | One compact `command_run` macro surface with ordered steps | [Command Run](doc/core/command-run.md) |
+| Prompt bloat from every manual every turn | Runtime prompt manuals selected by `task_type` | [Runtime Prompt](doc/core/runtime-prompt.md) |
+| Long tasks losing state | `task_status`, session records, compact context handoffs | [Task Status](doc/core/task-status.md), [Context Management](doc/core/context-management.md) |
+| CLI, TUI, and GUI splitting history | Shared gateway/router/session_db pipeline | [Sessions](doc/start/sessions.md), [Session DB](doc/architecture/session-db.md) |
+| Provider and model routing chaos | Provider catalog, routes, auth metadata, latency policy | [Providers](doc/start/providers.md) |
+| Weak verification | Business tests, OS tests, live tests, benchmarks, command evidence | [Testing](doc/development/testing.md), [Benchmark](doc/development/benchmark.md) |
 
-## Command Run Is The Bet
+## Documentation map
 
-`command_run` is the main trick. Instead of asking the provider to juggle a
-large menu of tools, Tura shows one compact schema and lets the model submit a
-batch:
+The organized documentation set lives in [`doc/`](doc/SUMMARY.md). Older Markdown files under `docs/` and crate-local README/ARCHITECTURE files are preserved.
 
-```json
-{
-  "commands": [
-    { "command_type": "shell_command", "command_line": "rg -n \"TODO\" crates", "step": 1 },
-    { "command_type": "shell_command", "command_line": "rg --files crates/runtime/src", "step": 1 },
-    { "command_type": "apply_patch", "command_line": "*** Begin Patch\n...\n*** End Patch", "step": 2 },
-    { "command_type": "shell_command", "command_line": "cargo test -p runtime --lib", "step": 3 },
-    { "command_type": "task_status", "command_line": "{\"status\":\"done\"}", "step": 4 }
-  ]
-}
+### Start
+
+- [Overview](doc/start/overview.md) - Tura is a terminal-native coding agent system built for long-horizon engineering work, verified edits, durable context, and a compact command surface.
+- [Install](doc/start/install.md) - Installation prepares Rust, Node or Bun client dependencies, command packages, release binaries, and the registered CLI path.
+- [How to Start](doc/start/how-to-start.md) - Start from the smallest front that fits the job: CLI for direct work, TUI for terminal conversation, GUI for workspace session management.
+- [CLI Parameters](doc/start/cli-parameters.md) - CLI parameters choose workspace, model, agent, output mode, streaming behavior, command-run shell, session reuse, and low-level gateway access.
+- [Settings](doc/start/settings.md) - Settings are split between provider configuration, workspace session configuration, UI preferences, and environment overrides.
+- [Sessions](doc/start/sessions.md) - Sessions are durable workspace-scoped conversations with messages, task state, todos, compact handoffs, and replayable command records.
+- [Providers](doc/start/providers.md) - Providers are catalog entries, auth methods, model routes, latency policies, and runtime model tiers used by the provider crate and clients.
+
+### Core
+
+- [Task Status](doc/core/task-status.md) - task_status is an internal state update command for doing, question, done, task_group, task_type, and compact_context; it is not a substitute for user-visible replies.
+- [Context Management](doc/core/context-management.md) - Context management keeps long tasks oriented by storing session records, compacting crowded transcripts, and reinserting active runtime manuals.
+- [Runtime Prompt](doc/core/runtime-prompt.md) - Runtime prompts are Tura-owned operating manuals selected by task_type; they differ from external skills because they shape discipline, tools, and completion rules.
+- [Command Run](doc/core/command-run.md) - command_run is the compact macro tool surface for batching shell commands, patches, media/web commands, and task-state updates into ordered steps.
+- [Commands](doc/core/commands.md) - Commands are local tool implementations exposed through command_run or router registry entries, with schemas, policies, prompts, timeouts, and output shaping.
+- [Agents](doc/core/agents.md) - Agents define prompt identity, provider defaults, capabilities, reporting behavior, validation behavior, aliases, and whether operation manuals are active.
+- [Personas](doc/core/personas.md) - Personas control communication style, visible identity, optional media expressions, and prompt fragments without changing the agent's engineering capabilities.
+
+### Architecture
+
+- [Session DB](doc/architecture/session-db.md) - Session DB is the single SQLite owner per TURA_HOME and the durable store for workspace sessions, records, task state, todos, and queued writes.
+- [Gateway](doc/architecture/gateway.md) - Gateway is the HTTP/SSE front used by TUI and GUI for health, config, providers, sessions, prompt streaming, files, projects, and product routes.
+- [Router](doc/architecture/router.md) - Router is the per-home daemon that owns session_db startup, runtime worker dispatch, command_run execution, registry operations, and IPC routing.
+- [Runtime](doc/architecture/runtime.md) - Runtime owns the agent turn loop: session bootstrap, prompt assembly, provider streaming, tool callbacks, runtime manuals, checkpoints, and final response shaping.
+- [Tool](doc/architecture/tool.md) - The tool crate defines ToolCall, ToolPayload, ToolContext, cancellation, file locks, command routing, and concrete command implementations.
+- [Terminal User Interface](doc/architecture/terminal-user-interface.md) - The TypeScript TUI is a thin terminal client that talks to gateway APIs for sessions, prompts, providers, agents, personas, config, and streaming events.
+- [Graphic User Interface](doc/architecture/graphic-user-interface.md) - The GUI is a Solid/Vite application hosted by Tauri or gateway static serving; it manages workspace navigation, sessions, settings, files, plans, and provider auth.
+
+### Customization
+
+- [Custom Providers](doc/customization/custom-providers.md) - Custom providers extend provider_config.json, auth registry behavior, model tiers, route fallback, latency policy, and client-visible catalog metadata.
+- [Custom Personas](doc/customization/custom-personas.md) - Custom personas add prompt fragments, communication style, display metadata, and optional media expression manifests under personas/src.
+- [Custom Agents](doc/customization/custom-agents.md) - Custom agents define model defaults, capabilities, prompts, validator behavior, aliases, operation manual policy, and reporting style.
+- [Custom Runtime Prompt](doc/customization/custom-runtime-prompt.md) - Runtime prompt customization changes the task_type catalog, manual dependency graph, capability injection, and manual append rules in runtime_prompt_manual.rs.
+- [Custom Commands](doc/customization/custom-commands.md) - Custom commands add new tool handlers, schemas, policies, prompts, router metadata, tests, and agent capability exposure.
+
+### Development
+
+- [Scripts](doc/development/scripts.md) - Scripts install dependencies, build debug/release binaries, register CLI paths, run CI, create release packages, and verify NPM platform artifacts.
+- [Testing](doc/development/testing.md) - Testing is split into business, OS, live, performance, release, app, and benchmark-style checks, with business tests kept local and deterministic.
+- [Environment](doc/development/environment.md) - Environment variables select home directories, release binaries, provider config, provider keys, logs, benchmark agents, and command-run shell behavior.
+- [Development Architecture](doc/development/architecture.md) - Development architecture explains crate ownership, binary topology, package boundaries, process roles, file locks, and documentation ownership.
+- [Benchmark](doc/development/benchmark.md) - Benchmarks are manual long-horizon comparison suites that launch real agents, collect artifacts, normalize token and command usage, and score outcomes.
+
+## Main executable paths
+
+| Entry | Purpose | Source owner |
+| --- | --- | --- |
+| `tura exec` | Rust one-shot coding prompt | `runRustCliExec` in `apps/tui/src/cli.ts`, `tura_exec::main` in `crates/gateway/src/bin/tura_exec.rs` |
+| `tura` / `tura run` | Interactive or non-interactive terminal client | `runCli` in `apps/tui/src/cli.ts`, `runPrompt` in `apps/tui/src/commands/run.ts` |
+| `tura_gateway` | HTTP/SSE API and static GUI serving | `build_router` and `run_server` in `crates/gateway/src/web/server.rs` |
+| `tura_router` | Per-home router daemon and registry CLI | `run_router_command` in `crates/router/src/cli.rs` |
+| `tura_runtime` | Per-session runtime worker | `main` in `crates/runtime/src/bin/tura_runtime.rs` |
+| `tura_session_db` | SQLite session-log owner | `run_socket_service` in `crates/session_log/src/service.rs` |
+
+## Development checks
+
+```powershell
+.\scripts\check-backend-quality.ps1
+npm --prefix apps\tui test
+bun run --cwd apps\gui test
 ```
 
-That matters for token economics. A normal multi-tool loop pays for repeated
-tool schemas, separate tool calls, repeated command narration, and callback
-history. Tura keeps the provider-facing surface small, groups independent reads
-in one step, streams command progress, and normalizes results before they become
-future context. In command-heavy workflows this is the path to 70%+ token
-reduction compared with direct multi-tool chatter; the exact number depends on
-the provider, task, and benchmark mix.
+Use focused crate checks while editing a single subsystem, then run broader checks before packaging or release work. Live provider tests are intentionally separate from deterministic business tests because bills are not a testing strategy.
 
-Start with [docs/command-run.md](docs/command-run.md), then inspect the source:
-[schema](crates/tools/src/command_run/schema.json),
-[handler](crates/tools/src/command_run/handler.rs),
-[tool catalog injection](crates/runtime/src/manas/tool_catalog.rs), and
-[streamed command handling](crates/runtime/src/provider_flow/streamed_command_run.rs).
+## License
 
-## Runtime Prompts Are Not Skills
-
-Skills are external capability packs: instructions, tools, assets, or connector
-knowledge that the agent may load because the environment exposes them.
-Runtime prompt manuals are Tura's internal operating manuals. They are selected
-by task type (`debug`, `frontend`, `visual`, `refactoring`, `new_build`, and
-others), persisted into session history, and can extend the active
-`command_run` command set.
-
-This lets Tura keep the base agent small while still giving a frontend task
-frontend taste, a refactor task source-port discipline, and a visual task media
-tools. See [Runtime Prompts vs Skills](docs/runtime-prompts-vs-skills.md).
-
-## Long Tasks Need State, Not Vibes
-
-Tura treats long work as a state-machine problem:
-
-- `task_status` records whether work is doing, blocked by a question, or done.
-- Provider retries explicitly say that transient failures are not completion.
-- Compact context is a structured handoff, not a fuzzy summary.
-- Runtime manuals can be reinserted after compaction so the next turn keeps the
-  same operating discipline.
-- Final replies are separated from internal status updates, so user-visible
-  communication does not disappear into tool output.
-
-The practical goal is a two-minute-scale compression window: when context gets
-crowded, the agent should spend a short, bounded turn creating a useful handoff
-instead of spending the next hour slowly degrading. See
-[Long Task Loop](docs/long-task-loop.md).
-
-## Benchmarks And Tests
-
-The repo has ordinary tests, business flows, OS/process tests, release-entry
-tests, live provider checks, performance pressure tests, and benchmark harnesses.
-The benchmark scripts under [benchmark](benchmark/README.md) measure
-the things that matter for agent work: token usage, command executions, wall
-time, provider time, artifacts, browser checks, and task score.
-
-Useful entry points:
-
-- [Command-run pressure test](crates/tools/tests/performance/command_run_pressure_test.rs)
-- [Command-run business flow](crates/tools/tests/business/command_run_current_flow.rs)
-- [Source-port benchmark harness](benchmark/refactoring/source-port-python/runner.mjs)
-- [Defined-workflow source-port harness](benchmark/refactoring/source-port-python/defined-workflow.runner.mjs)
-- [PDF cost comparison benchmark](benchmark/build/ogas-pdf-cost/runner.mjs)
-
-## Project Map
-
-- [Install and start](docs/getting-started.md)
-- [Operational overview](docs/overview.md)
-- [Architecture boundaries](ARCHITECTURE.md)
-- [Command Run](docs/command-run.md)
-- [Runtime Prompts vs Skills](docs/runtime-prompts-vs-skills.md)
-- [Long Task Loop](docs/long-task-loop.md)
-- [Tools crate](crates/tools/ARCHITECTURE.md)
-- [Benchmark guide](benchmark/README.md)
-- [Test guide](tests/README.md)
-- [Business test guide](tests/business/README.md)
-- [TUI guide](apps/tui/README.md)
-- [GUI guide](apps/gui/README.md)
+Tura is licensed under AGPL-3.0-or-later. See `LICENSE`.

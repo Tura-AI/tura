@@ -85,6 +85,7 @@
     "commands/*/requirements.txt",
     "commands/*/pyproject.toml",
     "commands/*/src/**",
+    "doc/**",
     "crates/*/Cargo.toml",
     "crates/*/build.rs",
     "crates/*/src/**",
