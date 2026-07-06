@@ -69,8 +69,8 @@ The organized documentation set lives in [`doc/`](doc/SUMMARY.md). Older Markdow
 - [Runtime Prompt](docs/core/runtime-prompt.md) - Runtime prompts are Tura-owned operating manuals selected by task_type; they differ from external skills because they shape discipline, tools, and completion rules.
 - [Command Run](docs/core/command-run.md) - command_run is the compact macro tool surface for batching shell commands, patches, media/web commands, and task-state updates into ordered steps.
 - [Commands](docs/core/commands.md) - Commands are local tool implementations exposed through command_run or router registry entries, with schemas, policies, prompts, timeouts, and output shaping.
-- [Agents](doc/core/agents.md) - Agents define prompt identity, provider defaults, capabilities, reporting behavior, validation behavior, aliases, and whether operation manuals are active.
-- [Personas](doc/core/personas.md) - Personas control communication style, visible identity, optional media expressions, and prompt fragments without changing the agent's engineering capabilities.
+- [Agents](docs/core/agents.md) - Agents define prompt identity, provider defaults, capabilities, reporting behavior, validation behavior, aliases, and whether operation manuals are active.
+- [Personas](docs/core/personas.md) - Personas control communication style, visible identity, optional media expressions, and prompt fragments without changing the agent's engineering capabilities.
 
 ### Architecture
 

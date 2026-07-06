@@ -58,7 +58,7 @@ inline code, links, blockquotes, media attachments, and reactions more directly
 than a raw Markdown transcript. A terminal, meanwhile, benefits from less markup,
 not more. Personas let Tura make that distinction explicitly.
 
-## Communication style
+## Customizable communication style
 
 The shared GUI communication style lives at
 [`personas/src/communication_style/communication_style.md`](../../personas/src/communication_style/communication_style.md).
@@ -87,7 +87,8 @@ It intentionally removes the rich-text layer:
 
 That split is the main advantage over a single Markdown house style. The same
 assistant can be expressive in a GUI and quiet in a terminal without pretending
-those are the same interface.
+those are the same interface, and the communication layer remains customizable
+without rewriting the agent's capability prompt.
 
 ## Rich text is a communication API
 
