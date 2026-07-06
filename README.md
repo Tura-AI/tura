@@ -1,12 +1,12 @@
 # Tura
 
-Tura is a terminal-native AI coding system for long-horizon engineering work: repository inspection, code changes, verification, session continuity, provider routing, and UI-assisted operation.
+Tura is a terminal-native developer tool for turning intent into verified code changes with disciplined motion, audit trails, and repo-aware control.
 
 The short version: Tura tries to make agent work less like a chat box throwing patches at a wall and more like a local engineering runtime with state, tools, manuals, and evidence. Still glamorous, in the way a torque wrench is glamorous.
 
 ## What Tura is
 
-Tura combines a Rust backend pipeline, a compact `command_run` tool surface, runtime prompt manuals, durable session history, provider/model routing, and CLI/TUI/GUI clients. The landing-page copy in `i18n.js` describes it as an open-source coding agent built around macro CLI execution, reasoning discipline, prompt/runtime control, and test-driven development. The repository code backs that up with real components:
+Tura combines a Rust backend pipeline, a compact `command_run` tool surface, runtime prompt manuals, durable session history, provider/model routing, and CLI/TUI/GUI clients. The landing-page copy in `i18n.js` frames it around macro CLI execution, backward reasoning, prompt/runtime control, and test-driven development. The repository code backs that up with real components:
 
 - `crates/runtime` owns the agent turn loop, prompt assembly, runtime manuals, provider streaming, command callbacks, context compaction, and final response shaping.
 - `crates/tools` owns `command_run`, concrete commands, shell execution, patches, task status, locks, cancellation, and tool output shaping.
@@ -41,9 +41,9 @@ Most coding agents pay too much token overhead for scattered tools, forget long 
 
 | Problem | Tura mechanism | Main docs |
 | --- | --- | --- |
-| Repeated tool schemas and command chatter | One compact `command_run` macro surface with ordered steps | [Command Run](docs/core/command-run.md) |
-| Prompt bloat from every manual every turn | Runtime prompt manuals selected by `task_type` | [Runtime Prompt](docs/core/runtime-prompt.md) |
-| Long tasks losing state | `task_status`, session records, compact context handoffs | [Task Status](docs/core/task-status.md), [Context Management](docs/core/context-management.md) |
+| Repeated tool schemas and command chatter | One compact `command_run` macro surface with ordered steps | [Command Run](doc/core/command-run.md) |
+| Prompt bloat from every manual every turn | Runtime prompt manuals selected by `task_type` | [Runtime Prompt](doc/core/runtime-prompt.md) |
+| Long tasks losing state | `task_status`, session records, compact context handoffs | [Task Status](doc/core/task-status.md), [Context Management](doc/core/context-management.md) |
 | CLI, TUI, and GUI splitting history | Shared gateway/router/session_db pipeline | [Sessions](doc/start/sessions.md), [Session DB](doc/architecture/session-db.md) |
 | Provider and model routing chaos | Provider catalog, routes, auth metadata, latency policy | [Providers](doc/start/providers.md) |
 | Weak verification | Business tests, OS tests, live tests, benchmarks, command evidence | [Testing](doc/development/testing.md), [Benchmark](doc/development/benchmark.md) |
@@ -64,15 +64,15 @@ The organized documentation set lives in [`doc/`](doc/SUMMARY.md). Older Markdow
 
 ### Core
 
-- [Task Status](docs/core/task-status.md) - task_status is an internal state update command for doing, question, done, task_group, task_type, and compact_context; it is not a substitute for user-visible replies.
-- [Context Management](docs/core/context-management.md) - Context management keeps long tasks oriented by storing session records, compacting crowded transcripts, and reinserting active runtime manuals.
-- [Runtime Prompt](docs/core/runtime-prompt.md) - Runtime prompts are Tura-owned operating manuals selected by task_type; they differ from external skills because they shape discipline, tools, and completion rules.
-- [Prompt Style](docs/core/prompt-style.md) - Prompt style is Tura's dynamic prompt injection layer for state-driven persona, task, retry, compaction, and capability prompt fragments.
-- [Command Run](docs/core/command-run.md) - command_run is the compact macro tool surface for batching shell commands, patches, media/web commands, and task-state updates into ordered steps.
-- [Commands](docs/core/commands.md) - Commands are local tool implementations exposed through command_run or router registry entries, with schemas, policies, prompts, timeouts, and output shaping.
-- [HTML Rich Text](docs/core/html-rich-text.md) - HTML rich text explains the normal messaging-app rich protocol, the separate CLI plain-text style, Markdown compatibility, and the GUI/TUI rendering entry points.
-- [Agents](docs/core/agents.md) - Agents define prompt identity, provider defaults, capabilities, reporting behavior, validation behavior, aliases, and whether operation manuals are active.
-- [Personas](docs/core/personas.md) - Personas control communication style, visible identity, optional media expressions, and prompt fragments without changing the agent's engineering capabilities.
+- [Task Status](doc/core/task-status.md) - task_status is an internal state update command for doing, question, done, task_group, task_type, and compact_context; it is not a substitute for user-visible replies.
+- [Context Management](doc/core/context-management.md) - Context management keeps long tasks oriented by storing session records, compacting crowded transcripts, and reinserting active runtime manuals.
+- [Runtime Prompt](doc/core/runtime-prompt.md) - Runtime prompts are Tura-owned operating manuals selected by task_type; they differ from external skills because they shape discipline, tools, and completion rules.
+- [Dynamic Prompt Injection](doc/core/dynamic-prompt-injection.md) - Dynamic prompt injection covers state-driven persona, task, retry, compaction, and capability prompt fragments.
+- [Command Run](doc/core/command-run.md) - command_run is the compact macro tool surface for batching shell commands, patches, media/web commands, and task-state updates into ordered steps.
+- [Commands](doc/core/commands.md) - Commands are local tool implementations exposed through command_run or router registry entries, with schemas, policies, prompts, timeouts, and output shaping.
+- [Rich Text](doc/core/rich-text.md) - Rich text explains the messaging-app HTML protocol, the separate CLI plain-text style, Markdown compatibility, and the GUI/TUI rendering entry points.
+- [Agents](doc/core/agents.md) - Agents define prompt identity, provider defaults, capabilities, reporting behavior, validation behavior, aliases, and whether operation manuals are active.
+- [Personas](doc/core/personas.md) - Personas control communication style, visible identity, optional media expressions, and prompt fragments without changing the agent's engineering capabilities.
 
 ### Architecture
 

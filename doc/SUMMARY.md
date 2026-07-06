@@ -1,0 +1,52 @@
+# Summary
+
+- [Tura documentation](README.md)
+
+## Start
+
+- [Overview](start/overview.md)
+- [Install](start/install.md)
+- [How to start](start/how-to-start.md)
+- [CLI parameters](start/cli-parameters.md)
+- [Settings](start/settings.md)
+- [Providers](start/providers.md)
+- [Sessions](start/sessions.md)
+- [Navigation](start/navigation.md)
+
+## Core
+
+- [Task status](core/task-status.md)
+- [Context management](core/context-management.md)
+- [Runtime prompt](core/runtime-prompt.md)
+- [Command run](core/command-run.md)
+- [Commands](core/commands.md)
+- [Agents](core/agents.md)
+- [Personas](core/personas.md)
+- [Rich text](core/rich-text.md)
+- [Dynamic prompt injection](core/dynamic-prompt-injection.md)
+
+## Architecture
+
+- [Session DB](architecture/session-db.md)
+- [Gateway](architecture/gateway.md)
+- [Router](architecture/router.md)
+- [Runtime](architecture/runtime.md)
+- [Tool](architecture/tool.md)
+- [Terminal user interface](architecture/terminal-user-interface.md)
+- [Graphic user interface](architecture/graphic-user-interface.md)
+
+## Customization
+
+- [Custom providers](customization/custom-providers.md)
+- [Custom personas](customization/custom-personas.md)
+- [Custom agents](customization/custom-agents.md)
+- [Custom runtime prompt](customization/custom-runtime-prompt.md)
+- [Custom commands](customization/custom-commands.md)
+
+## Development
+
+- [Scripts](development/scripts.md)
+- [Testing](development/testing.md)
+- [Environment](development/environment.md)
+- [Architecture](development/architecture.md)
+- [Benchmark](development/benchmark.md)
