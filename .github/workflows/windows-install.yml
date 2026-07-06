@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   clean-install:
@@ -46,12 +46,12 @@ jobs:
           "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           if ($exitCode -ne 0) { exit $exitCode }
 
-      - name: Publish install result branch
+      - name: Prepare install result artifact
         if: always()
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $resultDir = Join-Path $env:RUNNER_TEMP "windows-install-result"
+          $resultDir = ".ci-results\windows-install\${{ matrix.runner }}"
           if (Test-Path -LiteralPath $resultDir) {
             Remove-Item -LiteralPath $resultDir -Recurse -Force
           }
@@ -75,16 +75,14 @@ jobs:
             "run_attempt=${{ github.run_attempt }}"
           ) | Set-Content -LiteralPath $statusPath
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan "ci/windows-install-${{ matrix.runner }}"
-          git rm -rf . | Out-Null
-          New-Item -ItemType Directory -Path ".ci-results\windows-install\${{ matrix.runner }}" -Force | Out-Null
-          Copy-Item -LiteralPath $statusPath -Destination ".ci-results\windows-install\${{ matrix.runner }}\status.txt"
-          Copy-Item -LiteralPath $logPath -Destination ".ci-results\windows-install\${{ matrix.runner }}\install.log"
-          git add ".ci-results/windows-install/${{ matrix.runner }}/status.txt" ".ci-results/windows-install/${{ matrix.runner }}/install.log"
-          git commit -m "Record Windows install result for ${{ matrix.runner }}"
-          git push --force origin "HEAD:refs/heads/ci/windows-install-${{ matrix.runner }}"
+
+      - name: Upload install result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-${{ matrix.runner }}-result
+          path: .ci-results/windows-install/${{ matrix.runner }}/
+          if-no-files-found: error
 
       - name: Fail if install failed
         if: steps.install.outcome != 'success'
