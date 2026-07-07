@@ -5,6 +5,7 @@
 .cargo/*
 !.cargo/config.toml
 .tura/
+.tura-router-debug/
 /tura_workspace/
 /workspace/
 
