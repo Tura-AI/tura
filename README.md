@@ -14,7 +14,7 @@ Long-horizon task [benchmarks](https://turaai.net/benchmark) are one of the best
 
 You can compare Tura’s real-world performance against today’s most popular coding agents and extensions on the same [benchmark](https://turaai.net/benchmark) tasks.
 
-## Screenshots
+### Screenshots
 
 <p align="center">
   <img src="assets/screenshot/gui.PNG" alt="Tura GUI" width="800">
