@@ -1,16 +1,28 @@
+<p align="center">
+  <img src="assets/tura/icon.svg" alt="Tura icon" width="96">
+</p>
+
+<p align="center">
+  <a href="https://turaai.net/">turaai.net</a>
+</p>
+
 # Tura
 Tura is a local open-source coding agent built for developers who are tired of useless skills, extensions that claim they can save tokens, and agents that wreck repos without judgment.
 
-Long-horizon task benchmarks are one of the best ways to measure real-world coding-agent performance. Instead of testing agents on isolated prompts or simple Q&A tasks, Tura uses harness-based benchmarks that simulate actual long-horizon development workflows.
-> Across 150+ long-horizon benchmark tasks selected from the top 20% most difficult SWE-bench Pro, Deep SWE, and SWE-bench Verified cases, Tura reduced token usage by 75% and achieved an 89% score, outperforming Claude Code by 34%.
+Long-horizon task [benchmarks](https://turaai.net/benchmark) are one of the best ways to measure real-world coding-agent performance. Instead of testing agents on isolated prompts or simple Q&A tasks, Tura uses harness-based [benchmarks](https://turaai.net/benchmark) that simulate actual long-horizon development workflows.
+> Across 150+ long-horizon [benchmark](https://turaai.net/benchmark) tasks selected from the top 20% most difficult SWE-bench Pro, Deep SWE, and SWE-bench Verified cases, Tura reduced token usage by 75% and achieved an 89% score, outperforming Claude Code by 34%.
 
-You can compare Tura’s real-world performance against today’s most popular coding agents and extensions on the same benchmark tasks.
+You can compare Tura’s real-world performance against today’s most popular coding agents and extensions on the same [benchmark](https://turaai.net/benchmark) tasks.
 
 ## Screenshots
 
-![Tura GUI](assets/screenshot/gui.PNG)
+<p align="center">
+  <img src="assets/screenshot/gui.PNG" alt="Tura GUI" width="866">
+</p>
 
-![Tura TUI](assets/screenshot/tui.PNG)
+<p align="center">
+  <img src="assets/screenshot/tui.PNG" alt="Tura TUI" width="866">
+</p>
 
 What makes Tura different is that it is built from eval data, not marketing claims. Tura is powered by a unique harness-driven framework built around four core systems:
 
@@ -76,7 +88,7 @@ In the example below, Tura finishes in one LLM turn what a normal tool-calling a
 ```
 This reduces cached input token usage by up to 5x and improves total completion time by 3.4x in this case.
 
-In heavier workflows involving Playwright browser automation, multi-step internet research, and CI validation, the advantage can grow to 6–9x. You can check the benchmark page for details.
+In heavier workflows involving Playwright browser automation, multi-step internet research, and CI validation, the advantage can grow to 6–9x. You can check the [benchmark](https://turaai.net/benchmark) page for details.
 
 
 ## Backward Reasoning
@@ -112,7 +124,7 @@ In the example below, the LLM can derive the optimal strategy for playing rock-p
 > Then map rock, paper, or scissors to the number.
 ```
 
-In real programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is not pushed to cover the problem with a fallback, a guard clause, or a shallow patch. Instead, it is guided to reason through the full execution path, reconstruct the failure state, and identify the real root cause before writing code. This is one reason Tura can outperform other coding agents by 24% to 65% in benchmarked coding tasks.
+In real programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is not pushed to cover the problem with a fallback, a guard clause, or a shallow patch. Instead, it is guided to reason through the full execution path, reconstruct the failure state, and identify the real root cause before writing code. This is one reason Tura can outperform other coding agents by 24% to 65% in [benchmarked](https://turaai.net/benchmark) coding tasks.
 
 ## Test-Driven Development
 In a very common debugging failure case, the reviewer or the test names a bug and gives an assertion about where the error happens.
@@ -133,7 +145,7 @@ Then Tura identifies the earliest invariant, the earliest point where the state 
 > The earliest root cause is found in a race condition between the gateway live SSE event and the persisted session DB state.
 > The correct fix is to unify the session state machine, patch only that cause, and rerun the failing test before marking the task as complete.
 ```
-In benchmark samples, combining backward reasoning with a TDD workflow significantly reduced false completion.
+In [benchmark](https://turaai.net/benchmark) samples, combining backward reasoning with a TDD workflow significantly reduced false completion.
 
 When the agent claimed that the issue was solved, Tura failed to actually solve the problem only 4% of the time. By comparison, Codex had a 25% false-completion rate, and Claude Code had a 28% false-completion rate.
 
@@ -161,10 +173,10 @@ Instead of relying on users to manually reset sessions or letting Markdown skill
 
 Because compaction is a CLI command, Tura can batch it through `command_run` together with the exact execution state. The next turn does not need to rediscover the task from a vague summary.
 
-In benchmark samples, after a context compaction event, Tura resumed meaningful execution — either rerunning tests or applying a patch — in an average of 1.8 turns.
+In [benchmark](https://turaai.net/benchmark) samples, after a context compaction event, Tura resumed meaningful execution — either rerunning tests or applying a patch — in an average of 1.8 turns.
 
 Codex needed 4.3 turns, while Claude Code needed 7.2 turns.
-Across multiple debugging benchmarks, Tura was 54% more likely than Claude Code to locate the real issue in the hardest 20% of benchmark tasks, and 34% more likely to fix the actual bug.
+Across multiple debugging [benchmarks](https://turaai.net/benchmark), Tura was 54% more likely than Claude Code to locate the real issue in the hardest 20% of [benchmark](https://turaai.net/benchmark) tasks, and 34% more likely to fix the actual bug.
 
 
 ## Install and run
@@ -280,7 +292,7 @@ full navigation page is [docs/start/navigation.md](docs/start/navigation.md).
 - [Testing](scripts/ARCHITECTURE.md#xtask-test-collection-scripts)
 - [Environment](docs/start/settings.md)
 - [Architecture](ARCHITECTURE.md)
-- [Benchmark](benchmark/README.md)
+- [Benchmark](https://turaai.net/benchmark)
 
 ## License
 
