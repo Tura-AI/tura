@@ -128,6 +128,10 @@ impl RouterProcess {
             let killed_spawned_child = self.kill_managed_router_child();
             remove_router_endpoint_files();
             *self.addr.lock() = None;
+            if let Some(error) = session_log::service::unreachable_owner_lock_message() {
+                *self.last_error.lock() = Some(error.clone());
+                return Err(anyhow!("failed to start router daemon: {error}"));
+            }
 
             if !killed_spawned_child {
                 let error =
@@ -142,7 +146,9 @@ impl RouterProcess {
             }
         }
 
-        let error = "router daemon did not become healthy within 20 seconds".to_string();
+        let error = session_log::service::unreachable_owner_lock_message().unwrap_or_else(|| {
+            "router daemon did not become healthy within 20 seconds".to_string()
+        });
         *self.last_error.lock() = Some(error.clone());
         Err(anyhow!("failed to start router daemon: {error}"))
     }

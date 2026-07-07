@@ -413,6 +413,11 @@ fn ensure_router_daemon() -> Result<String, String> {
         }
         std::thread::sleep(ROUTER_HEALTH_POLL_INTERVAL);
     }
+    if let Some(error) = session_log::service::unreachable_owner_lock_message() {
+        return Err(format!(
+            "router daemon did not become healthy within 20 seconds: {error}"
+        ));
+    }
     Err("router daemon did not become healthy within 20 seconds".to_string())
 }
 
