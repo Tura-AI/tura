@@ -35,6 +35,9 @@ impl SessionDbService {
         if session_log::ipc::service_is_running() {
             return Ok(self.status_payload("running"));
         }
+        if let Some(message) = session_log::service::unreachable_owner_lock_message() {
+            return Err(anyhow!(message));
+        }
         let service_bin = session_db_binary()
             .ok_or_else(|| anyhow!("session_db service executable tura_session_db not found"))?;
         // tura_session_db owns the SQLite session-log write path. It serves a
@@ -127,15 +130,21 @@ impl SessionDbService {
                 if let Some(child) = guard.as_mut() {
                     if let Some(status) = child.try_wait()? {
                         *guard = None;
+                        let detail = session_log::service::unreachable_owner_lock_message()
+                            .map(|message| format!("; {message}"))
+                            .unwrap_or_default();
                         return Err(anyhow!(
-                            "session_db service exited before publishing a reachable socket: {status}"
+                            "session_db service exited before publishing a reachable socket: {status}{detail}"
                         ));
                     }
                 }
             }
             if started.elapsed() >= timeout {
+                let detail = session_log::service::unreachable_owner_lock_message()
+                    .map(|message| format!("; {message}"))
+                    .unwrap_or_default();
                 return Err(anyhow!(
-                    "timed out waiting for session_db service to publish a reachable socket"
+                    "timed out waiting for session_db service to publish a reachable socket{detail}"
                 ));
             }
             std::thread::sleep(SESSION_DB_STARTUP_POLL);
