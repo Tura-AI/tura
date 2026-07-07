@@ -13,13 +13,13 @@
     "tauri",
     "rust"
   ],
-  "homepage": "https://github.com/Tura-AI/test-tura#readme",
+  "homepage": "https://github.com/Tura-AI/tura#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Tura-AI/test-tura.git"
+    "url": "git+https://github.com/Tura-AI/tura.git"
   },
   "bugs": {
-    "url": "https://github.com/Tura-AI/test-tura/issues"
+    "url": "https://github.com/Tura-AI/tura/issues"
   },
   "bin": {
     "tura": "npm/tura.mjs"
