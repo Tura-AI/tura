@@ -35,9 +35,11 @@ pub(crate) fn finish_runtime_failure_with_usage(
         error_code,
         error_text,
         status,
-        usage,
-        true,
-        true,
+        RuntimeFailurePolicy {
+            usage,
+            retry_allowed: true,
+            fallback_allowed: true,
+        },
     )
 }
 
@@ -54,10 +56,18 @@ pub(crate) fn finish_provider_call_failure(
         "CALL_FAILED",
         error.to_string(),
         status,
-        None,
-        retry_allowed,
-        retry_allowed,
+        RuntimeFailurePolicy {
+            usage: None,
+            retry_allowed,
+            fallback_allowed: retry_allowed,
+        },
     )
+}
+
+struct RuntimeFailurePolicy {
+    usage: Option<UsageReport>,
+    retry_allowed: bool,
+    fallback_allowed: bool,
 }
 
 fn finish_runtime_failure_with_policy(
@@ -66,19 +76,17 @@ fn finish_runtime_failure_with_policy(
     error_code: &str,
     error_text: String,
     status: RuntimeCallResultStatus,
-    usage: Option<UsageReport>,
-    retry_allowed: bool,
-    fallback_allowed: bool,
+    policy: RuntimeFailurePolicy,
 ) -> Result<(), String> {
     let err = RuntimeError {
         error_code: Some(error_code.to_string()),
         error_text: Some(error_text),
-        retry_allowed,
-        fallback_allowed,
+        retry_allowed: policy.retry_allowed,
+        fallback_allowed: policy.fallback_allowed,
         fallback_to_id: None,
     };
     runtime
-        .finish_failure(finished_at, err, status, usage)
+        .finish_failure(finished_at, err, status, policy.usage)
         .map_err(|e| format!("failed to finish runtime failure: {e}"))
 }
 

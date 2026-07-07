@@ -82,7 +82,7 @@ impl TuraError {
 
     pub fn is_non_retryable_provider_failure(&self) -> bool {
         match self {
-            Self::HttpStatus { status, .. } => matches!(*status, 401 | 402 | 403 | 404),
+            Self::HttpStatus { status, .. } => matches!(*status, 401..=404),
             Self::Config { message } => is_missing_provider_key_message(message),
             Self::ProviderRequest { message, .. } => is_billing_or_key_failure_text(message),
             Self::AllProvidersFailed { message } => is_billing_or_key_failure_text(message),
