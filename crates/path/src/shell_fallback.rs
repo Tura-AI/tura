@@ -94,7 +94,7 @@ fn windows_powershell_fallback_paths() -> &'static [&'static str] {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::{
         resolve_program_on_path_from, resolve_windows_powershell_from, resolve_windows_shell,
@@ -105,7 +105,6 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    #[cfg(windows)]
     fn powershell_fallback_skips_unresolved_bare_pwsh() {
         let temp = tempfile::tempdir().expect("temp shell fallback dir");
         let fallback = temp.path().join("powershell.exe");
@@ -122,7 +121,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
     fn powershell_resolution_prefers_path_hit_before_fallback() {
         let temp = tempfile::tempdir().expect("temp shell path dir");
         let path_pwsh = temp.path().join("pwsh.exe");
@@ -139,7 +137,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
     fn windows_shell_falls_back_to_cmd_when_no_powershell_candidate_exists() {
         let shell = resolve_windows_shell_from(Some(OsStr::new("")), &[], &[]);
 
@@ -148,7 +145,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
     fn resolved_windows_shell_never_returns_empty_executable() {
         let shell = resolve_windows_shell();
 
@@ -160,7 +156,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
     fn program_on_path_requires_existing_file() {
         let temp = tempfile::tempdir().expect("temp shell path dir");
         let resolved = resolve_program_on_path_from("pwsh", Some(temp.path().as_os_str()));
