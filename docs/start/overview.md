@@ -3,7 +3,7 @@
 Tura is a terminal-native developer tool for turning intent into verified code
 changes with disciplined motion, audit trails, and repo-aware control.
 
-The landing text in [`i18n.js`](../../i18n.js) frames Tura around four ideas:
+Tura is framed around four ideas:
 
 | Frame | Meaning in the runtime |
 | --- | --- |
