@@ -26,15 +26,15 @@ jobs:
             exit 0
           fi
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error title=NPM token missing::Configure one repository secret named NPM_TOKEN, NODE_AUTH_TOKEN, or NPM_AUTH_TOKEN before publishing to npm." >&2
-            exit 1
+            echo "::notice title=NPM token missing::No npm token secret is configured in GitHub Actions. Release assets will still be built; npm publish steps will skip." >&2
+            exit 0
           fi
           printf '%s\n' \
             "registry=https://registry.npmjs.org/" \
             "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
           if ! npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
-            echo "::error title=NPM token invalid::The configured npm token is not accepted by registry.npmjs.org. Use a current granular access token with read/write publish permission and bypass 2FA enabled, or configure npm trusted publishing." >&2
-            exit 1
+            echo "::warning title=NPM token invalid::The configured npm token is not accepted by registry.npmjs.org. Release assets will still be built; npm publish steps will skip." >&2
+            exit 0
           fi
 
   build-platform:
@@ -168,8 +168,15 @@ jobs:
             $PSNativeCommandUseErrorActionPreference = $false
           }
           if (-not $env:NODE_AUTH_TOKEN) {
-            Write-Host "::error title=NPM token missing::Configure one repository secret named NPM_TOKEN, NODE_AUTH_TOKEN, or NPM_AUTH_TOKEN before publishing to npm."
-            exit 1
+            Write-Host "::notice title=NPM token missing::Skipping npm publish for this platform because no npm token secret is configured."
+            exit 0
+          }
+          npm whoami --registry=https://registry.npmjs.org/ *> $null
+          $whoamiExitCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($whoamiExitCode -ne 0) {
+            Write-Host "::warning title=NPM token invalid::Skipping npm publish for this platform because the configured token was rejected by npm."
+            exit 0
           }
           $packageDir = Get-ChildItem -LiteralPath release/npm-platform -Directory | Select-Object -First 1
           if (-not $packageDir) { throw "Platform package directory was not produced." }
@@ -200,8 +207,12 @@ jobs:
       - name: Verify and publish main package
         run: |
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error title=NPM token missing::Configure one repository secret named NPM_TOKEN, NODE_AUTH_TOKEN, or NPM_AUTH_TOKEN before publishing to npm." >&2
-            exit 1
+            echo "::notice title=NPM token missing::Skipping main npm publish because no npm token secret is configured." >&2
+            exit 0
+          fi
+          if ! npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "::warning title=NPM token invalid::Skipping main npm publish because the configured token was rejected by npm." >&2
+            exit 0
           fi
           node scripts/npm/prepack.mjs
           package_name="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).name")"
