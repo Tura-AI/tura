@@ -87,6 +87,41 @@ if ! grep -q "command installers require uv" "${TMPDIR:-/tmp}/tura-skipuv-confli
   exit 1
 fi
 
+step "Checking root installer owns Rust and PowerShell dependency coverage"
+install_source=$(cat "$REPO_ROOT/scripts/install.sh")
+for required in \
+  "ensure_windows_powershell" \
+  "ensure_rust_toolchain" \
+  "https://win.rustup.rs/x86_64" \
+  "https://sh.rustup.rs" \
+  "persist_path_entry" \
+  '"$CHECK_ONLY" -eq 0'; do
+  case "$install_source" in
+    *"$required"*) ;;
+    *) echo "scripts/install.sh is missing required dependency coverage: $required" >&2; exit 1 ;;
+  esac
+done
+
+step "Checking npm postinstall checks runtime dependencies only"
+npm_install_source=$(cat "$REPO_ROOT/scripts/npm/install-release.mjs")
+for required in \
+  "function ensureRuntimeDependencies" \
+  "refreshRuntimePath" \
+  "TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK" \
+  'requireRuntimeCommand("sh"' \
+  'requireRuntimeCommand("tar"'; do
+  case "$npm_install_source" in
+    *"$required"*) ;;
+    *) echo "scripts/npm/install-release.mjs is missing required runtime dependency behavior: $required" >&2; exit 1 ;;
+  esac
+done
+for forbidden in "run-install.mjs" "ensureProjectDependencies" ".cargo" "cargo" "rustc" "Bun" "uv"; do
+  case "$npm_install_source" in
+    *"$forbidden"*) echo "npm postinstall must not check source/build dependencies: $forbidden" >&2; exit 1 ;;
+    *) ;;
+  esac
+done
+
 step "Running root dependency installer"
 install_args=""
 [ "$FULL" -eq 0 ] && install_args="$install_args --check-only"

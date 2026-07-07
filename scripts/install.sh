@@ -30,9 +30,10 @@ Usage:
   scripts/install.sh [OPTIONS]
 
 Installs project dependencies without building Tura. The root installer verifies
-git and shell_command/bash/zsh coverage, installs missing git/bash/zsh dependencies when
-possible, ensures user-local uv/bun are available, runs command-owned installers
-under commands/*, and installs JavaScript workspaces in their own directories.
+Git, Rust/Cargo, PowerShell, shell_command/bash/zsh coverage, installs missing
+Git/bash/zsh/Rust dependencies when possible, ensures user-local uv/bun are
+available, runs command-owned installers under commands/*, and installs
+JavaScript workspaces in their own directories.
 
 Options:
   --skip-commands  skip commands/*/install.* scripts
@@ -52,6 +53,35 @@ done
 
 step() {
   printf '\n==> %s\n' "$1"
+}
+
+ensure_profile_file() {
+  profile=$1
+  [ -e "$profile" ] && return 0
+  mkdir -p "$(dirname "$profile")"
+  : >"$profile"
+}
+
+persist_path_entry() {
+  entry=$1
+  [ "$CHECK_ONLY" -eq 0 ] || return 0
+  [ -n "$entry" ] && [ -d "$entry" ] || return 0
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  ensure_profile_file "$HOME/.profile"
+  if [ "$os_name" = "Darwin" ]; then
+    ensure_profile_file "$HOME/.zprofile"
+    ensure_profile_file "$HOME/.zshrc"
+  fi
+  for profile in "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.zprofile" "$HOME/.zshrc"; do
+    [ -e "$profile" ] || continue
+    line="export PATH=\"$entry:\$PATH\""
+    grep -Fqx "$line" "$profile" 2>/dev/null || {
+      {
+        printf '\n# Tura dependency tool path\n'
+        printf '%s\n' "$line"
+      } >>"$profile"
+    }
+  done
 }
 
 have() {
@@ -112,6 +142,16 @@ find_git() {
     /usr/bin/git.exe /mingw64/bin/git.exe /ucrt64/bin/git.exe /c/msys64/usr/bin/git.exe
 }
 
+find_cargo() {
+  find_first_executable cargo "$HOME/.cargo/bin/cargo" "$HOME/.cargo/bin/cargo.exe" \
+    /usr/local/bin/cargo /opt/homebrew/bin/cargo
+}
+
+find_rustc() {
+  find_first_executable rustc "$HOME/.cargo/bin/rustc" "$HOME/.cargo/bin/rustc.exe" \
+    /usr/local/bin/rustc /opt/homebrew/bin/rustc
+}
+
 run_as_root() {
   if [ "$(id -u 2>/dev/null || echo 1)" != "0" ] && have sudo; then
     sudo "$@"
@@ -162,6 +202,8 @@ ensure_windows_shell_tools() {
     step "Installing MSYS2 for bash/zsh support"
     "$winget_path" install --id MSYS2.MSYS2 --exact --source winget --accept-package-agreements --accept-source-agreements
     PATH="/c/msys64/usr/bin:/c/msys64/ucrt64/bin:$PATH"
+    persist_path_entry "/c/msys64/usr/bin"
+    persist_path_entry "/c/msys64/ucrt64/bin"
     export PATH
     pacman_path=$(find_msys2_pacman || true)
   fi
@@ -175,6 +217,8 @@ ensure_windows_shell_tools() {
   # shellcheck disable=SC2086
   "$pacman_path" -Sy --noconfirm --needed $missing_packages
   PATH="/c/msys64/usr/bin:/c/msys64/ucrt64/bin:$PATH"
+  persist_path_entry "/c/msys64/usr/bin"
+  persist_path_entry "/c/msys64/ucrt64/bin"
   export PATH
 }
 
@@ -225,7 +269,53 @@ ensure_unix_shell_tools() {
 }
 
 find_powershell() {
-  find_first_executable pwsh powershell.exe powershell
+  find_first_executable pwsh powershell.exe powershell \
+    /c/Program\ Files/PowerShell/7/pwsh.exe \
+    /c/Program\ Files\ \(x86\)/PowerShell/7/pwsh.exe \
+    /c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+}
+
+add_powershell_tool_paths() {
+  for tool_path_dir in "/c/Program Files/PowerShell/7" "/c/Program Files (x86)/PowerShell/7" "/c/Windows/System32/WindowsPowerShell/v1.0"; do
+    if [ -d "$tool_path_dir" ]; then
+      case ":$PATH:" in
+        *":$tool_path_dir:"*) ;;
+        *) PATH="$tool_path_dir:$PATH" ;;
+      esac
+      persist_path_entry "$tool_path_dir"
+    fi
+  done
+  export PATH
+}
+
+ensure_windows_powershell() {
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*) ;;
+    *) return ;;
+  esac
+  add_powershell_tool_paths
+  ps_path=$(find_powershell || true)
+  if [ -n "$ps_path" ]; then
+    printf 'powershell: %s\n' "$ps_path"
+    return
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "PowerShell was not found. Run scripts/install.sh without --check-only or install PowerShell 7 manually." >&2
+    exit 1
+  fi
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "PowerShell was not found and --offline was supplied. Install PowerShell 7 manually, then rerun." >&2
+    exit 1
+  fi
+  winget_path=$(find_first_executable winget winget.exe /c/Windows/System32/winget.exe || true)
+  [ -n "$winget_path" ] || { echo "PowerShell was not found and winget is unavailable. Install PowerShell 7 manually, then rerun." >&2; exit 1; }
+  step "Installing PowerShell 7"
+  "$winget_path" install --id Microsoft.PowerShell --exact --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+  add_powershell_tool_paths
+  ps_path=$(find_powershell || true)
+  [ -n "$ps_path" ] || { echo "PowerShell was installed but is still not discoverable. Add PowerShell 7 to PATH and rerun." >&2; exit 1; }
+  printf 'powershell: %s\n' "$ps_path"
 }
 
 find_posix_shell() {
@@ -322,11 +412,14 @@ ensure_git() {
       if [ -n "$winget_path" ]; then
         "$winget_path" install --id Git.Git --exact --source winget --accept-package-agreements --accept-source-agreements
         PATH="/c/Program Files/Git/cmd:/c/Program Files/Git/bin:$PATH"
+        persist_path_entry "/c/Program Files/Git/cmd"
+        persist_path_entry "/c/Program Files/Git/bin"
         export PATH
       else
         pacman_path=$(find_msys2_pacman || true)
         [ -n "$pacman_path" ] || { echo "git was not found and neither winget nor MSYS2 pacman is available. Install Git manually, then rerun." >&2; exit 1; }
         "$pacman_path" -Sy --noconfirm --needed git
+        persist_path_entry "/c/msys64/usr/bin"
       fi
       ;;
     Darwin)
@@ -356,6 +449,48 @@ ensure_git() {
   git_path=$(find_git || true)
   [ -n "$git_path" ] || { echo "git was installed but is still not discoverable. Add Git to PATH and rerun." >&2; exit 1; }
   print_version git "$git_path" --version
+}
+
+ensure_rust_toolchain() {
+  add_user_tool_paths
+  cargo_path=$(find_cargo || true)
+  rustc_path=$(find_rustc || true)
+  if [ -n "$cargo_path" ] && [ -n "$rustc_path" ]; then
+    print_version cargo "$cargo_path" --version
+    print_version rustc "$rustc_path" --version
+    return
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "Rust/Cargo was not found. Run scripts/install.sh without --check-only or install Rust from https://rustup.rs/." >&2
+    exit 1
+  fi
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "Rust/Cargo was not found and --offline was supplied. Install Rust from https://rustup.rs/ manually, then rerun." >&2
+    exit 1
+  fi
+
+  ensure_download_tool
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  step "Installing Rust toolchain"
+  case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*)
+      tmp="${TMPDIR:-/tmp}/rustup-init-$$.exe"
+      download_to "https://win.rustup.rs/x86_64" "$tmp"
+      chmod +x "$tmp" 2>/dev/null || true
+      "$tmp" -y --profile minimal
+      ;;
+    *)
+      tmp="${TMPDIR:-/tmp}/rustup-init-$$.sh"
+      download_to "https://sh.rustup.rs" "$tmp"
+      sh "$tmp" -y --profile minimal
+      ;;
+  esac
+  add_user_tool_paths
+  cargo_path=$(find_cargo || true)
+  rustc_path=$(find_rustc || true)
+  [ -n "$cargo_path" ] && [ -n "$rustc_path" ] || { echo "Rust/Cargo was installed but is still not discoverable. Add $HOME/.cargo/bin to PATH and rerun." >&2; exit 1; }
+  print_version cargo "$cargo_path" --version
+  print_version rustc "$rustc_path" --version
 }
 
 ensure_download_tool() {
@@ -460,6 +595,7 @@ add_user_tool_paths() {
       if [ -n "${GITHUB_PATH:-}" ] && [ -f "$GITHUB_PATH" ] && ! grep -Fxq "$tool_path_dir" "$GITHUB_PATH"; then
         printf '%s\n' "$tool_path_dir" >>"$GITHUB_PATH"
       fi
+      persist_path_entry "$tool_path_dir"
     fi
   done
   export PATH
@@ -671,9 +807,11 @@ validate_option_contracts
 cd "$REPO_ROOT"
 
 step "Checking root dependency installers"
+ensure_windows_powershell
 ensure_shell_tool_coverage
 ensure_git
 ensure_download_tool
+ensure_rust_toolchain
 ensure_uv
 ensure_command_python
 ensure_bun

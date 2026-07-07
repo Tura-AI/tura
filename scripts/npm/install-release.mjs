@@ -63,6 +63,89 @@ function run(command, args, cwd = packageRoot) {
   }
 }
 
+function pathKey() {
+  return process.platform === "win32" ? "Path" : "PATH";
+}
+
+function prependExistingPathEntries(entries) {
+  const key = pathKey();
+  const delimiter = path.delimiter;
+  const current = process.env[key] || "";
+  const existing = current.split(delimiter).filter(Boolean);
+  const normalized = new Set(existing.map((entry) => path.resolve(entry).toLowerCase()));
+  const next = [];
+  for (const entry of entries) {
+    if (!entry || !existsSync(entry)) {
+      continue;
+    }
+    const resolved = path.resolve(entry);
+    const marker = resolved.toLowerCase();
+    if (!normalized.has(marker)) {
+      next.push(resolved);
+      normalized.add(marker);
+    }
+  }
+  if (next.length > 0) {
+    process.env[key] = [...next, ...existing].join(delimiter);
+  }
+}
+
+function refreshRuntimePath() {
+  if (process.platform === "win32") {
+    prependExistingPathEntries([
+      "C:\\Program Files\\PowerShell\\7",
+      "C:\\Program Files (x86)\\PowerShell\\7",
+    ]);
+    return;
+  }
+  prependExistingPathEntries([
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  ]);
+}
+
+function runtimeDependencyCheckSkipped() {
+  return (
+    process.env.TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK === "1" ||
+    process.env.TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK === "true"
+  );
+}
+
+function commandExists(name) {
+  const result = spawnSync(process.platform === "win32" ? "where.exe" : "sh", process.platform === "win32" ? [name] : ["-c", `command -v ${name}`], {
+    shell: false,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  return !result.error && (result.status ?? 1) === 0;
+}
+
+function requireRuntimeCommand(name, hint) {
+  if (commandExists(name)) {
+    return;
+  }
+  fail(`${name} was not found. ${hint}`);
+}
+
+function ensureRuntimeDependencies() {
+  if (runtimeDependencyCheckSkipped()) {
+    log("runtime dependency check skipped by TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK");
+    return;
+  }
+  refreshRuntimePath();
+  if (process.platform === "win32") {
+    ensurePowerShellCliPath();
+    return;
+  }
+  requireRuntimeCommand("sh", "Install a POSIX shell and ensure it is on PATH.");
+  requireRuntimeCommand("tar", "Install tar and ensure it is on PATH.");
+  if (process.platform === "darwin") {
+    requireRuntimeCommand("zsh", "Install zsh or set up macOS command-line tools so zsh is available.");
+  } else if (process.platform === "linux") {
+    requireRuntimeCommand("bash", "Install bash and ensure it is on PATH.");
+  }
+}
+
 function registerCli() {
   if (cliPathRegistrationSkipped()) {
     log("CLI registration skipped by TURA_NPM_SKIP_CLI_REGISTRATION");
@@ -227,12 +310,12 @@ if (
   process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "1" ||
   process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "true"
 ) {
-  ensurePowerShellCliPath();
+  ensureRuntimeDependencies();
   log("release download skipped by TURA_NPM_SKIP_RELEASE_DOWNLOAD");
   process.exit(0);
 }
 
-ensurePowerShellCliPath();
+ensureRuntimeDependencies();
 
 const existingMissing = missingReleaseFiles(packageRoot);
 if (existingMissing.length === 0) {
