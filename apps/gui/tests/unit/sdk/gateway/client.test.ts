@@ -57,6 +57,28 @@ describe("GatewayClient", () => {
     expect(observedHeader).toBe("C%3A%5Crepo");
   });
 
+  test("scopes non-English directory paths without mojibake", async () => {
+    let observedUrl = "";
+    let observedHeader = "";
+    const directory = "C:\\Users\\测试\\项目";
+    const encodedDirectory = encodeURIComponent(directory);
+    const client = new GatewayClient({
+      baseUrl: "http://gateway.test",
+      directory,
+      fetch: async (input, init) => {
+        observedUrl = String(input);
+        observedHeader = new Headers(init?.headers).get("x-opencode-directory") ?? "";
+        return jsonResponse([]);
+      },
+    });
+
+    await client.files("src");
+
+    expect(observedUrl).toContain(`directory=${encodedDirectory}`);
+    expect(observedHeader).toBe(encodedDirectory);
+    expect(decodeURIComponent(observedHeader)).toBe(directory);
+  });
+
   test("updates model config with a tier provider model selection", async () => {
     let observedBody = "";
     const client = new GatewayClient({

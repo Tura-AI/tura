@@ -3,19 +3,7 @@ use std::process::Command as ProcessCommand;
 pub(crate) fn select_directory(title: Option<&str>) -> anyhow::Result<Option<String>> {
     #[cfg(target_os = "windows")]
     {
-        let escaped_title = title.unwrap_or("Select directory").replace('\'', "''");
-        let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; \
-             $f = New-Object System.Windows.Forms.Form; \
-             $f.TopMost = $true; \
-             $f.StartPosition = 'CenterScreen'; \
-             $f.ShowInTaskbar = $false; \
-             $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
-             $d.Description = '{escaped_title}'; \
-             $d.ShowNewFolderButton = $true; \
-             if ($d.ShowDialog($f) -eq [System.Windows.Forms.DialogResult]::OK) {{ $d.SelectedPath }}; \
-             $f.Dispose()",
-        );
+        let script = windows_directory_picker_script(title.unwrap_or("Select directory"));
         let mut command = ProcessCommand::new("powershell");
         command.args([
             "-NoProfile",
@@ -30,8 +18,7 @@ pub(crate) fn select_directory(title: Option<&str>) -> anyhow::Result<Option<Str
         if !output.status.success() {
             return Ok(None);
         }
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok((!path.is_empty()).then_some(path))
+        selected_path_from_stdout(&output.stdout)
     }
 
     #[cfg(target_os = "macos")]
@@ -107,10 +94,56 @@ pub(crate) fn select_directory(title: Option<&str>) -> anyhow::Result<Option<Str
     }
 }
 
-#[cfg(not(target_os = "windows"))]
 fn selected_path_from_stdout(stdout: &[u8]) -> anyhow::Result<Option<String>> {
     let path = String::from_utf8_lossy(stdout).trim().to_string();
     Ok((!path.is_empty()).then_some(path))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_directory_picker_script(title: &str) -> String {
+    let escaped_title = title.replace('\'', "''");
+    format!(
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); \
+         $OutputEncoding = [Console]::OutputEncoding; \
+         Add-Type -AssemblyName System.Windows.Forms; \
+         $f = New-Object System.Windows.Forms.Form; \
+         $f.TopMost = $true; \
+         $f.StartPosition = 'CenterScreen'; \
+         $f.ShowInTaskbar = $false; \
+         $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
+         $d.Description = '{escaped_title}'; \
+         $d.ShowNewFolderButton = $true; \
+         if ($d.ShowDialog($f) -eq [System.Windows.Forms.DialogResult]::OK) {{ Write-Output $d.SelectedPath }}; \
+         $f.Dispose()",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_utf8_directory_picker_stdout_without_loss() {
+        let selected = selected_path_from_stdout("C:\\Users\\测试\\项目\r\n".as_bytes())
+            .expect("parse selected path");
+
+        assert_eq!(selected.as_deref(), Some("C:\\Users\\测试\\项目"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_picker_script_forces_utf8_stdout() {
+        let script = windows_directory_picker_script("选择目录");
+
+        assert!(
+            script.contains("[Console]::OutputEncoding"),
+            "Windows directory picker must force UTF-8 stdout before printing SelectedPath: {script}"
+        );
+        assert!(
+            script.contains("$OutputEncoding"),
+            "Windows directory picker must keep PowerShell pipeline encoding aligned with Console.OutputEncoding: {script}"
+        );
+    }
 }
 
 #[cfg(target_os = "macos")]
