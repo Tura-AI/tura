@@ -6,6 +6,12 @@ Long-horizon task benchmarks are one of the best ways to measure real-world codi
 
 You can compare Tura’s real-world performance against today’s most popular coding agents and extensions on the same benchmark tasks.
 
+## Screenshots
+
+![Tura GUI](assets/screenshot/gui.PNG)
+
+![Tura TUI](assets/screenshot/tui.PNG)
+
 What makes Tura different is that it is built from eval data, not marketing claims. Tura is powered by a unique harness-driven framework built around four core systems:
 
 ## Macro CLI Command Run
