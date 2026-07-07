@@ -22,9 +22,10 @@ Usage:
   .\scripts\install.ps1 [OPTIONS]
 
 Installs project dependencies without building Tura. The root installer verifies
-git and shell_command/bash/zsh coverage, installs missing git/bash/zsh dependencies when
-possible, ensures user-local uv/bun are available, runs command-owned installers
-under commands/*, and installs JavaScript workspaces in their own directories.
+Git, Rust/Cargo, PowerShell, shell_command/bash/zsh coverage, installs missing
+Git/bash/zsh/Rust dependencies when possible, ensures user-local uv/bun are
+available, runs command-owned installers under commands/*, and installs
+JavaScript workspaces in their own directories.
 
 Options:
   -SkipCommands  skip commands/*/install.* scripts
@@ -77,8 +78,26 @@ function Set-ProcessPathValue {
   [Environment]::SetEnvironmentVariable((Get-PathEnvironmentName), $Value, "Process")
 }
 
-function Add-PathEntry {
+function Add-UserPathEntry {
   param([string]$PathEntry)
+  if ($CheckOnly -or -not (Test-IsWindows) -or -not $PathEntry -or -not (Test-Path -LiteralPath $PathEntry)) {
+    return
+  }
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $entries = @()
+  if ($userPath) {
+    $entries = @($userPath -split [IO.Path]::PathSeparator | Where-Object { $_ -and $_.Trim() })
+  }
+  $trimChars = [char[]]@('\', '/')
+  $present = $entries | Where-Object { $_.TrimEnd($trimChars) -ieq $PathEntry.TrimEnd($trimChars) }
+  if (-not $present) {
+    $entries += $PathEntry
+    [Environment]::SetEnvironmentVariable("Path", ($entries -join [IO.Path]::PathSeparator), "User")
+  }
+}
+
+function Add-PathEntry {
+  param([string]$PathEntry, [switch]$PersistUser)
   if (-not $PathEntry -or -not (Test-Path -LiteralPath $PathEntry)) {
     return
   }
@@ -101,12 +120,31 @@ function Add-PathEntry {
       Add-Content -LiteralPath $env:GITHUB_PATH -Value $PathEntry
     }
   }
+  if ($PersistUser) {
+    Add-UserPathEntry $PathEntry
+  }
 }
 
 function Add-UserToolPaths {
-  Add-PathEntry (Join-Path (Join-Path $HOME ".local") "bin")
-  Add-PathEntry (Join-Path (Join-Path $HOME ".cargo") "bin")
-  Add-PathEntry (Join-Path (Join-Path $HOME ".bun") "bin")
+  Add-PathEntry (Join-Path (Join-Path $HOME ".local") "bin") -PersistUser
+  Add-PathEntry (Join-Path (Join-Path $HOME ".cargo") "bin") -PersistUser
+  Add-PathEntry (Join-Path (Join-Path $HOME ".bun") "bin") -PersistUser
+}
+
+function Add-PowerShellToolPaths {
+  if (-not (Test-IsWindows)) {
+    return
+  }
+  $currentPowerShell = Get-CurrentPowerShellPath
+  if ($currentPowerShell) {
+    Add-PathEntry (Split-Path -Parent $currentPowerShell) -PersistUser
+  }
+  foreach ($path in @(
+    "$env:ProgramFiles\PowerShell\7",
+    "${env:ProgramFiles(x86)}\PowerShell\7"
+  )) {
+    Add-PathEntry $path -PersistUser
+  }
 }
 
 function Add-ShellToolPaths {
@@ -119,7 +157,7 @@ function Add-ShellToolPaths {
       "C:\msys64\usr\bin",
       "C:\msys64\ucrt64\bin"
     )) {
-      Add-PathEntry $path
+      Add-PathEntry $path -PersistUser
     }
     return
   }
@@ -191,6 +229,46 @@ function Invoke-PowerShellScriptFile {
   & $powerShell -NoProfile -ExecutionPolicy Bypass -File $FilePath @Arguments
 }
 
+function Ensure-PowerShellTool {
+  if (-not (Test-IsWindows)) {
+    return
+  }
+  Add-PowerShellToolPaths
+  $powerShell = Find-PowerShellTool
+  if ($powerShell) {
+    Add-PathEntry (Split-Path -Parent $powerShell) -PersistUser
+    Write-DetectedVersion "powershell" (Get-CommandOutputLine $powerShell @("-NoProfile", "-Command", "`$PSVersionTable.PSVersion.ToString()"))
+    return
+  }
+  if ($CheckOnly) {
+    throw "PowerShell was not found. Run .\scripts\install.ps1 without -CheckOnly or install PowerShell 7 manually."
+  }
+  if ($Offline) {
+    throw "PowerShell was not found and -Offline was supplied. Install PowerShell 7 manually, then rerun."
+  }
+  $winget = Resolve-ExistingCommand @("winget")
+  if (-not $winget) {
+    throw "PowerShell was not found and winget is unavailable. Install PowerShell 7 manually, then rerun."
+  }
+  Write-Step "Installing PowerShell 7"
+  Invoke-NativeCommand $winget @(
+    "install",
+    "--id", "Microsoft.PowerShell",
+    "--exact",
+    "--source", "winget",
+    "--accept-package-agreements",
+    "--accept-source-agreements",
+    "--disable-interactivity"
+  )
+  Add-PowerShellToolPaths
+  $powerShell = Find-PowerShellTool
+  if (-not $powerShell) {
+    throw "PowerShell was installed but is still not discoverable. Add PowerShell 7 to PATH and rerun."
+  }
+  Add-PathEntry (Split-Path -Parent $powerShell) -PersistUser
+  Write-DetectedVersion "powershell" (Get-CommandOutputLine $powerShell @("-NoProfile", "-Command", "`$PSVersionTable.PSVersion.ToString()"))
+}
+
 function Find-BashTool {
   if (Test-IsWindows) {
     return Resolve-ExistingCommand @(
@@ -243,6 +321,26 @@ function Find-GitTool {
     "/usr/bin/git",
     "/usr/local/bin/git",
     "/opt/homebrew/bin/git"
+  )
+}
+
+function Find-CargoTool {
+  Resolve-ExistingCommand @(
+    "cargo",
+    "$(Join-Path (Join-Path $HOME ".cargo") "bin\cargo.exe")",
+    "$(Join-Path (Join-Path $HOME ".cargo") "bin/cargo")",
+    "/usr/local/bin/cargo",
+    "/opt/homebrew/bin/cargo"
+  )
+}
+
+function Find-RustcTool {
+  Resolve-ExistingCommand @(
+    "rustc",
+    "$(Join-Path (Join-Path $HOME ".cargo") "bin\rustc.exe")",
+    "$(Join-Path (Join-Path $HOME ".cargo") "bin/rustc")",
+    "/usr/local/bin/rustc",
+    "/opt/homebrew/bin/rustc"
   )
 }
 
@@ -504,6 +602,47 @@ function Ensure-GitTool {
   Write-DetectedVersion "git" (Get-CommandOutputLine $git @("--version"))
 }
 
+function Ensure-RustToolchain {
+  Add-UserToolPaths
+  $cargo = Find-CargoTool
+  $rustc = Find-RustcTool
+  if ($cargo -and $rustc) {
+    Write-DetectedVersion "cargo" (Get-CommandOutputLine $cargo @("--version"))
+    Write-DetectedVersion "rustc" (Get-CommandOutputLine $rustc @("--version"))
+    return
+  }
+  if ($CheckOnly) {
+    throw "Rust/Cargo was not found. Run .\scripts\install.ps1 without -CheckOnly or install Rust from https://rustup.rs/."
+  }
+  if ($Offline) {
+    throw "Rust/Cargo was not found and -Offline was supplied. Install Rust from https://rustup.rs/ manually, then rerun."
+  }
+
+  Write-Step "Installing Rust toolchain"
+  if (Test-IsWindows) {
+    $rustupPath = Join-Path ([IO.Path]::GetTempPath()) ("rustup-init-{0}.exe" -f [Guid]::NewGuid())
+    Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile $rustupPath -UseBasicParsing
+    Invoke-NativeCommand $rustupPath @("-y", "--profile", "minimal")
+  } else {
+    $rustupPath = Join-Path ([IO.Path]::GetTempPath()) ("rustup-init-{0}.sh" -f [Guid]::NewGuid())
+    Invoke-WebRequest -Uri "https://sh.rustup.rs" -OutFile $rustupPath -UseBasicParsing
+    $sh = Get-Command "sh" -ErrorAction SilentlyContinue
+    if (-not $sh) {
+      throw "sh was not found; cannot run rustup installer."
+    }
+    Invoke-NativeCommand $sh.Source @($rustupPath, "-y", "--profile", "minimal")
+  }
+
+  Add-UserToolPaths
+  $cargo = Find-CargoTool
+  $rustc = Find-RustcTool
+  if (-not $cargo -or -not $rustc) {
+    throw "Rust/Cargo was installed but is still not discoverable. Add $HOME\.cargo\bin to PATH and rerun."
+  }
+  Write-DetectedVersion "cargo" (Get-CommandOutputLine $cargo @("--version"))
+  Write-DetectedVersion "rustc" (Get-CommandOutputLine $rustc @("--version"))
+}
+
 function Get-CommandOutputLine {
   param([string]$Name, [string[]]$Arguments = @())
   try {
@@ -738,8 +877,10 @@ Test-InstallOptionContracts
 Set-Location $RepoRoot
 
 Write-Step "Checking root dependency installers"
+Ensure-PowerShellTool
 Ensure-ShellToolCoverage
 Ensure-GitTool
+Ensure-RustToolchain
 Ensure-Uv
 Ensure-CommandPython
 Ensure-Bun

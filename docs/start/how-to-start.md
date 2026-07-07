@@ -17,10 +17,14 @@ like agent problems, which is rude but traditional.
 | macOS | `git`, `bash`, `zsh`, package-manager paths such as `/opt/homebrew/bin` or `/usr/local/bin`, and Tura release binaries. | Install Apple command line tools with `xcode-select --install`. If Homebrew tools are needed, run `brew install git bash zsh` and make sure Homebrew's bin directory is in your shell profile. If zsh is custom-installed, set `TURA_ZSH_PATH`. | Run `./scripts/build-release.sh`, then `./scripts/register-cli.sh`, then open a new terminal. |
 | Linux | `git`, `bash`, optional `zsh`, normal system bin paths, and Tura release binaries. | Debian/Ubuntu: `sudo apt-get install git bash zsh`. Fedora: `sudo dnf install git bash zsh`. Arch: `sudo pacman -S git bash zsh`. If zsh lives outside PATH, set `TURA_ZSH_PATH`. | Run `./scripts/build-release.sh`, then `./scripts/register-cli.sh`, then open a new terminal. |
 
-`scripts/install.*` checks `shell_command`, `bash`, `zsh`, and `git` coverage.
-Set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` when missing optional shell support
-should fail instead of warn. For the complete install matrix, see
-[Install](install.md).
+`scripts/install.*` checks and installs source-checkout dependencies, including
+Git, Rust/Cargo, PowerShell, `shell_command`, `bash`, `zsh`, Bun, uv, and Python
+3.12, and updates PATH where the platform allows safe user-local registration.
+The npm package install path is intentionally narrower: it checks runtime
+dependencies and registers the release CLI path, but it does not check or install
+Rust/Cargo, Bun, uv, or Python. Set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` when
+missing optional shell support should fail instead of warn. For the complete
+install matrix, see [Install](install.md).
 
 If PATH registration is not available yet, start by direct binary path:
 

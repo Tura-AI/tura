@@ -89,7 +89,7 @@ Tura uses a different strategy.
 During reasoning, a common agent reasons from the current state to the prompt goal. In that case, $s_1$ is the current state, and $s_n$ is the goal given by the user prompt.
 
 $$
-s_1 \\rightarrow s_2 \\rightarrow s_3 \\rightarrow \\cdots \\rightarrow s_n
+s_1 \rightarrow s_2 \rightarrow s_3 \rightarrow \cdots \rightarrow s_n
 $$
 
 Instead, Tura guides the LLM to statistically estimate $s_{n-1}$ first, then reason backward from the state of $s_{n-1}$ to $s_{n-2}$.

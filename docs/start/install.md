@@ -11,19 +11,27 @@ can find `commands/`, `apps/`, `crates/`, and release scripts.
 
 ## Requirements
 
-Install these tools before building Tura:
+The source installer checks these tools and installs the missing ones when the
+current platform has a supported installer. In `CheckOnly` or `Offline` mode it
+only verifies them and fails with the manual step needed.
 
 | Tool | Required for | Notes |
 | --- | --- | --- |
 | Git | cloning the repository | Windows users can use Git for Windows. |
-| Rust and Cargo | backend binaries | Install from `https://rustup.rs/`. |
-| PowerShell | Windows scripts | Windows PowerShell or PowerShell 7 works. |
+| Rust and Cargo | backend binaries | `scripts/install.*` can install the minimal rustup toolchain and add the Cargo bin directory to PATH. |
+| PowerShell | Windows scripts | Windows PowerShell or PowerShell 7 works. On Windows, `scripts/install.*` and npm postinstall ensure PowerShell is discoverable; npm does not require Rust/Cargo. |
 | POSIX shell and Bash | Linux/macOS scripts and command execution | Linux normally has these already. |
 | zsh | macOS default command surface | On Windows, MSYS2 zsh can be used. |
-| Bun | TUI, GUI, and Tauri release builds | The install script can install user-local Bun. |
-| uv and Python 3.12 | command package environments | The install script can install user-local uv and command virtual environments. |
+| Bun | TUI, GUI, and Tauri release builds | `scripts/install.*` can install user-local Bun and add it to PATH. |
+| uv and Python 3.12 | command package environments | `scripts/install.*` can install user-local uv, Python 3.12, and command virtual environments. |
 
-The install scripts check shell coverage for `shell_command`, `bash`, and `zsh`.
+The source install scripts check Git, Rust/Cargo, PowerShell, `shell_command`,
+`bash`, `zsh`, Bun, uv, and Python 3.12 coverage. They update PATH for the
+current process, GitHub Actions, and user-local tool locations where the platform
+supports safe user PATH/profile updates. The npm package postinstall is narrower:
+it installs or copies release binaries, registers the Tura CLI path, and checks
+only runtime dependencies such as PowerShell on Windows and basic shell/archive
+tools on Unix. It does not check or install Rust/Cargo, Bun, uv, or Python.
 Set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` if you want missing optional shell
 surfaces to fail instead of warn.
 
@@ -49,10 +57,11 @@ cd tura
 tura exec "Inspect this workspace"
 ```
 
-`scripts/install.*` installs dependency tools and workspace dependencies. It
-does not build Tura. `scripts/build-release.*` builds release artifacts into
-`target/release`. `scripts/register-cli.*` adds `target/release` to your user
-PATH so `tura` and `tura exec` resolve from a new terminal.
+`scripts/install.*` installs source-checkout dependency tools and workspace
+dependencies, including Rust/Cargo when missing. It does not build Tura.
+`scripts/build-release.*` builds release artifacts into `target/release`.
+`scripts/register-cli.*` adds `target/release` to your user PATH so `tura` and
+`tura exec` resolve from a new terminal.
 
 ## Install with curl from GitHub
 

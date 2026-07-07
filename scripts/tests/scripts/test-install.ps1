@@ -213,6 +213,53 @@ function Test-DownloadedInstallerRefreshesPathBeforeExitCheck {
   }
 }
 
+function Test-RootInstallerEnsuresRustAndPowerShellPaths {
+  Write-Step "Checking root installer owns Rust and PowerShell dependency coverage"
+
+  $source = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\install.ps1") -Raw
+  foreach ($required in @(
+    "function Ensure-PowerShellTool",
+    "function Ensure-RustToolchain",
+    "Ensure-PowerShellTool",
+    "Ensure-RustToolchain",
+    "https://win.rustup.rs/x86_64",
+    "https://sh.rustup.rs",
+    "Microsoft.PowerShell"
+  )) {
+    if (-not $source.Contains($required)) {
+      throw "scripts/install.ps1 is missing required dependency coverage: $required"
+    }
+  }
+  if ($source -notmatch 'function Add-UserPathEntry[\s\S]*\$CheckOnly') {
+    throw "scripts/install.ps1 must not persist user PATH entries in -CheckOnly mode."
+  }
+}
+
+function Test-NpmPostinstallChecksRuntimeDependenciesOnly {
+  Write-Step "Checking npm postinstall checks runtime dependencies only"
+
+  $source = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\npm\install-release.mjs") -Raw
+  foreach ($required in @(
+    "function ensureRuntimeDependencies",
+    "refreshRuntimePath",
+    "TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK",
+    'requireRuntimeCommand("sh"',
+    'requireRuntimeCommand("tar"'
+  )) {
+    if (-not $source.Contains($required)) {
+      throw "scripts/npm/install-release.mjs is missing required runtime dependency behavior: $required"
+    }
+  }
+  foreach ($forbidden in @("run-install.mjs", "ensureProjectDependencies", ".cargo", "cargo", "rustc", "Bun", "uv")) {
+    if ($source.Contains($forbidden)) {
+      throw "npm postinstall must not check source/build dependencies: $forbidden"
+    }
+  }
+  if ($source.IndexOf("ensureRuntimeDependencies();", [StringComparison]::Ordinal) -ge $source.IndexOf("const existingMissing", [StringComparison]::Ordinal)) {
+    throw "npm postinstall must check runtime dependencies before checking/installing release binaries."
+  }
+}
+
 function Test-CommandInstallerInstallsPythonBeforeVenv {
   Write-Step "Checking command installer prepares Python before creating venv"
 
@@ -564,6 +611,8 @@ Test-PowerShellSyntax
 Test-WindowsInstallFindsCurrentPowerShellWithoutPath
 Test-RootInstallerBypassesChildPowerShellPolicy
 Test-DownloadedInstallerRefreshesPathBeforeExitCheck
+Test-RootInstallerEnsuresRustAndPowerShellPaths
+Test-NpmPostinstallChecksRuntimeDependenciesOnly
 Test-CommandInstallerInstallsPythonBeforeVenv
 Test-CommandInstallerUsesAbsoluteVenvPath
 Test-CommandInstallerRelativeInvocationUsesAbsoluteVenvPath
