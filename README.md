@@ -17,12 +17,16 @@ You can compare Tura’s real-world performance against today’s most popular c
 ## Screenshots
 
 <p align="center">
-  <img src="assets/screenshot/gui.PNG" alt="Tura GUI" width="866">
+  <img src="assets/screenshot/gui.PNG" alt="Tura GUI" width="800">
 </p>
 
+<p align="center"><em>GUI page with multi-session concurrent work and HTML rich text support.</em></p>
+
 <p align="center">
-  <img src="assets/screenshot/tui.PNG" alt="Tura TUI" width="866">
+  <img src="assets/screenshot/tui.PNG" alt="Tura TUI" width="800">
 </p>
+
+<p align="center"><em>TUI page with multi-session concurrent work and HTML rich text support.</em></p>
 
 What makes Tura different is that it is built from eval data, not marketing claims. Tura is powered by a unique harness-driven framework built around four core systems:
 
