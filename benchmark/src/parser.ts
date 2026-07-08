@@ -58,11 +58,13 @@ export function parseAgentRound(callback: unknown, roundIndex = 0): BenchmarkAge
     roundIndex,
     startedAt,
     endedAt,
-    input: { fullContext: extractFullContext(record) },
+    input: { fullContext: extractFullContext(record), messages: [] },
     output: {
       fullOutput: extractFullOutput(record),
       assistantMessage: extractAssistantMessage(record),
+      messages: [],
     },
+    messages: [],
     usage,
     providerDurationMs: readNumber(record, ["providerDurationMs", "provider_duration_ms", "duration_ms"]) ?? 0,
     toolCalls,
@@ -218,18 +220,20 @@ function readUsage(record: UnknownRecord): TokenUsage {
     if (!item) continue;
     usage.inputTokens += readNumber(item, ["inputTokens", "input_tokens", "prompt_tokens"]) ?? 0;
     usage.cacheInputTokens +=
-      readNumber(item, ["cacheInputTokens", "cached_input_tokens", "cache_read_input_tokens"]) ??
+      readNumber(item, ["cacheInputTokens", "cached_input_tokens", "cached", "cache_read_input_tokens"]) ??
       readNumber(asRecord(item.input_tokens_details) ?? {}, ["cached_tokens"]) ??
+      readNumber(asRecord(item.prompt_tokens_details) ?? {}, ["cached_tokens"]) ??
       0;
     usage.outputTokens += readNumber(item, ["outputTokens", "output_tokens", "completion_tokens"]) ?? 0;
     usage.reasoningTokens +=
       readNumber(item, ["reasoningTokens", "reasoning_tokens", "reasoning_output_tokens"]) ??
       readNumber(asRecord(item.output_tokens_details) ?? {}, ["reasoning_tokens"]) ??
+      readNumber(asRecord(item.completion_tokens_details) ?? {}, ["reasoning_tokens"]) ??
       0;
-    usage.totalTokens += readNumber(item, ["totalTokens", "total_tokens"]) ?? 0;
+    usage.totalTokens += readNumber(item, ["totalTokens", "total_tokens", "total"]) ?? 0;
   }
   if (usage.totalTokens === 0) {
-    usage.totalTokens = usage.inputTokens + usage.cacheInputTokens + usage.outputTokens + usage.reasoningTokens;
+    usage.totalTokens = usage.inputTokens + usage.outputTokens;
   }
   return usage;
 }

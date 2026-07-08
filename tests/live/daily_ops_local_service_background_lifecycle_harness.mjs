@@ -167,8 +167,8 @@ async function spawnLogged(command, args, options = {}) {
   }))
   if (options.input) {
     child.stdin.write(options.input)
-    child.stdin.end()
   }
+  child.stdin.end()
   child.stdout.on("data", (chunk) => {
     const text = chunk.toString("utf8")
     stdout += text

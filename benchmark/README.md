@@ -108,8 +108,12 @@ run directory's `contracts/` folder.
 - `benchmark/tasks/build/game-prompt-difficulty/`
 - `benchmark/tasks/build/ogas-pdf-cost/`
 - `benchmark/tasks/build/tui-streaming-memory/`
+- `benchmark/tasks/debug/cli-bugfix-binary-matrix-10/`
 - `benchmark/tasks/debug/react-ops-board-playwright-repair/`
 - `benchmark/tasks/debug/retail-ops-defect-repair/`
+- `benchmark/tasks/debug/deepswe-anko-default-function-arguments/`
+- `benchmark/tasks/debug/swebench-verified-astropy__astropy-12907/`
+- `benchmark/tasks/debug/swebench-pro-instance_NodeBB__NodeBB-04998908ba6721d64eba79ae3b65a351dcfbc5b5-vnan/`
 - `benchmark/tasks/debug/swebench-verified-issue-patch/`
 - `benchmark/tasks/refactoring/programbench-cli-cleanroom-rebuild/`
 - `benchmark/tasks/refactoring/prompt-gallery-tanstack-frontend-rebuild/`
@@ -123,3 +127,17 @@ run directory's `contracts/` folder.
 - `benchmark/tasks/refactoring/source-port-python-defined-workflow-nushell/`
 - `benchmark/tasks/refactoring/source-port-python-defined-workflow-xsv/`
 - `benchmark/tasks/refactoring/source-port-python-defined-workflow-zip-password-finder/`
+
+## Debug Matrix Runner
+
+Debug suite tasks can be batched with:
+
+```bash
+node benchmark/run_debug_matrix.mjs --tasks '["deepswe-anko-default-function-arguments","swebench-verified-astropy__astropy-12907"]' --agents '["tura-balanced","tura-direct","codex-main"]'
+```
+
+The runner groups selected tasks by suite prefix (`deepswe`, `swebench-verified`,
+`swebench-pro`) and passes each suite one task array plus one agent array. Suite
+runners execute all task-agent jobs first and then run their harness/eval phase.
+`COMMAND_RUN_BENCHMARK_TASKS` and `COMMAND_RUN_BENCHMARK_AGENTS` provide the same
+inputs as environment variables.

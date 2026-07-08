@@ -1,0 +1,1094 @@
+{
+  "schema": "tura.debug.cli-bugfix-binary-matrix.v1",
+  "selectionCriteria": {
+    "taskCount": 10,
+    "languages": [
+      "Rust",
+      "Go",
+      "TypeScript",
+      "Python",
+      "Java"
+    ],
+    "tasksPerLanguage": 2,
+    "repositorySourceLocRange": {
+      "min": 50000,
+      "max": 500000,
+      "note": "Approximate source LOC, excluding vendored/generated artifacts where known."
+    },
+    "requirements": [
+      "Broadly used CLI project.",
+      "Buggy and fixed versions expose a runnable release executable, console entry point, or all-in-one jar.",
+      "The bug has a public upstream issue plus a fixing PR, commit, or release entry.",
+      "The fixed version is the next release containing the fix.",
+      "The oracle is observable CLI behavior on reproducer inputs, not repository tests."
+    ]
+  },
+  "tasks": [
+    {
+      "id": "eza-grid-non-tty",
+      "label": "eza",
+      "sourceLanguage": "Rust",
+      "difficulty": "medium",
+      "cliType": "filesystem listing",
+      "locEstimate": 78000,
+      "repo": {
+        "url": "https://github.com/eza-community/eza.git",
+        "owner": "eza-community",
+        "name": "eza"
+      },
+      "bug": {
+        "summary": "`eza --grid` ignored grid mode when stdout was not a TTY.",
+        "issue": "https://github.com/eza-community/eza/issues/1545",
+        "issueNumber": 1545,
+        "fix": "https://github.com/eza-community/eza/pull/1556",
+        "buggyVersion": "v0.22.1",
+        "fixedVersion": "v0.23.0",
+        "buggyRef": "v0.22.1",
+        "fixedRef": "v0.23.0",
+        "agentInstruction": "Fix non-TTY grid rendering so --grid still emits a grid layout when stdout is piped or captured.",
+        "issueTitle": "bug: `--grid` option does not work when piped or redirected",
+        "issueExcerpt": "`eza --color=always --grid ./test | cat`",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "bug: `--grid` option does not work when piped or redirected",
+          "body": [
+            "Bash version: 5.2.31; Eza version: v0.19.2; OS version: Ubuntu 24.10.",
+            "Reproducer: create a directory with many files, then compare `eza --color=always --grid ./test` with `eza --color=always --grid ./test | cat`.",
+            "Observed: direct terminal output uses grid layout, but piped or redirected output prints one file per line. The reporter notes this happens any time eza is called from a non-tty."
+          ]
+        },
+        "buggyCommit": "a362025dd5d905a90a5410927842b75ac6623aff",
+        "fixedCommit": "7a2b2661148a3fa4f01bfe41e74c5f1c57a24bd6"
+      },
+      "binary": {
+        "kind": "github_release_asset",
+        "binaryNames": [
+          "eza"
+        ],
+        "releaseAssetRules": [
+          {
+            "os": "win32",
+            "arch": "x64",
+            "includes": [
+              "eza.exe_x86_64-pc-windows-gnu",
+              ".zip"
+            ]
+          },
+          {
+            "os": "linux",
+            "arch": "x64",
+            "includes": [
+              "eza_x86_64-unknown-linux-musl",
+              ".tar.gz"
+            ]
+          },
+          {
+            "os": "linux",
+            "arch": "arm64",
+            "includes": [
+              "eza_aarch64-unknown-linux-gnu",
+              ".tar.gz"
+            ]
+          },
+          {
+            "os": "darwin",
+            "arch": "x64",
+            "includes": [
+              "eza_x86_64-apple-darwin",
+              ".tar.gz"
+            ]
+          },
+          {
+            "os": "darwin",
+            "arch": "arm64",
+            "includes": [
+              "eza_aarch64-apple-darwin",
+              ".tar.gz"
+            ]
+          }
+        ]
+      },
+      "build": {
+        "commands": [
+          [
+            "cargo",
+            "build",
+            "--release",
+            "--bin",
+            "eza"
+          ]
+        ],
+        "candidateBinary": "target/release/eza"
+      },
+      "cases": [
+        {
+          "name": "grid captured stdout",
+          "fixtures": [
+            {
+              "path": "grid/file_01.txt",
+              "content": ""
+            },
+            {
+              "path": "grid/file_02.txt",
+              "content": ""
+            },
+            {
+              "path": "grid/file_03.txt",
+              "content": ""
+            },
+            {
+              "path": "grid/file_04.txt",
+              "content": ""
+            },
+            {
+              "path": "grid/file_05.txt",
+              "content": ""
+            },
+            {
+              "path": "grid/file_06.txt",
+              "content": ""
+            }
+          ],
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "--grid",
+            "{{fixtures}}/grid"
+          ],
+          "buggyBehavior": "prints a single-column listing when output is captured",
+          "fixedBehavior": "prints a multi-column grid when output is captured",
+          "compare": "fixed_stdout_exact"
+        }
+      ],
+      "evidence": [
+        "https://github.com/eza-community/eza/issues/1545",
+        "https://github.com/eza-community/eza/pull/1556",
+        "https://github.com/eza-community/eza/blob/main/CHANGELOG.md"
+      ]
+    },
+    {
+      "id": "ripgrep-empty-vfile-invert",
+      "label": "ripgrep",
+      "sourceLanguage": "Rust",
+      "difficulty": "medium",
+      "cliType": "text search",
+      "locEstimate": 105000,
+      "repo": {
+        "url": "https://github.com/BurntSushi/ripgrep.git",
+        "owner": "BurntSushi",
+        "name": "ripgrep"
+      },
+      "bug": {
+        "summary": "`rg -v -f empty-file input` returned no lines instead of treating the inverted empty pattern set as matching everything.",
+        "issue": "https://github.com/BurntSushi/ripgrep/issues/3001",
+        "issueNumber": 3001,
+        "fix": "https://github.com/BurntSushi/ripgrep/pull/3041",
+        "buggyVersion": "14.1.1",
+        "fixedVersion": "15.0.0",
+        "buggyRef": "14.1.1",
+        "fixedRef": "15.0.0",
+        "agentInstruction": "Fix -v/--invert-match with an empty -f pattern file so it returns every searched line.",
+        "issueTitle": "`grep -v -f file` and `rg -v -f file` differ",
+        "issueExcerpt": "ripgrep's behavior is internally inconsistent",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "`grep -v -f file` and `rg -v -f file` differ",
+          "body": [
+            "The report compares grep and ripgrep when `-v -f` is used with an empty pattern source.",
+            "Reproducer: `echo wat | rg -f /dev/null` and `echo wat | rg -v -f /dev/null` both report no results, while `echo wat | grep -v -f /dev/null` prints `wat`.",
+            "Observed: the first two ripgrep commands both reporting no results is wrong; the inverted empty pattern set should return the searched input."
+          ]
+        },
+        "buggyCommit": "4649aa9700619f94cf9c66876e9549d83420e16c",
+        "fixedCommit": "3a612f88b805e14aef45bfa43e25a54abc6297fc"
+      },
+      "binary": {
+        "kind": "github_release_asset",
+        "binaryNames": [
+          "rg"
+        ],
+        "releaseAssetRules": [
+          {
+            "os": "win32",
+            "arch": "x64",
+            "includes": [
+              "ripgrep-{version}-x86_64-pc-windows-msvc",
+              ".zip"
+            ]
+          },
+          {
+            "os": "linux",
+            "arch": "x64",
+            "includes": [
+              "ripgrep-{version}-x86_64-unknown-linux-musl",
+              ".tar.gz"
+            ]
+          },
+          {
+            "os": "linux",
+            "arch": "arm64",
+            "includes": [
+              "ripgrep-{version}-aarch64-unknown-linux-gnu",
+              ".tar.gz"
+            ]
+          },
+          {
+            "os": "darwin",
+            "arch": "x64",
+            "includes": [
+              "ripgrep-{version}-x86_64-apple-darwin",
+              ".tar.gz"
+            ]
+          },
+          {
+            "os": "darwin",
+            "arch": "arm64",
+            "includes": [
+              "ripgrep-{version}-aarch64-apple-darwin",
+              ".tar.gz"
+            ]
+          }
+        ]
+      },
+      "build": {
+        "commands": [
+          [
+            "cargo",
+            "build",
+            "--release",
+            "--bin",
+            "rg"
+          ]
+        ],
+        "candidateBinary": "target/release/rg"
+      },
+      "cases": [
+        {
+          "name": "invert empty pattern file",
+          "fixtures": [
+            {
+              "path": "patterns.txt",
+              "content": ""
+            },
+            {
+              "path": "items.txt",
+              "content": "one\ntwo\nthree\n"
+            }
+          ],
+          "args": [
+            "-v",
+            "-f",
+            "{{fixtures}}/patterns.txt",
+            "{{fixtures}}/items.txt"
+          ],
+          "buggyBehavior": "status is non-zero and stdout is empty",
+          "fixedBehavior": "status is zero and stdout contains all input lines",
+          "compare": "fixed_streams_exact"
+        }
+      ],
+      "evidence": [
+        "https://github.com/BurntSushi/ripgrep/issues/3001",
+        "https://github.com/BurntSushi/ripgrep/pull/3041",
+        "https://ripgrep.dev/changelog/"
+      ]
+    },
+    {
+      "id": "gitleaks-repo-config-no-git-panic",
+      "label": "gitleaks",
+      "sourceLanguage": "Go",
+      "difficulty": "medium",
+      "cliType": "secret scanning",
+      "locEstimate": 62000,
+      "repo": {
+        "url": "https://github.com/gitleaks/gitleaks.git",
+        "owner": "gitleaks",
+        "name": "gitleaks"
+      },
+      "bug": {
+        "summary": "`gitleaks --path . --repo-config-path ./gitleaks.toml --no-git` panicked instead of reporting a normal conflict or scanning result.",
+        "issue": "https://github.com/gitleaks/gitleaks/issues/473",
+        "issueNumber": 473,
+        "fix": "https://github.com/gitleaks/gitleaks/releases/tag/v7.0.2",
+        "buggyVersion": "v7.0.1",
+        "fixedVersion": "v7.0.2",
+        "buggyRef": "v7.0.1",
+        "fixedRef": "v7.0.2",
+        "agentInstruction": "Fix the --repo-config-path and --no-git path so gitleaks never dereferences a nil git repository and exits normally with a useful outcome.",
+        "issueTitle": "--path + --repo-config-path + --no-git = segmentation violation",
+        "issueExcerpt": "`gitleaks --path . --repo-config-path ./gitleaks.toml --no-git` panics with a nil pointer dereference.",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "--path + --repo-config-path + --no-git = segmentation violation",
+          "body": [
+            "Reproducer command: `gitleaks --path . --repo-config-path ./gitleaks.toml --no-git`.",
+            "Observed: the command panics with `panic: runtime error: invalid memory address or nil pointer dereference`.",
+            "The reporter notes that combining `--repo-config-path` and `--no-git` may not make sense, but the CLI should provide a better result than a Go exception.",
+            "Expected: a normal error message about the conflicting options, or otherwise no panic."
+          ]
+        },
+        "buggyCommit": "656ef1c9a7f52264ffd2d11c91db1f0540e324c8",
+        "fixedCommit": "7db08bfd90c981010eff30f288dcff6686d2d288"
+      },
+      "binary": {
+        "kind": "github_release_asset",
+        "binaryNames": [
+          "gitleaks"
+        ],
+        "releaseAssetRules": [
+          {
+            "os": "win32",
+            "arch": "x64",
+            "includes": [
+              "gitleaks-windows-amd64.exe"
+            ]
+          },
+          {
+            "os": "linux",
+            "arch": "x64",
+            "includes": [
+              "gitleaks-linux-amd64"
+            ]
+          },
+          {
+            "os": "linux",
+            "arch": "arm64",
+            "includes": [
+              "gitleaks-linux-arm"
+            ]
+          },
+          {
+            "os": "darwin",
+            "arch": "x64",
+            "includes": [
+              "gitleaks-darwin-amd64"
+            ]
+          }
+        ]
+      },
+      "build": {
+        "commands": [
+          [
+            "go",
+            "build",
+            "-o",
+            "{{candidateBinary}}",
+            "."
+          ]
+        ],
+        "candidateBinary": "gitleaks"
+      },
+      "cases": [
+        {
+          "name": "repo config path with no-git does not panic",
+          "fixtures": [
+            {
+              "path": "gitleaks.toml",
+              "content": "title = 'empty'\n"
+            },
+            {
+              "path": "file.txt",
+              "content": "hello\n"
+            }
+          ],
+          "cwd": "{{fixtures}}",
+          "args": [
+            "--path",
+            ".",
+            "--repo-config-path",
+            "./gitleaks.toml",
+            "--no-git"
+          ],
+          "buggyBehavior": "panics with a nil pointer dereference",
+          "fixedBehavior": "does not panic and exits through normal CLI handling",
+          "compare": "fixed_streams_exact"
+        }
+      ],
+      "evidence": [
+        "https://github.com/gitleaks/gitleaks/issues/473",
+        "https://github.com/gitleaks/gitleaks/releases/tag/v7.0.2",
+        "https://github.com/gitleaks/gitleaks/releases/tag/v7.0.1"
+      ]
+    },
+    {
+      "id": "yq-multidoc-anchor-explode",
+      "label": "yq",
+      "sourceLanguage": "Go",
+      "difficulty": "hard",
+      "cliType": "structured data query",
+      "locEstimate": 125000,
+      "repo": {
+        "url": "https://github.com/mikefarah/yq.git",
+        "owner": "mikefarah",
+        "name": "yq"
+      },
+      "bug": {
+        "summary": "`explode(.)` failed to resolve anchors correctly in later documents of a multi-document YAML stream.",
+        "issue": "https://github.com/mikefarah/yq/issues/1861",
+        "issueNumber": 1861,
+        "fix": "https://github.com/mikefarah/yq/releases/tag/v4.40.2",
+        "buggyVersion": "v4.40.1",
+        "fixedVersion": "v4.40.2",
+        "buggyRef": "v4.40.1",
+        "fixedRef": "v4.40.2",
+        "agentInstruction": "Fix explode(.) so merge anchors and aliases are expanded correctly across YAML document boundaries.",
+        "issueTitle": "Breaking change in v4.40.1 pre-release - explode (merge using anchors) no longer works",
+        "issueExcerpt": "Version of yq: 4.40.1",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "Breaking change in v4.40.1 pre-release - explode (merge using anchors) no longer works",
+          "body": [
+            "Version of yq: 4.40.1. Operating system: Linux. Installed via `go install github.com/mikefarah/yq/v4@v4.40.1`.",
+            "Input YAML has defaults, anchors, aliases, and multiple YAML documents; the later document merges defaults and references both lunch and dinner aliases.",
+            "Command: `yq 'explode(.) | select(di == 2)' template.yaml`.",
+            "Observed: the selected document still contains unresolved aliases. Expected: the selected document includes the pantry default and fully expanded protein entries."
+          ]
+        },
+        "buggyCommit": "5f4c1fbd0ab1f7c1c97c23deb355a9a4d5077f66",
+        "fixedCommit": "1cf9ecc79df9cabe69ae75a0bbfa7df7f9fe8a2f"
+      },
+      "binary": {
+        "kind": "github_release_asset",
+        "binaryNames": [
+          "yq"
+        ],
+        "releaseAssetRules": [
+          {
+            "os": "win32",
+            "arch": "x64",
+            "includes": [
+              "yq_windows_amd64.exe"
+            ]
+          },
+          {
+            "os": "linux",
+            "arch": "x64",
+            "includes": [
+              "yq_linux_amd64"
+            ],
+            "excludes": [
+              ".tar.gz"
+            ]
+          },
+          {
+            "os": "linux",
+            "arch": "arm64",
+            "includes": [
+              "yq_linux_arm64"
+            ],
+            "excludes": [
+              ".tar.gz"
+            ]
+          },
+          {
+            "os": "darwin",
+            "arch": "x64",
+            "includes": [
+              "yq_darwin_amd64"
+            ],
+            "excludes": [
+              ".tar.gz"
+            ]
+          },
+          {
+            "os": "darwin",
+            "arch": "arm64",
+            "includes": [
+              "yq_darwin_arm64"
+            ],
+            "excludes": [
+              ".tar.gz"
+            ]
+          }
+        ]
+      },
+      "build": {
+        "commands": [
+          [
+            "go",
+            "build",
+            "-o",
+            "{{candidateBinary}}",
+            "./yq.go"
+          ]
+        ],
+        "candidateBinary": "yq"
+      },
+      "cases": [
+        {
+          "name": "explode third YAML document",
+          "fixtures": [
+            {
+              "path": "template.yaml",
+              "content": ".defaults: &defaults\n  pantry: [sauce]\noptions:\n- &lunch\n  protein: meat\n- &dinner\n  protein: eggs\n---\n<<: *defaults\nbuy:\n- *lunch\n---\n<<: *defaults\nbuy:\n- *lunch\n- *dinner\n"
+            }
+          ],
+          "args": [
+            "explode(.) | select(di == 2)",
+            "{{fixtures}}/template.yaml"
+          ],
+          "buggyBehavior": "leaves aliases unresolved in the selected document",
+          "fixedBehavior": "prints pantry plus fully expanded protein entries",
+          "compare": "fixed_stdout_exact"
+        }
+      ],
+      "evidence": [
+        "https://github.com/mikefarah/yq/issues/1861",
+        "https://github.com/mikefarah/yq/blob/master/release_notes.txt"
+      ]
+    },
+    {
+      "id": "prettier-cache-list-different",
+      "label": "prettier",
+      "sourceLanguage": "TypeScript",
+      "difficulty": "medium",
+      "cliType": "code formatter",
+      "locEstimate": 230000,
+      "repo": {
+        "url": "https://github.com/prettier/prettier.git",
+        "owner": "prettier",
+        "name": "prettier"
+      },
+      "bug": {
+        "summary": "`prettier --list-different --cache` wrote a cache entry that caused a later `--write --cache` run to skip needed formatting.",
+        "issue": "https://github.com/prettier/prettier/issues/13015",
+        "issueNumber": 13015,
+        "fix": "https://prettier.io/blog/2022/11/23/2.8.0.html",
+        "buggyVersion": "2.7.1",
+        "fixedVersion": "2.8.0",
+        "buggyRef": "2.7.1",
+        "fixedRef": "2.8.0",
+        "agentInstruction": "Fix cache writes so read-only/listing modes cannot poison a later --write --cache invocation.",
+        "issueTitle": "Unexpected --cache Behavior with --list-different",
+        "issueExcerpt": "Prettier Version: 2.7.1",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "Unexpected --cache Behavior with --list-different",
+          "body": [
+            "Environment: Prettier Version 2.7.1, run through `npx`, Node v16.14.0, npm v8.3.1, no plugins.",
+            "Steps: run `npx prettier . --list-different --cache`, then run `npx prettier . --write --cache`.",
+            "Expected: the second command should format project code. Actual: the first command writes a cache entry, and the later write command uses that cache and does not write formatting changes."
+          ]
+        },
+        "buggyCommit": "eeed611c728fb2f5f601440bbb78046a2a8aad83",
+        "fixedCommit": "dcc0623911f8b352eda18f60683eb1a232d6c2bd"
+      },
+      "binary": {
+        "kind": "npm_package",
+        "package": "prettier",
+        "binPath": "bin-prettier.js",
+        "binaryNames": [
+          "prettier"
+        ]
+      },
+      "build": {
+        "commands": [
+          [
+            "yarn",
+            "install",
+            "--frozen-lockfile"
+          ],
+          [
+            "yarn",
+            "build"
+          ]
+        ],
+        "candidateBinary": "bin-prettier.js"
+      },
+      "cases": [
+        {
+          "name": "cache must not skip write after list-different",
+          "fixtures": [
+            {
+              "path": "src/example.js",
+              "content": "const value={a:1,b:2}\n"
+            }
+          ],
+          "steps": [
+            {
+              "args": [
+                "{{fixtures}}/src/example.js",
+                "--list-different",
+                "--cache"
+              ]
+            },
+            {
+              "args": [
+                "{{fixtures}}/src/example.js",
+                "--write",
+                "--cache"
+              ]
+            },
+            {
+              "readFile": "{{fixtures}}/src/example.js"
+            }
+          ],
+          "buggyBehavior": "second command exits without rewriting the unformatted file",
+          "fixedBehavior": "second command rewrites the file to Prettier output",
+          "compare": "fixed_side_effect_exact"
+        }
+      ],
+      "evidence": [
+        "https://github.com/prettier/prettier/issues/13015",
+        "https://prettier.io/blog/2022/11/23/2.8.0.html",
+        "https://prettier.io/docs/cli"
+      ]
+    },
+    {
+      "id": "vite-repeated-host-local-url",
+      "label": "vite",
+      "sourceLanguage": "TypeScript",
+      "difficulty": "medium",
+      "cliType": "frontend dev server",
+      "locEstimate": 96000,
+      "repo": {
+        "url": "https://github.com/vitejs/vite.git",
+        "owner": "vitejs",
+        "name": "vite"
+      },
+      "bug": {
+        "summary": "Repeated `--host` flags made the dev server print an invalid Local URL such as `http://true,true,true:5173/`.",
+        "issue": "https://github.com/vitejs/vite/issues/10424",
+        "issueNumber": 10424,
+        "fix": "https://github.com/vitejs/vite/pull/10474",
+        "buggyVersion": "3.1.8",
+        "fixedVersion": "3.2.0",
+        "buggyRef": "v3.1.8",
+        "fixedRef": "v3.2.0",
+        "agentInstruction": "Fix CLI option normalization so repeated --host flags do not turn the displayed local dev-server URL host into an array string.",
+        "issueTitle": "Vite Local address is badly formatted when using multiple --host",
+        "issueExcerpt": "When using vite cli with option `--host` the address displayed in the `Local` section is badly formatted when using multiple instance of `--host`.",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "Vite Local address is badly formatted when using multiple --host",
+          "body": [
+            "When using vite cli with option `--host` the address displayed in the `Local` section is badly formatted when using multiple instance of `--host`.",
+            "Reproducer: run the dev server with repeated flags, for example `vite --host --host --host --host`.",
+            "Observed: the Local address is printed as `http://true,true,true,true:5000/` instead of a normal localhost URL.",
+            "Expected: repeated boolean host flags should still produce a valid local address such as `http://localhost:5000/`."
+          ]
+        },
+        "buggyCommit": "c9da59bda6e556f8d1c10afa8c5cc8d95d27ea12",
+        "fixedCommit": "4198e3428457b648aa622b665035bebe2821c660"
+      },
+      "binary": {
+        "kind": "npm_package",
+        "package": "vite",
+        "installMode": "npm_install",
+        "binPath": "node_modules/vite/bin/vite.js",
+        "binaryNames": [
+          "vite"
+        ]
+      },
+      "build": {
+        "commands": [
+          [
+            "pnpm",
+            "install",
+            "--frozen-lockfile"
+          ],
+          [
+            "pnpm",
+            "build"
+          ]
+        ],
+        "candidateBinary": "packages/vite/bin/vite.js"
+      },
+      "cases": [
+        {
+          "name": "repeated host local url",
+          "fixtures": [
+            {
+              "path": "index.html",
+              "content": "<div id=\"app\"></div>\n"
+            }
+          ],
+          "protocol": "server-output",
+          "args": [
+            "--host",
+            "--host",
+            "--host",
+            "--port",
+            "49217",
+            "--strictPort",
+            "--clearScreen",
+            "false"
+          ],
+          "readyPattern": "Local:",
+          "buggyBehavior": "prints a Local URL whose host is `true,true,true`",
+          "fixedBehavior": "prints a normal localhost Local URL",
+          "compare": "fixed_stdout_exact"
+        }
+      ],
+      "evidence": [
+        "https://github.com/vitejs/vite/issues/10424",
+        "https://github.com/vitejs/vite/pull/10474",
+        "https://github.com/vitejs/vite/releases/tag/v3.2.0"
+      ]
+    },
+    {
+      "id": "black-multiline-fstring-parse",
+      "label": "black",
+      "sourceLanguage": "Python",
+      "difficulty": "medium",
+      "cliType": "code formatter",
+      "locEstimate": 118000,
+      "repo": {
+        "url": "https://github.com/psf/black.git",
+        "owner": "psf",
+        "name": "black"
+      },
+      "bug": {
+        "summary": "Black 24.4.x failed to parse a valid f-string containing a nested multiline string.",
+        "issue": "https://github.com/psf/black/issues/4362",
+        "issueNumber": 4362,
+        "fix": "https://black.readthedocs.io/en/stable/change_log.html",
+        "buggyVersion": "24.4.2",
+        "fixedVersion": "24.8.0",
+        "buggyRef": "24.4.2",
+        "fixedRef": "24.8.0",
+        "agentInstruction": "Fix Black's parser handling for valid f-strings that contain nested multiline string literals.",
+        "issueTitle": "Black v24.4.1 & v24.4.2 fails to format f-strings containing multi-line strings",
+        "issueExcerpt": "this is valid python syntax",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "Black v24.4.1 & v24.4.2 fails to format f-strings containing multi-line strings",
+          "body": [
+            "Black versions 24.4.1 and 24.4.2 fail when formatting Python code containing an f-string that includes a multi-line string.",
+            "Sample: `s = f\"\"\"{'''a\n            b\n            c'''}\"\"\"` followed by `print(s)`.",
+            "The reporter notes this is valid Python syntax and executable, but Black 24.4.2 reports `Cannot parse: 1:9` and fails to reformat the file."
+          ]
+        },
+        "buggyCommit": "3702ba224ecffbcec30af640c149f231d90aebdb",
+        "fixedCommit": "b965c2a5026f8ba399283ba3e01898b012853c79"
+      },
+      "binary": {
+        "kind": "pypi_package",
+        "package": "black",
+        "binaryNames": [
+          "black"
+        ],
+        "command": "black"
+      },
+      "build": {
+        "commands": [
+          [
+            "python",
+            "-m",
+            "pip",
+            "install",
+            "-e",
+            ".[d]"
+          ]
+        ],
+        "candidateBinary": "python -m black"
+      },
+      "cases": [
+        {
+          "name": "valid nested multiline f-string",
+          "fixtures": [
+            {
+              "path": "black_sample.py",
+              "content": "s = f\"\"\"{'''a\n            b\n            c'''}\"\"\"\n\nprint(s)\n"
+            }
+          ],
+          "args": [
+            "{{fixtures}}/black_sample.py"
+          ],
+          "buggyBehavior": "exits with parse error Cannot parse: 1:9",
+          "fixedBehavior": "formats or confirms the file successfully",
+          "compare": "fixed_status_and_file"
+        }
+      ],
+      "evidence": [
+        "https://github.com/psf/black/issues/4362",
+        "https://black.readthedocs.io/en/stable/change_log.html"
+      ]
+    },
+    {
+      "id": "pytest-importlib-assert-diff",
+      "label": "pytest",
+      "sourceLanguage": "Python",
+      "difficulty": "medium",
+      "cliType": "test runner diagnostics",
+      "locEstimate": 175000,
+      "repo": {
+        "url": "https://github.com/pytest-dev/pytest.git",
+        "owner": "pytest-dev",
+        "name": "pytest"
+      },
+      "bug": {
+        "summary": "Pytest omitted assertion failure diffs when running with `--import-mode=importlib`.",
+        "issue": "https://github.com/pytest-dev/pytest/issues/12659",
+        "issueNumber": 12659,
+        "fix": "https://docs.pytest.org/en/stable/changelog.html#pytest-8-3-3-2024-09-09",
+        "buggyVersion": "8.3.2",
+        "fixedVersion": "8.3.3",
+        "buggyRef": "8.3.2",
+        "fixedRef": "8.3.3",
+        "agentInstruction": "Restore assertion explanation diffs when tests are imported through --import-mode=importlib.",
+        "issueTitle": "pytest >=8.1.1 displays no diff for AssertionError with --import-mode=importlib",
+        "issueExcerpt": "causes `AssertionError` to not render a diff",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "pytest >=8.1.1 displays no diff for AssertionError with --import-mode=importlib",
+          "body": [
+            "From pytest 8.1.1 onward, using `--import-mode=importlib` causes `AssertionError` to omit the diff in shell output.",
+            "Reproducer: create a package-style tests directory with `__init__.py`, add a simple failing equality assertion, and run `pytest --import-mode=importlib tests/test.py`.",
+            "Expected: assertion output should include the diff/explanation. Observed: the failure is reported without the useful diff that earlier pytest versions showed."
+          ]
+        },
+        "buggyCommit": "bbcec9c46509c417ef58e4849847b4aa43f4591e",
+        "fixedCommit": "d0f136fe64f9374f18a04562305b178fb380d1ec"
+      },
+      "binary": {
+        "kind": "pypi_package",
+        "package": "pytest",
+        "binaryNames": [
+          "pytest"
+        ],
+        "command": "pytest"
+      },
+      "build": {
+        "commands": [
+          [
+            "python",
+            "-m",
+            "pip",
+            "install",
+            "-e",
+            "."
+          ]
+        ],
+        "candidateBinary": "python -m pytest"
+      },
+      "cases": [
+        {
+          "name": "assert diff with importlib import mode",
+          "fixtures": [
+            {
+              "path": "test_assert_diff.py",
+              "content": "def test_dict_diff():\n    assert {'alpha': 1, 'beta': 2} == {'alpha': 1, 'beta': 3}\n"
+            }
+          ],
+          "args": [
+            "--import-mode=importlib",
+            "-q",
+            "{{fixtures}}/test_assert_diff.py"
+          ],
+          "buggyBehavior": "failure output lacks the dict value difference details",
+          "fixedBehavior": "failure output includes the differing beta item explanation",
+          "compare": "fixed_stderr_stdout_normalized"
+        }
+      ],
+      "evidence": [
+        "https://github.com/pytest-dev/pytest/issues/12659",
+        "https://docs.pytest.org/en/stable/changelog.html#pytest-8-3-3-2024-09-09"
+      ]
+    },
+    {
+      "id": "checkstyle-invalid-config-diagnostics",
+      "label": "checkstyle",
+      "sourceLanguage": "Java",
+      "difficulty": "medium",
+      "cliType": "Java style checker",
+      "locEstimate": 240000,
+      "repo": {
+        "url": "https://github.com/checkstyle/checkstyle.git",
+        "owner": "checkstyle",
+        "name": "checkstyle"
+      },
+      "bug": {
+        "summary": "An incorrect config file could make the CLI exit with an error but without actionable diagnostic details.",
+        "issue": "https://github.com/checkstyle/checkstyle/issues/1180",
+        "issueNumber": 1180,
+        "fix": "https://checkstyle.sourceforge.io/version/6.18/releasenotes.html",
+        "buggyVersion": "checkstyle-6.17",
+        "fixedVersion": "checkstyle-6.18",
+        "buggyRef": "checkstyle-6.17",
+        "fixedRef": "checkstyle-6.18",
+        "agentInstruction": "Fix CLI error reporting for invalid configuration files so users receive the underlying config problem.",
+        "issueTitle": "Incorrect config file cause CLI finish with error but no output with details",
+        "issueExcerpt": "Checkstyle ends with 1 errors.",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "Incorrect config file cause CLI finish with error but no output with details",
+          "body": [
+            "Incorrect config files cause the Checkstyle CLI to finish with an error but no detailed output.",
+            "Reproducer: run `java -cp checkstyle-6.7-all.jar com.puppycrawl.tools.checkstyle.Main -c my_check.xml Test.java` with a malformed or invalid check configuration.",
+            "Observed output is only `Checkstyle ends with 1 errors.` Expected: the CLI should print the underlying configuration problem so the user can fix it."
+          ]
+        },
+        "buggyCommit": "42680a09abd07ed3f9587bca44b770d4e346fdfc",
+        "fixedCommit": "05cb344de33eff0a7bcb312a2d20ff7fa3bd88e4"
+      },
+      "binary": {
+        "kind": "github_release_jar",
+        "binaryNames": [
+          "checkstyle"
+        ],
+        "jarNameTemplate": "checkstyle-{versionNoPrefix}-all.jar",
+        "releaseAssetRules": [
+          {
+            "os": "win32",
+            "includes": [
+              "checkstyle-{versionNoPrefix}-all.jar"
+            ]
+          },
+          {
+            "os": "linux",
+            "includes": [
+              "checkstyle-{versionNoPrefix}-all.jar"
+            ]
+          },
+          {
+            "os": "darwin",
+            "includes": [
+              "checkstyle-{versionNoPrefix}-all.jar"
+            ]
+          }
+        ]
+      },
+      "build": {
+        "commands": [
+          [
+            "mvn",
+            "-DskipTests",
+            "package"
+          ]
+        ],
+        "candidateBinary": "target/checkstyle-*-all.jar"
+      },
+      "cases": [
+        {
+          "name": "invalid module config prints cause",
+          "fixtures": [
+            {
+              "path": "bad-checks.xml",
+              "content": "<?xml version=\"1.0\"?>\n<!DOCTYPE module PUBLIC \"-//Checkstyle//DTD Checkstyle Configuration 1.3//EN\" \"https://checkstyle.org/dtds/configuration_1_3.dtd\">\n<module name=\"Checker\"><module name=\"TreeWalker\"><module name=\"NoSuchCheck\"/></module></module>\n"
+            },
+            {
+              "path": "Sample.java",
+              "content": "class Sample {}\n"
+            }
+          ],
+          "args": [
+            "-c",
+            "{{fixtures}}/bad-checks.xml",
+            "{{fixtures}}/Sample.java"
+          ],
+          "buggyBehavior": "exits with minimal or missing config diagnostic text",
+          "fixedBehavior": "stderr/stdout includes the invalid module/configuration cause",
+          "compare": "fixed_diagnostic_contains"
+        }
+      ],
+      "evidence": [
+        "https://github.com/checkstyle/checkstyle/issues/1180",
+        "https://checkstyle.sourceforge.io/version/6.18/releasenotes.html"
+      ]
+    },
+    {
+      "id": "google-java-format-native-reflection",
+      "label": "google-java-format",
+      "sourceLanguage": "Java",
+      "difficulty": "hard",
+      "cliType": "Java code formatter",
+      "locEstimate": 56000,
+      "repo": {
+        "url": "https://github.com/google/google-java-format.git",
+        "owner": "google",
+        "name": "google-java-format"
+      },
+      "bug": {
+        "summary": "The GraalVM native release binary missed reflection configuration and failed on formatting paths that the jar handled.",
+        "issue": "https://github.com/google/google-java-format/issues/1327",
+        "issueNumber": 1327,
+        "fix": "https://github.com/google/google-java-format/releases/tag/v1.34.1",
+        "buggyVersion": "v1.34.0",
+        "fixedVersion": "v1.34.1",
+        "buggyRef": "v1.34.0",
+        "fixedRef": "v1.34.1",
+        "agentInstruction": "Fix native-image reflection configuration so the native CLI formats source that the jar formatter accepts.",
+        "issueTitle": "Fix reflection errors during native execution",
+        "issueExcerpt": "after updating to the new version 1.34.0",
+        "issueText": {
+          "source": "github-issue-text-snapshot",
+          "title": "Fix reflection errors during native execution",
+          "body": [
+            "After updating to version 1.34.0, the reporter receives an error while running the native binary.",
+            "Observed error begins with `error: no such method: com.sun.tools.javac.tree.JCTree.getEndPosition(EndPosTable)int/invokeVirtual` and a `java.lang.LinkageError` from formatter internals.",
+            "Expected: the native CLI should format Java source accepted by the jar formatter without reflection or linkage configuration errors."
+          ]
+        },
+        "buggyCommit": "1d7adff14730726d69f315180e9d30365f938125",
+        "fixedCommit": "64ee627337507dca8953da3771413fd81c96ec50"
+      },
+      "binary": {
+        "kind": "github_release_asset",
+        "binaryNames": [
+          "google-java-format"
+        ],
+        "releaseAssetRules": [
+          {
+            "os": "win32",
+            "arch": "x64",
+            "includes": [
+              "google-java-format_windows-x86-64.exe"
+            ]
+          },
+          {
+            "os": "linux",
+            "arch": "x64",
+            "includes": [
+              "google-java-format_linux-x86-64"
+            ]
+          },
+          {
+            "os": "darwin",
+            "arch": "arm64",
+            "includes": [
+              "google-java-format_darwin-arm64"
+            ]
+          },
+          {
+            "os": "darwin",
+            "arch": "x64",
+            "includes": [
+              "google-java-format_darwin-x86-64"
+            ]
+          }
+        ]
+      },
+      "build": {
+        "commands": [
+          [
+            "mvn",
+            "-DskipTests",
+            "package"
+          ]
+        ],
+        "candidateBinary": "core/target/google-java-format"
+      },
+      "cases": [
+        {
+          "name": "native binary formats simple Java source",
+          "fixtures": [
+            {
+              "path": "Hello.java",
+              "content": "class Hello{public static void main(String[]args){System.out.println(\"hi\");}}\n"
+            }
+          ],
+          "args": [
+            "{{fixtures}}/Hello.java"
+          ],
+          "buggyBehavior": "native binary fails with a reflection/configuration error",
+          "fixedBehavior": "native binary prints formatted Java source",
+          "compare": "fixed_stdout_exact"
+        }
+      ],
+      "evidence": [
+        "https://github.com/google/google-java-format/issues/1327",
+        "https://github.com/google/google-java-format/releases/tag/v1.34.1"
+      ]
+    }
+  ]
+}

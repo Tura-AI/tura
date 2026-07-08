@@ -44,6 +44,7 @@ const planningOverride = parsePlanningOverride(process.env.COMMAND_RUN_AGENT_TUR
 const codexGoalsEnabled = truthy(process.env.COMMAND_RUN_AGENT_CODEX_GOALS || "0")
 const turaGoalEnabled = truthy(process.env.COMMAND_RUN_AGENT_TURA_GOAL || "0")
 const turaExplicitSessionId = truthy(process.env.COMMAND_RUN_AGENT_TURA_SESSION_ID || "0")
+const turaStrictJson = process.env.COMMAND_RUN_AGENT_TURA_STRICT_JSON || process.env.TURA_COMMAND_RUN_STRICT_JSON || "0"
 const turaExe =
   process.env.COMMAND_RUN_AGENT_TURA_EXE ||
   path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
@@ -56,7 +57,7 @@ function shortRunDirName(value) {
   return `r-${crypto.createHash("sha1").update(String(value)).digest("hex").slice(0, 10)}`
 }
 
-const TASKS = {
+const BUILTIN_TASKS = {
   "zip-password-finder": {
     id: "agourlay__zip-password-finder.source-port-python",
     label: "zip-password-finder",
@@ -132,7 +133,45 @@ const TASKS = {
   },
 }
 
+const TASKS = {
+  ...BUILTIN_TASKS,
+  ...loadExternalTasks(),
+}
+
 const selectedTasks = parseTasks(selectedTasksRaw)
+
+function loadExternalTasks() {
+  const configPath = process.env.SOURCE_PORT_TASK_CONFIG || process.env.COMMAND_RUN_AGENT_SOURCE_PORT_TASK_CONFIG
+  if (!configPath) return {}
+  const resolved = path.resolve(configPath)
+  const parsed = JSON.parse(fs.readFileSync(resolved, "utf8"))
+  const rows = Array.isArray(parsed) ? parsed : parsed.tasks
+  if (!Array.isArray(rows)) throw new Error(`source-port task config must be an array or { tasks: [...] }: ${resolved}`)
+  const tasks = {}
+  for (const row of rows) {
+    const task = {
+      ...row,
+      label: row.label || row.name,
+      sourceDir: row.sourceDir || "source-reference",
+    }
+    if (!task.label) throw new Error(`external source-port task missing label in ${resolved}`)
+    if (!task.id) task.id = `${task.label}.source-port-python-binary`
+    if (!task.repo) throw new Error(`external source-port task ${task.label} missing repo`)
+    if (!task.owner || !task.repoName) {
+      const match = String(task.repo).match(/github\.com[:/](.+?)\/(.+?)(?:\.git)?$/i)
+      if (match) {
+        task.owner ||= match[1]
+        task.repoName ||= match[2]
+      }
+    }
+    task.ref ||= task.commit || task.tag
+    task.tag ||= task.ref
+    task.binaryNames ||= task.reference?.binaryNames || [task.reference?.binary || task.label]
+    task.releaseAssetRules ||= task.reference?.releaseAssetRules || []
+    tasks[task.label] = task
+  }
+  return tasks
+}
 
 function truthy(value) {
   return ["1", "true", "yes", "on", "enabled"].includes(String(value || "").trim().toLowerCase())
@@ -288,7 +327,8 @@ function setupWorkspaceGit(workspace, addArgs, commitMessage) {
 
 function run(command, args, options = {}) {
   const started = performance.now()
-  const result = spawnSync(command, args, {
+  const invocation = commandInvocation(command, args)
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: options.cwd || repoRoot,
     input: options.input,
     text: true,
@@ -308,6 +348,23 @@ function run(command, args, options = {}) {
     duration_ms: Math.round(performance.now() - started),
     error: result.error ? String(result.error.stack || result.error.message || result.error) : null,
   }
+}
+
+function commandInvocation(command, args = []) {
+  const commandText = String(command)
+  if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(commandText)) {
+    return {
+      command: process.env.ComSpec || "cmd.exe",
+      args: ["/d", "/s", "/c", `call ${quoteWindowsCmdArg(commandText)} ${args.map(quoteWindowsCmdArg).join(" ")}`.trim()],
+    }
+  }
+  return { command, args }
+}
+
+function quoteWindowsCmdArg(value) {
+  const text = String(value)
+  if (!/[ \t"&<>|^]/.test(text)) return text
+  return `"${text.replace(/"/g, '\\"')}"`
 }
 
 function runOk(command, args, options = {}) {
@@ -372,8 +429,8 @@ function runLiveAttempt(command, args, options = {}) {
     }))
     if (options.input) {
       child.stdin.write(options.input)
-      child.stdin.end()
     }
+    child.stdin.end()
     const timer = setTimeout(() => {
       timedOut = true
       killProcessTree(child.pid)
@@ -486,9 +543,11 @@ function ensureReferenceRepo(task) {
   } else {
     run("git", ["fetch", "--all", "--tags"], { cwd: referenceCache, timeoutMs: 10 * 60_000 })
   }
-  runOk("git", ["checkout", "--force", task.commit], { cwd: referenceCache, timeoutMs: 120_000 })
+  const checkoutRef = task.commit || task.ref || task.tag
+  runOk("git", ["checkout", "--force", checkoutRef], { cwd: referenceCache, timeoutMs: 120_000 })
   const rev = runOk("git", ["rev-parse", "HEAD"], { cwd: referenceCache, timeoutMs: 60_000 }).stdout.trim()
-  assert.equal(rev, task.commit)
+  if (task.commit) assert.equal(rev, task.commit)
+  else task.commit = rev
   return referenceCache
 }
 
@@ -578,6 +637,9 @@ function findBinaryInDir(dir, binaryNames) {
 }
 
 async function ensureReferenceBinary(task) {
+  if (task.reference?.kind === "npm_package") return ensureNpmReferenceCommand(task)
+  if (task.reference?.kind === "pypi_package") return ensurePypiReferenceCommand(task)
+  if (task.reference?.kind === "github_release_jar") return ensureGithubReleaseJarCommand(task)
   const binName = process.platform === "win32" ? `${task.binaryNames[0]}.exe` : task.binaryNames[0]
   const stable = path.join(suiteRoot, "binaries", task.label, task.tag, binName)
   if (fs.existsSync(stable)) {
@@ -588,19 +650,113 @@ async function ensureReferenceBinary(task) {
   const asset = selectAsset(task, release.assets || [])
   const archive = path.join(suiteRoot, "downloads", task.label, task.tag, asset.name)
   await downloadFile(asset.browser_download_url, archive)
-  const extractDir = path.join(suiteRoot, "extract", task.label, task.tag)
-  extractArchive(archive, extractDir)
-  const found = findBinaryInDir(extractDir, task.binaryNames)
   mkdirp(path.dirname(stable))
-  fs.copyFileSync(found, stable)
+  if (isRawBinaryAsset(archive)) {
+    fs.copyFileSync(archive, stable)
+  } else {
+    const extractDir = path.join(suiteRoot, "extract", task.label, task.tag)
+    extractArchive(archive, extractDir)
+    const found = findBinaryInDir(extractDir, task.binaryNames)
+    fs.copyFileSync(found, stable)
+  }
   if (process.platform !== "win32") fs.chmodSync(stable, 0o755)
   smokeReferenceBinary(task, stable)
   return stable
 }
 
+async function ensureGithubReleaseJarCommand(task) {
+  const jarName = task.reference.jarName || `${task.label}.jar`
+  const stableDir = path.join(suiteRoot, "jars", task.label, task.tag)
+  const jarPath = path.join(stableDir, jarName)
+  const wrapper = path.join(stableDir, process.platform === "win32" ? `${task.label}.cmd` : task.label)
+  if (!fs.existsSync(jarPath)) {
+    const release = await githubRelease(task)
+    const asset = selectAsset(task, release.assets || [])
+    const downloaded = path.join(suiteRoot, "downloads", task.label, task.tag, asset.name)
+    await downloadFile(asset.browser_download_url, downloaded)
+    mkdirp(stableDir)
+    fs.copyFileSync(downloaded, jarPath)
+  }
+  writeCommandWrapper(wrapper, "java", ["-jar", jarPath])
+  smokeReferenceBinary(task, wrapper)
+  return wrapper
+}
+
+function isRawBinaryAsset(file) {
+  const lower = file.toLowerCase()
+  return (
+    lower.endsWith(".exe") ||
+    lower.endsWith(".bin") ||
+    (!lower.endsWith(".zip") && !lower.endsWith(".tar.gz") && !lower.endsWith(".tgz") && !lower.endsWith(".tar.xz"))
+  )
+}
+
+function npmPack(packageSpec, destination) {
+  const npmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")
+  if (fs.existsSync(npmCli)) {
+    return runOk(process.execPath, [npmCli, "pack", packageSpec, "--pack-destination", destination], { timeoutMs: 5 * 60_000 })
+  }
+  return runOk("npm", ["pack", packageSpec, "--pack-destination", destination], { timeoutMs: 5 * 60_000 })
+}
+
+function ensureNpmReferenceCommand(task) {
+  const pkg = task.reference.package
+  const version = task.reference.version || task.tag
+  const binPath = task.reference.binPath
+  if (!pkg || !version || !binPath) throw new Error(`npm reference for ${task.label} requires package, version, and binPath`)
+  const stableDir = path.join(suiteRoot, "npm", task.label, version)
+  const packageDir = path.join(stableDir, "package")
+  const wrapper = path.join(stableDir, process.platform === "win32" ? `${task.label}.cmd` : task.label)
+  if (!fs.existsSync(path.join(packageDir, binPath))) {
+    fs.rmSync(stableDir, { recursive: true, force: true })
+    mkdirp(stableDir)
+    const packDir = path.join(suiteRoot, "downloads", "npm", task.label, version)
+    fs.rmSync(packDir, { recursive: true, force: true })
+    mkdirp(packDir)
+    const pack = npmPack(`${pkg}@${version}`, packDir)
+    const tgz = pack.stdout.trim().split(/\r?\n/).pop()
+    extractArchive(path.join(packDir, tgz), stableDir)
+  }
+  writeCommandWrapper(wrapper, "node", [path.join(packageDir, binPath)])
+  smokeReferenceBinary(task, wrapper)
+  return wrapper
+}
+
+function ensurePypiReferenceCommand(task) {
+  const pkg = task.reference.package
+  const version = task.reference.version || task.tag
+  const command = task.reference.command || task.label
+  if (!pkg || !version) throw new Error(`PyPI reference for ${task.label} requires package and version`)
+  const stableDir = path.join(suiteRoot, "pypi", task.label, version)
+  const venvDir = path.join(stableDir, "venv")
+  const script = path.join(venvDir, process.platform === "win32" ? "Scripts" : "bin", process.platform === "win32" ? `${command}.exe` : command)
+  if (!fs.existsSync(script)) {
+    fs.rmSync(stableDir, { recursive: true, force: true })
+    mkdirp(stableDir)
+    runOk(process.env.PYTHON || "python", ["-m", "venv", venvDir], { timeoutMs: 5 * 60_000 })
+    const pip = path.join(venvDir, process.platform === "win32" ? "Scripts" : "bin", process.platform === "win32" ? "pip.exe" : "pip")
+    runOk(pip, ["install", `${pkg}==${version}`], { timeoutMs: 10 * 60_000 })
+  }
+  smokeReferenceBinary(task, script)
+  return script
+}
+
+function writeCommandWrapper(wrapper, command, args) {
+  mkdirp(path.dirname(wrapper))
+  if (process.platform === "win32") {
+    const quoted = [command, ...args].map((item) => `"${String(item).replace(/"/g, '""')}"`).join(" ")
+    writeFile(wrapper, `@echo off\r\n${quoted} %*\r\n`)
+  } else {
+    const quoted = [command, ...args].map((item) => `'${String(item).replace(/'/g, "'\\''")}'`).join(" ")
+    writeFile(wrapper, `#!/usr/bin/env sh\nexec ${quoted} "$@"\n`)
+    fs.chmodSync(wrapper, 0o755)
+  }
+}
+
 function smokeReferenceBinary(task, binary) {
   assert(fs.existsSync(binary), `missing reference binary for ${task.label}: ${binary}`)
-  const result = run(binary, ["--version"], { timeoutMs: 60_000, maxBuffer: 16 * 1024 * 1024 })
+  const smokeArgs = task.reference?.smokeArgs || ["--version"]
+  const result = run(binary, smokeArgs, { timeoutMs: 60_000, maxBuffer: 16 * 1024 * 1024 })
   if (result.status !== 0) {
     throw new Error(`reference binary smoke failed for ${task.label}: ${binary}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}\nerror:${result.error || ""}`)
   }
@@ -608,58 +764,45 @@ function smokeReferenceBinary(task, binary) {
 }
 
 function sourcePortPrompt(task) {
-  const todoHint = complexTodoHint
-    ? "\nThis is a complex task. Prefer breaking it into fine-grained TODOs and work through them systematically before marking the task done.\n"
-    : ""
-  return `You are in a benchmark workspace containing a Rust reference application at ./rust-reference and an official release binary path recorded in ./REFERENCE_BINARY.txt.
+  const sourceLanguage = task.sourceLanguage || "Rust"
+  const targetLanguage = task.targetLanguage || "Python"
+  const sourceDir = task.sourceDir || "rust-reference"
+  const tag = task.tag || task.ref || ""
+  const commit = task.commit || task.ref || "resolved from the configured tag during benchmark setup"
+  const commands = Array.isArray(task.commands) && task.commands.length > 0 ? task.commands.join(", ") : "the documented CLI behavior"
+  return `You are in a benchmark workspace containing a ${sourceLanguage} reference application at ./${sourceDir} and an official reference CLI path recorded in ./REFERENCE_BINARY.txt.
 
 Goal:
-Create a Python implementation that replicates the reference application's business-relevant CLI behavior needed for this benchmark. The evaluator focuses on functional outputs for representative real workflows rather than exhaustive help text or parser-copy minutiae.
+Create a ${targetLanguage} implementation that is a 1:1 functional port of the reference application for this benchmark. For the same input, the official reference CLI and your rebuilt version must produce exactly the same observable result: exit status, stdout, and stderr.
 
 Reference:
 - Project: ${task.label}
+- Source language: ${sourceLanguage}
+- Target language: ${targetLanguage}
 - Repository: ${task.repo}
-- Release/tag: ${task.tag}
-- Commit: ${task.commit}
-- Local source copy: ./rust-reference
-- Official binary: read ./REFERENCE_BINARY.txt
+- Release/tag: ${tag}
+- Commit: ${commit}
+- Local source copy: ./${sourceDir}
+- Official reference CLI: read ./REFERENCE_BINARY.txt
+- Behavior area: ${commands}
 
 Hard constraints:
 - Do not use Docker.
 - Do not search the internet.
-- Do not look for, copy, adapt, vendor, install, or import an existing Python implementation, clone, wrapper, compatibility layer, or package for this application.
-- Do not use package names, GitHub searches, package indexes, web pages, StackOverflow posts, examples, or generated snippets that implement the same tool or command family.
-- Use ./rust-reference and the official binary as the only functional sources of truth.
-- Implement in Python.
-- Do not shell out to the official binary from your implementation.
+- Do not look for, copy, adapt, vendor, install, or import an existing ${targetLanguage} implementation, clone, wrapper, compatibility layer, or package for this application.
+- Use ./${sourceDir} and the official reference CLI as the only functional sources of truth.
+- Implement in ${targetLanguage}.
+- Do not shell out to the official reference CLI from your implementation.
 - Do not install packages that already implement this application or its command suite.
-- The root deliverable must include ./executable. The harness will run it as: python ./executable ...
-- Also include ./compile.sh. It may be tiny, but it must leave ./executable present and ready to run.
-- Your Python implementation must be self-contained in the workspace. Standard-library modules are allowed; external dependencies are strongly discouraged and must not be used to bypass implementing the CLI behavior.
-- Do not fake tests by special-casing harness file names only. Implement the general command semantics for the requested scope.
-
-Required benchmark scope:
-- Determine the required CLI surface from the authoritative sources before planning implementation work: inspect the Rust source, command dispatcher, tests/fixtures when present, and official binary behavior.
-- Do not assume the required scope is limited to an obvious subset or to the first commands you inspect. Prioritize command behaviors needed for realistic data-processing or file-processing workflows over copying static help text.
-- Treat the official binary and local source as the source of truth for which commands, flags, inputs, outputs, exit codes, and error cases matter.
+- The root deliverable must include ./compile.sh.
+- ./compile.sh must build or wrap your ${targetLanguage} implementation and leave a runnable root command named ./executable. On Windows, ./executable.exe or ./executable.cmd is also accepted.
+- The first entrypoint discovered by the evaluator must itself be directly runnable on the current OS/runtime; do not leave a higher-priority wrapper, placeholder, or script that requires a different interpreter than the evaluator will use.
+- The harness will run ./compile.sh and then invoke your runnable executable with the same argv used for the official reference CLI.
 
 Equivalence requirements:
-- For every required command/flag/input you identify, match the official binary's observable business behavior: success/failure status, parsed data results, selected files, ordering when semantically meaningful, filtering, transformations, and realistic error handling.
-- Do not chase cosmetic formatting that does not change the business result. Column widths, decorative tree glyphs, long help prose, exact spacing, and platform-specific path spelling are lower priority than correct data and file-processing behavior.
-- Do not spend disproportionate effort cloning long static help text. Match parser behavior enough to support the evaluated workflows.
-- Match data behavior: ordering where meaningful, delimiters, quoting, escaping, headers, path selection, numeric/string coercion, and realistic failure cases.
-- If the official binary prints nothing, your program must print nothing. If the official binary writes to stderr, your program must write to stderr, not stdout.
-- The evaluator will generate expected results by invoking the official binary at runtime and then invoke your ./executable with the same inputs. It will score semantic behavior rather than require byte-for-byte formatting for display-oriented commands.
-- Passing local hand-written examples is not enough. You must probe the official binary on representative business workflows and reconcile functional differences before marking the task done.
-- A command metadata/help/inventory lookup does not count as testing that command's behavior. For each discovered command, the oracle checklist must include at least one executable invocation that exercises that command's functional semantics, with reference-vs-port status/stdout/stderr comparison. Metadata/help cases may be additional evidence only, never a replacement for functional behavior cases.
-${todoHint}
-
-Required workflow:
-1. Inspect README/Cargo metadata and the relevant Rust source files under ./rust-reference.
-2. Use the official binary from ./REFERENCE_BINARY.txt to probe representative business CLI input/output/exit-code behavior before implementing and again after implementation.
-3. Implement the Python port.
-4. Run local checks against the official binary behavior and fix every mismatch you find.
-5. Finish by leaving ./executable and ./compile.sh in the workspace root.
+- For every evaluated invocation, running the official reference CLI and running your rebuilt executable with the same argv, stdin, files, and environment must produce the same exit status, stdout, and stderr.
+- If the official binary prints nothing, your program must print nothing.
+- If the official binary writes to stderr, your program must write to stderr.
 
 Do not ask the user questions. Infer from source and official CLI behavior.`
 }
@@ -678,13 +821,51 @@ from pathlib import Path
 
 
 TASK = os.environ["SOURCE_PORT_TASK"]
+TARGET_LANGUAGE = os.environ.get("SOURCE_PORT_TARGET_LANGUAGE", "Python")
 REFERENCE_BINARY = Path(os.environ["SOURCE_PORT_REFERENCE_BINARY"])
+SOURCE_PORT_CASES = os.environ.get("SOURCE_PORT_CASES")
+GENERIC_CASE_PAYLOAD = None
+
+
+def quote_cmd_arg(value):
+    text = str(value)
+    if text and not re.search(r'[\\s"&<>|^%]', text):
+        return text
+    return '"' + text.replace('"', '""') + '"'
+
+
+def command_argv(argv):
+    argv = [str(x) for x in argv]
+    if os.name == "nt" and argv and argv[0].lower().endswith((".cmd", ".bat")):
+        return " ".join(quote_cmd_arg(x) for x in argv)
+    return argv
+
+
+def find_shell():
+    candidates = [shutil.which("sh"), shutil.which("bash")]
+    if os.name == "nt":
+        candidates.extend([
+            r"C:\Program Files\Git\bin\sh.exe",
+            r"C:\Program Files\Git\usr\bin\sh.exe",
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files\Git\usr\bin\bash.exe",
+        ])
+    for candidate in candidates:
+        if not candidate:
+            continue
+        lower = str(candidate).replace("\\", "/").lower()
+        if os.name == "nt" and lower.endswith("/windows/system32/bash.exe"):
+            continue
+        if Path(candidate).exists():
+            return candidate
+    return None
 
 
 def run_cmd(argv, cwd, stdin=None, timeout=30):
+    command = command_argv(argv)
     try:
         proc = subprocess.run(
-            [str(x) for x in argv],
+            command,
             cwd=str(cwd),
             input=stdin,
             text=True,
@@ -692,6 +873,7 @@ def run_cmd(argv, cwd, stdin=None, timeout=30):
             errors="replace",
             capture_output=True,
             timeout=timeout,
+            shell=isinstance(command, str),
             env={**os.environ, "NO_COLOR": "1", "CLICOLOR": "0", "TERM": "dumb", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         )
         return {"status": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr, "timed_out": False}
@@ -784,6 +966,45 @@ def same_normalized_streams(actual, expected):
         and normalize(actual["stdout"]) == normalize(expected["stdout"])
         and normalize(actual["stderr"]) == normalize(expected["stderr"])
     )
+
+
+def same_line_set(actual, expected):
+    return (
+        same_status(actual, expected)
+        and normalize(actual["stderr"]) == normalize(expected["stderr"])
+        and sorted(split_lines(actual["stdout"])) == sorted(split_lines(expected["stdout"]))
+    )
+
+
+def scrub_json_timing(value):
+    if isinstance(value, list):
+        return [scrub_json_timing(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: scrub_json_timing(item)
+            for key, item in value.items()
+            if key not in {"elapsed", "elapsed_total"}
+        }
+    return value
+
+
+def json_lines(text):
+    rows = []
+    for line in normalize(text).splitlines():
+        if line.strip():
+            rows.append(scrub_json_timing(json.loads(line)))
+    return rows
+
+
+def same_json_lines(actual, expected):
+    if not same_status(actual, expected):
+        return False
+    if normalize(actual["stderr"]) != normalize(expected["stderr"]):
+        return False
+    try:
+        return json_lines(actual["stdout"]) == json_lines(expected["stdout"])
+    except Exception:
+        return False
 
 
 def same_scalar(actual, expected):
@@ -911,7 +1132,13 @@ def same_business(task, case, actual, expected, fx):
         if case["name"] in {"csv select"}:
             return same_csv(actual, expected)
         return same_json_or_scalar(actual, expected)
-    return same_status(actual, expected)
+    if case.get("comparison") == "line_set":
+        return same_line_set(actual, expected)
+    if case.get("comparison") == "json_lines":
+        return same_json_lines(actual, expected)
+    if case.get("comparison") == "status_only":
+        return same_status(actual, expected)
+    return same_normalized_streams(actual, expected)
 
 
 def write(path, text):
@@ -932,9 +1159,32 @@ def make_fixtures(root):
     write(fx / "empty.txt", "")
     write(fx / "long name file.txt", "spaces\n")
     write(fx / "script.py", "print('hello')\n# TODO: inspect\n")
+    write(fx / "unused_import.py", "import os\n\nprint('hello')\n")
+    write(fx / "undefined.py", "print(missing_name)\n")
     write(fx / "exec.sh", "#!/bin/sh\necho hi\n")
     write(fx / "README.md", "# Demo\n\nhello world\n")
     write(fx / "Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n")
+    write(fx / "data.json", "{\"name\":\"alice\",\"age\":30,\"items\":[1,2,3]}\n")
+    write(fx / "data.xml", "<root><name>alice</name><item color=\"red\">one</item><item color=\"blue\">two</item></root>\n")
+    write(fx / "config.yaml", "name: alice\nage: 30\nitems:\n  - red\n  - blue\n")
+    write(fx / "multi.yaml", "---\nname: alice\nage: 30\n---\ncity: Paris\nscore: 8\n")
+    write(fx / "expr.yq", ".items | length\n")
+    write(fx / "valid.ts", "const answer: number = 42;\nconsole.log(answer);\n")
+    write(fx / "invalid.ts", "const answer: number = 'forty-two';\n")
+    write(fx / "tsconfig.json", "{\"compilerOptions\":{\"strict\":true,\"target\":\"es2017\",\"module\":\"commonjs\",\"noEmit\":true},\"files\":[\"valid.ts\"]}\n")
+    write(fx / "sample.js", "const demo={alpha:1,beta:2};\nconsole.log(demo)\n")
+    write(fx / "sample.ts", "type User={name:string;age:number}\nconst user:User={name:'alice',age:30}\n")
+    write(fx / "sample.html", "<div><span>Hello</span><span>world</span></div>\n")
+    write(fx / "sample.css", "body{color:red;background:white}.item{display:flex;gap:4px}\n")
+    write(fx / "sample.yaml", "name: alice\nitems: [red, blue]\n")
+    write(fx / ".prettierrc", "{\"singleQuote\":true,\"semi\":false}\n")
+    write(fx / "unformatted.py", "def add(a,b):\n    return(a+b)\n")
+    write(fx / "bad_py.py", "def broken(:\n    pass\n")
+    write(fx / "Hello.java", "public class Hello { public static void main(String[] args) { System.out.println(\"hi\"); } }\n")
+    write(fx / "Bad.java", "public class Bad { public static void main(String[] args) { System.out.println(\"bad\") } }\n")
+    write(fx / "Imports.java", "import java.util.List;\nimport java.io.File;\nimport java.util.ArrayList;\npublic class Imports { List<String> names = new ArrayList<>(); }\n")
+    write(fx / "JavadocExample.java", "/** Example class. */\npublic class JavadocExample { /** Returns one. */ int one() { return 1; } }\n")
+    write(fx / "javadoc-comment.txt", " Example method.\n @param value input value\n @return output value\n")
     (fx / ".hidden").write_text("hidden\n", encoding="utf-8")
     sub = fx / "sub"
     sub.mkdir(exist_ok=True)
@@ -948,6 +1198,84 @@ def make_fixtures(root):
     except Exception:
         pass
     return fx
+
+
+def expand_case_value(value, fx):
+    replacements = {
+        "fixtures": str(fx),
+        "people_csv": str(fx / "people.csv"),
+        "people2_csv": str(fx / "people2.csv"),
+        "cities_csv": str(fx / "cities.csv"),
+        "semi_csv": str(fx / "semi.csv"),
+        "no_headers_csv": str(fx / "no_headers.csv"),
+        "notes_txt": str(fx / "notes.txt"),
+        "readme_md": str(fx / "README.md"),
+        "script_py": str(fx / "script.py"),
+        "bad_py": str(fx / "bad_py.py"),
+        "unformatted_py": str(fx / "unformatted.py"),
+        "unused_import_py": str(fx / "unused_import.py"),
+        "undefined_py": str(fx / "undefined.py"),
+        "cargo_toml": str(fx / "Cargo.toml"),
+        "data_json": str(fx / "data.json"),
+        "data_xml": str(fx / "data.xml"),
+        "config_yaml": str(fx / "config.yaml"),
+        "multi_yaml": str(fx / "multi.yaml"),
+        "expr_yq": str(fx / "expr.yq"),
+        "valid_ts": str(fx / "valid.ts"),
+        "invalid_ts": str(fx / "invalid.ts"),
+        "tsconfig_json": str(fx / "tsconfig.json"),
+        "ts_out": str(fx / "ts-out"),
+        "declaration_out": str(fx / "declaration-out"),
+        "sample_js": str(fx / "sample.js"),
+        "sample_ts": str(fx / "sample.ts"),
+        "sample_html": str(fx / "sample.html"),
+        "sample_css": str(fx / "sample.css"),
+        "sample_yaml": str(fx / "sample.yaml"),
+        "hello_java": str(fx / "Hello.java"),
+        "bad_java": str(fx / "Bad.java"),
+        "imports_java": str(fx / "Imports.java"),
+        "javadoc_java": str(fx / "JavadocExample.java"),
+        "javadoc_comment": str(fx / "javadoc-comment.txt"),
+        "checkstyle_out": str(fx / "checkstyle-out.txt"),
+        "empty_txt": str(fx / "empty.txt"),
+    }
+    if isinstance(value, str):
+        out = value
+        for key, item in replacements.items():
+            out = out.replace("{{" + key + "}}", item)
+        return out
+    if isinstance(value, list):
+        return [expand_case_value(item, fx) for item in value]
+    if isinstance(value, dict):
+        return {key: expand_case_value(item, fx) for key, item in value.items()}
+    return value
+
+
+def generic_case_payload():
+    global GENERIC_CASE_PAYLOAD
+    if GENERIC_CASE_PAYLOAD is not None:
+        return GENERIC_CASE_PAYLOAD
+    case_file = Path(SOURCE_PORT_CASES) if SOURCE_PORT_CASES else Path.cwd() / "SOURCE_PORT_CASES.json"
+    if not case_file.exists():
+        raise AssertionError(f"missing generic case file for {TASK}: {case_file}")
+    GENERIC_CASE_PAYLOAD = json.loads(case_file.read_text(encoding="utf-8"))
+    return GENERIC_CASE_PAYLOAD
+
+
+def generic_cases(fx):
+    raw = generic_case_payload()
+    cases = raw.get("cases", raw) if isinstance(raw, dict) else raw
+    if not isinstance(cases, list) or not cases:
+        raise AssertionError(f"generic case file must contain a non-empty cases array for {TASK}")
+    return [expand_case_value(case, fx) for case in cases]
+
+
+def generic_coverage():
+    raw = generic_case_payload()
+    if not isinstance(raw, dict):
+        return {}
+    coverage = raw.get("coverage") or {}
+    return coverage if isinstance(coverage, dict) else {}
 
 
 def zip_cases(fx):
@@ -1140,13 +1468,15 @@ def cases_for(task, fx):
         return eza_cases(fx)
     if task == "nushell":
         return nushell_cases(fx)
-    raise AssertionError(task)
+    return generic_cases(fx)
 
 
 def command_name_from_case(task, case):
     if task == "xsv" and case.get("args"):
         return case["args"][0]
     if task == "eza":
+        return case.get("feature")
+    if case.get("feature"):
         return case.get("feature")
     return None
 
@@ -1176,6 +1506,34 @@ def side_effect_outputs(case):
     ]
 
 
+def find_actual_executable(workspace):
+    candidates = [
+        workspace / "executable",
+        workspace / "executable.exe",
+        workspace / "executable.cmd",
+        workspace / "executable.bat",
+        workspace / "executable.js",
+        workspace / "executable.py",
+        workspace / "executable.jar",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return workspace / "executable"
+
+
+def actual_command(executable, args):
+    if executable.suffix == ".py":
+        return [sys.executable, executable, *args]
+    if executable.suffix == ".js":
+        return ["node", executable, *args]
+    if executable.suffix == ".jar":
+        return ["java", "-jar", executable, *args]
+    if TARGET_LANGUAGE.lower() == "python" and executable.name == "executable":
+        return [sys.executable, executable, *args]
+    return [executable, *args]
+
+
 def eza_required_success_features():
     return {
         "listing", "hidden", "long-view", "time-fields", "tree-recursion",
@@ -1195,8 +1553,8 @@ def discover_cli_help(task, workspace):
     root = run_cmd([REFERENCE_BINARY, "--help"], workspace, timeout=15)
     help_data = {
         "root_status": root["status"],
-        "root_stdout": normalize(root["stdout"])[:12000],
-        "root_stderr": normalize(root["stderr"])[:12000],
+        "root_stdout": normalize(root["stdout"])[:120000],
+        "root_stderr": normalize(root["stderr"])[:120000],
         "help_commands": [],
         "source_commands": [],
         "commands": [],
@@ -1248,7 +1606,7 @@ def discover_cli_help(task, workspace):
 class Check:
     def __init__(self, workspace):
         self.workspace = Path(workspace)
-        self.exe = self.workspace / "executable"
+        self.exe = find_actual_executable(self.workspace)
         self.failures = []
         self.passes = 0
         self.cli_help = None
@@ -1263,28 +1621,46 @@ class Check:
     def ok(self, name):
         self.passes += 1
 
+    def build(self):
+        compile_script = self.workspace / "compile.sh"
+        if not compile_script.exists():
+            self.fail("compile.sh exists", "missing")
+            return
+        shell = find_shell()
+        if shell:
+            result = run_cmd([shell, compile_script], self.workspace, timeout=180)
+        else:
+            result = run_cmd([compile_script], self.workspace, timeout=180)
+        if result["status"] == 0:
+            self.ok("compile.sh succeeds")
+        else:
+            self.fail("compile.sh succeeds", result)
+        self.exe = find_actual_executable(self.workspace)
+
     def check_files(self):
-        for rel in ["executable", "compile.sh"]:
-            if not (self.workspace / rel).exists():
-                self.fail(f"{rel} exists", "missing")
-            else:
-                self.ok(f"{rel} exists")
+        if not (self.workspace / "compile.sh").exists():
+            self.fail("compile.sh exists", "missing")
+        else:
+            self.ok("compile.sh exists")
+        if not self.exe.exists():
+            self.fail("executable exists", "missing")
+        else:
+            self.ok("executable exists")
         if (self.workspace / "REFERENCE_BINARY.txt").exists() or REFERENCE_BINARY.exists():
             self.ok("reference binary available")
         else:
             self.fail("reference binary available", "missing REFERENCE_BINARY.txt and SOURCE_PORT_REFERENCE_BINARY")
-        if self.exe.exists() and self.exe.read_bytes()[:4] == b"\x7fELF":
-            self.fail("executable is python", "./executable must be a Python script, not a binary")
-        elif self.exe.exists():
-            self.ok("executable is python")
+        if self.exe.exists():
+            self.ok("executable target language")
 
     def check_cli_help_coverage(self, cases):
         self.cli_help = discover_cli_help(TASK, self.workspace)
         self.discovered_commands = list(self.cli_help.get("commands") or [])
-        if TASK not in {"xsv", "eza"}:
-            return
         if self.cli_help.get("root_status") != 0:
             self.fail("reference root help", {"status": self.cli_help.get("root_status"), "stderr": self.cli_help.get("root_stderr")})
+            return
+        coverage = generic_coverage() if TASK not in {"xsv", "eza"} else {}
+        if TASK not in {"xsv", "eza"} and not coverage:
             return
         covered = {
             command_name_from_case(TASK, case)
@@ -1308,10 +1684,18 @@ class Check:
             required_success = set(self.discovered_commands)
             required_error = set(self.discovered_commands)
             check_name = "success and error coverage for discovered xsv commands"
-        else:
+        elif TASK == "eza":
             required_success = eza_required_success_features()
             required_error = eza_required_error_features()
             check_name = "success and error coverage for discovered eza option groups"
+        else:
+            required_success = set(coverage.get("success", []))
+            required_error = set(coverage.get("error", []))
+            check_name = f"success and error coverage for {TASK} help-derived option groups"
+            help_text = normalize((self.cli_help.get("root_stdout") or "") + "\n" + (self.cli_help.get("root_stderr") or ""))
+            missing_help_options = [option for option in coverage.get("helpOptions", []) if option not in help_text]
+            if missing_help_options:
+                self.fail("reference help includes covered options", {"missing_help_options": missing_help_options})
         missing_success = sorted(required_success - success_covered)
         missing_error = sorted(required_error - error_covered)
         if missing_success or missing_error:
@@ -1324,8 +1708,37 @@ class Check:
             })
         else:
             self.ok(check_name)
+        minimum_success = int(coverage.get("minimumSuccessCasesPerFeature", 0) or 0)
+        minimum_error = int(coverage.get("minimumErrorCasesPerFeature", 0) or 0)
+        if minimum_success or minimum_error:
+            success_counts = {
+                feature: sum(
+                    1 for case in cases
+                    if command_name_from_case(TASK, case) == feature and case.get("kind", "success") == "success"
+                )
+                for feature in required_success
+            }
+            error_counts = {
+                feature: sum(
+                    1 for case in cases
+                    if command_name_from_case(TASK, case) == feature and case.get("kind") == "error"
+                )
+                for feature in required_error
+            }
+            sparse_success = {feature: count for feature, count in success_counts.items() if count < minimum_success}
+            sparse_error = {feature: count for feature, count in error_counts.items() if count < minimum_error}
+            if sparse_success or sparse_error:
+                self.fail("minimum feature case counts", {
+                    "minimum_success": minimum_success,
+                    "minimum_error": minimum_error,
+                    "sparse_success": sparse_success,
+                    "sparse_error": sparse_error,
+                })
+            else:
+                self.ok("minimum feature case counts")
 
     def run(self):
+        self.build()
         self.check_files()
         if not self.exe.exists():
             return
@@ -1349,7 +1762,7 @@ class Check:
                 expected_case = next(item for item in cases_for(TASK, expected_fx) if item["name"] == case["name"])
                 actual_case = next(item for item in cases_for(TASK, actual_fx) if item["name"] == case["name"])
             expected = run_cmd([REFERENCE_BINARY, *expected_case["args"]], self.workspace, stdin=stdin, timeout=case.get("timeout", 30))
-            actual = run_cmd([sys.executable, self.exe, *actual_case["args"]], self.workspace, stdin=stdin, timeout=case.get("timeout", 30))
+            actual = run_cmd(actual_command(self.exe, actual_case["args"]), self.workspace, stdin=stdin, timeout=case.get("timeout", 30))
             ok = same_business(TASK, actual_case, actual, expected, actual_fx)
             expected_side_effects = side_effect_outputs(expected_case)
             actual_side_effects = side_effect_outputs(actual_case)
@@ -1408,13 +1821,19 @@ async function prepareWorkspace(agentDir, task) {
   mkdirp(workspace)
   const reference = ensureReferenceRepo(task)
   const binary = await ensureReferenceBinary(task)
-  copyDir(reference, path.join(workspace, "rust-reference"))
-  fs.rmSync(path.join(workspace, "rust-reference", ".git"), { recursive: true, force: true })
-  writeFile(path.join(workspace, ".gitignore"), "rust-reference/\nharness/\n__pycache__/\n*.pyc\n")
+  const sourceDir = task.sourceDir || "rust-reference"
+  copyDir(reference, path.join(workspace, sourceDir))
+  fs.rmSync(path.join(workspace, sourceDir, ".git"), { recursive: true, force: true })
+  writeFile(path.join(workspace, ".gitignore"), `${sourceDir}/\nharness/\n__pycache__/\n*.pyc\n`)
   writeFile(path.join(workspace, "PYTHON_PORT_TASK.md"), sourcePortPrompt(task))
   writeFile(path.join(workspace, "REFERENCE_BINARY.txt"), binary)
+  if (Array.isArray(task.cases) && task.cases.length > 0) {
+    writeFile(path.join(workspace, "SOURCE_PORT_CASES.json"), JSON.stringify({ cases: task.cases, coverage: task.coverage || {} }, null, 2))
+  }
   writeFile(path.join(workspace, "compile.sh"), "#!/usr/bin/env sh\nset -eu\n[ -f executable ]\n")
-  const gitSetup = setupWorkspaceGit(workspace, [".gitignore", "PYTHON_PORT_TASK.md", "REFERENCE_BINARY.txt", "compile.sh"], "benchmark source-port fixture")
+  const initialFiles = [".gitignore", "PYTHON_PORT_TASK.md", "REFERENCE_BINARY.txt", "compile.sh"]
+  if (fs.existsSync(path.join(workspace, "SOURCE_PORT_CASES.json"))) initialFiles.push("SOURCE_PORT_CASES.json")
+  const gitSetup = setupWorkspaceGit(workspace, initialFiles, "benchmark source-port fixture")
   return { workspace, reference_path: reference, reference_binary: binary, prompt_path: path.join(workspace, "PYTHON_PORT_TASK.md"), git_setup: gitSetup, error: null }
 }
 
@@ -1487,21 +1906,49 @@ function writeAgentInvocationArchive(agentDir, details) {
 
 function codexHomeForAgent(agentDir, label) {
   const defaultCodexHome = process.env.CODEX_HOME || path.join(homeDir, ".codex")
-  if (label === "codex-ponytail") return process.env.COMMAND_RUN_AGENT_CODEX_PONYTAIL_HOME || defaultCodexHome
+  const explicitHome = process.env[codexEnvName("COMMAND_RUN_AGENT_CODEX_HOME", label)]
+    || process.env.COMMAND_RUN_AGENT_CODEX_HOME
+    || (label === "codex-main" ? process.env.COMMAND_RUN_AGENT_CODEX_MAIN_HOME : "")
+  if (explicitHome) return explicitHome
   if (!truthy(process.env.COMMAND_RUN_AGENT_CODEX_CLEAN_HOME || "0")) return process.env.CODEX_HOME || undefined
   const cleanHome = path.join(agentDir, "codex-home-clean")
   mkdirp(cleanHome)
   const authSource = path.join(defaultCodexHome, "auth.json")
   if (fs.existsSync(authSource)) fs.copyFileSync(authSource, path.join(cleanHome, "auth.json"))
-  writeFile(path.join(cleanHome, "config.toml"), [
-    `model = ${JSON.stringify(model)}`,
-    `model_reasoning_effort = ${JSON.stringify(reasoning)}`,
-    `approval_policy = "never"`,
-    `sandbox_mode = "danger-full-access"`,
-    `service_tier = ${JSON.stringify(serviceTier)}`,
-    "",
-  ].join("\n"))
   return cleanHome
+}
+
+function codexEnvName(prefix, label) {
+  const suffix = String(label || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "")
+  return suffix ? `${prefix}_${suffix}` : prefix
+}
+
+function codexCliConfigOverrides(label) {
+  return [
+    ...parseCodexCliConfig(process.env.COMMAND_RUN_AGENT_CODEX_CLI_CONFIG),
+    ...parseCodexCliConfig(process.env[codexEnvName("COMMAND_RUN_AGENT_CODEX_CLI_CONFIG", label)]),
+  ]
+}
+
+function parseCodexCliConfig(value) {
+  if (!value) return []
+  const text = String(value).trim()
+  if (!text) return []
+  try {
+    const parsed = JSON.parse(text)
+    if (Array.isArray(parsed)) return parsed.map(String).map((item) => item.trim()).filter(Boolean)
+    if (parsed && typeof parsed === "object") {
+      return Object.entries(parsed).map(([key, item]) => `${key}=${tomlLiteral(item)}`)
+    }
+  } catch {}
+  return text.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+}
+
+function tomlLiteral(value) {
+  if (typeof value === "boolean") return value ? "true" : "false"
+  if (typeof value === "number" && Number.isFinite(value)) return String(value)
+  if (Array.isArray(value)) return `[${value.map(tomlLiteral).join(", ")}]`
+  return JSON.stringify(String(value ?? ""))
 }
 
 async function runCodexLike(workspace, agentDir, prompt, onProgress, codexExe, label) {
@@ -1524,6 +1971,7 @@ async function runCodexLike(workspace, agentDir, prompt, onProgress, codexExe, l
     "-c",
     `log_dir="${escapeConfigPath(codexLogDir)}"`,
     ...serviceTierConfigArgs(),
+    ...codexCliConfigOverrides(label).flatMap((override) => ["-c", override]),
   ]
   const env = {
     COMMAND_RUN_AGENT_CONTEXT_ARCHIVE: "1",
@@ -1601,7 +2049,7 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     TURA_PROJECT_ROOT: repoRoot,
     LOG_PATH: providerLogPath,
     TURA_COMMAND_RUN_SHELL: process.env.COMMAND_RUN_AGENT_TURA_SHELL || "shell_command",
-    TURA_COMMAND_RUN_STRICT_JSON: "0",
+    TURA_COMMAND_RUN_STRICT_JSON: turaStrictJson,
     TURA_SESSION_REASONING_EFFORT: reasoning,
     ...optionalEnv([
       "TURA_PROFILE_TURN_TIMINGS",
@@ -2024,6 +2472,7 @@ function evaluateWorkspace(workspace, agentDir, task, binary) {
     timeoutMs: Number(process.env.SOURCE_PORT_EVAL_TIMEOUT_MS || 10 * 60_000),
     env: {
       SOURCE_PORT_TASK: task.label,
+      SOURCE_PORT_TARGET_LANGUAGE: task.targetLanguage || "Python",
       SOURCE_PORT_REFERENCE_BINARY: binary,
     },
   })
@@ -2164,12 +2613,12 @@ async function runSelfTest() {
   for (const id of selectedTasks) {
     const task = TASKS[id]
     const prompt = sourcePortPrompt(task)
-    for (const expected of ["official binary", "REFERENCE_BINARY.txt", "python ./executable", "Do not use Docker", "Do not shell out"]) {
+    for (const expected of ["official reference CLI", "REFERENCE_BINARY.txt", "Target language", "Do not use Docker", "Do not shell out", "1:1 functional port"]) {
       assert(prompt.includes(expected), `${task.label} prompt missing ${expected}`)
     }
   }
   const harness = harnessTemplate()
-  for (const expected of ["run_cmd([REFERENCE_BINARY", "zip_cases", "xsv_cases", "eza_cases", "nushell_cases", "same_business"]) {
+  for (const expected of ["run_cmd([REFERENCE_BINARY", "actual_command", "zip_cases", "xsv_cases", "eza_cases", "nushell_cases", "same_business"]) {
     assert(harness.includes(expected), `harness missing ${expected}`)
   }
   return { ok: true, self_test: "source-port rewrite suite", tasks: selectedTasks }

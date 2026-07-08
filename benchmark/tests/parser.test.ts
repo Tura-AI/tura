@@ -200,7 +200,7 @@ test("parseJsonlRounds normalizes the five benchmark agents' per-round callbacks
     "OpenCode patched it.",
     "Tura patched it.",
   ]);
-  assert.deepEqual(rounds.map((round) => round.usage.totalTokens), [20, 20, 20, 23, 25]);
+  assert.deepEqual(rounds.map((round) => round.usage.totalTokens), [20, 20, 17, 23, 25]);
   assert.deepEqual(
     rounds.map((round) => [
       round.metadata.agentId,

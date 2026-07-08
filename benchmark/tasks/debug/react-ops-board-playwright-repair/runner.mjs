@@ -115,12 +115,17 @@ function findPiExe() {
 
 function parseAgents(value) {
   const alias = new Map([
+    ["codex", "codex-main"],
     ["current", "current-shll"],
     ["current-shll", "current-shll"],
     ["codex-current", "current-shll"],
     ["main", "codex-main"],
     ["codex-main", "codex-main"],
     ["tura", "tura-fast-shll"],
+    ["balanced", "tura-balanced"],
+    ["tura-balanced", "tura-balanced"],
+    ["direct", "tura-direct"],
+    ["tura-direct", "tura-direct"],
     ["tura-shll", "tura-shll"],
     ["tura-bash", "tura-bash"],
     ["tura-coding", "tura-shll"],
@@ -261,6 +266,35 @@ function turaReasoningArgs() {
 function maxTokenConfigArgs() {
   if (!Number.isFinite(modelMaxTokens) || modelMaxTokens <= 0) return []
   return ["-c", `model_max_tokens=${modelMaxTokens}`, "-c", `max_tokens=${modelMaxTokens}`]
+}
+
+function priorityEnabled() {
+  return String(serviceTier || "").trim().toLowerCase() === "priority"
+}
+
+function benchmarkAgentKind(agentId) {
+  const kind = agentKind(agentId)
+  if (kind.startsWith("tura-")) return "tura"
+  if (kind.startsWith("current-") || kind.startsWith("codex-")) return "codex"
+  if (kind === "claude-code") return "claudecode"
+  if (kind === "pi-agent") return "pi"
+  return kind || "unknown"
+}
+
+function benchmarkAgentMode(agentId) {
+  const kind = agentKind(agentId)
+  if (kind === "tura-balanced") return "balanced"
+  if (kind === "tura-direct") return "direct"
+  if (kind === "tura-fast-shll" || kind === "tura-fast-bash") return "fast"
+  if (kind === "tura-shll" || kind === "tura-bash") return "coding_agent"
+  if (kind === "current-shll" || kind === "current-bash") return "current"
+  if (kind === "codex-main") return "main"
+  if (kind === "claude-code" || kind === "pi-agent") return "cli"
+  return "unknown"
+}
+
+function benchmarkModelForAgent(agentId) {
+  return benchmarkAgentKind(agentId) === "tura" ? turaModel : model
 }
 
 function killProcessesByCommandLinePath(targetPath) {
@@ -1444,6 +1478,39 @@ function writeRunLogs(agentDir, result) {
   writeFile(path.join(agentDir, "phase1.stderr.log"), result.first.stderr)
   writeFile(path.join(agentDir, "phase2.stdout.jsonl"), result.second.stdout)
   writeFile(path.join(agentDir, "phase2.stderr.log"), result.second.stderr)
+  writeFile(path.join(agentDir, "stdout.jsonl"), [result.first.stdout, result.second.stdout].filter(Boolean).join("\n"))
+  writeFile(path.join(agentDir, "stderr.log"), [result.first.stderr, result.second.stderr].filter(Boolean).join("\n"))
+}
+
+function finiteNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function validationToEval(agentDir, validation) {
+  const stdoutPath = path.join(agentDir, "eval.stdout.json")
+  const stderrPath = path.join(agentDir, "eval.stderr.log")
+  writeFile(stdoutPath, JSON.stringify(validation || {}, null, 2))
+  writeFile(stderrPath, String(validation?.error || ""))
+  const failures = Array.isArray(validation?.failures) ? validation.failures : []
+  const maxScore = finiteNumber(validation?.max) ?? (validation?.pass ? 1 : Math.max(failures.length, 1))
+  const passed = finiteNumber(validation?.total) ?? (validation?.pass ? maxScore : 0)
+  const failed = Math.max(0, maxScore - passed, validation?.pass ? 0 : failures.length ? failures.length : 0)
+  return {
+    ran: true,
+    exit_code: validation?.pass ? 0 : 1,
+    stdout_path: stdoutPath,
+    stderr_path: stderrPath,
+    report: {
+      reports: [{
+        task: "react-ops-board-playwright-repair",
+        passed,
+        failed,
+        max: maxScore,
+        failures,
+      }],
+    },
+  }
 }
 
 async function evaluate(workspace, evaluator, port) {
@@ -1512,6 +1579,10 @@ async function runAgent(agentId, template, evaluator, index) {
         result = await runCurrentLike(agentId, codexCurrentExe, workspace, agentDir, agentPort)
       } else if (kind === "codex-main") {
         result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort)
+      } else if (kind === "tura-balanced") {
+        result = await runTura(workspace, agentDir, agentPort, "balanced", shellSurface)
+      } else if (kind === "tura-direct") {
+        result = await runTura(workspace, agentDir, agentPort, "direct", shellSurface)
       } else if (kind === "tura-fast-shll" || kind === "tura-fast-bash") {
         result = await runTura(workspace, agentDir, agentPort, "fast", shellSurface)
       } else if (kind === "tura-shll" || kind === "tura-bash") {
@@ -1531,7 +1602,18 @@ async function runAgent(agentId, template, evaluator, index) {
     const events = [...parseJsonl(result.first.stdout), ...parseJsonl(result.second.stdout)]
     const validationMode = smokeOnly ? "smoke" : phase1Only ? "phase1_diagnostic_full_evaluator" : "full"
     const validation = smokeOnly ? evaluateSmoke(workspace) : await evaluate(workspace, evaluator, 43100 + index)
+    const evalResult = validationToEval(agentDir, validation)
     const stats = {
+      agent: agentId,
+      agent_id: agentId,
+      agent_kind: benchmarkAgentKind(agentId),
+      agent_mode: benchmarkAgentMode(agentId),
+      model: benchmarkModelForAgent(agentId),
+      tura_model: benchmarkAgentKind(agentId) === "tura" ? turaModel : null,
+      reasoning,
+      service_tier: serviceTier,
+      priority_enabled: priorityEnabled(),
+      task: "react-ops-board-playwright-repair",
       id: agentId,
       workspace,
       shell_surface: shellSurface,
@@ -1547,8 +1629,11 @@ async function runAgent(agentId, template, evaluator, index) {
       usage_by_phase: usageDiagnostics(agentId, result),
       events: countEvents(events),
       workspace_boundary_violations: workspaceBoundaryViolations(events, workspace),
+      stdout_path: path.join(agentDir, "stdout.jsonl"),
+      stderr_path: path.join(agentDir, "stderr.log"),
       validation_mode: validationMode,
       validation,
+      eval: evalResult,
     }
     writeFile(path.join(agentDir, "agent-summary.json"), JSON.stringify(stats, null, 2))
     return stats
@@ -1570,6 +1655,8 @@ async function main() {
         ok: false,
         harness_error: "baseline template scored too high; harness is not discriminating enough",
         baseline_validation: baseline,
+        service_tier: serviceTier,
+        priority_enabled: priorityEnabled(),
         agents,
       }, runPaths)
       writeFile(summaryPath, JSON.stringify(summary, null, 2))
@@ -1584,6 +1671,8 @@ async function main() {
         template,
         evaluator,
         baseline_validation: baseline,
+        service_tier: serviceTier,
+        priority_enabled: priorityEnabled(),
       }, runPaths)
       writeFile(summaryPath, JSON.stringify(summary, null, 2))
       console.log(JSON.stringify(summary, null, 2))
@@ -1617,13 +1706,17 @@ async function main() {
     const summary = normalizeBusinessSummary({
       ok: summaryOk,
       model,
+      tura_model: turaModel,
       claude_model: claudeModel,
       reasoning,
+      service_tier: serviceTier,
+      priority_enabled: priorityEnabled(),
       timeout_ms: timeoutMs,
       smoke_only: smokeOnly,
       phase1_only: phase1Only,
       diagnostic_only: phase1Only,
       skip_tura_build: skipTuraBuild,
+      harness_directory: path.join(runRoot, "hidden"),
       agents,
       baseline_validation: baseline,
       aggregate_usage: aggregateUsage(results),

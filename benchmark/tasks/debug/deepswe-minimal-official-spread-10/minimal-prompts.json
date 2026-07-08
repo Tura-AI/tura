@@ -1,0 +1,69 @@
+{
+  "schema": "tura.deepswe.minimal-prompts.v2",
+  "source": {
+    "tasks": "C:/Users/liuliu/Documents/tura_workspace/benchmarks/deep-swe-site-artifacts/tasks-v1.1.json",
+    "trials": "C:/Users/liuliu/Documents/tura_workspace/benchmarks/deep-swe-site-artifacts/trials-v1.1.json",
+    "method": "Grouped v1.1 trials by task_name, kept included_in_score trials, averaged score_value per task, sorted by pass rate, and sampled 10 approximately even rank quantiles."
+  },
+  "common_rules": [
+    "Do not search the internet.",
+    "Do not inspect or rely on hidden tests, verifier files, or reference solutions.",
+    "Fix the described behavior in the repository code.",
+    "The harness expects the public behavior described below to work from a clean checkout, not just a narrow local smoke test.",
+    "Keep the change focused and avoid unrelated refactors.",
+    "Run relevant local checks when available.",
+    "The official verifier will grade your patch in a pristine container after you finish."
+  ],
+  "tasks": {
+    "obsidian-linter-auto-table-of-contents": {
+      "official_pass_rate": 0.009615384615384616,
+      "official_trial_count": 104,
+      "task_goal": "The harness expects the linter to support an opt-in rule for automatic table of contents management. When the rule is enabled, a document's table of contents should be generated from the current headings, updated when headings change, and kept in a stable, repeatable format. The implementation should behave like a normal linter rule: it should respect configuration, avoid changing unrelated document content, and produce the same result when run repeatedly on already-correct text."
+    },
+    "pest-character-class-coalescing": {
+      "official_pass_rate": 0.19230769230769232,
+      "official_trial_count": 104,
+      "task_goal": "The harness expects the grammar optimizer to recognize alternatives that can be represented as a single character class and to rewrite them without changing what the grammar accepts. Compatible literal characters and existing character classes should be merged where that is semantically safe, including the corresponding negated form when applicable. The optimized grammar should remain equivalent to the original grammar from the parser's point of view, so this is an optimization and normalization task rather than a language change."
+    },
+    "sqlfmt-create-table-ddl-formatting": {
+      "official_pass_rate": 0.27184466019417475,
+      "official_trial_count": 103,
+      "task_goal": "The harness expects CREATE TABLE statements to format as structured DDL instead of as generic SQL text. Column definitions and table constraints should be understood well enough to preserve their meaning while placing them on clear, consistent lines with predictable indentation and separators. The formatter should handle realistic table definitions, keep valid SQL valid, and avoid regressing ordinary formatting behavior outside the CREATE TABLE support."
+    },
+    "prometheus-typed-label-sorting": {
+      "official_pass_rate": 0.34615384615384615,
+      "official_trial_count": 104,
+      "task_goal": "The harness expects PromQL label sorting to be deterministic when label values include a mix of typed and untyped values. Values that have explicit type information should compare according to the intended typed ordering, while untyped values should still sort consistently alongside them. The final order should be stable, reproducible, and compatible with existing behavior for simple labels that do not involve mixed typed values."
+    },
+    "mnamer-daemon-watch-lifecycle": {
+      "official_pass_rate": 0.44660194174757284,
+      "official_trial_count": 103,
+      "task_goal": "The harness expects daemon watch mode to have a usable lifecycle rather than just starting a long-running process. Starting the daemon, checking status, reading logs, and performing a run-once watch operation should all behave predictably. The watch workflow should be observable through status and logs, should not block when the command is expected to return, and should cleanly represent whether the daemon is running or has completed work."
+    },
+    "tengo-callable-instance-isolation": {
+      "official_pass_rate": 0.5480769230769231,
+      "official_trial_count": 104,
+      "task_goal": "The harness expects Go code to be able to call Tengo functions and closures exported from compiled scripts without corrupting runtime state. Calls should preserve the callable's captured context, evaluate with the correct globals and locals, and keep separate compiled instances isolated from one another. Repeated calls and calls across different instances should be independent, so data from one invocation or instance should not leak into another."
+    },
+    "textual-richlog-follow-state": {
+      "official_pass_rate": 0.6153846153846154,
+      "official_trial_count": 104,
+      "task_goal": "The harness expects RichLog to follow newly written content in the same practical way as the regular Log widget when follow mode is enabled. When follow mode is disabled or the user has scrolled away, new writes should not unexpectedly pull the view back to the end. The harness also expects expanded and justified rich content to keep correct reflow behavior, so fixing follow state should not break layout for wider or reformatted writes."
+    },
+    "anko-default-function-arguments": {
+      "official_pass_rate": 0.6826923076923077,
+      "official_trial_count": 104,
+      "task_goal": "The harness expects Anko functions to support default parameter values in normal function definitions and calls. A caller should be able to omit arguments that have defaults, provided values should still override defaults, and default expressions should be evaluated at call time with the correct surrounding context. Existing function behavior for required parameters, argument counts, closures, and ordinary calls should continue to work."
+    },
+    "actionlint-action-pinning-lint": {
+      "official_pass_rate": 0.7884615384615384,
+      "official_trial_count": 104,
+      "task_goal": "The harness expects workflow linting to include a configurable rule that detects unpinned action and reusable workflow references. References that use mutable names or branches should be reported when the rule is enabled, while references pinned to an immutable commit-style value should be accepted. The rule should apply to ordinary action uses and reusable workflow uses, respect configuration, and avoid false positives for local actions or other references that are not supposed to be pinned."
+    },
+    "narwhals-rolling-window-suite": {
+      "official_pass_rate": 0.9326923076923077,
+      "official_trial_count": 104,
+      "task_goal": "The harness expects Narwhals to expose the remaining rolling window operations consistently for expressions and series. Rolling min, rolling max, rolling median, and rolling quantile should validate their arguments the same way the existing rolling operations do, delegate to each supported backend appropriately, and return matching results for comparable eager and lazy use cases. The new behavior should fit the existing API style and should not regress the already-supported rolling sum, mean, variance, or standard deviation behavior."
+    }
+  }
+}

@@ -58,6 +58,11 @@ export interface BenchmarkCliMetadata {
 
 export type BenchmarkToolCallKind = "tool" | "command";
 
+export interface BenchmarkMessage {
+  role: string;
+  text: string;
+}
+
 export interface BenchmarkToolCall {
   id: string;
   kind: BenchmarkToolCallKind;
@@ -66,7 +71,8 @@ export interface BenchmarkToolCall {
   arguments: JsonValue;
   parentToolName?: string;
   parentToolCallId?: string;
-  parallelGroupId?: string;
+  parallelGroupId?: string | number;
+  durationMs?: number;
   startedAt?: string;
   endedAt?: string;
   raw?: JsonValue;
@@ -83,6 +89,22 @@ export interface BenchmarkAgentRoundMetadata {
   roundSource: string;
   eventType: string;
   sessionOrTurnId: string;
+  fixtureBackend?: string | null;
+  fixtureSourcePath?: string | null;
+  sourceAgentId?: string | null;
+  sourceEventType?: string | null;
+  sourceRoundIndex?: number | null;
+  durationSource?: string | null;
+  usageEventSource?: string | null;
+  compactSummaryCount?: number;
+  compactSummaryTokenIncluded?: boolean;
+}
+
+export interface BenchmarkRoundSources {
+  stdoutPath?: string | null;
+  providerCallsPath?: string | null;
+  providerLogPath?: string | null;
+  summaryPath?: string | null;
 }
 
 export interface BenchmarkAgentRound {
@@ -93,14 +115,18 @@ export interface BenchmarkAgentRound {
   endedAt: string;
   input: {
     fullContext: string;
+    messages?: BenchmarkMessage[];
   };
   output: {
     fullOutput: string;
     assistantMessage: string;
+    messages?: BenchmarkMessage[];
   };
+  messages: BenchmarkMessage[];
   usage: TokenUsage;
   providerDurationMs: number;
   toolCalls: BenchmarkToolCall[];
+  sources?: BenchmarkRoundSources;
   metadata: BenchmarkAgentRoundMetadata;
   rawCallbackPath?: string;
 }
@@ -138,6 +164,7 @@ export interface BenchmarkTaskReport {
   cliMetadataPath: string;
   roundsDirectory: string;
   rounds: BenchmarkAgentRound[];
+  sourceSummaryPath?: string;
 }
 
 export interface BenchmarkHarnessScore {

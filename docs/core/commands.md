@@ -305,6 +305,13 @@ type, step, success state, output, and error. Runtime can store compact command
 evidence in the session log without replaying a noisy pile of unrelated tool
 messages on every later turn.
 
+When that evidence is replayed into provider context, runtime keeps the provider
+tool transcript legal by replaying the `command_run` `function_call` and its
+matching `function_call_output` with the same `call_id`. Orphan
+`function_call_output` records are invalid. The output projection omits `step`,
+`command_type`, and `command_line`; those fields live in the paired
+`function_call.arguments`.
+
 ### Task-specific capabilities
 
 Commands can be added only when the task needs them. A plain backend debugging

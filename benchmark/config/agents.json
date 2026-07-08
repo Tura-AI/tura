@@ -44,6 +44,32 @@
       "pluginSkillGithubUrls": []
     },
     {
+      "id": "codex-main-ponytail",
+      "aliases": ["codex-ponytail", "ponytail"],
+      "agentName": "Codex CLI (Ponytail GitHub)",
+      "commandEnv": "COMMAND_RUN_AGENT_CODEX_EXE",
+      "defaultCommand": "codex",
+      "versionEnv": "COMMAND_RUN_AGENT_CODEX_VERSION",
+      "modelEnv": "COMMAND_RUN_AGENT_CODEX_MODEL",
+      "defaultModel": "gpt-5.5",
+      "reasoningEnv": "COMMAND_RUN_AGENT_REASONING_EFFORT",
+      "defaultReasoning": "medium",
+      "defaultArgs": [
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "-C",
+        "{workspace}",
+        "-m",
+        "{model}",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-c",
+        "model_reasoning_effort=\"{reasoning}\""
+      ],
+      "appendInstruction": true,
+      "pluginSkillGithubUrls": ["https://github.com/openai/plugins/tree/main/plugins/github"]
+    },
+    {
       "id": "claudecode",
       "aliases": ["claude", "claude-code", "claude-opus"],
       "agentName": "Claude Code",

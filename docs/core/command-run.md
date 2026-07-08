@@ -118,6 +118,33 @@ is `apply_patch`, the active shell, `web_discover`, and `task_status`. Manuals
 and agent capabilities can add commands such as `read_media`, `generate_media`,
 and `planning`.
 
+The schema above is the shape the model emits for the current tool call. It is
+not the shape used when an old `command_run` is replayed into later provider
+context. Replay keeps the old provider transcript shape: a completed
+`function_call` immediately followed by its matching `function_call_output`.
+The call arguments contain the original `command_run` input after runtime-only
+reporting fields are stripped:
+
+```json
+{
+  "type": "function_call",
+  "call_id": "call_...",
+  "name": "command_run",
+  "arguments": "{\"commands\":[{\"step\":1,\"command_type\":\"shell_command\",\"command_line\":\"rg TODO\"}]}"
+}
+{
+  "type": "function_call_output",
+  "call_id": "call_...",
+  "output": "{\"results\":[{\"success\":true,\"output\":{\"exit_code\":0,\"stdout\":\"...\",\"stderr\":\"\"}}]}"
+}
+```
+
+This is intentionally the same legal provider shape produced during the original
+tool call. Tests enforce that replayed `function_call_output` items are paired
+with a preceding `command_run` `function_call`; orphan outputs are invalid. The
+output projection omits `step`, `command_type`, and `command_line` because the
+paired `function_call.arguments` already contains the command input.
+
 ## Command Item Fields
 
 | Field | Required | Meaning |
@@ -302,6 +329,7 @@ Every command returns a normalized item in `results`:
     {
       "step": 1,
       "command_type": "shell_command",
+      "command_line": "rg --files",
       "success": true,
       "output": {
         "exit_code": 0,

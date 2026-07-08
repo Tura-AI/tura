@@ -1,0 +1,23 @@
+{
+  "schema": "tura.benchmark.task-declaration.v1",
+  "id": "binary-verified-cli-port-matrix-10",
+  "type": "refactoring",
+  "title": "10-task binary-verified multi-target CLI port matrix",
+  "directory": "benchmark/tasks/refactoring/binary-verified-cli-port-matrix-10",
+  "summary": "Ports ten fixed CLI tools across balanced source and target languages with eza-style official binary comparison.",
+  "contract": {
+    "cliMetadata": "tura.benchmark.cli-metadata.v1",
+    "round": "tura.benchmark.agent-round.v1",
+    "taskReport": "tura.benchmark.task-report.v1",
+    "harnessReport": "tura.benchmark.harness-report.v1"
+  },
+  "variants": [
+    {
+      "id": "default",
+      "label": "10-task CLI binary matrix",
+      "runner": "runner.mjs",
+      "default": true
+    }
+  ],
+  "duplicatePolicy": "none"
+}

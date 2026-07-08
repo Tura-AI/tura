@@ -187,11 +187,8 @@ function analyzeEvents(stdout, agent) {
     .map((change) => ({ kind: change.kind, path: String(change.path || "").replace(/\\/g, "/").replace(/.*\/src\/app\.txt$/, "src/app.txt") }))
   const expectedPhaseSequence = [
     "agent_message",
-    "command_execution:item.started:in_progress",
     "command_execution:item.completed:completed",
-    "file_change:item.started:in_progress",
     "file_change:item.completed:completed",
-    "command_execution:item.started:in_progress",
     "command_execution:item.completed:completed",
     "agent_message",
   ]
@@ -324,6 +321,15 @@ function inspectTuraToolFlow(calls) {
   const secondMarkers = markerSequenceFromMessages(secondMessages)
   const observedCurrentBackfillShape = (calls.slice(1).flatMap((call) => call?.request?.messages || []))
     .some((message) => message?.type === "function_call_output")
+  const backfillMessages = calls.slice(1).flatMap((call) => call?.request?.messages || [])
+  const observedBackfillCall = backfillMessages
+    .some((message) => message?.type === "function_call" && message?.name === "command_run")
+  const backfillCallIds = new Set(backfillMessages
+    .filter((message) => message?.type === "function_call" && message?.name === "command_run")
+    .map((message) => message.call_id)
+    .filter(Boolean))
+  const observedOrphanBackfillOutput = backfillMessages
+    .some((message) => message?.type === "function_call_output" && !backfillCallIds.has(message.call_id))
   const commandSequence = functionCalls.flatMap((call) => call.args.commands.map(commandSignature))
   const coreCommandSequence = normalizeCoreCommandFlow(commandSequence)
   const pathOk = commandFlowHasRequiredPath(commandSequence)
@@ -335,6 +341,8 @@ function inspectTuraToolFlow(calls) {
       hasTerminalTaskStatus(commandSequence) &&
       pathOk &&
       parsedBackfills.length >= 1 &&
+      observedBackfillCall &&
+      !observedOrphanBackfillOutput &&
       parsedBackfills.some((value) => value.results.length === functionCalls[0]?.args?.commands?.length) &&
       !/"cache_id"|"tool_name"|"input"/.test(joinedBackfill) &&
       !/Turn \d+ completed with \d+ tool calls/.test(joinedBackfill) &&
@@ -348,6 +356,8 @@ function inspectTuraToolFlow(calls) {
     path_ok: pathOk,
     backfill_results_lengths: parsedBackfills.map((value) => value.results.length),
     backfill_uses_function_call_output: observedCurrentBackfillShape,
+    backfill_has_paired_function_call: observedBackfillCall,
+    backfill_has_orphan_function_output: observedOrphanBackfillOutput,
     backfill_has_legacy_wrapper: /"cache_id"|"tool_name"|"input"/.test(joinedBackfill),
     backfill_has_turn_status_noise: /Turn \d+ completed with \d+ tool calls/.test(joinedBackfill),
     second_marker_sequence: secondMarkers,

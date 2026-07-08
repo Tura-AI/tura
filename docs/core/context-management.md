@@ -86,10 +86,9 @@ The practical details are where the design earns its keep:
   so a final verification command run just before checkpointing can still be
   visible after the old transcript is removed.
 - `tool_result_context_cache` stores compact output/error views with a stable
-  cache id. For `command_run`, context rebuilding can recreate provider-shaped
-  `function_call` / `function_call_output` pairs when provider metadata contains
-  a call id; otherwise it falls back to a normal user context message to avoid
-  orphan tool outputs.
+  cache id. For `command_run`, context rebuilding recreates the provider-shaped
+  `function_call` / `function_call_output` pair so the provider receives a legal
+  transcript with no orphan tool outputs.
 - Command-run context keeps step, command type, command line, success, compact
   output, and compact error. Reporting fields such as command ids, UI event ids,
   receipts, timestamps, and provider-only metadata are stripped unless they are
@@ -199,11 +198,34 @@ The code strips reporting-only fields such as command ids, timestamps, summaries
 receipt metadata, and UI event ids. It preserves task-status fields inside
 `task_status` results so state updates remain auditable.
 
-For `command_run`, cached context can be represented as provider function-call
-and function-call-output items when provider metadata includes a call id. Without
-that metadata, it falls back to a user message containing compact output. Media
-tool results are handled specially so inspected media can remain visible without
-keeping raw payload noise in every record.
+For `command_run`, cached context is represented as a provider function-call
+pair when provider metadata includes a call id. Without that metadata, it falls
+back to a user message containing compact output. Media tool results are handled
+specially so inspected media can remain visible without keeping raw payload
+noise in every record.
+
+When a previous `command_run` is replayed into provider context, runtime keeps
+the legal provider transcript shape:
+
+```json
+{
+  "type": "function_call",
+  "call_id": "call_...",
+  "name": "command_run",
+  "arguments": "{\"commands\":[{\"step\":1,\"command_type\":\"shell_command\",\"command_line\":\"rg TODO\"}]}"
+}
+{
+  "type": "function_call_output",
+  "call_id": "call_...",
+  "output": "{\"results\":[{\"success\":true,\"output\":{\"exit_code\":0,\"stdout\":\"...\",\"stderr\":\"\"}}]}"
+}
+```
+
+Cached `context_messages` with orphan outputs, empty call arguments, or command
+identity fields duplicated in `function_call_output.output` are treated as stale
+and rebuilt instead of reused. `read_media` uses the same paired replay shape,
+but its `function_call_output.output` can be provider media content items rather
+than a JSON string so images or files can be passed through the media channel.
 
 Relevant code:
 

@@ -1354,6 +1354,8 @@ mod tests {
             .iter()
             .position(|message| {
                 message.get("type").and_then(serde_json::Value::as_str) == Some("function_call")
+                    && message.get("name").and_then(serde_json::Value::as_str)
+                        == Some("command_run")
             })
             .expect("command_run function call");
         let function_output_index = messages
@@ -1376,11 +1378,11 @@ mod tests {
             compact_index < function_call_index
                 && function_call_index < function_output_index
                 && function_output_index < prompt_style_index,
-            "compact must replay previous command_run through normal tool context before prompt_style: {joined}"
+            "compact must replay previous command_run pair before prompt_style: {joined}"
         );
         assert_eq!(
             messages[function_call_index]["call_id"], messages[function_output_index]["call_id"],
-            "tool call and output must remain paired: {joined}"
+            "command_run call and output must stay paired: {joined}"
         );
         assert!(
             messages[function_output_index]
@@ -1397,6 +1399,94 @@ mod tests {
             !compact_content.contains("RAW_TOOL_RESULT_BEFORE_COMPACT"),
             "compact core must not rewrite command_run output: {compact_content}"
         );
+    }
+
+    #[test]
+    fn build_context_rebuilds_stale_command_run_context_messages_with_empty_arguments() {
+        let now = Utc::now();
+        let mut session = session();
+        session.push_log(
+            serde_json::json!({
+                "type": "tool_result",
+                "tool_name": "command_run",
+                "provider_metadata": { "id": "call_stale_context" },
+                "context_messages": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_stale_context",
+                        "name": "command_run",
+                        "arguments": "{}"
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_stale_context",
+                        "output": "{\"results\":[{\"command_type\":\"shell_command\",\"command_line\":\"echo stale\"}]}"
+                    }
+                ],
+                "input": {
+                    "commands": [{
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "echo current"
+                    }]
+                },
+                "output": {
+                    "results": [{
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": {
+                            "ok": true,
+                            "exit_code": 0,
+                            "stdout": "current\n",
+                            "stderr": ""
+                        }
+                    }]
+                },
+                "success": true,
+                "error": null,
+                "timestamp": now.to_rfc3339()
+            })
+            .to_string(),
+            now,
+        );
+
+        let messages = build_messages_from_session(&session);
+        let function_call = messages
+            .iter()
+            .find(|message| {
+                message.get("type").and_then(serde_json::Value::as_str) == Some("function_call")
+                    && message.get("call_id").and_then(serde_json::Value::as_str)
+                        == Some("call_stale_context")
+            })
+            .expect("rebuilt command_run function call");
+        let arguments: serde_json::Value = serde_json::from_str(
+            function_call["arguments"]
+                .as_str()
+                .expect("arguments JSON string"),
+        )
+        .expect("arguments JSON");
+        assert_eq!(arguments["commands"][0]["command_line"], "echo current");
+
+        let function_output = messages
+            .iter()
+            .find(|message| {
+                message.get("type").and_then(serde_json::Value::as_str)
+                    == Some("function_call_output")
+                    && message.get("call_id").and_then(serde_json::Value::as_str)
+                        == Some("call_stale_context")
+            })
+            .expect("rebuilt command_run function output");
+        let output: serde_json::Value = serde_json::from_str(
+            function_output["output"]
+                .as_str()
+                .expect("output JSON string"),
+        )
+        .expect("output JSON");
+        assert!(output["results"][0].get("step").is_none());
+        assert!(output["results"][0].get("command_type").is_none());
+        assert!(output["results"][0].get("command_line").is_none());
+        assert_eq!(output["results"][0]["output"]["stdout"], "current\n");
     }
 
     #[test]
@@ -1567,13 +1657,6 @@ mod tests {
                 message.get("type").and_then(serde_json::Value::as_str) == Some("function_call")
             })
             .collect::<Vec<_>>();
-        let function_outputs = messages
-            .iter()
-            .filter(|message| {
-                message.get("type").and_then(serde_json::Value::as_str)
-                    == Some("function_call_output")
-            })
-            .collect::<Vec<_>>();
         let joined = messages
             .iter()
             .map(serde_json::Value::to_string)
@@ -1583,8 +1666,15 @@ mod tests {
         assert_eq!(
             function_calls.len(),
             1,
-            "one command_run call should replay: {joined}"
+            "one command_run call should replay into provider context: {joined}"
         );
+        let function_outputs = messages
+            .iter()
+            .filter(|message| {
+                message.get("type").and_then(serde_json::Value::as_str)
+                    == Some("function_call_output")
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
             function_outputs.len(),
             1,
@@ -1602,10 +1692,9 @@ mod tests {
         let output_json: serde_json::Value =
             serde_json::from_str(output).expect("structured command_run output");
         assert_eq!(output_json["results"].as_array().expect("results").len(), 3);
-        assert_eq!(
-            output_json["results"][2]["command_line"],
-            "apply_patch success-three"
-        );
+        assert!(output_json["results"][2].get("step").is_none());
+        assert!(output_json["results"][2].get("command_type").is_none());
+        assert!(output_json["results"][2].get("command_line").is_none());
         assert!(output.contains("FINAL_BATCH_FAILURE_ONE"), "{output}");
         assert!(output.contains("FINAL_BATCH_FAILURE_TWO"), "{output}");
         assert!(output.contains("FINAL_BATCH_SUCCESS_THREE"), "{output}");

@@ -30,31 +30,7 @@ pub(crate) fn emit_cli_live_command_run_started(
         emit_cli_progress_command_run_started(command_type, command);
         return;
     }
-    if !env_flag("TURA_CLI_LIVE_JSONL") {
-        return;
-    }
-    let item_type = if command_type == "apply_patch" {
-        "file_change"
-    } else {
-        "command_execution"
-    };
-    println!(
-        "{}",
-        serde_json::json!({
-            "type": "item.started",
-            "item": {
-                "id": format!("item_streamed_command_{provider_tool_call_id}_{command_index}"),
-                "type": item_type,
-                "command": command_type,
-                "command_line": command.get("command_line").cloned().unwrap_or(serde_json::Value::Null),
-                "step": command.get("step").cloned().unwrap_or(serde_json::Value::Null),
-                "provider_tool_call_id": provider_tool_call_id,
-                "command_index": command_index,
-                "status": "running",
-            }
-        })
-    );
-    let _ = std::io::stdout().flush();
+    let _ = (command, provider_tool_call_id, command_index);
 }
 
 fn emit_cli_progress_command_run_started(command_type: &str, command: &serde_json::Value) {

@@ -1,0 +1,1347 @@
+{
+  "schema": "tura.debug.cli-bugfix-binary-oracle-matrix.v1",
+  "matrixPolicy": {
+    "failToPass": "Cases where the configured buggy release binary must differ from the fixed release binary and the candidate must match the fixed release binary.",
+    "passToPass": "Cases where buggy and fixed release binaries must already agree; the candidate must preserve that behavior.",
+    "interfaceAudit": "Commands run against downloaded buggy and fixed binaries to prove the harness inspected the real CLI surface before scoring.",
+    "repositoryTestsAreOracle": false
+  },
+  "tasks": {
+    "eza-grid-non-tty": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "listing",
+          "hidden",
+          "long-view",
+          "tree-recursion",
+          "sorting",
+          "display-modes",
+          "filtering",
+          "error-handling"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "grid/file_01.txt",
+          "content": ""
+        },
+        {
+          "path": "grid/file_02.txt",
+          "content": ""
+        },
+        {
+          "path": "grid/file_03.txt",
+          "content": ""
+        },
+        {
+          "path": "grid/file_04.txt",
+          "content": ""
+        },
+        {
+          "path": "grid/file_05.txt",
+          "content": ""
+        },
+        {
+          "path": "grid/file_06.txt",
+          "content": ""
+        },
+        {
+          "path": "grid/file_07.txt",
+          "content": ""
+        },
+        {
+          "path": "grid/file_08.txt",
+          "content": ""
+        },
+        {
+          "path": ".hidden",
+          "content": "hidden\n"
+        },
+        {
+          "path": "README.md",
+          "content": "# Demo\n\nhello\n"
+        },
+        {
+          "path": "notes.txt",
+          "content": "alpha\nbeta\n"
+        },
+        {
+          "path": "sub/nested.txt",
+          "content": "nested\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "grid captured stdout",
+          "commandGroup": "display-modes",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "--grid",
+            "{{fixtures}}/grid"
+          ],
+          "compare": "fixed_stdout_exact"
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "plain listing",
+          "commandGroup": "listing",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "{{fixtures}}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "all hidden",
+          "commandGroup": "hidden",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "-a",
+            "{{fixtures}}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "long no user",
+          "commandGroup": "long-view",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "-l",
+            "--no-permissions",
+            "--no-user",
+            "--time-style=iso",
+            "{{fixtures}}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "tree two levels",
+          "commandGroup": "tree-recursion",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "-T",
+            "-L",
+            "2",
+            "{{fixtures}}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "sort name reverse",
+          "commandGroup": "sorting",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "--sort=name",
+            "-r",
+            "{{fixtures}}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "only directories",
+          "commandGroup": "filtering",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "-D",
+            "{{fixtures}}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "one per line",
+          "commandGroup": "display-modes",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "-1",
+            "{{fixtures}}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "invalid sort",
+          "commandGroup": "error-handling",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "--sort=definitely-not-sort",
+            "{{fixtures}}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "missing path",
+          "commandGroup": "error-handling",
+          "args": [
+            "--color=never",
+            "--icons=never",
+            "{{fixtures}}/missing"
+          ],
+          "compare": "normalized_streams"
+        }
+      ]
+    },
+    "ripgrep-empty-vfile-invert": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "literal",
+          "regex",
+          "files",
+          "count",
+          "invert",
+          "errors"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "patterns-empty.txt",
+          "content": ""
+        },
+        {
+          "path": "patterns-alpha.txt",
+          "content": "alpha\n"
+        },
+        {
+          "path": "items.txt",
+          "content": "alpha\nbeta\nalphabet\ngamma\n"
+        },
+        {
+          "path": "src/main.rs",
+          "content": "fn main() {\n    println!(\"alpha beta\");\n}\n"
+        },
+        {
+          "path": "README.md",
+          "content": "Alpha project\nbeta notes\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "invert empty pattern file",
+          "commandGroup": "invert",
+          "args": [
+            "-v",
+            "-f",
+            "{{fixtures}}/patterns-empty.txt",
+            "{{fixtures}}/items.txt"
+          ],
+          "compare": "fixed_streams_exact"
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "literal search",
+          "commandGroup": "literal",
+          "args": [
+            "alpha",
+            "{{fixtures}}/items.txt"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "regex search",
+          "commandGroup": "regex",
+          "args": [
+            "a.*a",
+            "{{fixtures}}/items.txt"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "fixed string",
+          "commandGroup": "literal",
+          "args": [
+            "-F",
+            "alpha",
+            "{{fixtures}}/items.txt"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "line numbers",
+          "commandGroup": "literal",
+          "args": [
+            "-n",
+            "alpha",
+            "{{fixtures}}/items.txt"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "count",
+          "commandGroup": "count",
+          "args": [
+            "--count",
+            "alpha",
+            "{{fixtures}}/items.txt"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "ignore case",
+          "commandGroup": "literal",
+          "args": [
+            "--ignore-case",
+            "ALPHA",
+            "{{fixtures}}/items.txt"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "invert non-empty pattern file",
+          "commandGroup": "invert",
+          "args": [
+            "-v",
+            "-f",
+            "{{fixtures}}/patterns-alpha.txt",
+            "{{fixtures}}/items.txt"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "files",
+          "commandGroup": "files",
+          "args": [
+            "--files",
+            "{{fixtures}}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "invalid regex",
+          "commandGroup": "errors",
+          "args": [
+            "["
+          ],
+          "compare": "normalized_streams"
+        }
+      ]
+    },
+    "yq-multidoc-anchor-explode": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "yaml",
+          "json",
+          "multi-document",
+          "format-conversion",
+          "errors"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "template.yaml",
+          "content": ".defaults: &defaults\n  pantry: [sauce]\noptions:\n- &lunch\n  protein: meat\n- &dinner\n  protein: eggs\n---\n<<: *defaults\nbuy:\n- *lunch\n---\n<<: *defaults\nbuy:\n- *lunch\n- *dinner\n"
+        },
+        {
+          "path": "config.yaml",
+          "content": "name: alice\nitems:\n  - red\n  - blue\n"
+        },
+        {
+          "path": "data.json",
+          "content": "{\"name\":\"alice\",\"items\":[1,2,3]}\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "explode third YAML document",
+          "commandGroup": "multi-document",
+          "args": [
+            "explode(.) | select(di == 2)",
+            "{{fixtures}}/template.yaml"
+          ],
+          "compare": "fixed_stdout_exact"
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "yaml field",
+          "commandGroup": "yaml",
+          "args": [
+            ".name",
+            "{{fixtures}}/config.yaml"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "yaml list length",
+          "commandGroup": "yaml",
+          "args": [
+            ".items | length",
+            "{{fixtures}}/config.yaml"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "json field",
+          "commandGroup": "json",
+          "args": [
+            "-p=json",
+            ".name",
+            "{{fixtures}}/data.json"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "json output",
+          "commandGroup": "format-conversion",
+          "args": [
+            "-o=json",
+            ".",
+            "{{fixtures}}/config.yaml"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "missing field",
+          "commandGroup": "yaml",
+          "args": [
+            ".missing",
+            "{{fixtures}}/config.yaml"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "invalid expression",
+          "commandGroup": "errors",
+          "args": [
+            ".items |",
+            "{{fixtures}}/config.yaml"
+          ],
+          "compare": "normalized_streams"
+        }
+      ]
+    },
+    "prettier-cache-list-different": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "stdin-format",
+          "file-format",
+          "check",
+          "write",
+          "cache",
+          "errors"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "src/example.js",
+          "content": "const value={a:1,b:2}\n"
+        },
+        {
+          "path": "src/clean.js",
+          "content": "const value = { a: 1, b: 2 };\n"
+        },
+        {
+          "path": "README.md",
+          "content": "# Title\n\nhello   world\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "cache must not skip write after list-different",
+          "commandGroup": "cache",
+          "steps": [
+            {
+              "args": [
+                "{{fixtures}}/src/example.js",
+                "--list-different",
+                "--cache"
+              ]
+            },
+            {
+              "args": [
+                "{{fixtures}}/src/example.js",
+                "--write",
+                "--cache"
+              ]
+            },
+            {
+              "readFile": "{{fixtures}}/src/example.js"
+            }
+          ],
+          "compare": "fixed_side_effect_exact"
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "babel stdin",
+          "commandGroup": "stdin-format",
+          "stdin": "const x={a:1,b:2};\n",
+          "args": [
+            "--parser",
+            "babel"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "typescript stdin",
+          "commandGroup": "stdin-format",
+          "stdin": "type A={x:number;y:string}\n",
+          "args": [
+            "--parser",
+            "typescript"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "json stdin",
+          "commandGroup": "stdin-format",
+          "stdin": "{\"b\":2,\"a\":1}\n",
+          "args": [
+            "--parser",
+            "json"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "markdown file",
+          "commandGroup": "file-format",
+          "args": [
+            "--parser",
+            "markdown",
+            "{{fixtures}}/README.md"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "check clean",
+          "commandGroup": "check",
+          "args": [
+            "{{fixtures}}/src/clean.js",
+            "--check"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "write without cache",
+          "commandGroup": "write",
+          "steps": [
+            {
+              "args": [
+                "{{fixtures}}/src/example.js",
+                "--write"
+              ]
+            },
+            {
+              "readFile": "{{fixtures}}/src/example.js"
+            }
+          ],
+          "compare": "fixed_side_effect_exact"
+        },
+        {
+          "name": "parser error",
+          "commandGroup": "errors",
+          "stdin": "const = ;\n",
+          "args": [
+            "--parser",
+            "babel"
+          ],
+          "compare": "normalized_streams"
+        }
+      ]
+    },
+    "vite-repeated-host-local-url": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "dev-server",
+          "repeated-options",
+          "build",
+          "preview",
+          "optimize",
+          "errors"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          },
+          {
+            "name": "dev server startup",
+            "commandGroup": "dev-server",
+            "protocol": "server-output",
+            "args": [
+              "--host",
+              "127.0.0.1",
+              "--port",
+              "49317",
+              "--strictPort",
+              "--clearScreen",
+              "false"
+            ],
+            "readyPattern": "Local:",
+            "timeoutMs": 15000
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "index.html",
+          "content": "<script type=\"module\" src=\"/src/main.js\"></script><div id=\"app\"></div>\n"
+        },
+        {
+          "path": "src/main.js",
+          "content": "document.querySelector('#app').textContent = 'hello';\n"
+        },
+        {
+          "path": "package.json",
+          "content": "{\"private\":true,\"scripts\":{\"build\":\"vite build\"}}\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "repeated host local url",
+          "commandGroup": "repeated-options",
+          "protocol": "server-output",
+          "cwd": "{{fixtures}}",
+          "args": [
+            "--host",
+            "--host",
+            "--host",
+            "--port",
+            "49217",
+            "--strictPort",
+            "--clearScreen",
+            "false"
+          ],
+          "readyPattern": "Local:",
+          "compare": "fixed_stdout_exact",
+          "timeoutMs": 15000
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "explicit host dev server",
+          "commandGroup": "dev-server",
+          "protocol": "server-output",
+          "cwd": "{{fixtures}}",
+          "args": [
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "49218",
+            "--strictPort",
+            "--clearScreen",
+            "false"
+          ],
+          "readyPattern": "Local:",
+          "compare": "normalized_streams",
+          "timeoutMs": 15000
+        },
+        {
+          "name": "production build",
+          "commandGroup": "build",
+          "cwd": "{{fixtures}}",
+          "args": [
+            "build",
+            "--emptyOutDir"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "production build sourcemap",
+          "commandGroup": "build",
+          "cwd": "{{fixtures}}",
+          "args": [
+            "build",
+            "--sourcemap",
+            "--emptyOutDir"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "optimize help",
+          "commandGroup": "optimize",
+          "args": [
+            "optimize",
+            "--help"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "preview help",
+          "commandGroup": "preview",
+          "args": [
+            "preview",
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "invalid option",
+          "commandGroup": "errors",
+          "args": [
+            "--bad-option"
+          ],
+          "compare": "normalized_streams"
+        }
+      ]
+    },
+    "black-multiline-fstring-parse": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "code",
+          "check",
+          "diff",
+          "format-file",
+          "errors"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "black_sample.py",
+          "content": "s = f\"\"\"{'''a\n            b\n            c'''}\"\"\"\n\nprint(s)\n"
+        },
+        {
+          "path": "unformatted.py",
+          "content": "def add(a,b):\n    return(a+b)\n"
+        },
+        {
+          "path": "bad.py",
+          "content": "def broken(:\n    pass\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "valid nested multiline f-string",
+          "commandGroup": "format-file",
+          "args": [
+            "{{fixtures}}/black_sample.py"
+          ],
+          "compare": "fixed_status_and_file"
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "code format",
+          "commandGroup": "code",
+          "args": [
+            "--code",
+            "x= { 'a':1}"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "diff file",
+          "commandGroup": "diff",
+          "args": [
+            "--diff",
+            "{{fixtures}}/unformatted.py"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "check file",
+          "commandGroup": "check",
+          "args": [
+            "--check",
+            "{{fixtures}}/unformatted.py"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "syntax error",
+          "commandGroup": "errors",
+          "args": [
+            "--check",
+            "{{fixtures}}/bad.py"
+          ],
+          "compare": "normalized_streams"
+        }
+      ]
+    },
+    "pytest-importlib-assert-diff": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "collection",
+          "passing-tests",
+          "failing-tests",
+          "importlib",
+          "diagnostics"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "tests/__init__.py",
+          "content": ""
+        },
+        {
+          "path": "tests/test_assert_diff.py",
+          "content": "def test_dict_diff():\n    assert {'alpha': 1, 'beta': 2} == {'alpha': 1, 'beta': 3}\n"
+        },
+        {
+          "path": "tests/test_pass.py",
+          "content": "def test_ok():\n    assert 1 + 1 == 2\n"
+        },
+        {
+          "path": "tests/test_string_diff.py",
+          "content": "def test_string_diff():\n    assert 'four lights' == 'five lights'\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "assert diff with importlib import mode",
+          "commandGroup": "importlib",
+          "args": [
+            "--import-mode=importlib",
+            "-q",
+            "{{fixtures}}/tests/test_assert_diff.py"
+          ],
+          "compare": "fixed_stderr_stdout_normalized"
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "passing test quiet",
+          "commandGroup": "passing-tests",
+          "args": [
+            "-q",
+            "{{fixtures}}/tests/test_pass.py"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "collect only",
+          "commandGroup": "collection",
+          "args": [
+            "--collect-only",
+            "-q",
+            "{{fixtures}}/tests/test_pass.py"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "string diff normal import",
+          "commandGroup": "failing-tests",
+          "args": [
+            "-q",
+            "{{fixtures}}/tests/test_string_diff.py"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "importlib passing test",
+          "commandGroup": "importlib",
+          "args": [
+            "--import-mode=importlib",
+            "-q",
+            "{{fixtures}}/tests/test_pass.py"
+          ],
+          "compare": "normalized_streams"
+        }
+      ]
+    },
+    "checkstyle-invalid-config-diagnostics": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "valid-config",
+          "invalid-config",
+          "missing-file",
+          "diagnostics"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "bad-checks.xml",
+          "content": "<?xml version=\"1.0\"?>\n<!DOCTYPE module PUBLIC \"-//Checkstyle//DTD Checkstyle Configuration 1.3//EN\" \"https://checkstyle.org/dtds/configuration_1_3.dtd\">\n<module name=\"Checker\"><module name=\"TreeWalker\"><module name=\"NoSuchCheck\"/></module></module>\n"
+        },
+        {
+          "path": "empty-checks.xml",
+          "content": "<?xml version=\"1.0\"?>\n<!DOCTYPE module PUBLIC \"-//Checkstyle//DTD Checkstyle Configuration 1.3//EN\" \"https://checkstyle.org/dtds/configuration_1_3.dtd\">\n<module name=\"Checker\"/>\n"
+        },
+        {
+          "path": "Sample.java",
+          "content": "class Sample {}\n"
+        },
+        {
+          "path": "Bad.java",
+          "content": "class Bad { public void f() { int x = ; } }\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "invalid module config prints cause",
+          "commandGroup": "invalid-config",
+          "args": [
+            "-c",
+            "{{fixtures}}/bad-checks.xml",
+            "{{fixtures}}/Sample.java"
+          ],
+          "compare": "fixed_diagnostic_contains"
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "valid empty config",
+          "commandGroup": "valid-config",
+          "args": [
+            "-c",
+            "{{fixtures}}/empty-checks.xml",
+            "{{fixtures}}/Sample.java"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "missing file",
+          "commandGroup": "missing-file",
+          "args": [
+            "-c",
+            "{{fixtures}}/empty-checks.xml",
+            "{{fixtures}}/Missing.java"
+          ],
+          "compare": "normalized_streams"
+        },
+        {
+          "name": "bad java parse",
+          "commandGroup": "diagnostics",
+          "args": [
+            "-c",
+            "{{fixtures}}/empty-checks.xml",
+            "{{fixtures}}/Bad.java"
+          ],
+          "compare": "normalized_streams"
+        }
+      ]
+    },
+    "google-java-format-native-reflection": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "format-file",
+          "dry-run",
+          "exit-if-changed",
+          "errors"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "Hello.java",
+          "content": "class Hello{public static void main(String[]args){System.out.println(\"hi\");}}\n"
+        },
+        {
+          "path": "Clean.java",
+          "content": "class Clean {\n  void f() {}\n}\n"
+        },
+        {
+          "path": "Bad.java",
+          "content": "class Bad { void f( { } }\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "native binary formats simple Java source",
+          "commandGroup": "format-file",
+          "args": [
+            "{{fixtures}}/Hello.java"
+          ],
+          "compare": "fixed_stdout_exact"
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "invalid option",
+          "commandGroup": "errors",
+          "args": [
+            "--definitely-not-google-java-format"
+          ],
+          "compare": "status_only"
+        }
+      ]
+    },
+    "gitleaks-repo-config-no-git-panic": {
+      "interfaceAudit": {
+        "expectedCommandGroups": [
+          "version",
+          "help",
+          "path-scan",
+          "config",
+          "no-git",
+          "redaction",
+          "errors"
+        ],
+        "entrypoints": [
+          {
+            "name": "version",
+            "args": [
+              "--version"
+            ]
+          },
+          {
+            "name": "help",
+            "args": [
+              "--help"
+            ]
+          }
+        ]
+      },
+      "sharedFixtures": [
+        {
+          "path": "gitleaks.toml",
+          "content": "title = 'empty'\n"
+        },
+        {
+          "path": "file.txt",
+          "content": "hello\n"
+        },
+        {
+          "path": "secret.txt",
+          "content": "aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n"
+        }
+      ],
+      "failToPass": [
+        {
+          "name": "repo config path with no-git does not panic",
+          "commandGroup": "config",
+          "cwd": "{{fixtures}}",
+          "args": [
+            "--path",
+            ".",
+            "--repo-config-path",
+            "./gitleaks.toml",
+            "--no-git"
+          ],
+          "compare": "fixed_streams_exact"
+        }
+      ],
+      "passToPass": [
+        {
+          "name": "version",
+          "commandGroup": "version",
+          "args": [
+            "--version"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "help",
+          "commandGroup": "help",
+          "args": [
+            "--help"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "path scan no git",
+          "commandGroup": "path-scan",
+          "cwd": "{{fixtures}}",
+          "args": [
+            "--path",
+            ".",
+            "--no-git"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "redacted path scan",
+          "commandGroup": "redaction",
+          "cwd": "{{fixtures}}",
+          "args": [
+            "--path",
+            ".",
+            "--no-git",
+            "--redact"
+          ],
+          "compare": "status_only"
+        },
+        {
+          "name": "missing scan path",
+          "commandGroup": "errors",
+          "cwd": "{{fixtures}}",
+          "args": [
+            "--path",
+            "./missing",
+            "--no-git"
+          ],
+          "compare": "status_only"
+        }
+      ]
+    }
+  }
+}

@@ -191,6 +191,9 @@ fn router_callback_direct_item_event(
         return None;
     }
     let event_type = event.get("type").and_then(Value::as_str)?;
+    if event_type != "item.completed" {
+        return None;
+    }
     let id = event
         .pointer("/item/id")
         .and_then(Value::as_str)
@@ -201,13 +204,9 @@ fn router_callback_direct_item_event(
     }
     let mut event = event.clone();
     if let Some(item) = event.get_mut("item").and_then(Value::as_object_mut) {
-        item.entry("status".to_string()).or_insert_with(|| {
-            json!(if event_type == "item.started" {
-                "in_progress"
-            } else {
-                "completed"
-            })
-        });
+        item.entry("status".to_string())
+            .or_insert_with(|| json!("completed"));
+        prune_model_visible_cli_item(item);
     }
     Some(event)
 }
@@ -227,7 +226,6 @@ fn command_update_cli_event(
 ) -> Option<Value> {
     let status = update.get("status").and_then(Value::as_str)?;
     let (event_type, item_status, phase) = match status {
-        "ready" | "running" | "in_progress" => ("item.started", "in_progress", "started"),
         "completed" => ("item.completed", "completed", "completed"),
         "failed" | "error" => ("item.completed", "failed", "completed"),
         _ => return None,
@@ -266,7 +264,6 @@ fn command_update_cli_event(
             "command_line".to_string(),
             Value::String(command_line.clone()),
         );
-        item.insert("display_command".to_string(), Value::String(command_line));
     }
     if let Some(step) = update
         .pointer("/command/step")
@@ -304,11 +301,23 @@ fn command_update_cli_event(
             }
         }
     }
+    prune_model_visible_cli_item(&mut item);
 
     Some(serde_json::json!({
         "type": event_type,
         "item": Value::Object(item),
     }))
+}
+
+fn prune_model_visible_cli_item(item: &mut serde_json::Map<String, Value>) {
+    let item_type = item.get("type").and_then(Value::as_str);
+    let command_type = item
+        .get("command_type")
+        .or_else(|| item.get("command"))
+        .and_then(Value::as_str);
+    if item_type == Some("file_change") || command_type == Some("apply_patch") {
+        item.remove("display_command");
+    }
 }
 
 fn command_update_id(update: &Value) -> String {
@@ -866,30 +875,22 @@ mod tests {
 
         let events = router_callback_cli_events(&notification, &mut emitted);
 
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0]["type"], "item.started");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["type"], "item.completed");
         assert_eq!(events[0]["item"]["type"], "command_execution");
-        assert_eq!(events[0]["item"]["status"], "in_progress");
+        assert_eq!(events[0]["item"]["status"], "completed");
         assert_eq!(events[0]["item"]["command"], "shell_command");
         assert_eq!(events[0]["item"]["command_type"], "shell_command");
         assert_eq!(
             events[0]["item"]["command_line"],
             "Get-Content -Raw src/app.txt"
         );
+        assert!(events[0]["item"].get("display_command").is_none());
         assert_eq!(events[0]["item"]["provider_tool_call_id"], "call-1");
         assert_eq!(events[0]["item"]["command_index"], 0);
         assert_eq!(events[0]["item"]["step"], 1);
-        assert_eq!(events[1]["type"], "item.completed");
-        assert_eq!(events[1]["item"]["type"], "command_execution");
-        assert_eq!(events[1]["item"]["status"], "completed");
-        assert_eq!(events[1]["item"]["command"], "shell_command");
-        assert_eq!(events[1]["item"]["command_type"], "shell_command");
-        assert_eq!(
-            events[1]["item"]["command_line"],
-            "Get-Content -Raw src/app.txt"
-        );
-        assert_eq!(events[1]["item"]["aggregated_output"], "broken-by-agent\n");
-        assert_eq!(events[1]["item"]["exit_code"], 0);
+        assert_eq!(events[0]["item"]["aggregated_output"], "broken-by-agent\n");
+        assert_eq!(events[0]["item"]["exit_code"], 0);
 
         let duplicate = router_callback_cli_events(&notification, &mut emitted);
         assert!(duplicate.is_empty());
@@ -927,6 +928,7 @@ mod tests {
         assert_eq!(events[0]["item"]["type"], "file_change");
         assert_eq!(events[0]["item"]["command"], "apply_patch");
         assert_eq!(events[0]["item"]["command_line"], "*** Begin Patch");
+        assert!(events[0]["item"].get("display_command").is_none());
         assert_eq!(events[0]["item"]["changes"][0]["path"], "src/app.txt");
     }
 }

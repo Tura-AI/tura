@@ -1,0 +1,27 @@
+{
+  "schema": "tura.benchmark.task-declaration.v1",
+  "id": "deepswe-anko-default-arguments",
+  "type": "debug",
+  "title": "DeepSWE Anko default arguments",
+  "directory": "benchmark/tasks/debug/deepswe-anko-default-arguments",
+  "summary": "Runs a DeepSWE Harbor-format task through the unified benchmark CLI and contract pipeline.",
+  "contract": {
+    "cliMetadata": "tura.benchmark.cli-metadata.v1",
+    "round": "tura.benchmark.agent-round.v1",
+    "taskReport": "tura.benchmark.task-report.v1",
+    "harnessReport": "tura.benchmark.harness-report.v1"
+  },
+  "variants": [
+    {
+      "id": "default",
+      "label": "DeepSWE single task",
+      "runner": "runner.mjs",
+      "default": true
+    }
+  ],
+  "upstream": {
+    "repository": "https://github.com/datacurve-ai/deep-swe",
+    "task": "anko-default-function-arguments"
+  },
+  "duplicatePolicy": "none"
+}

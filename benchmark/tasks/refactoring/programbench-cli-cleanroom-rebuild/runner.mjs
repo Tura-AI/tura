@@ -146,8 +146,8 @@ function runLive(command, args, options = {}) {
     }))
     if (options.input) {
       child.stdin.write(options.input)
-      child.stdin.end()
     }
+    child.stdin.end()
     const timer = setTimeout(() => {
       timedOut = true
       killProcessTree(child.pid)

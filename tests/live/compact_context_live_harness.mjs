@@ -138,8 +138,8 @@ function spawnLogged(command, args, options = {}) {
     })
     if (options.input) {
       child.stdin.write(options.input)
-      child.stdin.end()
     }
+    child.stdin.end()
     child.on("error", (error) => {
       finish({ status: -1, stdout, stderr: `${stderr}\n${error.stack || error.message}`, timedOut, durationMs: Math.round(performance.now() - started) })
     })

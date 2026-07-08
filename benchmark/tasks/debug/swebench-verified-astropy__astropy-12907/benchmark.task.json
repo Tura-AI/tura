@@ -1,0 +1,29 @@
+{
+  "schema": "tura.benchmark.task-declaration.v1",
+  "id": "swebench-verified-astropy__astropy-12907",
+  "type": "debug",
+  "title": "SWE-bench Verified astropy__astropy-12907",
+  "directory": "benchmark/tasks/debug/swebench-verified-astropy__astropy-12907",
+  "summary": "Runs one SWE-bench Verified issue through the unified debug matrix runner.",
+  "contract": {
+    "cliMetadata": "tura.benchmark.cli-metadata.v1",
+    "round": "tura.benchmark.agent-round.v1",
+    "taskReport": "tura.benchmark.task-report.v1",
+    "harnessReport": "tura.benchmark.harness-report.v1"
+  },
+  "variants": [
+    {
+      "id": "default",
+      "label": "SWE-bench Verified astropy__astropy-12907",
+      "runner": "runner.mjs",
+      "default": true
+    }
+  ],
+  "upstream": {
+    "suite": "swebench-verified",
+    "dataset": "SWE-bench/SWE-bench_Verified",
+    "repo": "astropy/astropy",
+    "instance_id": "astropy__astropy-12907"
+  },
+  "duplicatePolicy": "none"
+}

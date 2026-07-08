@@ -384,8 +384,8 @@ function spawnLogged(command, args, options = {}) {
     })
     if (options.input) {
       child.stdin.write(options.input)
-      child.stdin.end()
     }
+    child.stdin.end()
     child.on("error", (error) => {
       settle(-1, error.stack || error.message)
     })
