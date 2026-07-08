@@ -639,6 +639,37 @@ pub fn process_manas_internal(
     } else {
         "completed"
     };
+    commit_terminal_session_checkpoint(session, git_event);
+
+    for agent in agents.iter_mut() {
+        agent.state = if final_session_state == SessionState::Failed {
+            AgentState::Failed
+        } else {
+            AgentState::Completed
+        };
+        agent.updated_at = Utc::now();
+    }
+
+    let final_runtime = create_dummy_runtime(last_runtime_id.unwrap_or_default(), session)?;
+
+    Ok(ManasResult {
+        agents: agents.to_vec(),
+        session: session.clone(),
+        final_runtime,
+        final_error,
+    })
+}
+
+fn commit_terminal_session_checkpoint(session: &SessionManagement, git_event: &str) -> bool {
+    if crate::router_command_run::command_run_sandbox_enabled() {
+        info!(
+            session_id = %session.session_id,
+            event = git_event,
+            "skipping workspace session checkpoint commit because command_run sandbox is enabled"
+        );
+        return false;
+    }
+
     match crate::workspace_git::commit_session_checkpoint(session, git_event) {
         Ok(Some(commit)) => info!(
             session_id = %session.session_id,
@@ -658,24 +689,7 @@ pub fn process_manas_internal(
             "failed to commit workspace session checkpoint"
         ),
     }
-
-    for agent in agents.iter_mut() {
-        agent.state = if final_session_state == SessionState::Failed {
-            AgentState::Failed
-        } else {
-            AgentState::Completed
-        };
-        agent.updated_at = Utc::now();
-    }
-
-    let final_runtime = create_dummy_runtime(last_runtime_id.unwrap_or_default(), session)?;
-
-    Ok(ManasResult {
-        agents: agents.to_vec(),
-        session: session.clone(),
-        final_runtime,
-        final_error,
-    })
+    true
 }
 
 fn manas_max_turns() -> u64 {
@@ -911,7 +925,7 @@ fn terminal_status_needs_final_response_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_compact_summary_after_new_context,
+        auto_compact_summary_after_new_context, commit_terminal_session_checkpoint,
         complete_active_doing_task_after_non_planning_reply, increment_turn_with_fresh_timestamp,
         manas_max_turns, messages_with_initial_context_prefix,
         should_auto_complete_non_planning_doing_after_tool_turn,
@@ -1258,6 +1272,22 @@ mod tests {
         assert!(!terminal_status_needs_final_response_turn(None, true, true));
     }
 
+    #[test]
+    fn terminal_checkpoint_commit_skips_when_command_run_sandbox_is_enabled() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let _sandbox = EnvGuard::set("TURA_COMMAND_RUN_SANDBOX", "enabled");
+        let temp = tempfile::tempdir().expect("temp workspace");
+        std::fs::write(temp.path().join("src.txt"), "sandboxed change").expect("fixture file");
+        let mut session = test_session("session-sandbox-checkpoint");
+        session.session_directory = temp.path().to_path_buf();
+
+        assert!(!commit_terminal_session_checkpoint(&session, "completed"));
+        assert!(
+            !temp.path().join(".git").exists(),
+            "sandboxed runtime completion must not initialize git or create checkpoint commits"
+        );
+    }
+
     fn test_session(id: &str) -> SessionManagement {
         let now = Utc::now();
         SessionManagement::new(
@@ -1323,5 +1353,28 @@ mod tests {
             token_per_second: 0.0,
         });
         runtime
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
     }
 }
