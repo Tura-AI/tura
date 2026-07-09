@@ -4,7 +4,7 @@
   </a>
 </p>
 
-<h1 align="center">Tura — 76% fewer tokens. 18% better performance.</h1>
+<h1 align="center">Tura: 76% fewer tokens. 18% better performance.</h1>
 
 Tura is a local open-source coding agent built for developers who are tired of useless skills, extensions that claim they can save tokens, and agents that wreck repos without judgment.
 
