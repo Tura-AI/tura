@@ -4,6 +4,12 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="https://turaai.net/"><img alt="Website" title="Tura official website" src="https://img.shields.io/badge/Website-turaai.net-40e0d0?style=flat-square&amp;labelColor=555555"></a>
+  <a href="https://turaai.net/benchmark"><img alt="Benchmark" title="Tura benchmark results" src="https://img.shields.io/badge/Benchmark-results-9b59b6?style=flat-square&amp;labelColor=555555"></a>
+  <a href="https://www.npmjs.com/package/tura-ai"><img alt="npm package" title="Tura npm package" src="https://img.shields.io/npm/v/tura-ai?style=flat-square&amp;logo=npm&amp;label=npm&amp;labelColor=555555&amp;color=cb3837"></a>
+</p>
+
 <h1 align="center">Tura: 76% fewer tokens. 18% better performance.</h1>
 
 Tura is a local open-source coding agent built for developers who are tired of useless skills, extensions that claim they can save tokens, and agents that wreck repos without judgment.
