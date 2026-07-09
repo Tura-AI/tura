@@ -28,8 +28,11 @@ const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 25 * 60_000
 const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "codex,tura")
 const prepOnly = (process.env.COMMAND_RUN_AGENT_PREP_ONLY || "0") === "1"
 const evaluateOnly = (process.env.COMMAND_RUN_AGENT_EVALUATE_ONLY || "0") === "1"
+const skipEval = (process.env.COMMAND_RUN_AGENT_SKIP_EVAL || "0") === "1"
 const skipTuraBuild = (process.env.COMMAND_RUN_AGENT_SKIP_TURA_BUILD || "0") === "1"
 const allowFailure = (process.env.COMMAND_RUN_AGENT_ALLOW_FAILURE || "0") === "1"
+const turaEmbedded = (process.env.COMMAND_RUN_AGENT_TURA_EMBEDDED || "0") === "1"
+const turaExplicitSessionId = (process.env.COMMAND_RUN_AGENT_TURA_EXPLICIT_SESSION_ID || "0") === "1"
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
 const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx"
 
@@ -38,6 +41,13 @@ const claudeExe = findClaudeExe()
 const piExe = findPiExe()
 const codexExe = path.join(
   process.env.COMMAND_RUN_AGENT_CODEX_CURRENT_ROOT || path.join(homeDir, "Documents", "Codex"),
+  "codex-rs",
+  "target",
+  "debug",
+  process.platform === "win32" ? "codex.exe" : "codex",
+)
+const codexMainExe = path.join(
+  process.env.COMMAND_RUN_AGENT_CODEX_MAIN_ROOT || path.join(homeDir, "Documents", "codex-main"),
   "codex-rs",
   "target",
   "debug",
@@ -59,9 +69,15 @@ function parseAgents(value) {
     ["codex", "codex"],
     ["codex-current", "codex"],
     ["current", "codex"],
+    ["codex-main", "codex-main"],
+    ["main", "codex-main"],
     ["tura", "tura-fast"],
     ["tura-fast", "tura-fast"],
     ["tura-fast-shll", "tura-fast"],
+    ["tura-balanced", "tura-balanced"],
+    ["balanced", "tura-balanced"],
+    ["tura-direct", "tura-direct"],
+    ["direct", "tura-direct"],
     ["tura-thinking", "tura-thinking"],
     ["tura-think", "tura-thinking"],
     ["thinking", "tura-thinking"],
@@ -130,13 +146,18 @@ async function runLive(command, args, options = {}) {
   const stdoutStream = fs.createWriteStream(options.stdoutPath)
   const stderrStream = fs.createWriteStream(options.stderrPath)
   return await new Promise((resolve) => {
+    let progressQueued = false
     const child = spawn(command, args, {
       cwd: options.cwd || repoRoot,
       env: { ...process.env, ...(options.env || {}) },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.input ? "pipe" : "ignore", "pipe", "pipe"],
       shell: options.shell || false,
       windowsHide: true,
     })
+    if (options.input) {
+      child.stdin.write(options.input)
+      child.stdin.end()
+    }
     let settled = false
     const timeout = setTimeout(() => {
       if (settled) return
@@ -147,10 +168,12 @@ async function runLive(command, args, options = {}) {
     child.stdout.on("data", (chunk) => {
       stdoutChunks.push(chunk)
       stdoutStream.write(chunk)
+      queueProgress()
     })
     child.stderr.on("data", (chunk) => {
       stderrChunks.push(chunk)
       stderrStream.write(chunk)
+      queueProgress()
     })
     child.on("error", (error) => {
       if (settled) return
@@ -176,11 +199,36 @@ async function runLive(command, args, options = {}) {
         signal,
         stdout,
         stderr,
+        stdout_path: options.stdoutPath,
+        stderr_path: options.stderrPath,
+        status_path: options.statusPath,
         duration_ms: Math.round(performance.now() - started),
         error: error ? String(error.stack || error.message || error) : signal === "timeout" ? "timeout" : null,
       }
       writeFile(options.statusPath, JSON.stringify(result, null, 2))
+      options.onProgress?.(result)
       resolve(result)
+    }
+    function queueProgress() {
+      if (!options.onProgress || progressQueued || settled) return
+      progressQueued = true
+      setTimeout(() => {
+        progressQueued = false
+        if (settled) return
+        options.onProgress({
+          command,
+          args,
+          status: null,
+          signal: null,
+          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+          stderr: Buffer.concat(stderrChunks).toString("utf8"),
+          stdout_path: options.stdoutPath,
+          stderr_path: options.stderrPath,
+          status_path: options.statusPath,
+          duration_ms: Math.round(performance.now() - started),
+          error: null,
+        })
+      }, 1000)
     }
   })
 }
@@ -258,6 +306,128 @@ function countEvents(events) {
   return { turns, commands, failures }
 }
 
+function contextArchiveDir(agentDir) {
+  return path.join(agentDir, "context-and-calls")
+}
+
+function emptyAgentUsage() {
+  return {
+    input: 0,
+    cached: 0,
+    output: 0,
+    reasoning: 0,
+    total: 0,
+    usage_events: 0,
+    latency_ms: 0,
+  }
+}
+
+function addAgentUsage(totals, usage) {
+  if (!usage || typeof usage !== "object") return
+  totals.usage_events += 1
+  const input = Number(usage.input || usage.input_tokens || usage.prompt_tokens || 0)
+  const cached = Number(usage.cached || usage.cached_input_tokens || usage.cache_read_input_tokens || usage.input_tokens_details?.cached_tokens || usage.prompt_tokens_details?.cached_tokens || 0)
+  const output = Number(usage.output || usage.output_tokens || usage.completion_tokens || 0)
+  const reasoning = Number(usage.reasoning || usage.reasoning_tokens || usage.reasoning_output_tokens || usage.output_tokens_details?.reasoning_tokens || usage.completion_tokens_details?.reasoning_tokens || 0)
+  totals.input += input
+  totals.cached += cached
+  totals.output += output
+  totals.reasoning += reasoning
+  totals.total += Number(usage.total || usage.total_tokens || 0) || input + output
+  totals.latency_ms += Number(usage.latency_ms || 0)
+}
+
+function jsonFilesUnder(root) {
+  if (!fs.existsSync(root)) return []
+  const files = []
+  const stack = [root]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name)
+      if (entry.isDirectory()) stack.push(full)
+      else if (entry.isFile() && entry.name.endsWith(".json")) files.push(full)
+    }
+  }
+  return files
+}
+
+function usageFromProviderLogs(logRoot) {
+  const totals = emptyAgentUsage()
+  const calls = []
+  for (const file of jsonFilesUnder(logRoot)) {
+    let payload
+    try { payload = JSON.parse(fs.readFileSync(file, "utf8")) } catch { continue }
+    if (payload?.type !== "llm_call") continue
+    const usage = payload.metrics?.usage || payload.response?.usage
+    if (usage) addAgentUsage(totals, usage)
+    calls.push({
+      file,
+      call_id: payload.call_id,
+      success: payload.success,
+      provider: payload.provider,
+      model: payload.model,
+      started_at: payload.started_at,
+      finished_at: payload.finished_at,
+      duration_ms: payload.duration_ms,
+      usage: usage || null,
+    })
+  }
+  calls.sort((a, b) => String(a.started_at || "").localeCompare(String(b.started_at || "")))
+  return { totals, calls }
+}
+
+function refreshContextAndCallArchive(agentDir, stdout = "") {
+  const archive = contextArchiveDir(agentDir)
+  mkdirp(archive)
+  const providerLogRoot = path.join(agentDir, "provider-log")
+  const fullCalls = []
+  for (const file of jsonFilesUnder(providerLogRoot).sort()) {
+    let payload = null
+    try { payload = JSON.parse(fs.readFileSync(file, "utf8")) } catch {}
+    if (payload?.type !== "llm_call") continue
+    fullCalls.push({ source_file: file, ...payload })
+  }
+  writeFile(
+    path.join(archive, "provider-calls-full.jsonl"),
+    fullCalls.map((call) => JSON.stringify(call)).join("\n") + (fullCalls.length ? "\n" : ""),
+  )
+  writeFile(path.join(archive, "visible-agent-events.jsonl"), stdout || "")
+  writeFile(path.join(archive, "provider-calls-index.json"), JSON.stringify(fullCalls.map((call, index) => ({
+    index,
+    source_file: call.source_file,
+    call_id: call.call_id,
+    success: call.success,
+    provider: call.provider,
+    model: call.model,
+    started_at: call.started_at,
+    finished_at: call.finished_at,
+    duration_ms: call.duration_ms,
+    usage: call.metrics?.usage || call.response?.usage || null,
+    request_messages_count: Array.isArray(call.request?.messages) ? call.request.messages.length : null,
+    has_request_messages: Array.isArray(call.request?.messages),
+    has_response: Boolean(call.response),
+  })), null, 2))
+  writeFile(path.join(archive, "archive-summary.json"), JSON.stringify({
+    provider_log_root: providerLogRoot,
+    provider_call_count: fullCalls.length,
+    provider_calls_full_path: path.join(archive, "provider-calls-full.jsonl"),
+    provider_calls_include_full_request_messages: fullCalls.some((call) => Array.isArray(call.request?.messages)),
+    visible_events_path: path.join(archive, "visible-agent-events.jsonl"),
+  }, null, 2))
+  return {
+    archive_dir: archive,
+    provider_call_count: fullCalls.length,
+    provider_calls_full_path: path.join(archive, "provider-calls-full.jsonl"),
+  }
+}
+
+function usageForAgent(agentDir, stdout) {
+  const provider = usageFromProviderLogs(path.join(agentDir, "provider-log"))
+  if (provider.totals.usage_events > 0) return { usage: provider.totals, usage_source: "provider_log", provider_calls: provider.calls }
+  return { usage: usageFromEvents(parseJsonl(stdout || "")), usage_source: "stdout_jsonl", provider_calls: [] }
+}
+
 function prepareProject(agent) {
   const dir = existingProject(agent)
   fs.rmSync(dir, { recursive: true, force: true })
@@ -273,12 +443,17 @@ function existingProject(agent) {
 
 function projectDirectoryName(agent) {
   if (agent === "codex") return "makeup-codex"
+  if (agent === "codex-main") return "makeup-codex-main"
   if (agent === "tura-fast") return "makeup-tura-fast"
   if (agent === "tura-thinking") return "makeup-tura-thinking"
+  if (agent === "tura-balanced") return "makeup-tura-balanced"
+  if (agent === "tura-direct") return "makeup-tura-direct"
   return `makeup-${agent.replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`
 }
 
 function turaAgentPrompt(agent) {
+  if (agent === "tura-balanced") return "balanced"
+  if (agent === "tura-direct") return "direct"
   return agent === "tura-thinking" ? "thinking" : "fast"
 }
 
@@ -337,7 +512,7 @@ function conversionPrompt() {
   if (!isFullStackVersion) {
     return `You are in a directory containing makeup.html and README-task.md. Turn this HTML into a production-quality TanStack Start React frontend in the current directory.
 
-Follow README-task.md exactly. Preserve the page as a real app, not a screenshot or iframe. Use gpt-5.5 low reasoning style: act decisively, keep the implementation compact, and verify locally.
+Follow README-task.md exactly. Preserve the page as a real app, not a screenshot or iframe. Use gpt-5.5 ${reasoning} reasoning style: act decisively, keep the implementation compact, and verify locally.
 
 What matters most:
 - Match the source page as a complete app, not just the general theme: POWERPROMPT branding, left sidebar, sticky top filters, search reveal, sort controls, masonry gallery, varied image cards, hover overlays, save/favorite state, cart/dock actions, toast feedback, lightbox/detail preview, and the mobile drawer/dock experience.
@@ -361,7 +536,7 @@ Important constraints:
   }
   return `You are in a directory containing makeup.html and README-task.md. Turn this HTML into a production-quality full-stack TanStack Start prompt marketplace in the current directory.
 
-Follow README-task.md exactly. Preserve the page as a real app, not a screenshot or iframe. Use gpt-5.5 low reasoning style: act decisively, keep the implementation compact, and verify locally.
+Follow README-task.md exactly. Preserve the page as a real app, not a screenshot or iframe. Use gpt-5.5 ${reasoning} reasoning style: act decisively, keep the implementation compact, and verify locally.
 
 What matters most:
 - Match the source page as a complete frontend app, not just the general theme: POWERPROMPT branding, left sidebar, sticky top filters, search reveal, sort controls, masonry gallery, varied image cards, hover overlays, save/favorite state, cart/dock actions, toast feedback, lightbox/detail preview, and the mobile drawer/dock experience.
@@ -389,7 +564,8 @@ Important constraints:
 `
 }
 
-async function runCodex(workspace, agentDir) {
+async function runCodex(agent, workspace, agentDir, onProgress = null) {
+  const exe = agent === "codex-main" ? codexMainExe : codexExe
   const args = [
     "exec",
     "--json",
@@ -403,23 +579,27 @@ async function runCodex(workspace, agentDir) {
     ...serviceTierConfigArgs(),
     conversionPrompt(),
   ]
-  return await runLive(codexExe, args, {
+  return await runLive(exe, args, {
     cwd: workspace,
     timeoutMs,
     stdoutPath: path.join(agentDir, "codex.stdout.jsonl"),
     stderrPath: path.join(agentDir, "codex.stderr.log"),
     statusPath: path.join(agentDir, "codex.status.json"),
+    onProgress,
   })
 }
 
-async function runTura(agent, workspace, agentDir) {
+async function runTura(agent, workspace, agentDir, onProgress = null) {
   const sessionId = `makeup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const sessionCwd = prepareTuraSessionCwd(sessionId)
+  const providerLogPath = path.join(agentDir, "provider-log")
+  mkdirp(providerLogPath)
   const args = [
     "exec",
     "--json",
     "--skip-git-repo-check",
-    "--session-id",
-    sessionId,
+    ...(turaEmbedded ? ["--embedded"] : []),
+    ...(turaExplicitSessionId ? ["--session-id", sessionId] : []),
     "--sandbox",
     "--agent-id",
     turaAgentPrompt(agent),
@@ -429,41 +609,56 @@ async function runTura(agent, workspace, agentDir) {
     ...turaReasoningArgs(),
     "--cwd",
     workspace,
-    conversionPrompt(),
   ]
   return await runLive(turaExe, args, {
-    cwd: workspace,
+    cwd: sessionCwd,
+    input: conversionPrompt(),
     timeoutMs,
     resolveOnTurnCompleted: true,
     cleanupWorkspaceOnSettle: true,
     env: {
-      OPENAI_LOGIN: process.env.OPENAI_LOGIN || "oauth",
+      ...(process.env.OPENAI_LOGIN ? { OPENAI_LOGIN: process.env.OPENAI_LOGIN } : {}),
       TURA_ENV_PATH: process.env.TURA_ENV_PATH || path.join(repoRoot, ".env"),
+      TURA_PROJECT_ROOT: repoRoot,
+      LOG_PATH: providerLogPath,
       TURA_COMMAND_RUN_STRICT_JSON: "0",
+      TURA_SESSION_REASONING_EFFORT: reasoning,
+      COMMAND_RUN_AGENT_CONTEXT_ARCHIVE: "1",
     },
     stdoutPath: path.join(agentDir, "tura.stdout.jsonl"),
     stderrPath: path.join(agentDir, "tura.stderr.log"),
     statusPath: path.join(agentDir, "tura.status.json"),
+    onProgress,
   })
 }
 
-async function runClaudeCode(workspace, agentDir) {
+function prepareTuraSessionCwd(sessionId) {
+  const safe = sessionId.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 80)
+  const dir = path.join(runRoot, "tura-session-cwd", safe)
+  mkdirp(path.join(dir, "crates", "session_log"))
+  writeFile(path.join(dir, "Cargo.toml"), "[workspace]\n")
+  return dir
+}
+
+async function runClaudeCode(workspace, agentDir, onProgress = null) {
   return await runLive(claudeExe, claudeCodeArgs(conversionPrompt(), { model: process.env.COMMAND_RUN_AGENT_CLAUDE_MODEL || "opus" }), {
     cwd: workspace,
     timeoutMs,
     stdoutPath: path.join(agentDir, "claude-code.stdout.jsonl"),
     stderrPath: path.join(agentDir, "claude-code.stderr.log"),
     statusPath: path.join(agentDir, "claude-code.status.json"),
+    onProgress,
   })
 }
 
-async function runPiAgent(workspace, agentDir) {
+async function runPiAgent(workspace, agentDir, onProgress = null) {
   return await runLive(piExe, piAgentArgs(conversionPrompt()), {
     cwd: workspace,
     timeoutMs,
     stdoutPath: path.join(agentDir, "pi-agent.stdout.jsonl"),
     stderrPath: path.join(agentDir, "pi-agent.stderr.log"),
     statusPath: path.join(agentDir, "pi-agent.status.json"),
+    onProgress,
   })
 }
 
@@ -704,39 +899,109 @@ function sourceHtmlProfile() {
 }
 
 function pickServeScript(pkg) {
-  const scripts = pkg?.scripts || {}
-  if (scripts.start) return "start"
-  if (scripts.preview) return "preview"
-  if (scripts.dev) return "dev"
-  return null
+  return pickServeScripts(pkg)[0] || null
 }
 
-function startServer(workspace, script, port) {
-  return spawn(npmCmd, ["run", script, "--", "--port", String(port), "--host", "127.0.0.1"], {
+function pickServeScripts(pkg, workspace = null) {
+  const scripts = pkg?.scripts || {}
+  const names = ["start", "preview", "dev"].filter((name) => scripts[name])
+  if (!workspace) return names
+  const hasOutputServer = fs.existsSync(path.join(workspace, ".output", "server", "index.mjs"))
+  const hasDist = fs.existsSync(path.join(workspace, "dist"))
+  return names.sort((a, b) => serveScriptRank(a, scripts[a], { hasOutputServer, hasDist }) - serveScriptRank(b, scripts[b], { hasOutputServer, hasDist }))
+}
+
+function serveScriptRank(name, command, { hasOutputServer, hasDist }) {
+  const text = String(command || "")
+  if (name === "start" && /\.output[\\/]server[\\/]index\.mjs|\.output\/server\/index\.mjs/.test(text) && !hasOutputServer) return 30
+  if (name === "preview" && hasDist) return 0
+  if (name === "start" && hasOutputServer) return 1
+  if (name === "preview") return 2
+  if (name === "dev") return 3
+  return 10
+}
+
+function tailFile(filePath, maxChars = 4000) {
+  try {
+    const text = fs.readFileSync(filePath, "utf8")
+    return text.length > maxChars ? text.slice(-maxChars) : text
+  } catch {
+    return ""
+  }
+}
+
+function startServer(workspace, script, port, agentDir) {
+  const safeScript = script.replace(/[^a-z0-9_-]/gi, "-")
+  const stdoutPath = path.join(agentDir, `runtime-server-${safeScript}.stdout.log`)
+  const stderrPath = path.join(agentDir, `runtime-server-${safeScript}.stderr.log`)
+  mkdirp(agentDir)
+  const server = spawn(npmCmd, ["run", script, "--", "--port", String(port), "--host", "127.0.0.1"], {
     cwd: workspace,
     stdio: ["ignore", "pipe", "pipe"],
-    env: process.env,
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      HOSTNAME: "127.0.0.1",
+      PORT: String(port),
+      NITRO_HOST: "127.0.0.1",
+      NITRO_PORT: String(port),
+      SERVER_HOST: "127.0.0.1",
+      SERVER_PORT: String(port),
+    },
     shell: process.platform === "win32",
     windowsHide: true,
   })
+  const stdoutStream = fs.createWriteStream(stdoutPath)
+  const stderrStream = fs.createWriteStream(stderrPath)
+  server.stdout?.pipe(stdoutStream)
+  server.stderr?.pipe(stderrStream)
+  server.on("close", () => {
+    stdoutStream.end()
+    stderrStream.end()
+  })
+  server.stdoutPath = stdoutPath
+  server.stderrPath = stderrPath
+  server.exitStatus = null
+  server.exitSignal = null
+  server.exitPromise = new Promise((resolve) => {
+    server.on("close", (status, signal) => {
+      server.exitStatus = status
+      server.exitSignal = signal
+      resolve({ status, signal })
+    })
+  })
+  return server
 }
 
-async function waitForServer(port) {
+async function waitForServer(port, server = null) {
   const deadline = Date.now() + 45_000
+  let exited = null
+  server?.exitPromise?.then((result) => {
+    exited = result
+  })
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}`)
-      if (response.ok) return true
+      if (response.status > 0 && response.status < 600) return { ready: true, status: response.status }
     } catch {}
+    if (exited) return { ready: false, status: null, exited: true, exit_status: exited.status, exit_signal: exited.signal }
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
-  return false
+  return {
+    ready: false,
+    status: null,
+    exited: Boolean(exited),
+    exit_status: exited?.status ?? server?.exitStatus ?? null,
+    exit_signal: exited?.signal ?? server?.exitSignal ?? null,
+  }
 }
 
 async function evaluateRuntime(workspace, port, agentDir) {
   const evalScript = path.join(agentDir, "runtime-evaluate.mjs")
+  const screenshotsDir = path.join(agentDir, "screenshots")
+  mkdirp(screenshotsDir)
   writeFile(evalScript, runtimeEvaluator())
-  const result = run("node", [evalScript, String(port), path.join(agentDir, "runtime-screenshot.png")], {
+  const result = run("node", [evalScript, String(port), path.join(screenshotsDir, "desktop.png")], {
     cwd: workspace,
     timeoutMs: 120_000,
   })
@@ -862,13 +1127,15 @@ async function scan(name, viewport, screenshotPath) {
   await page.close();
   return { name, load_ms: loadMs, screenshot: screenshotPath, ...data };
 }
+const mobileScreenshot = screenshot.replace(/[^/\\\\]+$/, "mobile.png");
 const desktop = await scan("desktop", { width: 1440, height: 980 }, screenshot);
-const mobile = await scan("mobile", { width: 390, height: 844 }, screenshot.replace(/\\.png$/, "-mobile.png"));
+const mobile = await scan("mobile", { width: 390, height: 844 }, mobileScreenshot);
 await browser.close();
 console.log(JSON.stringify({
   pass: desktop.body_chars > 500 && mobile.body_chars > 500 && !desktop.horizontal_overflow && !mobile.horizontal_overflow,
   load_ms: desktop.load_ms,
   screenshot,
+  screenshots_dir: screenshot.replace(/[/\\\\][^/\\\\]+$/, ""),
   desktop,
   mobile,
   body_chars: desktop.body_chars,
@@ -995,15 +1262,47 @@ async function evaluateProject(agent, workspace, agentDir, index) {
   const source = sourceHtmlProfile()
   const distBytes = byteSize(path.join(workspace, "dist")) || byteSize(path.join(workspace, ".output")) || byteSize(path.join(workspace, "build"))
   let runtime = { pass: false, error: "no package.json or serve script" }
-  const serveScript = pickServeScript(pkg)
-  if (pkg && serveScript && install?.status === 0) {
+  const serveScripts = pickServeScripts(pkg, workspace)
+  if (pkg && serveScripts.length > 0 && install?.status === 0) {
     const port = 45200 + index
-    const server = startServer(workspace, serveScript, port)
-    try {
-      if (await waitForServer(port)) runtime = await evaluateRuntime(workspace, port, agentDir)
-      else runtime = { pass: false, error: `${serveScript} server did not become ready` }
-    } finally {
-      killProcessTree(server)
+    const attempts = []
+    for (const serveScript of serveScripts) {
+      const server = startServer(workspace, serveScript, port, agentDir)
+      try {
+        const ready = await waitForServer(port, server)
+        attempts.push({
+          script: serveScript,
+          ready: ready.ready,
+          status: ready.status,
+          exited: Boolean(ready.exited),
+          exit_status: ready.exit_status ?? null,
+          exit_signal: ready.exit_signal ?? null,
+          stdout_path: server.stdoutPath,
+          stderr_path: server.stderrPath,
+          stdout_tail: tailFile(server.stdoutPath),
+          stderr_tail: tailFile(server.stderrPath),
+        })
+        if (ready.ready) {
+          runtime = await evaluateRuntime(workspace, port, agentDir)
+          runtime.serve_script = serveScript
+          runtime.server_status = ready.status
+          runtime.server_attempts = attempts
+          break
+        }
+        runtime = {
+          pass: false,
+          error: `${serveScript} server did not become ready`,
+          server_stdout_path: server.stdoutPath,
+          server_stderr_path: server.stderrPath,
+          server_exit_status: ready.exit_status ?? null,
+          server_exit_signal: ready.exit_signal ?? null,
+          server_stdout_tail: tailFile(server.stdoutPath),
+          server_stderr_tail: tailFile(server.stderrPath),
+          server_attempts: attempts,
+        }
+      } finally {
+        killProcessTree(server)
+      }
     }
   }
   const standards = buildStandards({ pkg, install, build, tests, metrics, runtime, distBytes, source })
@@ -1045,8 +1344,86 @@ function summarizeRun(result) {
     signal: result.signal,
     duration_ms: result.duration_ms,
     error: result.error,
-    stderr_tail: result.stderr.split(/\r?\n/).filter(Boolean).slice(-20).join("\n"),
+    stdout_path: result.stdout_path || null,
+    stderr_path: result.stderr_path || null,
+    status_path: result.status_path || null,
+    stderr_tail: String(result.stderr || "").split(/\r?\n/).filter(Boolean).slice(-20).join("\n"),
   }
+}
+
+function statsFromLiveResult(agent, workspace, agentDir, started, result, validation = null, contextArchive = null) {
+  const stdout = result?.stdout || ""
+  const events = parseJsonl(stdout)
+  const isExternal = agent === "claude-code" || agent === "pi-agent"
+  const usageInfo = isExternal
+    ? { usage: agentUsageFromJsonl(stdout), usage_source: `${agent}-jsonl`, provider_calls: [] }
+    : usageForAgent(agentDir, stdout)
+  return {
+    id: agent,
+    agent,
+    task: `prompt-gallery-tanstack-${taskVersion}-rebuild`,
+    workspace,
+    in_progress: result?.status === null && !result?.error,
+    elapsed_ms: Math.round(performance.now() - started),
+    exit_code: result?.status ?? null,
+    error: result?.error || null,
+    stdout_path: result?.stdout_path || null,
+    stderr_path: result?.stderr_path || null,
+    status_path: result?.status_path || null,
+    run: summarizeRun(result),
+    usage: usageInfo.usage,
+    usage_source: usageInfo.usage_source,
+    provider_calls: usageInfo.provider_calls,
+    provider_calls_path: contextArchive?.provider_calls_full_path || null,
+    context_archive: contextArchive,
+    events: isExternal ? agentEventStats(stdout) : countEvents(events),
+    validation,
+  }
+}
+
+function aggregateUsage(results) {
+  const usage = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 }
+  for (const result of results) {
+    const u = result?.usage || {}
+    usage.input += Number(u.input || u.input_tokens || u.inputTokens || 0)
+    usage.cached += Number(u.cached || u.cached_input_tokens || u.cacheInputTokens || 0)
+    usage.output += Number(u.output || u.output_tokens || u.outputTokens || 0)
+    usage.reasoning += Number(u.reasoning || u.reasoning_tokens || u.reasoningTokens || 0)
+    usage.total += Number(u.total || u.total_tokens || u.totalTokens || 0)
+  }
+  return {
+    ...usage,
+    inputTokens: usage.input,
+    cacheInputTokens: usage.cached,
+    outputTokens: usage.output,
+    reasoningTokens: usage.reasoning,
+    totalTokens: usage.total,
+  }
+}
+
+function buildRunSummary(results, extra = {}) {
+  const finalResults = !extra.in_progress && results.length > 0
+  const validations = results.map((result) => result.validation).filter(Boolean)
+  const comparison = validations.length > 0 ? compareResults(validations) : null
+  return normalizeBusinessSummary({
+    ok: finalResults && results.every((result) =>
+      result.run?.status === 0 &&
+      (skipEval || (result.validation && validationAccepted(result.validation))),
+    ),
+    source_html: sourceHtml,
+    task_version: taskVersion,
+    model,
+    tura_model: turaModel,
+    reasoning,
+    service_tier: serviceTier,
+    desktop_dir: desktopDir,
+    agents,
+    aggregate_usage: aggregateUsage(results),
+    comparison,
+    results,
+    skip_eval: skipEval,
+    ...extra,
+  }, runPaths)
 }
 
 function compareResults(results) {
@@ -1099,28 +1476,34 @@ function ensureHarnessRuntime() {
   runOk(npxCmd, ["playwright", "install", "chromium"], { cwd: runRoot, timeoutMs: 240_000, shell: process.platform === "win32" })
 }
 
-async function runAgent(agent, index) {
+async function runAgent(agent, index, onAgentUpdate = null) {
   const agentDir = path.join(runRoot, agent)
   mkdirp(agentDir)
   const workspace = prepareProject(agent)
   const started = performance.now()
   let result
-  if (agent === "codex") result = await runCodex(workspace, agentDir)
-  else if (agent === "claude-code") result = await runClaudeCode(workspace, agentDir)
-  else if (agent === "pi-agent") result = await runPiAgent(workspace, agentDir)
-  else result = await runTura(agent, workspace, agentDir)
-  const events = parseJsonl(result.stdout)
-  const validation = await evaluateProject(agent, workspace, agentDir, index)
-  const stats = {
-    id: agent,
-    workspace,
-    elapsed_ms: Math.round(performance.now() - started),
-    run: summarizeRun(result),
-    usage: agent === "claude-code" || agent === "pi-agent" ? agentUsageFromJsonl(result.stdout) : usageFromEvents(events),
-    events: agent === "claude-code" || agent === "pi-agent" ? agentEventStats(result.stdout) : countEvents(events),
-    validation,
+  let lastContextArchive = null
+  let lastContextArchiveRefreshMs = 0
+  const publishProgress = (liveResult) => {
+    const now = performance.now()
+    if (!lastContextArchive || liveResult.status !== null || now - lastContextArchiveRefreshMs > 10_000) {
+      lastContextArchive = refreshContextAndCallArchive(agentDir, liveResult.stdout || "")
+      lastContextArchiveRefreshMs = now
+    }
+    const stats = statsFromLiveResult(agent, workspace, agentDir, started, liveResult, null, lastContextArchive)
+    writeFile(path.join(agentDir, "agent-summary.json"), JSON.stringify(stats, null, 2))
+    onAgentUpdate?.(stats)
   }
+  if (agent === "codex" || agent === "codex-main") result = await runCodex(agent, workspace, agentDir, publishProgress)
+  else if (agent === "claude-code") result = await runClaudeCode(workspace, agentDir, publishProgress)
+  else if (agent === "pi-agent") result = await runPiAgent(workspace, agentDir, publishProgress)
+  else result = await runTura(agent, workspace, agentDir, publishProgress)
+  const validation = skipEval ? null : await evaluateProject(agent, workspace, agentDir, index)
+  lastContextArchive = refreshContextAndCallArchive(agentDir, result.stdout || "")
+  const stats = statsFromLiveResult(agent, workspace, agentDir, started, result, validation, lastContextArchive)
+  stats.in_progress = false
   writeFile(path.join(agentDir, "agent-summary.json"), JSON.stringify(stats, null, 2))
+  onAgentUpdate?.(stats)
   return stats
 }
 
@@ -1142,17 +1525,22 @@ async function main() {
       assert(fs.existsSync(workspace), `missing existing project: ${workspace}`)
       const agentDir = path.join(runRoot, agent)
       mkdirp(agentDir)
+      const summaryFile = path.join(agentDir, "agent-summary.json")
+      const prior = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")) : {}
       const validation = await evaluateProject(agent, workspace, agentDir, index)
       const stats = {
+        ...prior,
         id: agent,
+        agent,
+        task: `prompt-gallery-tanstack-${taskVersion}-rebuild`,
         workspace,
         elapsed_ms: validation.install?.duration_ms + validation.build?.duration_ms,
-        run: { status: null, evaluate_only: true },
-        usage: { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 },
-        events: { turns: 0, commands: 0, failures: 0 },
+        run: { ...(prior.run || {}), status: prior.run?.status || null, evaluate_only: true },
+        usage: prior.usage || { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 },
+        events: prior.events || { turns: 0, commands: 0, failures: 0 },
         validation,
       }
-      writeFile(path.join(agentDir, "agent-summary.json"), JSON.stringify(stats, null, 2))
+      writeFile(summaryFile, JSON.stringify(stats, null, 2))
       results.push(stats)
     }
     const validations = results.map((result) => result.validation)
@@ -1166,6 +1554,8 @@ async function main() {
       task_version: taskVersion,
       source_html: sourceHtml,
       desktop_dir: desktopDir,
+      agents,
+      aggregate_usage: aggregateUsage(results),
       comparison,
       results,
     }, runPaths)
@@ -1175,6 +1565,7 @@ async function main() {
     return
   }
   if (agents.includes("codex")) assert(fs.existsSync(codexExe), `missing codex exe ${codexExe}`)
+  if (agents.includes("codex-main")) assert(fs.existsSync(codexMainExe), `missing codex-main exe ${codexMainExe}`)
   if (agents.some((agent) => agent.startsWith("tura-"))) {
     if (!skipTuraBuild || !fs.existsSync(turaExe)) {
       runOk("cargo", ["build", "-p", "gateway", "--bin", "tura_exec"], { cwd: repoRoot, timeoutMs: 5 * 60_000 })
@@ -1182,28 +1573,23 @@ async function main() {
     assert(fs.existsSync(turaExe), `missing tura exe ${turaExe}`)
   }
   ensureHarnessRuntime()
+  const partialResults = new Map()
+  let finalSummaryWritten = false
+  const writeProgressSummary = () => {
+    if (finalSummaryWritten) return
+    const results = [...partialResults.values()].sort((a, b) => String(a.agent || a.id).localeCompare(String(b.agent || b.id)))
+    const summary = buildRunSummary(results, { in_progress: true })
+    writeFile(summaryPath, JSON.stringify(summary, null, 2))
+  }
   const results = await Promise.all(agents.map((agent, index) => {
     console.log(`[makeup-tanstack] running ${agent}`)
-    return runAgent(agent, index)
+    return runAgent(agent, index, (stats) => {
+      partialResults.set(agent, stats)
+      writeProgressSummary()
+    })
   }))
-  const validations = results.map((result) => result.validation)
-  const comparison = compareResults(validations)
-  const summary = normalizeBusinessSummary({
-    ok: results.every(
-      (result) =>
-        result.run?.status === 0 &&
-        validationAccepted(result.validation),
-    ),
-    source_html: sourceHtml,
-    task_version: taskVersion,
-    model,
-    tura_model: turaModel,
-    reasoning,
-    service_tier: serviceTier,
-    desktop_dir: desktopDir,
-    comparison,
-    results,
-  }, runPaths)
+  finalSummaryWritten = true
+  const summary = buildRunSummary(results, { in_progress: false })
   writeFile(summaryPath, JSON.stringify(summary, null, 2))
   console.log(JSON.stringify(summary, null, 2))
   if (!summary.ok && !allowFailure) process.exitCode = 1

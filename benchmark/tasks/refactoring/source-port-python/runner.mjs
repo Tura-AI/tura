@@ -36,6 +36,7 @@ const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "tura-plannin
 const printProviderLog = truthy(process.env.COMMAND_RUN_AGENT_PRINT_PROVIDER_LOG || "0")
 const selectedTasksRaw = process.env.SOURCE_PORT_TASKS || process.env.COMMAND_RUN_AGENT_SOURCE_PORT_TASKS || "all"
 const prepOnly = truthy(process.env.COMMAND_RUN_AGENT_PREP_ONLY || "0")
+const evaluateOnly = truthy(process.env.COMMAND_RUN_AGENT_EVALUATE_ONLY || "0")
 const selfTest = truthy(process.env.SOURCE_PORT_SELF_TEST || process.env.COMMAND_RUN_AGENT_SOURCE_PORT_SELF_TEST || "0")
 const binaryOnly = truthy(process.env.SOURCE_PORT_BINARY_ONLY || "0")
 const runEval = truthy(process.env.SOURCE_PORT_RUN_EVAL || process.env.COMMAND_RUN_AGENT_SOURCE_PORT_RUN_EVAL || "1")
@@ -44,6 +45,7 @@ const planningOverride = parsePlanningOverride(process.env.COMMAND_RUN_AGENT_TUR
 const codexGoalsEnabled = truthy(process.env.COMMAND_RUN_AGENT_CODEX_GOALS || "0")
 const turaGoalEnabled = truthy(process.env.COMMAND_RUN_AGENT_TURA_GOAL || "0")
 const turaExplicitSessionId = truthy(process.env.COMMAND_RUN_AGENT_TURA_SESSION_ID || "0")
+const turaEmbedded = truthy(process.env.COMMAND_RUN_AGENT_TURA_EMBEDDED || "0")
 const turaStrictJson = process.env.COMMAND_RUN_AGENT_TURA_STRICT_JSON || process.env.TURA_COMMAND_RUN_STRICT_JSON || "0"
 const turaExe =
   process.env.COMMAND_RUN_AGENT_TURA_EXE ||
@@ -799,6 +801,15 @@ Hard constraints:
 - The first entrypoint discovered by the evaluator must itself be directly runnable on the current OS/runtime; do not leave a higher-priority wrapper, placeholder, or script that requires a different interpreter than the evaluator will use.
 - The harness will run ./compile.sh and then invoke your runnable executable with the same argv used for the official reference CLI.
 
+Deliverable shape:
+- Keep the actual implementation in one or more ${targetLanguage} files, for example ./main.py or ./${task.label.replace(/[^A-Za-z0-9_-]+/g, "_")}_port.py.
+- ./compile.sh must be idempotent and must create only entrypoints that are directly runnable by the evaluator on this machine.
+- The evaluator checks entrypoints in this order: ./executable, ./executable.exe, ./executable.cmd, ./executable.bat, ./executable.js, ./executable.py, ./executable.jar.
+- For a ${targetLanguage} target, if ./executable exists, it must be valid ${targetLanguage} source that can be run as: python ./executable <args>. Do not make ./executable a POSIX shell script.
+- On Windows, prefer creating ./executable.cmd that calls your ${targetLanguage} file. If you create ./executable.cmd, remove any POSIX shell wrapper named ./executable so it cannot be discovered first.
+- On Unix-like systems, either make ./executable valid ${targetLanguage} source with a ${targetLanguage} shebang or make sure the current evaluator will not run it through the wrong interpreter.
+- Do not leave stale, broken, placeholder, or higher-priority entrypoints in the workspace after ./compile.sh runs.
+
 Equivalence requirements:
 - For every evaluated invocation, running the official reference CLI and running your rebuilt executable with the same argv, stdin, files, and environment must produce the same exit status, stdout, and stderr.
 - If the official binary prints nothing, your program must print nothing.
@@ -1284,17 +1295,17 @@ def zip_cases(fx):
     two = zips / "2.test.txt.zip"
     three = zips / "3.test.txt.zip"
     return [
-        {"name": "find generated", "args": ["-i", str(two), "-c", "l", "--maxPasswordLen", "2", "-w", "1"], "timeout": 90},
-        {"name": "find generated starting password", "args": ["-i", str(three), "-c", "l", "--maxPasswordLen", "3", "-s", "abc", "-w", "1"], "timeout": 90},
-        {"name": "not found", "args": ["-i", str(two), "-c", "l", "--maxPasswordLen", "1", "-w", "1"], "timeout": 90},
-        {"name": "dictionary", "args": ["-i", str(two), "-p", str(dict_file), "-w", "1"], "timeout": 90},
-        {"name": "mask two lowercase", "args": ["-i", str(two), "--mask", "?l?l", "-w", "1"], "timeout": 90},
-        {"name": "mask custom charset", "args": ["-i", str(two), "--mask", "?1?1", "-1", "ab", "-w", "1"], "timeout": 90},
-        {"name": "missing input", "args": ["-i", "missing.zip"]},
-        {"name": "workers zero", "args": ["-i", str(two), "-w", "0"]},
-        {"name": "min zero", "args": ["-i", str(two), "--minPasswordLen", "0"]},
-        {"name": "max before min", "args": ["-i", str(two), "--minPasswordLen", "3", "--maxPasswordLen", "2"]},
-        {"name": "file number missing", "args": ["-i", str(two), "--fileNumber", "99", "-c", "l", "--maxPasswordLen", "2"]},
+        {"name": "find generated", "kind": "success", "feature": "bruteforce-lowercase", "args": ["-i", str(two), "-c", "l", "--maxPasswordLen", "2", "-w", "1"], "timeout": 90},
+        {"name": "find generated starting password", "kind": "success", "feature": "starting-password", "args": ["-i", str(three), "-c", "l", "--maxPasswordLen", "3", "-s", "abc", "-w", "1"], "timeout": 90},
+        {"name": "not found", "kind": "success", "feature": "not-found", "args": ["-i", str(two), "-c", "l", "--maxPasswordLen", "1", "-w", "1"], "timeout": 90},
+        {"name": "dictionary", "kind": "success", "feature": "dictionary", "args": ["-i", str(two), "-p", str(dict_file), "-w", "1"], "timeout": 90},
+        {"name": "mask two lowercase", "kind": "success", "feature": "mask", "args": ["-i", str(two), "--mask", "?l?l", "-w", "1"], "timeout": 90},
+        {"name": "mask custom charset", "kind": "success", "feature": "custom-charset", "args": ["-i", str(two), "--mask", "?1?1", "-1", "ab", "-w", "1"], "timeout": 90},
+        {"name": "missing input", "kind": "error", "feature": "missing-input", "args": ["-i", "missing.zip"]},
+        {"name": "workers zero", "kind": "error", "feature": "invalid-workers", "args": ["-i", str(two), "-w", "0"]},
+        {"name": "min zero", "kind": "error", "feature": "invalid-length", "args": ["-i", str(two), "--minPasswordLen", "0"]},
+        {"name": "max before min", "kind": "error", "feature": "invalid-range", "args": ["-i", str(two), "--minPasswordLen", "3", "--maxPasswordLen", "2"]},
+        {"name": "file number missing", "kind": "error", "feature": "missing-file-number", "args": ["-i", str(two), "--fileNumber", "99", "-c", "l", "--maxPasswordLen", "2"]},
     ]
 
 
@@ -1415,47 +1426,47 @@ def eza_cases(fx):
 def nushell_cases(fx):
     people = fx / "people.csv"
     return [
-        {"name": "help math", "args": ["-c", "help math"]},
-        {"name": "help open", "args": ["-c", "help open"]},
-        {"name": "math", "args": ["-c", "1 + 2"]},
-        {"name": "pipeline math", "args": ["-c", "[1 2 3 4] | math sum"]},
-        {"name": "math avg", "args": ["-c", "[1 2 3 4] | math avg"]},
-        {"name": "math min", "args": ["-c", "[1 2 3 4] | math min"]},
-        {"name": "math max", "args": ["-c", "[1 2 3 4] | math max"]},
-        {"name": "string", "args": ["-c", "'hello' | str upcase"]},
-        {"name": "string downcase", "args": ["-c", "'HELLO' | str downcase"]},
-        {"name": "string contains", "args": ["-c", "'alphabet' | str contains 'alpha'"]},
-        {"name": "string replace", "args": ["-c", "'alpha beta' | str replace beta gamma"]},
-        {"name": "split row", "args": ["-c", "'a,b,c' | split row ',' | length"]},
-        {"name": "json compact", "args": ["-c", "{name: alice, age: 30} | to json --raw"]},
-        {"name": "from json", "args": ["-c", "'{\"name\":\"alice\",\"age\":30}' | from json | get name"]},
-        {"name": "list length", "args": ["-c", "[1 2 3 4] | length"]},
-        {"name": "first", "args": ["-c", "[1 2 3 4] | first"]},
-        {"name": "last", "args": ["-c", "[1 2 3 4] | last"]},
-        {"name": "skip", "args": ["-c", "[1 2 3 4] | skip 2 | first"]},
-        {"name": "take", "args": ["-c", "[1 2 3 4] | take 2 | length"]},
-        {"name": "each", "args": ["-c", "[1 2 3] | each { |x| $x * 2 } | math sum"]},
-        {"name": "where filter", "args": ["-c", "[[name age]; [alice 30] [bob 22]] | where age > 25 | get name | first"]},
-        {"name": "sort table", "args": ["-c", "[[name age]; [alice 30] [bob 22]] | sort-by age | get name | first"]},
-        {"name": "select table", "args": ["-c", "[[name age city]; [alice 30 Paris]] | select name city | to json --raw"]},
-        {"name": "insert table", "args": ["-c", "[[name age]; [alice 30]] | insert city Paris | to json --raw"]},
-        {"name": "update table", "args": ["-c", "[[name age]; [alice 30]] | update age 31 | get age | first"]},
-        {"name": "default value", "args": ["-c", "[[name age]; [alice null]] | default 0 age | get age | first"]},
-        {"name": "transpose record", "args": ["-c", "{a: 1, b: 2} | transpose key value | length"]},
-        {"name": "csv count", "args": ["-c", f"open {str(people)!r} | length"]},
-        {"name": "csv select", "args": ["-c", f"open {str(people)!r} | select name city | to csv --noheaders"]},
-        {"name": "csv where", "args": ["-c", f"open {str(people)!r} | where city == Paris | length"]},
-        {"name": "open text", "args": ["-c", f"open {str(fx / 'notes.txt')!r} | lines | length"]},
-        {"name": "open toml", "args": ["-c", f"open {str(fx / 'Cargo.toml')!r} | get package.name"]},
-        {"name": "path exists", "args": ["-c", f"({str(people)!r} | path exists)"]},
-        {"name": "path basename", "args": ["-c", f"{str(people)!r} | path basename"]},
-        {"name": "path dirname", "args": ["-c", f"{str(people)!r} | path dirname | path basename"]},
-        {"name": "ls fixture", "args": ["-c", f"ls {str(fx)!r} | length"]},
-        {"name": "glob txt", "args": ["-c", f"glob {str(fx / '*.txt')!r} | length"]},
-        {"name": "empty input", "args": ["-c", "'' | is-empty"]},
-        {"name": "invalid json", "args": ["-c", "'not-json' | from json"]},
-        {"name": "missing file", "args": ["-c", f"open {str(fx / 'missing.txt')!r}"]},
-        {"name": "bad expression", "args": ["-c", "definitely-not-a-command"]},
+        {"name": "help math", "kind": "success", "feature": "help", "args": ["-c", "help math"]},
+        {"name": "help open", "kind": "success", "feature": "help", "args": ["-c", "help open"]},
+        {"name": "math", "kind": "success", "feature": "math", "args": ["-c", "1 + 2"]},
+        {"name": "pipeline math", "kind": "success", "feature": "math", "args": ["-c", "[1 2 3 4] | math sum"]},
+        {"name": "math avg", "kind": "success", "feature": "math", "args": ["-c", "[1 2 3 4] | math avg"]},
+        {"name": "math min", "kind": "success", "feature": "math", "args": ["-c", "[1 2 3 4] | math min"]},
+        {"name": "math max", "kind": "success", "feature": "math", "args": ["-c", "[1 2 3 4] | math max"]},
+        {"name": "string", "kind": "success", "feature": "strings", "args": ["-c", "'hello' | str upcase"]},
+        {"name": "string downcase", "kind": "success", "feature": "strings", "args": ["-c", "'HELLO' | str downcase"]},
+        {"name": "string contains", "kind": "success", "feature": "strings", "args": ["-c", "'alphabet' | str contains 'alpha'"]},
+        {"name": "string replace", "kind": "success", "feature": "strings", "args": ["-c", "'alpha beta' | str replace beta gamma"]},
+        {"name": "split row", "kind": "success", "feature": "strings", "args": ["-c", "'a,b,c' | split row ',' | length"]},
+        {"name": "json compact", "kind": "success", "feature": "json", "args": ["-c", "{name: alice, age: 30} | to json --raw"]},
+        {"name": "from json", "kind": "success", "feature": "json", "args": ["-c", "'{\"name\":\"alice\",\"age\":30}' | from json | get name"]},
+        {"name": "list length", "kind": "success", "feature": "lists", "args": ["-c", "[1 2 3 4] | length"]},
+        {"name": "first", "kind": "success", "feature": "lists", "args": ["-c", "[1 2 3 4] | first"]},
+        {"name": "last", "kind": "success", "feature": "lists", "args": ["-c", "[1 2 3 4] | last"]},
+        {"name": "skip", "kind": "success", "feature": "lists", "args": ["-c", "[1 2 3 4] | skip 2 | first"]},
+        {"name": "take", "kind": "success", "feature": "lists", "args": ["-c", "[1 2 3 4] | take 2 | length"]},
+        {"name": "each", "kind": "success", "feature": "lists", "args": ["-c", "[1 2 3] | each { |x| $x * 2 } | math sum"]},
+        {"name": "where filter", "kind": "success", "feature": "tables", "args": ["-c", "[[name age]; [alice 30] [bob 22]] | where age > 25 | get name | first"]},
+        {"name": "sort table", "kind": "success", "feature": "tables", "args": ["-c", "[[name age]; [alice 30] [bob 22]] | sort-by age | get name | first"]},
+        {"name": "select table", "kind": "success", "feature": "tables", "args": ["-c", "[[name age city]; [alice 30 Paris]] | select name city | to json --raw"]},
+        {"name": "insert table", "kind": "success", "feature": "tables", "args": ["-c", "[[name age]; [alice 30]] | insert city Paris | to json --raw"]},
+        {"name": "update table", "kind": "success", "feature": "tables", "args": ["-c", "[[name age]; [alice 30]] | update age 31 | get age | first"]},
+        {"name": "default value", "kind": "success", "feature": "tables", "args": ["-c", "[[name age]; [alice null]] | default 0 age | get age | first"]},
+        {"name": "transpose record", "kind": "success", "feature": "tables", "args": ["-c", "{a: 1, b: 2} | transpose key value | length"]},
+        {"name": "csv count", "kind": "success", "feature": "csv", "args": ["-c", f"open {str(people)!r} | length"]},
+        {"name": "csv select", "kind": "success", "feature": "csv", "args": ["-c", f"open {str(people)!r} | select name city | to csv --noheaders"]},
+        {"name": "csv where", "kind": "success", "feature": "csv", "args": ["-c", f"open {str(people)!r} | where city == Paris | length"]},
+        {"name": "open text", "kind": "success", "feature": "filesystem", "args": ["-c", f"open {str(fx / 'notes.txt')!r} | lines | length"]},
+        {"name": "open toml", "kind": "success", "feature": "filesystem", "args": ["-c", f"open {str(fx / 'Cargo.toml')!r} | get package.name"]},
+        {"name": "path exists", "kind": "success", "feature": "paths", "args": ["-c", f"({str(people)!r} | path exists)"]},
+        {"name": "path basename", "kind": "success", "feature": "paths", "args": ["-c", f"{str(people)!r} | path basename"]},
+        {"name": "path dirname", "kind": "success", "feature": "paths", "args": ["-c", f"{str(people)!r} | path dirname | path basename"]},
+        {"name": "ls fixture", "kind": "success", "feature": "filesystem", "args": ["-c", f"ls {str(fx)!r} | length"]},
+        {"name": "glob txt", "kind": "success", "feature": "filesystem", "args": ["-c", f"glob {str(fx / '*.txt')!r} | length"]},
+        {"name": "empty input", "kind": "success", "feature": "empty-values", "args": ["-c", "'' | is-empty"]},
+        {"name": "invalid json", "kind": "error", "feature": "invalid-json", "args": ["-c", "'not-json' | from json"]},
+        {"name": "missing file", "kind": "error", "feature": "missing-file", "args": ["-c", f"open {str(fx / 'missing.txt')!r}"]},
+        {"name": "bad expression", "kind": "error", "feature": "bad-expression", "args": ["-c", "definitely-not-a-command"]},
     ]
 
 
@@ -1549,6 +1560,49 @@ def eza_required_error_features():
     }
 
 
+def zip_required_success_features():
+    return {
+        "bruteforce-lowercase", "starting-password", "not-found",
+        "dictionary", "mask", "custom-charset",
+    }
+
+
+def zip_required_error_features():
+    return {
+        "missing-input", "invalid-workers", "invalid-length",
+        "invalid-range", "missing-file-number",
+    }
+
+
+def nushell_required_success_features():
+    return {
+        "help", "math", "strings", "json", "lists", "tables",
+        "csv", "filesystem", "paths", "empty-values",
+    }
+
+
+def nushell_required_error_features():
+    return {"invalid-json", "missing-file", "bad-expression"}
+
+
+def builtin_required_coverage(task):
+    if task == "zip-password-finder":
+        return {
+            "success": sorted(zip_required_success_features()),
+            "error": sorted(zip_required_error_features()),
+            "minimumSuccessCasesPerFeature": 1,
+            "minimumErrorCasesPerFeature": 1,
+        }
+    if task == "nushell":
+        return {
+            "success": sorted(nushell_required_success_features()),
+            "error": sorted(nushell_required_error_features()),
+            "minimumSuccessCasesPerFeature": 1,
+            "minimumErrorCasesPerFeature": 1,
+        }
+    return {}
+
+
 def discover_cli_help(task, workspace):
     root = run_cmd([REFERENCE_BINARY, "--help"], workspace, timeout=15)
     help_data = {
@@ -1564,6 +1618,12 @@ def discover_cli_help(task, workspace):
         text = normalize(root["stdout"] + "\n" + root["stderr"])
         help_data["help_options"] = sorted(set(re.findall(r"(?<![\\w-])--[A-Za-z][A-Za-z0-9-]*(?:=\\w+)?", text)))
         help_data["commands"] = sorted(eza_required_success_features() | eza_required_error_features())
+        return help_data
+    builtin_coverage = builtin_required_coverage(task)
+    if builtin_coverage:
+        text = normalize(root["stdout"] + "\n" + root["stderr"])
+        help_data["help_options"] = sorted(set(re.findall(r"(?<![\\w-])--[A-Za-z][A-Za-z0-9-]*(?:=\\w+)?", text)))
+        help_data["commands"] = sorted(set(builtin_coverage.get("success", [])) | set(builtin_coverage.get("error", [])))
         return help_data
     if task != "xsv":
         return help_data
@@ -1659,7 +1719,9 @@ class Check:
         if self.cli_help.get("root_status") != 0:
             self.fail("reference root help", {"status": self.cli_help.get("root_status"), "stderr": self.cli_help.get("root_stderr")})
             return
-        coverage = generic_coverage() if TASK not in {"xsv", "eza"} else {}
+        coverage = builtin_required_coverage(TASK) if TASK not in {"xsv", "eza"} else {}
+        if TASK not in {"xsv", "eza"} and not coverage:
+            coverage = generic_coverage()
         if TASK not in {"xsv", "eza"} and not coverage:
             return
         covered = {
@@ -2031,6 +2093,7 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     "exec",
     "--json",
     "--skip-git-repo-check",
+    ...(turaEmbedded ? ["--embedded"] : []),
     ...(turaGoalEnabled ? ["--goal"] : []),
     ...(turaExplicitSessionId ? ["--session-id", launchId] : []),
     "--sandbox",
@@ -2613,7 +2676,7 @@ async function runSelfTest() {
   for (const id of selectedTasks) {
     const task = TASKS[id]
     const prompt = sourcePortPrompt(task)
-    for (const expected of ["official reference CLI", "REFERENCE_BINARY.txt", "Target language", "Do not use Docker", "Do not shell out", "1:1 functional port"]) {
+    for (const expected of ["official reference CLI", "REFERENCE_BINARY.txt", "Target language", "Do not use Docker", "Do not shell out", "1:1 functional port", "The evaluator checks entrypoints in this order", "Do not make ./executable a POSIX shell script", "remove any POSIX shell wrapper named ./executable"]) {
       assert(prompt.includes(expected), `${task.label} prompt missing ${expected}`)
     }
   }
@@ -2687,6 +2750,38 @@ async function main() {
     const summary = normalizeBusinessSummary({ ok: true, prep_only: true, suite_root: suiteRoot, complex_todo_hint: complexTodoHint, assets, preps }, runPaths)
     writeFile(summaryPath, JSON.stringify(summary, null, 2))
     console.log(JSON.stringify(summary, null, 2))
+    return
+  }
+  if (evaluateOnly) {
+    const results = []
+    for (let t = 0; t < taskObjects.length; t += 1) {
+      const task = taskObjects[t]
+      for (let a = 0; a < agents.length; a += 1) {
+        const agentId = agents[a]
+        const agentDir = path.join(runRoot, taskRunDirName(task), `${agentId}-${a + 1}`)
+        const summaryFile = path.join(agentDir, "agent-summary.json")
+        const prior = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")) : {}
+        const workspace = prior.prep?.workspace || path.join(agentDir, "workspace")
+        assert(fs.existsSync(workspace), `missing workspace for evaluate-only: ${workspace}`)
+        const referenceBinary = prior.prep?.reference_binary || await ensureReferenceBinary(task)
+        const evalResult = evaluateWorkspace(workspace, agentDir, task, referenceBinary)
+        const stats = {
+          ...prior,
+          agent: agentId,
+          task: task.label,
+          instance_id: task.id,
+          workspace,
+          in_progress: false,
+          eval: evalResult,
+        }
+        writeFile(summaryFile, JSON.stringify(stats, null, 2))
+        results.push(stats)
+      }
+    }
+    const summary = buildSuiteSummary(results, assets, false)
+    writeFile(summaryPath, JSON.stringify({ ...summary, evaluate_only: true }, null, 2))
+    console.log(JSON.stringify({ ...summary, evaluate_only: true }, null, 2))
+    if (!summary.ok && process.env.COMMAND_RUN_AGENT_ALLOW_FAILURE !== "1") process.exitCode = 1
     return
   }
   const jobs = []

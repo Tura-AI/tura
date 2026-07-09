@@ -1,0 +1,404 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" role="img" aria-labelledby="title desc">
+  <title id="title">Tura TUI CI quality checks demo</title>
+  <desc id="desc">Animated SVG demo of the Tura terminal user interface, styled from the real TUI glyphs, colors, command panels, thinking line, metadata row, and composer.</desc>
+  <defs>
+    <clipPath id="terminal-clip">
+      <rect x="0" y="0" width="800" height="600" rx="0" ry="0"/>
+    </clipPath>
+    <clipPath id="screen-clip">
+      <rect x="8" y="44" width="784" height="556"/>
+    </clipPath>
+    <style><![CDATA[
+      :root {
+        --terminal: #0b0d0e;
+        --chrome: #272822;
+        --tab: #171819;
+        --tab-active: #0f1011;
+        --panel: #141718;
+        --panel-2: #181b1c;
+        --inline: #3a3a3a;
+        --primary: #f4f7eb;
+        --agent: #d9decd;
+        --secondary: #97a099;
+        --aux: #67746f;
+        --line: #3d4644;
+        --highlight: #40e0d0;
+        --wave-glow: #46c7be;
+        --wave-mid: #4baeac;
+        --wave-low: #51959a;
+        --wave-base: #567c88;
+        --text-background: #363f3d;
+        --error: #ef5f73;
+      }
+
+      * { box-sizing: border-box; }
+      svg {
+        background: var(--terminal);
+        color: var(--primary);
+        font-family: "Cascadia Mono", "Cascadia Code", "Consolas", "DejaVu Sans Mono", monospace;
+      }
+      text {
+        dominant-baseline: text-before-edge;
+        white-space: pre;
+      }
+      .primary { fill: var(--primary); font-weight: 650; }
+      .agent { fill: var(--agent); font-weight: 620; }
+      .secondary { fill: var(--secondary); font-weight: 620; }
+      .aux { fill: var(--aux); font-weight: 650; }
+      .line { stroke: var(--line); }
+      .highlight { fill: var(--highlight); font-weight: 700; }
+      .placeholder { fill: var(--text-background); font-weight: 620; }
+      .error { fill: var(--error); font-weight: 700; }
+      .faint { opacity: .55; }
+      .tiny { font-size: 12px; }
+      .small { font-size: 13px; }
+      .mono { font-size: 14px; }
+      .body { font-size: 15px; }
+      .title { font-size: 16px; }
+      .cursor {
+        animation: cursor-blink 1.05s steps(1, end) infinite;
+      }
+      .session-page,
+      .chat-page,
+      .first-commands-start,
+      .first-commands-complete,
+      .second-commands,
+      .cmd-row {
+        animation-duration: 9000ms;
+        animation-timing-function: steps(1, end);
+        animation-iteration-count: infinite;
+      }
+      .session-page { animation-name: show-session-page; }
+      .chat-page { animation-name: show-chat-page; }
+      .first-commands-start { animation-name: show-first-commands-start; }
+      .first-commands-complete { animation-name: show-first-commands-complete; }
+      .second-commands { animation-name: show-second-commands; }
+      .cmd-row { opacity: 0; }
+      .row-a1 { animation-name: show-row-a1; }
+      .row-a2 { animation-name: show-row-a2; }
+      .row-a3 { animation-name: show-row-a3; }
+      .row-a4 { animation-name: show-row-a4; }
+      .row-a5 { animation-name: show-row-a5; }
+      .row-b1 { animation-name: show-row-b1; }
+      .row-b2 { animation-name: show-row-b2; }
+      .row-b3 { animation-name: show-row-b3; }
+      .row-b4 { animation-name: show-row-b4; }
+      .row-b5 { animation-name: show-row-b5; }
+
+      .thinking-frame,
+      .command-frame,
+      .running-frame {
+        opacity: 0;
+        animation-timing-function: steps(1, end);
+        animation-iteration-count: infinite;
+      }
+
+      .thinking-frame { animation-duration: 1500ms; fill: var(--aux); }
+      .thinking-frame.frame-1 { animation-name: show-1-of-9; }
+      .thinking-frame.frame-2 { animation-name: show-2-of-9; }
+      .thinking-frame.frame-3 { animation-name: show-3-of-9; }
+      .thinking-frame.frame-4 { animation-name: show-4-of-9; }
+      .thinking-frame.frame-5 { animation-name: show-5-of-9; }
+      .thinking-frame.frame-6 { animation-name: show-6-of-9; }
+      .thinking-frame.frame-7 { animation-name: show-7-of-9; }
+      .thinking-frame.frame-8 { animation-name: show-8-of-9; }
+      .thinking-frame.frame-9 { animation-name: show-9-of-9; }
+
+      .command-frame,
+      .running-frame {
+        animation-duration: 500ms;
+      }
+      .command-frame { fill: var(--aux); }
+      .command-frame.frame-1,
+      .running-frame.frame-1 { animation-name: show-1-of-3; }
+      .command-frame.frame-2,
+      .running-frame.frame-2 { animation-name: show-2-of-3; }
+      .command-frame.frame-3,
+      .running-frame.frame-3 { animation-name: show-3-of-3; }
+
+      .wave-1 { fill: var(--wave-glow); }
+      .wave-2 { fill: var(--wave-mid); }
+      .wave-3 { fill: var(--wave-low); }
+      .wave-4 { fill: var(--wave-base); }
+      .thinking-char {
+        animation: thinking-wave-cycle 400ms steps(1, end) infinite both;
+        animation-delay: calc(var(--i) * 16.6667ms);
+      }
+
+      @keyframes cursor-blink {
+        0%, 47% { opacity: 1; }
+        48%, 100% { opacity: 0; }
+      }
+      @keyframes show-session-page {
+        0%, 21.999% { opacity: 1; }
+        22%, 100% { opacity: 0; }
+      }
+      @keyframes show-chat-page {
+        0%, 21.999% { opacity: 0; }
+        22%, 100% { opacity: 1; }
+      }
+      @keyframes show-first-commands-start {
+        0%, 54.999% { opacity: 1; }
+        55%, 100% { opacity: 0; }
+      }
+      @keyframes show-first-commands-complete {
+        0%, 54.999% { opacity: 0; }
+        55%, 100% { opacity: 1; }
+      }
+      @keyframes show-second-commands {
+        0%, 54.999% { opacity: 0; }
+        55%, 100% { opacity: 1; }
+      }
+      @keyframes show-row-a1 { 0%, 100% { opacity: 1; } }
+      @keyframes show-row-a2 { 0%, 100% { opacity: 1; } }
+      @keyframes show-row-a3 { 0%, 100% { opacity: 1; } }
+      @keyframes show-row-a4 { 0%, 100% { opacity: 1; } }
+      @keyframes show-row-a5 { 0%, 100% { opacity: 1; } }
+      @keyframes show-row-b1 { 0%, 55.999% { opacity: 0; } 56%, 100% { opacity: 1; } }
+      @keyframes show-row-b2 { 0%, 60.999% { opacity: 0; } 61%, 100% { opacity: 1; } }
+      @keyframes show-row-b3 { 0%, 65.999% { opacity: 0; } 66%, 100% { opacity: 1; } }
+      @keyframes show-row-b4 { 0%, 70.999% { opacity: 0; } 71%, 100% { opacity: 1; } }
+      @keyframes show-row-b5 { 0%, 75.999% { opacity: 0; } 76%, 100% { opacity: 1; } }
+      @keyframes show-1-of-9 { 0%, 11.110% { opacity: 1; } 11.111%, 100% { opacity: 0; } }
+      @keyframes show-2-of-9 { 0%, 11.110%, 22.222%, 100% { opacity: 0; } 11.111%, 22.221% { opacity: 1; } }
+      @keyframes show-3-of-9 { 0%, 22.221%, 33.333%, 100% { opacity: 0; } 22.222%, 33.332% { opacity: 1; } }
+      @keyframes show-4-of-9 { 0%, 33.332%, 44.444%, 100% { opacity: 0; } 33.333%, 44.443% { opacity: 1; } }
+      @keyframes show-5-of-9 { 0%, 44.443%, 55.556%, 100% { opacity: 0; } 44.444%, 55.555% { opacity: 1; } }
+      @keyframes show-6-of-9 { 0%, 55.555%, 66.667%, 100% { opacity: 0; } 55.556%, 66.666% { opacity: 1; } }
+      @keyframes show-7-of-9 { 0%, 66.666%, 77.778%, 100% { opacity: 0; } 66.667%, 77.777% { opacity: 1; } }
+      @keyframes show-8-of-9 { 0%, 77.777%, 88.889%, 100% { opacity: 0; } 77.778%, 88.888% { opacity: 1; } }
+      @keyframes show-9-of-9 { 0%, 88.888% { opacity: 0; } 88.889%, 100% { opacity: 1; } }
+      @keyframes show-1-of-3 { 0%, 33.332% { opacity: 1; } 33.333%, 100% { opacity: 0; } }
+      @keyframes show-2-of-3 { 0%, 33.332%, 66.666%, 100% { opacity: 0; } 33.333%, 66.665% { opacity: 1; } }
+      @keyframes show-3-of-3 { 0%, 66.665% { opacity: 0; } 66.666%, 100% { opacity: 1; } }
+      @keyframes thinking-wave-cycle {
+        0%, 4.166% { fill: var(--wave-base); }
+        4.167%, 8.333% { fill: var(--wave-low); }
+        8.334%, 12.500% { fill: var(--wave-mid); }
+        12.501%, 25.000% { fill: var(--wave-glow); }
+        25.001%, 29.167% { fill: var(--wave-mid); }
+        29.168%, 33.333% { fill: var(--wave-low); }
+        33.334%, 37.500% { fill: var(--wave-base); }
+        37.501%, 100% { fill: var(--aux); }
+      }
+    ]]></style>
+  </defs>
+
+  <g clip-path="url(#terminal-clip)">
+    <rect width="800" height="600" fill="#0b0d0e"/>
+
+    <rect x="0" y="0" width="800" height="44" fill="var(--chrome)"/>
+    <circle cx="24" cy="22" r="7" fill="#f92672"/>
+    <circle cx="44" cy="22" r="7" fill="#f4bf75"/>
+    <circle cx="64" cy="22" r="7" fill="#a6e22e"/>
+    <text x="304" y="14" class="secondary small">tura — CI quality checks</text>
+    <text x="711" y="14" class="aux small">zsh</text>
+    <path d="M0 43.5 H800" stroke="#1a1d1e" stroke-width="1"/>
+
+    <g clip-path="url(#screen-clip)">
+      <rect x="8" y="44" width="784" height="556" fill="var(--terminal)"/>
+
+      <g class="session-page">
+        <text x="22" y="70" class="highlight body">C:\Users\liuliu\Documents\tura</text>
+        <path d="M8 100 H792" class="line" stroke-width="1"/>
+        <text x="22" y="126" class="aux body">Sessions</text>
+        <rect x="8" y="154" width="784" height="24" fill="var(--panel)"/>
+        <text x="22" y="158" class="highlight body">›</text>
+        <text x="46" y="158" class="primary body">CI quality checks</text>
+        <text x="212" y="158" class="aux body">The exact formatter boundary is .github/workflows/ci.yml:51-52</text>
+        <text x="46" y="190" class="secondary body">Backend crate lint</text>
+        <text x="212" y="190" class="aux body">cargo clippy through xtask/scripts/run-ci-crate-tests.sh</text>
+        <text x="46" y="222" class="secondary body">TUI renderer pass</text>
+        <text x="212" y="222" class="aux body">apps/tui src animation and command rendering checks</text>
+        <text x="7" y="501" class="aux body">session select page 1/1</text>
+      </g>
+
+      <g class="chat-page">
+      <rect x="8" y="48" width="784" height="112" fill="#151819"/>
+      <text x="22" y="68" class="primary body">The exact formatter boundary is </text>
+      <rect x="303" y="65" width="272" height="20" fill="var(--inline)"/>
+      <text x="311" y="68" class="primary body">.github/workflows/ci.yml:51-52</text>
+      <text x="577" y="68" class="primary body"> → </text>
+      <rect x="604" y="65" width="188" height="20" fill="var(--inline)"/>
+      <text x="607" y="68" class="primary body">scripts/check-backend</text>
+      <rect x="22" y="84" width="166" height="20" fill="var(--inline)"/>
+      <text x="30" y="87" class="primary body">-quality.sh:86-90</text>
+      <text x="196" y="87" class="primary body">. For lint, CT's Rust lint boundary is the crate matrix at</text>
+      <rect x="22" y="103" width="272" height="20" fill="var(--inline)"/>
+      <text x="30" y="106" class="primary body">.github/workflows/ci.yml:97-98</text>
+      <text x="302" y="106" class="primary body">, which calls clippy through</text>
+      <rect x="22" y="122" width="324" height="20" fill="var(--inline)"/>
+      <text x="30" y="126" class="primary body">xtask/scripts/run-ci-crate-tests.sh</text>
+      <text x="354" y="126" class="primary body">; I'll run clippy locally without runner time.</text>
+
+      <g transform="translate(0, 166)" class="first-commands-start">
+        <g class="command-row">
+          <g transform="translate(7, 1)" class="aux title">
+            <text class="command-frame frame-1">◆</text>
+            <text class="command-frame frame-2">◇</text>
+            <text class="command-frame frame-3">◈</text>
+          </g>
+          <text x="24" y="0" class="aux body">Commands</text>
+        </g>
+        <g class="cmd-row row-a1">
+          <text x="8" y="22" class="aux body">├─</text>
+          <text x="30" y="22" class="aux body">x</text>
+          <text x="48" y="22" class="aux body">#1 shell_command failed    $ {"command":"sh scripts/check-backend-quality.sh --s...</text>
+        </g>
+        <g class="cmd-row row-a2">
+          <text x="8" y="43" class="aux body">├─</text>
+          <text x="30" y="43" class="aux body">✓</text>
+          <text x="48" y="43" class="aux body">#1 shell_command completed $ {"command":"npm --prefix apps/tui run lint -- --qui...</text>
+        </g>
+        <g class="cmd-row row-a3">
+          <text x="8" y="64" class="aux body">├─</text>
+          <text x="30" y="64" class="aux body">✓</text>
+          <text x="48" y="64" class="aux body">#1 shell_command completed $ {"command":"npm --prefix apps/gui run lint -- --qui...</text>
+        </g>
+        <g class="cmd-row row-a4">
+          <text x="8" y="85" class="aux body">├─</text>
+          <text x="30" y="85" class="aux body">✓</text>
+          <text x="48" y="85" class="aux body">#1 shell_command completed $ {"command":"cargo clippy -p tura_workspace -p router...</text>
+        </g>
+        <g class="cmd-row row-a5">
+          <text x="8" y="106" class="aux body">└─</text>
+          <g transform="translate(30,106)" class="aux body">
+            <text class="running-frame frame-1">■</text>
+            <text class="running-frame frame-2">□</text>
+            <text class="running-frame frame-3">◧</text>
+          </g>
+          <text x="48" y="106" class="aux body">#2 shell_command running   $ {"command":"git status --short","workdir":"C:\\Users...</text>
+        </g>
+      </g>
+
+      <g transform="translate(0, 166)" class="first-commands-complete">
+        <g class="command-row">
+          <g transform="translate(7, 1)" class="aux title">
+            <text class="command-frame frame-1">◆</text>
+            <text class="command-frame frame-2">◇</text>
+            <text class="command-frame frame-3">◈</text>
+          </g>
+          <text x="24" y="0" class="aux body">Commands</text>
+        </g>
+        <text x="8" y="22" class="aux body">├─</text>
+        <text x="8" y="43" class="aux body">├─</text>
+        <text x="8" y="64" class="aux body">├─</text>
+        <text x="8" y="85" class="aux body">├─</text>
+        <text x="8" y="106" class="aux body">└─</text>
+        <text x="30" y="22" class="aux body">x</text>
+        <text x="48" y="22" class="aux body">#1 shell_command failed    $ {"command":"sh scripts/check-backend-quality.sh --s...</text>
+        <text x="30" y="43" class="aux body">✓</text>
+        <text x="48" y="43" class="aux body">#1 shell_command completed $ {"command":"npm --prefix apps/tui run lint -- --qui...</text>
+        <text x="30" y="64" class="aux body">✓</text>
+        <text x="48" y="64" class="aux body">#1 shell_command completed $ {"command":"npm --prefix apps/gui run lint -- --qui...</text>
+        <text x="30" y="85" class="aux body">✓</text>
+        <text x="48" y="85" class="aux body">#1 shell_command completed $ {"command":"cargo clippy -p tura_workspace -p router...</text>
+        <text x="30" y="106" class="aux body">✓</text>
+        <text x="48" y="106" class="aux body">#2 shell_command completed $ {"command":"git status --short","workdir":"C:\\Users...</text>
+      </g>
+
+      <g transform="translate(0, 304)" class="second-commands">
+        <g class="command-row">
+          <g transform="translate(7, 1)" class="aux title">
+            <text class="command-frame frame-1">◆</text>
+            <text class="command-frame frame-2">◇</text>
+            <text class="command-frame frame-3">◈</text>
+          </g>
+          <text x="24" y="0" class="aux body">Commands</text>
+        </g>
+        <g class="cmd-row row-b1">
+          <text x="8" y="22" class="aux body">├─</text>
+          <text x="30" y="22" class="aux body">✓</text>
+          <text x="48" y="22" class="aux body">#1 shell_command completed $ {"command":"Get-Command sh -ErrorAction SilentlyCo...</text>
+        </g>
+        <g class="cmd-row row-b2">
+          <text x="8" y="43" class="aux body">├─</text>
+          <g transform="translate(30,43)" class="aux body">
+            <text class="running-frame frame-1">■</text>
+            <text class="running-frame frame-2">□</text>
+            <text class="running-frame frame-3">◧</text>
+          </g>
+          <text x="48" y="43" class="aux body">#1 shell_command running   $ {"command":"python xtask/scripts/check-backend-test...</text>
+        </g>
+        <g class="cmd-row row-b3">
+          <text x="8" y="64" class="aux body">├─</text>
+          <g transform="translate(30,64)" class="aux body">
+            <text class="running-frame frame-1">■</text>
+            <text class="running-frame frame-2">□</text>
+            <text class="running-frame frame-3">◧</text>
+          </g>
+          <text x="48" y="64" class="aux body">#1 shell_command running   $ {"command":"cargo fmt --all -- --check --config-path...</text>
+        </g>
+        <g class="cmd-row row-b4">
+          <text x="8" y="85" class="aux body">├─</text>
+          <g transform="translate(30,85)" class="aux body">
+            <text class="running-frame frame-1">■</text>
+            <text class="running-frame frame-2">□</text>
+            <text class="running-frame frame-3">◧</text>
+          </g>
+          <text x="48" y="85" class="aux body">#1 shell_command running   $ {"command":"npm --prefix apps/tui run format:check...</text>
+        </g>
+        <g class="cmd-row row-b5">
+          <text x="8" y="106" class="aux body">└─</text>
+          <g transform="translate(30,106)" class="aux body">
+            <text class="running-frame frame-1">■</text>
+            <text class="running-frame frame-2">□</text>
+            <text class="running-frame frame-3">◧</text>
+          </g>
+          <text x="48" y="106" class="aux body">#2 shell_command running   $ {"command":"git status --short","workdir":"C:\\Users...</text>
+        </g>
+      </g>
+
+      <g transform="translate(6, 438)">
+        <rect x="0" y="0" width="784" height="20" fill="var(--panel)"/>
+        <text x="0" y="1" class="aux body">▏</text>
+        <g transform="translate(18,1)" class="title">
+          <text class="thinking-frame frame-1 thinking-char" style="--i:0">✦</text>
+          <text class="thinking-frame frame-2 thinking-char" style="--i:0">✧</text>
+          <text class="thinking-frame frame-3 thinking-char" style="--i:0">✶</text>
+          <text class="thinking-frame frame-4 thinking-char" style="--i:0">✷</text>
+          <text class="thinking-frame frame-5 thinking-char" style="--i:0">✸</text>
+          <text class="thinking-frame frame-6 thinking-char" style="--i:0">✹</text>
+          <text class="thinking-frame frame-7 thinking-char" style="--i:0">✺</text>
+          <text class="thinking-frame frame-8 thinking-char" style="--i:0">✹</text>
+          <text class="thinking-frame frame-9 thinking-char" style="--i:0">✸</text>
+        </g>
+        <text x="38" y="2" class="thinking-char body" style="--i:2">t</text>
+        <text x="47.6" y="2" class="thinking-char body" style="--i:3">h</text>
+        <text x="57.2" y="2" class="thinking-char body" style="--i:4">i</text>
+        <text x="66.8" y="2" class="thinking-char body" style="--i:5">n</text>
+        <text x="76.4" y="2" class="thinking-char body" style="--i:6">k</text>
+        <text x="86" y="2" class="thinking-char body" style="--i:7">i</text>
+        <text x="95.6" y="2" class="thinking-char body" style="--i:8">n</text>
+        <text x="105.2" y="2" class="thinking-char body" style="--i:9">g</text>
+        <text x="134" y="2" class="thinking-char body" style="--i:12">1</text>
+        <text x="143.6" y="2" class="thinking-char body" style="--i:13">2</text>
+        <text x="153.2" y="2" class="thinking-char body" style="--i:14">3</text>
+        <text x="162.8" y="2" class="thinking-char body" style="--i:15">s</text>
+      </g>
+
+      <text x="22" y="478" class="highlight body">CI quality checks</text>
+      <text x="7" y="501" class="aux body">codex/gpt-5.5</text>
+      <text x="137" y="501" class="line body">│</text>
+      <text x="155" y="501" class="aux body">high</text>
+      <text x="198" y="501" class="line body">│</text>
+      <text x="216" y="501" class="aux body">balanced</text>
+      <text x="301" y="501" class="line body">│</text>
+      <text x="319" y="501" class="aux body">tura</text>
+      <text x="365" y="501" class="line body">│</text>
+      <text x="383" y="501" class="aux body">context 54.4k/260k</text>
+      <text x="545" y="501" class="aux body">█▒░░░░</text>
+
+      <g transform="translate(6, 536)">
+        <rect x="0" y="0" width="784" height="54" fill="var(--panel)"/>
+        <text x="0" y="0" class="primary body">▏</text>
+        <text x="18" y="21" class="highlight body">></text>
+        <rect x="40" y="22" width="8" height="16" fill="var(--primary)" class="cursor"/>
+        <text x="48" y="21" class="placeholder body">Enter: send · Tab: sessions · /stop: cancel · /help · /settings</text>
+      </g>
+
+      </g>
+      <line x1="791.5" y1="48" x2="791.5" y2="590" stroke="#a7aaa2" stroke-width="1" opacity=".82"/>
+    </g>
+  </g>
+</svg>

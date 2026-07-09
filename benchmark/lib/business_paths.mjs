@@ -710,10 +710,12 @@ function lifecycleTurnGroups(records) {
 function tokenUsageRoundGroups(records) {
   const groups = []
   let pending = []
+  let lastMessageRecords = []
   for (const [index, record] of (Array.isArray(records) ? records : []).entries()) {
+    if (isMessageRecord(record)) lastMessageRecords = [record]
     pending.push(record)
     if (!isTokenUsageUpdateRecord(record)) continue
-    const groupRecords = pending
+    const groupRecords = messagesFromEvents(pending).length > 0 ? pending : [...lastMessageRecords, ...pending]
     pending = []
     groups.push({
       turnId: firstTextOrNull(record.turn_id, record.turnId, record.id) || `token-usage-${index + 1}`,
@@ -724,6 +726,16 @@ function tokenUsageRoundGroups(records) {
     })
   }
   return groups
+}
+
+function isMessageRecord(record) {
+  const itemType = firstTextOrNull(record?.item?.type)
+  return itemType === "agent_message" ||
+    itemType === "assistant_message" ||
+    itemType === "user_message" ||
+    itemType === "system_message" ||
+    (record?.type === "message_end" && record.message) ||
+    (record?.type === "text" && record.part?.text)
 }
 
 function visibleAgentRoundGroups(records) {

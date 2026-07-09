@@ -92,7 +92,8 @@ const harnessClean = process.env.COMMAND_RUN_AGENT_HARNESS_CLEAN || "false"
 const harnessBackend = process.env.COMMAND_RUN_AGENT_HARNESS_BACKEND || (process.platform === "win32" ? "docker-linux" : "native")
 const harnessImage = process.env.COMMAND_RUN_AGENT_HARNESS_IMAGE || "tura-swebench-harness:latest"
 
-const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
+const defaultTuraExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
+const turaExe = process.env.COMMAND_RUN_AGENT_TURA_EXE || defaultTuraExe
 
 function firstExistingPath(candidates) {
   return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || candidates.find(Boolean) || ""
@@ -439,6 +440,7 @@ function runGitAddWithRetry(workspace) {
 
 function repairWorkspaceGitPermissions(workspace) {
   if (!fs.existsSync(workspace)) return
+  if (/^(1|true|yes|on)$/i.test(String(process.env.COMMAND_RUN_AGENT_SKIP_WORKSPACE_ACL_REPAIR || ""))) return
   try {
     chmodTree(workspace)
   } catch {
@@ -514,8 +516,17 @@ function collectPatch(workspace, agentDir) {
       diff_check_output: "workspace git repository was not prepared",
     }
   }
-  const diff = run("git", ["diff", "--binary"], { cwd: workspace, timeoutMs: 120_000 })
-  const status = run("git", ["status", "--short"], { cwd: workspace, timeoutMs: 120_000 })
+  const diffBase = workspaceDiffBase(workspace)
+  const pathspec = patchPathspec()
+  const diffArgs = diffBase
+    ? ["diff", "--binary", diffBase, "--", ...pathspec]
+    : ["diff", "--binary", "--", ...pathspec]
+  const nameArgs = diffBase
+    ? ["diff", "--name-only", diffBase, "--", ...pathspec]
+    : ["diff", "--name-only", "--", ...pathspec]
+  const diff = run("git", diffArgs, { cwd: workspace, timeoutMs: 120_000 })
+  const diffNames = run("git", nameArgs, { cwd: workspace, timeoutMs: 120_000 })
+  const status = run("git", ["status", "--short", "--", ...pathspec], { cwd: workspace, timeoutMs: 120_000 })
   const patchText = normalizePatchLineEndings(diff.stdout || "")
   const diffCheck = checkNormalizedPatchWhitespace(patchText)
   writeFile(path.join(agentDir, "model.patch"), patchText)
@@ -524,11 +535,27 @@ function collectPatch(workspace, agentDir) {
   return {
     patch_path: path.join(agentDir, "model.patch"),
     patch_bytes: Buffer.byteLength(patchText, "utf8"),
-    changed_files: status.stdout.split(/\r?\n/).filter(Boolean).length,
+    changed_files: diffNames.stdout.split(/\r?\n/).filter(Boolean).length,
     git_status: status.stdout,
+    diff_base: diffBase,
     diff_check_exit_code: diffCheck.exit_code,
     diff_check_output: diffCheck.output.slice(-2000),
   }
+}
+
+function workspaceDiffBase(workspace) {
+  const roots = run("git", ["rev-list", "--max-parents=0", "HEAD"], { cwd: workspace, timeoutMs: 30_000 })
+  if (roots.status === 0) return roots.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)[0] || null
+  const head = run("git", ["rev-parse", "HEAD"], { cwd: workspace, timeoutMs: 30_000 })
+  return head.status === 0 ? head.stdout.trim() || null : null
+}
+
+function patchPathspec() {
+  return [
+    ".",
+    ":(exclude).tura/**",
+    ":(exclude)db/session_log/**",
+  ]
 }
 
 function normalizePatchLineEndings(patchText) {
@@ -1193,7 +1220,7 @@ async function main() {
     console.log(JSON.stringify(summary, null, 2))
     return
   }
-  if (agentRuns.some((agentRun) => agentRun.agent_id.startsWith("tura-"))) {
+  if (agentRuns.some((agentRun) => agentRun.agent_id.startsWith("tura-")) && turaExe === defaultTuraExe) {
     runOk("cargo", ["build", "-p", "gateway", "--bin", "tura_exec"], { cwd: repoRoot, timeoutMs: 240_000 })
     assert(fs.existsSync(turaExe), `missing cli executable after build: ${turaExe}`)
   }

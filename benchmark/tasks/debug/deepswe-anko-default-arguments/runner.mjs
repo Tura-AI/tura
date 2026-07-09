@@ -524,11 +524,17 @@ function redactedTask(task) {
 function collectPatch(workspace, agentDir, baseSnapshot) {
   const patchPath = path.join(agentDir, "model.patch")
   const statusPath = path.join(agentDir, "git-status.txt")
-  const diff = run("git", ["diff", "--binary", baseSnapshot, "--", ".", ":(exclude).deepswe"], {
+  const patchPathspec = [
+    ".",
+    ":(exclude).deepswe/**",
+    ":(exclude).tura/**",
+    ":(exclude)db/session_log/**",
+  ]
+  const diff = run("git", ["diff", "--binary", baseSnapshot, "--", ...patchPathspec], {
     cwd: workspace,
     timeoutMs: 120_000,
   })
-  const status = run("git", ["status", "--short"], { cwd: workspace, timeoutMs: 120_000 })
+  const status = run("git", ["status", "--short", "--", ...patchPathspec], { cwd: workspace, timeoutMs: 120_000 })
   const patchText = normalizeUnifiedPatchLineEndings(diff.stdout || "")
   writeFile(patchPath, patchText)
   writeFile(statusPath, status.stdout || "")
@@ -541,6 +547,48 @@ function collectPatch(workspace, agentDir, baseSnapshot) {
     diff_status: diff.status,
     diff_error: diff.error || (diff.status === 0 ? null : diff.stderr),
   }
+}
+
+function refreshPatchFromResultWorkspace(result) {
+  const patch = result.patch || {}
+  const agentDir = path.dirname(patch.patch_path || result.stdout_path || runRoot)
+  const workspace = result.workspace
+  const baseSnapshot = result.prep?.base_snapshot
+  if (workspace && baseSnapshot && fs.existsSync(path.join(workspace, ".git"))) {
+    return collectPatch(workspace, agentDir, baseSnapshot)
+  }
+  return patch
+}
+
+function skippedEvalResult(task, agentDir, reason) {
+  const stdoutPath = path.join(agentDir, "deepswe-eval.stdout.log")
+  const stderrPath = path.join(agentDir, "deepswe-eval.stderr.log")
+  writeFile(stdoutPath, "")
+  writeFile(stderrPath, `${reason}\n`)
+  return {
+    ran: false,
+    reason,
+    exit_code: 1,
+    infrastructure_exit_code: null,
+    stdout_path: stdoutPath,
+    stderr_path: stderrPath,
+    report: {
+      reports: [{
+        task: task.id,
+        passed: 0,
+        failed: 1,
+        score: 0,
+        reward: 0,
+        exit_code: 1,
+        message: reason,
+      }],
+    },
+  }
+}
+
+function shouldRunVerifierForResult(result, patch) {
+  if (result.in_progress) return false
+  return Boolean(patch?.patch_path) && Number(patch?.patch_bytes || 0) > 0
 }
 
 function normalizeUnifiedPatchLineEndings(patchText) {
@@ -1322,12 +1370,18 @@ async function evaluateAllPatches(tasks, results) {
     const task = group.task
     const verifier = verifierImages.get(task.id) || {}
     for (const result of group.results) {
-      const patch = result.patch || {}
+      const patch = refreshPatchFromResultWorkspace(result)
       const agentDir = path.dirname(patch.patch_path || result.stdout_path || runRoot)
-      const evalResult = evaluatePatch(task, agentDir, patch, verifier.verifier_image, verifier.verifier_setup_error)
+      const skipReason = shouldRunVerifierForResult(result, patch)
+        ? null
+        : `DeepSWE verifier skipped: agent workspace has no non-empty patch from base snapshot (exit_code=${result.exit_code}, patch_bytes=${Number(patch?.patch_bytes || 0)})`
+      const evalResult = skipReason
+        ? skippedEvalResult(task, agentDir, skipReason)
+        : evaluatePatch(task, agentDir, patch, verifier.verifier_image, verifier.verifier_setup_error)
       const updated = {
         ...result,
         in_progress: false,
+        patch,
         eval: evalResult,
       }
       writeJson(path.join(agentDir, "agent-summary.json"), updated)
@@ -1503,14 +1557,13 @@ async function runEvalOnly(tasks) {
   const sourceResults = evalCompletedOnly
     ? (existingSummary.results || []).filter((result) => {
         if (result.in_progress) return false
-        if (Number(result.exit_code) !== 0) return false
         if (evalPendingOnly) {
           const patchForDir = result.patch || {}
           const resultAgentDir = path.dirname(patchForDir.patch_path || result.stdout_path || runRoot)
           const agentSummary = readJsonIfExists(path.join(resultAgentDir, "agent-summary.json"))
           if (agentSummary?.eval?.ran) return false
         }
-        const patch = result.patch || {}
+        const patch = refreshPatchFromResultWorkspace(result)
         return Boolean(patch.patch_path) && Number(patch.patch_bytes || 0) > 0
       })
     : (existingSummary.results || [])
@@ -1526,9 +1579,14 @@ async function runEvalOnly(tasks) {
     const task = group.task
     const verifier = verifierImages.get(task.id) || {}
     for (const result of group.results) {
-      const patch = result.patch || {}
+      const patch = refreshPatchFromResultWorkspace(result)
       const agentDir = path.dirname(patch.patch_path || result.stdout_path || runRoot)
-      const evalResult = evaluatePatch(task, agentDir, patch, verifier.verifier_image, verifier.verifier_setup_error)
+      const skipReason = shouldRunVerifierForResult(result, patch)
+        ? null
+        : `DeepSWE verifier skipped: agent workspace has no non-empty patch from base snapshot (exit_code=${result.exit_code}, patch_bytes=${Number(patch?.patch_bytes || 0)})`
+      const evalResult = skipReason
+        ? skippedEvalResult(task, agentDir, skipReason)
+        : evaluatePatch(task, agentDir, patch, verifier.verifier_image, verifier.verifier_setup_error)
       const agentId = result.agent_id || result.agent
       const stdoutPath = result.stdout_path || path.join(agentDir, "stdout.jsonl")
       const stdout = fs.existsSync(stdoutPath) ? readText(stdoutPath) : ""
@@ -1541,6 +1599,7 @@ async function runEvalOnly(tasks) {
         usage_source: usageInfo.usage_source,
         provider_calls: usageInfo.provider_calls,
         events,
+        patch,
         eval: evalResult,
       }
       writeJson(path.join(agentDir, "agent-summary.json"), updated)

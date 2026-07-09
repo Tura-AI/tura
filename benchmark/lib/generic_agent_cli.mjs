@@ -1392,7 +1392,7 @@ function parseJsonArray(text) {
 }
 
 function defaultTuraExe(repoRoot) {
-  return path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
+  return process.env.COMMAND_RUN_AGENT_TURA_EXE || path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
 }
 
 function codexServiceTierArgs(serviceTier) {

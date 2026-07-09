@@ -1,12 +1,11 @@
 <p align="center">
-  <img src="assets/tura/icon.svg" alt="Tura icon" width="96">
+  <a href="https://turaai.net/">
+    <img src="assets/tura/icon.svg" alt="Tura icon" width="96">
+  </a>
 </p>
 
-<p align="center">
-  <a href="https://turaai.net/">turaai.net</a>
-</p>
+<h1 align="center">Tura — 76% fewer tokens. 18% better performance.</h1>
 
-# Tura
 Tura is a local open-source coding agent built for developers who are tired of useless skills, extensions that claim they can save tokens, and agents that wreck repos without judgment.
 
 Long-horizon task [benchmarks](https://turaai.net/benchmark) are one of the best ways to measure real-world coding-agent performance. Instead of testing agents on isolated prompts or simple Q&A tasks, Tura uses harness-based [benchmarks](https://turaai.net/benchmark) that simulate actual long-horizon development workflows.
@@ -17,13 +16,13 @@ You can compare Tura’s real-world performance against today’s most popular c
 ### Screenshots
 
 <p align="center">
-  <img src="assets/screenshot/gui.PNG" alt="Tura GUI" width="800">
+  <img src="assets/screenshot/gui-ci-quality-demo.svg" alt="Tura GUI" width="800">
 </p>
 
 <p align="center"><em>GUI page with multi-session concurrent work and HTML rich text support.</em></p>
 
 <p align="center">
-  <img src="assets/screenshot/tui.PNG" alt="Tura TUI" width="800">
+  <img src="assets/screenshot/tui-ci-quality-demo.svg" alt="Tura TUI" width="800">
 </p>
 
 <p align="center"><em>TUI page with multi-session concurrent work and HTML rich text support.</em></p>
