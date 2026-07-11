@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - "fix/**"
     tags:
       - "release*"
       - "release-v*"
@@ -164,6 +165,66 @@ jobs:
         working-directory: apps/gui
         run: bun run test:unit
 
+  install-script-tests:
+    name: Install Scripts ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    needs: quality
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ubuntu-latest
+            runner: ubuntu-latest
+            log: .ci-results/install-ubuntu-latest.log
+          - label: macos-latest
+            runner: macos-latest
+            log: .ci-results/install-macos-latest.log
+          - label: windows-2022
+            runner: windows-2022
+            log: .ci-results/install-windows-2022.log
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run install script tests (Windows)
+        if: runner.os == 'Windows'
+        id: install_windows
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Continue"
+          New-Item -ItemType Directory -Path .ci-results -Force | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tests\scripts\test-install.ps1 -SkipApps *>&1 | Tee-Object -FilePath "${{ matrix.log }}"
+          $exitCode = $LASTEXITCODE
+          "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($exitCode -ne 0) { exit $exitCode }
+      - name: Run install script tests (Linux/macOS)
+        if: runner.os != 'Windows'
+        id: install_posix
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p .ci-results
+          sh scripts/tests/scripts/test-install.sh --skip-apps 2>&1 | tee "${{ matrix.log }}"
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=${exit_code}" >> "$GITHUB_OUTPUT"
+          exit "$exit_code"
+      - name: Upload install script logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-script-${{ matrix.label }}-logs
+          path: ${{ matrix.log }}
+          if-no-files-found: warn
+      - name: Fail if install script tests failed
+        if: steps.install_windows.outcome == 'failure' || steps.install_posix.outcome == 'failure'
+        shell: pwsh
+        run: exit 1
+
   ci-complete:
     name: CI Complete
     runs-on: ubuntu-latest
@@ -172,6 +233,7 @@ jobs:
       - backend-business
       - tui-local
       - gui-local
+      - install-script-tests
     steps:
       - run: echo "CI flow passed"
 

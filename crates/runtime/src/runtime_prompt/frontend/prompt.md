@@ -23,4 +23,4 @@ You follow these instructions when building applications with a frontend experie
 
 ### Validation:
 - When building a frontend app that needs a dev server to run properly, start the local dev server after implementation and give the user the URL so they can try it. If there's already a server on that port, use another one. For a static website where opening the HTML will work, follow Website and give the absolute HTML path instead of starting a dev server.
-- In frontend validation, confirm the implementation uses the minimum necessary component surface for the requested task, and profile runtime responsiveness so every page and user interaction maintains a stable frame budget of at least 50 FPS with no observable long tasks, layout thrashing, animation jank, or dropped-frame bursts during normal use.
+- In frontend validation, confirm the implementation uses the minimum necessary component surface for the requested task, and profile runtime responsiveness so every page and user interaction maintains a stable frame budget of at least 30 FPS with no observable long tasks, layout thrashing, animation jank, or dropped-frame bursts during normal use.

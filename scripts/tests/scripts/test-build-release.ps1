@@ -62,6 +62,48 @@ function Assert-AnyPath {
   throw $Message
 }
 
+function Assert-RuntimeConfigFiles {
+  foreach ($relativePath in @(
+    "agents\src\balanced\agent_config.json",
+    "agents\src\balanced\prompt.md",
+    "agents\src\direct\agent_config.json",
+    "agents\src\direct\prompt.md",
+    "agents\src\direct-text-only\agent_config.json",
+    "agents\src\direct-text-only\prompt.md",
+    "personas\src\communication_style\communication_style.md",
+    "personas\src\communication_style\cli_communication_style.md",
+    "personas\src\expression_manifest.json",
+    "personas\src\pidan\persona_config.json",
+    "personas\src\pidan\prompt\persona.md",
+    "personas\src\tura\persona_config.json",
+    "personas\src\tura\prompt\persona.md",
+    "personas\src\wonderful\persona_config.json",
+    "personas\src\wonderful\prompt\persona.md",
+    "crates\runtime\src\runtime_prompt\data_research\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\data_research\prompt.md",
+    "crates\runtime\src\runtime_prompt\debug\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\debug\prompt.md",
+    "crates\runtime\src\runtime_prompt\devops\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\devops\prompt.md",
+    "crates\runtime\src\runtime_prompt\editorial\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\editorial\prompt.md",
+    "crates\runtime\src\runtime_prompt\frontend\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\frontend\prompt.md",
+    "crates\runtime\src\runtime_prompt\interactive_and_3d\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\interactive_and_3d\prompt.md",
+    "crates\runtime\src\runtime_prompt\new_build\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\new_build\prompt.md",
+    "crates\runtime\src\runtime_prompt\refactoring\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\refactoring\prompt.md",
+    "crates\runtime\src\runtime_prompt\visual\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\visual\prompt.md",
+    "crates\runtime\src\runtime_prompt\website\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\website\prompt.md"
+  )) {
+    Assert-Path (Join-Path $TargetDir $relativePath) "Missing release runtime config or prompt: $relativePath"
+  }
+}
+
 function Test-ProtocolHealth {
   param([string]$Binary)
   $payload = '{"kind":"health_check","payload":{}}'
@@ -111,9 +153,7 @@ foreach ($name in @(
 }
 Assert-Path (Join-Path $TargetDir "config\provider_config.json") "Missing release provider config."
 if (-not $Binary) {
-  Assert-Path (Join-Path $TargetDir "agents\src\direct\prompt.md") "Missing release agent prompt."
-  Assert-Path (Join-Path $TargetDir "personas\src\tura\prompt\persona.md") "Missing release persona prompt."
-  Assert-Path (Join-Path $TargetDir "crates\runtime\src\runtime_prompt\debug\prompt.md") "Missing release runtime prompt."
+  Assert-RuntimeConfigFiles
   Assert-Path (Join-Path $TargetDir "crates\tools\src\commands\shell_command\schema.json") "Missing release tool command schema."
   Assert-Path (Join-Path $TargetDir "commands\read_media\prompt.md") "Missing release external command prompt."
   Assert-Path (Join-Path $TargetDir "scripts\register-cli.ps1") "Missing release CLI registration script."

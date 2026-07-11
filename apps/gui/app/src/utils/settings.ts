@@ -13,10 +13,10 @@ export type ProviderAuthDisplayState = {
 
 export function defaultModel(providers: AppState["providers"]): string | undefined {
   if (!providers) {
-    return "openai/gpt-5.5";
+    return "openai/gpt-5.6-sol";
   }
-  if (providers.all.some((provider) => provider.id === "openai" && provider.models["gpt-5.5"])) {
-    return "openai/gpt-5.5";
+  if (providers.all.some((provider) => provider.id === "openai" && provider.models["gpt-5.6-sol"])) {
+    return "openai/gpt-5.6-sol";
   }
   const firstConnected = providers.connected[0];
   if (firstConnected && providers.default[firstConnected]) {

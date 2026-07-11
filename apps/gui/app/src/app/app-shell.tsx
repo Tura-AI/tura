@@ -348,6 +348,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   setState={props.view.setState}
                   selectedSession={props.view.selectedSession}
                   selectedMessages={props.view.selectedMessages}
+                  selectedSessionMessagesLoading={props.view.selectedSessionMessagesLoading}
                   loadEarlierMessages={props.view.loadEarlierMessages}
                   slashCommands={props.view.slashCommands}
                   selectedEditingTask={selectedEditingTask}

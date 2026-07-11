@@ -15,23 +15,23 @@ const runId = process.env.COMMAND_RUN_AGENT_RUN_ID || `multimedia-research-${Dat
 const runPaths = businessRunPaths("media-official-research", runId)
 const runRoot = runPaths.run_root
 const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
-const codexMainExe = findCodexMainExe()
+const codexCliExe = findCodexCliExe()
 const claudeExe = findClaudeExe()
 const piExe = findPiExe()
 const codexModel = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.3-codex-spark"
 const model = process.env.COMMAND_RUN_AGENT_TURA_MODEL || `openai/${codexModel}`
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
 const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 240_000)
-const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "tura-fast-shll,codex-main")
+const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "tura-fast-shll,codex-cli")
 const reinforcedPrompt = envFlag("COMMAND_RUN_AGENT_REINFORCED_PROMPT")
 
-function findCodexMainExe() {
+function findCodexCliExe() {
   const exeName = process.platform === "win32" ? "codex.exe" : "codex"
   const candidates = [
-    process.env.COMMAND_RUN_AGENT_CODEX_MAIN_ROOT,
-    path.join(homeDir, "Documents", "codex-main"),
-    path.join(homeDir, "codex-main"),
-    path.join(homeDir, "RustroverProjects", "codex-main"),
+    process.env.COMMAND_RUN_AGENT_CODEX_CLI_ROOT,
+    path.join(homeDir, "Documents", "codex-cli"),
+    path.join(homeDir, "codex-cli"),
+    path.join(homeDir, "RustroverProjects", "codex-cli"),
     path.join(homeDir, "Documents", "Codex"),
   ]
     .filter(Boolean)
@@ -41,9 +41,7 @@ function findCodexMainExe() {
 
 function parseAgents(value) {
   const aliases = new Map([
-    ["main", "codex-main"],
-    ["codex-main", "codex-main"],
-    ["codex_main", "codex-main"],
+    ["codex-cli", "codex-cli"],
     ["tura", "tura-shll"],
     ["tura-fast", "tura-fast-shll"],
     ["tura-fast-shell", "tura-fast-shll"],
@@ -604,7 +602,6 @@ async function runTuraAgent(id) {
     model,
     "--agent-id",
     turaCliAgentName(id),
-    "--sandbox",
     ...(process.env.COMMAND_RUN_AGENT_CODEX_SERVICE_TIER === "auto" ? [] : ["-p"]),
     "--model-reasoning-effort",
     reasoning,
@@ -680,7 +677,7 @@ async function runTuraAgent(id) {
   }
 }
 
-async function runCodexMainAgent(id) {
+async function runCodexCliAgent(id) {
   const workspace = path.join(runRoot, id, "workspace")
   const logs = path.join(runRoot, id, "logs")
   fs.mkdirSync(workspace, { recursive: true })
@@ -689,7 +686,7 @@ async function runCodexMainAgent(id) {
   const stderrPath = path.join(logs, "codex.stderr.log")
   const lastMessagePath = path.join(logs, "last-message.md")
   const started = Date.now()
-  const result = await runAsync(codexMainExe, [
+  const result = await runAsync(codexCliExe, [
     "exec",
     "--skip-git-repo-check",
     "--json",
@@ -722,7 +719,7 @@ async function runCodexMainAgent(id) {
   if (session.token_count_events > llm.llm_turns) llm.llm_turns = session.token_count_events
   return {
     id,
-    agent: "codex-main",
+    agent: "codex-cli",
     model: codexModel,
     reasoning,
     ok: result.status === 0,
@@ -817,11 +814,11 @@ async function main() {
     runOk("cargo", ["build", "-p", "gateway", "--bin", "tura_exec"], { cwd: repoRoot, timeoutMs: 300_000 })
     assert(fs.existsSync(turaExe), `missing cli executable: ${turaExe}`)
   }
-  if (agents.includes("codex-main")) assert(fs.existsSync(codexMainExe), `missing codex-main executable: ${codexMainExe}`)
+  if (agents.includes("codex-cli")) assert(fs.existsSync(codexCliExe), `missing codex-cli executable: ${codexCliExe}`)
   assert(agents.length > 0, "COMMAND_RUN_AGENT_AGENTS did not select any supported agents")
   const results = await Promise.all(
     agents.map((agent) => {
-      if (agent === "codex-main") return runCodexMainAgent(agent)
+      if (agent === "codex-cli") return runCodexCliAgent(agent)
       if (agent === "claude-code" || agent === "pi-agent") return runExternalCliAgent(agent)
       return runTuraAgent(agent)
     })

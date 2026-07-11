@@ -207,6 +207,38 @@ fn provider_payload_maps_highest_reasoning_to_xhigh() {
 }
 
 #[test]
+fn provider_payload_keeps_max_reasoning_for_gpt_5_6_family() {
+    let messages = vec![json!({"role": "user", "content": "ping"})];
+    let options = CallOptions {
+        reasoning_effort: Some("max".to_string()),
+        ..CallOptions::default()
+    };
+
+    for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+        let chat_payload = build_chat_payload("openai", model, &messages, &options);
+        let codex_payload = build_codex_oauth_payload(model, &messages, &options);
+
+        assert_eq!(chat_payload["reasoning_effort"], "max", "chat {model}");
+        assert_eq!(codex_payload["reasoning"]["effort"], "max", "codex {model}");
+    }
+}
+
+#[test]
+fn provider_payload_maps_max_reasoning_to_xhigh_for_non_gpt_5_6_models() {
+    let messages = vec![json!({"role": "user", "content": "ping"})];
+    let options = CallOptions {
+        reasoning_effort: Some("max".to_string()),
+        ..CallOptions::default()
+    };
+
+    let chat_payload = build_chat_payload("openai", "gpt-5.5", &messages, &options);
+    let codex_payload = build_codex_oauth_payload("gpt-5.5", &messages, &options);
+
+    assert_eq!(chat_payload["reasoning_effort"], "xhigh");
+    assert_eq!(codex_payload["reasoning"]["effort"], "xhigh");
+}
+
+#[test]
 fn provider_payload_omits_default_reasoning_and_acceleration() {
     let messages = vec![json!({"role": "user", "content": "ping"})];
     let options = CallOptions {

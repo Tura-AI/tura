@@ -155,13 +155,13 @@ are:
 | --- | --- |
 | `default_model_tier` | Stable route name such as `thinking` or `fast`. Runtime uses this first. |
 | `tura_llm_name` | Legacy/stable route name fallback when `default_model_tier` is absent. |
-| `current_model` | Optional exact provider/model override such as `codex/gpt-5.5`. |
+| `current_model` | Optional exact provider/model override such as `codex/gpt-5.6`. |
 | `stream` | Whether responses should stream. |
 | `temperature` | Provider call temperature when supported. |
 | `max_tokens` | Output limit; `0` means defer to provider/runtime defaults. |
 | `tool_choice` | Tool-call policy, usually `Auto`. |
 | `time_out_ms` | Base timeout before tier-specific runtime timeout logic is applied. |
-| `model_reasoning_effort` | Reasoning-effort hint, commonly `low`, `medium`, `high`, or `xhigh`. |
+| `model_reasoning_effort` | Reasoning-effort hint, commonly `low`, `medium`, `high`, `xhigh`, or `max`; `max` is sent only to GPT-5.6 models and maps to `xhigh` for older models. |
 | `model_acceleration_enabled` | Client/runtime hint that priority acceleration is enabled. |
 | `service_tier` | Provider-specific acceleration tier, forwarded only when supported. |
 

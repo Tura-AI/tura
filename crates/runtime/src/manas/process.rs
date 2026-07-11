@@ -537,7 +537,26 @@ pub fn process_manas_internal(
                 break;
             }
 
+            let has_visible_reply = visible_runtime_reply(&runtime).is_some();
+
             let has_active_doing_task = active_doing_task_user_message(session).is_some();
+            if has_visible_reply {
+                if complete_active_doing_task_after_non_planning_reply(
+                    session,
+                    !session.goal_mode && !supports_planning,
+                ) {
+                    persist_session_checkpoint(session, "task_auto_completed");
+                }
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    has_active_doing_task = has_active_doing_task,
+                    "turn completed without command_run but produced a user-visible reply; ending session after any required task_status backfill"
+                );
+                break;
+            }
             if !has_active_doing_task {
                 if should_retry_no_tool_task_status(
                     session,
@@ -566,10 +585,7 @@ pub fn process_manas_internal(
             }
 
             if !session.goal_mode && !supports_planning {
-                if complete_active_doing_task_after_non_planning_reply(
-                    session,
-                    visible_runtime_reply(&runtime).is_some(),
-                ) {
+                if complete_active_doing_task_after_non_planning_reply(session, false) {
                     persist_session_checkpoint(session, "task_auto_completed");
                 }
                 info!(
@@ -750,17 +766,15 @@ fn complete_active_doing_task_after_non_planning_reply(
 }
 
 fn should_auto_complete_non_planning_doing_after_tool_turn(
-    goal_mode: bool,
-    supports_planning: bool,
-    terminal_task_status: Option<&str>,
-    visible_reply_already_published: bool,
-    terminal_status_followed_command: bool,
+    _goal_mode: bool,
+    _supports_planning: bool,
+    _terminal_task_status: Option<&str>,
+    _visible_reply_already_published: bool,
+    _terminal_status_followed_command: bool,
 ) -> bool {
-    !goal_mode
-        && !supports_planning
-        && terminal_task_status == Some("doing")
-        && visible_reply_already_published
-        && !terminal_status_followed_command
+    // A `doing` task_status is only a progress update. It must be replayed to the
+    // next model turn so newly activated manuals and task context can be used.
+    false
 }
 
 fn should_end_turn_without_task_status_backfill(
@@ -768,20 +782,23 @@ fn should_end_turn_without_task_status_backfill(
     terminal_task_status: Option<&str>,
     visible_reply: Option<&str>,
 ) -> bool {
-    terminal_task_status == Some("done")
-        && visible_reply
-            .is_some_and(|reply| reply.len() > DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF)
-        && command_run_has_only_done_task_status_result(tool_results)
+    let Some(status @ ("done" | "question")) = terminal_task_status else {
+        return false;
+    };
+
+    visible_reply.is_some_and(|reply| reply.len() > DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF)
+        && command_run_has_only_terminal_task_status_result(tool_results, status)
 }
 
-fn command_run_has_only_done_task_status_result(
+fn command_run_has_only_terminal_task_status_result(
     tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+    status: &str,
 ) -> bool {
     let [tool_result] = tool_results else {
         return false;
     };
     tool_result.tool_name == crate::manas::COMMAND_RUN_TOOL
-        && command_run_result_is_single_task_status(&tool_result.result, "done")
+        && command_run_result_is_single_task_status(&tool_result.result, status)
 }
 
 fn messages_with_initial_context_prefix(
@@ -1068,7 +1085,7 @@ mod tests {
 
     #[test]
     fn non_planning_tool_turn_auto_completes_only_visible_status_only_doing() {
-        assert!(should_auto_complete_non_planning_doing_after_tool_turn(
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
             false,
             false,
             Some("doing"),
@@ -1183,7 +1200,7 @@ mod tests {
     }
 
     #[test]
-    fn long_visible_done_task_status_can_end_without_backfill_only_when_single_status_call() {
+    fn long_visible_terminal_task_status_can_end_without_backfill_only_when_single_status_call() {
         let status_result = ToolExecutionResult {
             tool_name: "command_run".to_string(),
             arguments: json!({"commands":[{"command_type":"task_status"}]}),
@@ -1191,6 +1208,28 @@ mod tests {
                 "command_type":"task_status",
                 "success":true,
                 "output":{"task_status":{"status":"done"}}
+            }]}),
+            success: true,
+            error: None,
+        };
+        let question_status_result = ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"task_status"}]}),
+            result: json!({"results":[{
+                "command_type":"task_status",
+                "success":true,
+                "output":{"task_status":{"status":"question"}}
+            }]}),
+            success: true,
+            error: None,
+        };
+        let doing_status_result = ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"task_status"}]}),
+            result: json!({"results":[{
+                "command_type":"task_status",
+                "success":true,
+                "output":{"task_status":{"status":"doing"}}
             }]}),
             success: true,
             error: None,
@@ -1207,9 +1246,14 @@ mod tests {
             Some("done"),
             Some(&"x".repeat(1_000)),
         ));
-        assert!(!should_end_turn_without_task_status_backfill(
-            std::slice::from_ref(&status_result),
+        assert!(should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&question_status_result),
             Some("question"),
+            Some(&long_reply),
+        ));
+        assert!(!should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&doing_status_result),
+            Some("doing"),
             Some(&long_reply),
         ));
 

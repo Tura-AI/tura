@@ -483,7 +483,7 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
         "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
-        "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command, step 3 run multiple known test commands in the same step.",
+        "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command and use `apply_patch` to write or modify the testing scripts, step 3 run multiple known test commands in the same step.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
         "- Example long-running database check: step 1 run `sleep 60` with `timeout_ms` comfortably above 60000, step 2 run the known database probe script, step 3 read the script output log such as `logs/db-check.log` and summarize the findings.",
     ];

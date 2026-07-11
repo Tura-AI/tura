@@ -18,7 +18,7 @@ const summaryPath =
   process.env.COMMAND_RUN_AGENT_SUMMARY ||
   path.join(repoRoot, "target", "codex-logs", `command-run-three-stream-probe-${runId}.json`)
 const turaRoot = process.env.COMMAND_RUN_AGENT_TURA_ROOT || repoRoot
-const codexCurrentRoot = process.env.COMMAND_RUN_AGENT_CODEX_CURRENT_ROOT || path.join(homeDir, "Documents", "Codex")
+const codexCliRoot = process.env.COMMAND_RUN_AGENT_CODEX_CLI_ROOT || path.join(homeDir, "Documents", "codex-cli")
 const codexModel = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.1-codex"
 const turaModel = process.env.COMMAND_RUN_AGENT_TURA_MODEL || (codexModel.includes("/") ? codexModel : `openai/${codexModel}`)
 const reasoningEffort = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
@@ -401,7 +401,6 @@ async function runTura(workspace) {
       "-m",
       turaModel,
       ...(turaPriority ? ["-p"] : []),
-      "--sandbox",
       "--model-reasoning-effort",
       reasoningEffort,
       "--output-last-message",
@@ -440,8 +439,8 @@ async function runTura(workspace) {
   }
 }
 
-async function runCurrent(workspace) {
-  const bin = codexBinForRoot(codexCurrentRoot)
+async function runCodexCli(workspace) {
+  const bin = codexBinForRoot(codexCliRoot)
   const logs = path.join(runRoot, "current")
   await fs.mkdir(logs, { recursive: true })
   const stdoutPath = path.join(logs, "stdout.jsonl")
@@ -469,7 +468,7 @@ async function runCurrent(workspace) {
   )
   const probeLog = await readProbeLog(workspace)
   return {
-    agent: "current",
+    agent: "codex-cli",
     ok: result.status === 0 && probeLog.ok,
     exit_code: result.status,
     duration_ms: result.durationMs,
@@ -492,14 +491,14 @@ async function main() {
 
   const baseline = path.join(runRoot, "baseline")
   const turaWorkspace = path.join(runRoot, "repo-tura")
-  const currentWorkspace = path.join(runRoot, "repo-current")
+  const codexCliWorkspace = path.join(runRoot, "repo-current")
   await writeFixture(baseline)
   await copyDir(baseline, turaWorkspace)
-  await copyDir(baseline, currentWorkspace)
+  await copyDir(baseline, codexCliWorkspace)
 
-  const [tura, current] = await Promise.all([runTura(turaWorkspace), runCurrent(currentWorkspace)])
+  const [tura, codexCli] = await Promise.all([runTura(turaWorkspace), runCodexCli(codexCliWorkspace)])
   const turaReady = tura.provider_stream.ready_commands.map((item) => item.command.command_line)
-  const currentCalls = current.stdout.function_call_commands.map((item) => item.command_line)
+  const codexCliCalls = codexCli.stdout.function_call_commands.map((item) => item.command_line)
   const turaFirstCommandStartedBeforeProviderFinished =
     Number.isFinite(tura.provider_stream.finished_ms) &&
     Number.isFinite(tura.probe_log.first_command_start_ms) &&
@@ -516,10 +515,10 @@ async function main() {
   const summary = {
     ok:
       tura.ok &&
-      current.ok &&
+      codexCli.ok &&
       tura.provider_stream.ready_command_count === 3 &&
       tura.probe_log.command_order.join(",") === "cmd1,cmd2,cmd3" &&
-      current.probe_log.command_order.join(",") === "cmd1,cmd2,cmd3",
+      codexCli.probe_log.command_order.join(",") === "cmd1,cmd2,cmd3",
     run_id: runId,
     run_root: runRoot,
     summary_path: summaryPath,
@@ -532,17 +531,17 @@ async function main() {
       tura_priority: turaPriority,
     },
     duration_ms: Math.round(performance.now() - started),
-    workspaces: { tura: turaWorkspace, current: currentWorkspace },
+    workspaces: { tura: turaWorkspace, codex_cli: codexCliWorkspace },
     parity: {
-      both_ran_three_commands: tura.probe_log.ok && current.probe_log.ok,
+      both_ran_three_commands: tura.probe_log.ok && codexCli.probe_log.ok,
       tura_stream_ready_three_commands: tura.provider_stream.ready_command_count === 3,
       tura_first_command_started_before_provider_finished: turaFirstCommandStartedBeforeProviderFinished,
       tura_first_command_started_before_last_command_ready: turaFirstCommandStartedBeforeLastCommandReady,
-      current_function_call_batch_sizes: current.stdout.function_call_batch_sizes,
+      codex_cli_function_call_batch_sizes: codexCli.stdout.function_call_batch_sizes,
       tura_ready_command_lines: turaReady,
-      current_function_call_command_lines: currentCalls,
+      codex_cli_function_call_command_lines: codexCliCalls,
     },
-    runs: [current, tura],
+    runs: [codexCli, tura],
   }
   await writeText(summaryPath, JSON.stringify(summary, null, 2))
   console.log(`[three-stream-probe] summary: ${summaryPath}`)

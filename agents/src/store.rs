@@ -492,8 +492,8 @@ mod tests {
 
         for (agent_id, expected_reflection, expected_op_manual, expected_self_reflection) in [
             ("balanced", false, true, false),
-            ("direct", false, false, false),
-            ("direct-text-only", false, false, false),
+            ("direct", false, true, false),
+            ("direct-text-only", false, true, false),
         ] {
             let agent = load_agent(project_root, agent_id).expect("built-in agent should load");
             assert_eq!(

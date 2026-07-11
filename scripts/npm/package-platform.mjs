@@ -10,6 +10,7 @@ import {
   firstExistingPath,
   guiDistCandidates,
   missingPackageFiles,
+  missingReleaseRuntimeFiles,
   platformPackageName,
   releaseArchiveName,
   releaseConfigFiles,
@@ -142,6 +143,10 @@ if (!binaryOnly) {
       path.join(stageRelease, releaseRelative),
       releaseRelative
     );
+  }
+  const missingRuntime = missingReleaseRuntimeFiles(packageDir);
+  if (missingRuntime.length > 0) {
+    fail(`platform package is missing runtime config files: ${missingRuntime.map((file) => path.relative(packageDir, file)).join(", ")}`);
   }
 }
 

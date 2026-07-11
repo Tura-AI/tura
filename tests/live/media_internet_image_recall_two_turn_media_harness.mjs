@@ -17,7 +17,7 @@ const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win
 const claudeExe = findClaudeExe()
 const piExe = findPiExe()
 const codexExe = path.join(
-  process.env.COMMAND_RUN_AGENT_CODEX_CURRENT_ROOT || path.join(homeDir, "Documents", "Codex"),
+  process.env.COMMAND_RUN_AGENT_CODEX_CLI_ROOT || path.join(homeDir, "Documents", "codex-cli"),
   "codex-rs",
   "target",
   "debug",
@@ -25,14 +25,12 @@ const codexExe = path.join(
 )
 const model = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
-const agents = parseAgents(process.env.COMMAND_RUN_MEDIA_RECALL_AGENTS || process.env.COMMAND_RUN_AGENT_AGENTS || "current,tura")
+const agents = parseAgents(process.env.COMMAND_RUN_MEDIA_RECALL_AGENTS || process.env.COMMAND_RUN_AGENT_AGENTS || "codex-cli,tura")
 const skipTuraBuild = (process.env.COMMAND_RUN_AGENT_SKIP_TURA_BUILD || "0") === "1"
 
 function parseAgents(value) {
   const aliases = new Map([
-    ["current", "current"],
-    ["codex", "current"],
-    ["codex-current", "current"],
+    ["codex-cli", "codex-cli"],
     ["tura", "tura"],
     ["tura-fast", "tura"],
     ["claude", "claude-code"],
@@ -228,7 +226,7 @@ function runTura(imagePath) {
   }
 }
 
-function runCurrent(imagePath) {
+function runCodexCli(imagePath) {
   const currentDir = path.join(runRoot, "current")
   fs.mkdirSync(currentDir, { recursive: true })
   const firstPrompt = [
@@ -254,7 +252,7 @@ function runCurrent(imagePath) {
   ]
   const first = runOk(codexExe, [...common, firstPrompt], { cwd: currentDir })
   const threadId = parseJsonl(first.stdout).find((event) => event.type === "thread.started")?.thread_id
-  assert(threadId, "current should emit thread.started")
+  assert(threadId, "codex-cli should emit thread.started")
   const second = runOk(
     codexExe,
     [
@@ -281,7 +279,7 @@ function runCurrent(imagePath) {
   const allText = collectText(first.stdout, second.stdout)
   const events = [...parseJsonl(first.stdout), ...parseJsonl(second.stdout)]
   return {
-    id: "current",
+    id: "codex-cli",
     ok: allText.includes("yellow") && allText.includes("star") && allText.includes("green"),
     recall_ok: allText.includes("star") && allText.includes("green"),
     image_context_present_in_second_request: null,
@@ -362,11 +360,11 @@ function main() {
     }
     assert(fs.existsSync(turaExe), `missing tura exe: ${turaExe}`)
   }
-  if (agents.includes("current")) {
-    assert(fs.existsSync(codexExe), `missing current codex exe: ${codexExe}`)
+  if (agents.includes("codex-cli")) {
+    assert(fs.existsSync(codexExe), `missing codex-cli executable: ${codexExe}`)
   }
   const results = [
-    ...(agents.includes("current") ? [runCurrent(imagePath)] : []),
+    ...(agents.includes("codex-cli") ? [runCodexCli(imagePath)] : []),
     ...(agents.includes("tura") ? [runTura(imagePath)] : []),
     ...(agents.includes("claude-code") ? [runExternalCliAgent("claude-code", imagePath)] : []),
     ...(agents.includes("pi-agent") ? [runExternalCliAgent("pi-agent", imagePath)] : []),
@@ -393,8 +391,8 @@ function main() {
   assert(
     summary.ok,
     expectMediaUnsupported
-      ? "media recall should pass for current and tura should clearly report unsupported image input"
-      : "media recall should pass for current and tura",
+      ? "media recall should pass for codex-cli and tura should clearly report unsupported image input"
+      : "media recall should pass for codex-cli and tura",
   )
 }
 

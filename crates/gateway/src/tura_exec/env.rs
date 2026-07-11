@@ -77,7 +77,12 @@ fn project_root_from_exe() -> String {
 }
 
 fn configure_release_runtime_env() {
-    let root = project_root_from_exe();
+    let root = std::env::var_os("TURA_PROJECT_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| find_project_root_from(path).is_some())
+        .unwrap_or_else(|| PathBuf::from(project_root_from_exe()))
+        .display()
+        .to_string();
     std::env::set_var("TURA_PROJECT_ROOT", &root);
     if std::env::var_os("TURA_PROVIDER_CONFIG").is_none() {
         let provider_config = PathBuf::from(&root)

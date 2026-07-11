@@ -19,7 +19,7 @@ const summaryPath =
   process.env.COMMAND_RUN_AGENT_SUMMARY ||
   path.join(repoRoot, "target", "codex-logs", `command-run-codex-two-way-small-${runId}.json`)
 const turaRoot = process.env.COMMAND_RUN_AGENT_TURA_ROOT || repoRoot
-const codexCurrentRoot = process.env.COMMAND_RUN_AGENT_CODEX_CURRENT_ROOT || path.join(homeDir, "Documents", "Codex")
+const codexCliRoot = process.env.COMMAND_RUN_AGENT_CODEX_CLI_ROOT || path.join(homeDir, "Documents", "codex-cli")
 const codexModel = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.1-codex"
 const turaModel = process.env.COMMAND_RUN_AGENT_TURA_MODEL || `openai/${codexModel}`
 const reasoningEffort = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
@@ -364,9 +364,9 @@ function inspectTuraToolFlow(calls) {
   }
 }
 
-function inspectCodexCurrentToolFlow(sessionFile) {
+function inspectCodexCliToolFlow(sessionFile) {
   if (!sessionFile || !existsSync(sessionFile)) {
-    return { ok: false, error: "codex-current session file missing" }
+    return { ok: false, error: "codex-cli session file missing" }
   }
   const events = parseJsonl(readFileSync(sessionFile, "utf8"))
   const functionCalls = events
@@ -520,7 +520,7 @@ function contextContractFromMessages(messages, options = {}) {
   }
 }
 
-async function inspectCodexCurrentContext(sinceMs, workspace) {
+async function inspectCodexCliContext(sinceMs, workspace) {
   const sessionsRoot = path.join(homeDir, ".codex", "sessions")
   const files = await collectJsonlFiles(sessionsRoot)
   const candidates = []
@@ -558,7 +558,7 @@ async function inspectCodexCurrentContext(sinceMs, workspace) {
   candidates.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)
   const selected = candidates[0]
   if (!selected) {
-    return { ok: false, inspected_session: null, error: "codex-current session context not found" }
+    return { ok: false, inspected_session: null, error: "codex-cli session context not found" }
   }
   return {
     ...contextContractFromMessages([{ role: "system", content: selected.base }, ...selected.messages]),
@@ -709,8 +709,8 @@ async function inspectTuraSourceContract() {
 }
 
 async function runCodex(workspace) {
-  const bin = codexBinForRoot(codexCurrentRoot)
-  if (!existsSync(bin)) throw new Error(`missing codex-current binary: ${bin}`)
+  const bin = codexBinForRoot(codexCliRoot)
+  if (!existsSync(bin)) throw new Error(`missing codex-cli binary: ${bin}`)
   const logs = path.join(runRoot, "codex-current")
   await fs.mkdir(logs, { recursive: true })
   const stdoutPath = path.join(logs, "stdout.jsonl")
@@ -737,10 +737,10 @@ async function runCodex(workspace) {
   await writeText(stdoutPath, result.stdout)
   await writeText(stderrPath, result.stderr)
   const verify = await verifyRepo(workspace)
-  const analysis = analyzeEvents(result.stdout, "codex-current")
-  const context_contract = await inspectCodexCurrentContext(contextSinceMs, workspace)
-  const tool_flow = inspectCodexCurrentToolFlow(context_contract.inspected_session)
-  return { agent: "codex-current", bin, workspace, ok: result.status === 0 && verify.ok && analysis.path_ok && context_contract.ok && tool_flow.ok, exit_code: result.status, verify, analysis, context_contract, tool_flow, stdout_path: stdoutPath, stderr_path: stderrPath, last_message_path: lastMessagePath, stderr_tail: result.stderr.slice(-2000), duration_ms: result.durationMs, first_output_ms: result.firstOutputMs }
+  const analysis = analyzeEvents(result.stdout, "codex-cli")
+  const context_contract = await inspectCodexCliContext(contextSinceMs, workspace)
+  const tool_flow = inspectCodexCliToolFlow(context_contract.inspected_session)
+  return { agent: "codex-cli", bin, workspace, ok: result.status === 0 && verify.ok && analysis.path_ok && context_contract.ok && tool_flow.ok, exit_code: result.status, verify, analysis, context_contract, tool_flow, stdout_path: stdoutPath, stderr_path: stderrPath, last_message_path: lastMessagePath, stderr_tail: result.stderr.slice(-2000), duration_ms: result.durationMs, first_output_ms: result.firstOutputMs }
 }
 
 async function runTura(workspace) {
@@ -760,7 +760,6 @@ async function runTura(workspace) {
     "-m",
     turaModel,
     ...(turaPriority ? ["-p"] : []),
-    "--sandbox",
     "--model-reasoning-effort",
     reasoningEffort,
     "--output-last-message",
@@ -794,7 +793,7 @@ async function main() {
 
   const runs = await Promise.all([runTura(turaWorkspace), runCodex(codexWorkspace)])
   const turaRun = runs.find((run) => run.agent === "tura")
-  const codexRun = runs.find((run) => run.agent === "codex-current")
+  const codexRun = runs.find((run) => run.agent === "codex-cli")
   const turaCommandSequence = turaRun?.provider_contract?.tool_flow?.command_sequence || []
   const codexCommandSequence = codexRun?.tool_flow?.command_sequence || []
   const turaCoreCommandSequence = normalizeCoreCommandFlow(turaCommandSequence)

@@ -353,7 +353,7 @@ fn catalog_provider_model_catalog_filters_hidden_claude_models() {
     let catalog = provider_model_catalog(None);
 
     assert!(catalog.iter().any(|(provider, models)| {
-        provider == "codex" && models.iter().any(|model| model == "gpt-5.5")
+        provider == "codex" && models.iter().any(|model| model == "gpt-5.6-sol")
     }));
     for (provider_id, models) in catalog {
         for model_id in models {
@@ -367,9 +367,12 @@ fn catalog_provider_model_catalog_filters_hidden_claude_models() {
 
 #[test]
 fn catalog_model_supported_by_provider_matches_registry_exactly() {
-    assert!(model_supported_by_provider("codex", "gpt-5.5"));
+    assert!(model_supported_by_provider("codex", "gpt-5.6-sol"));
     assert!(!model_supported_by_provider("codex", "missing-model"));
-    assert!(!model_supported_by_provider("missing-provider", "gpt-5.5"));
+    assert!(!model_supported_by_provider(
+        "missing-provider",
+        "gpt-5.6-sol"
+    ));
 }
 
 #[tokio::test]

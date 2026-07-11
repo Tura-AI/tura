@@ -16,6 +16,7 @@ import {
   executableName,
   executableNames,
   missingReleaseFiles,
+  requiredReleaseRuntimeFiles,
   platformPackageName,
 } from "./release-artifacts.mjs";
 import { isCliPathRegistered, unregisterCliPath } from "./cli-path.mjs";
@@ -82,6 +83,12 @@ function writeFixtureExecutable(file) {
   chmodSync(file, 0o755);
 }
 
+function writeFixtureFile(relativePath, content = "fixture\n") {
+  const file = path.join(platformReleaseDir, relativePath);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, content);
+}
+
 function createFixturePlatformPackage() {
   mkdirSync(platformReleaseDir, { recursive: true });
   for (const name of executableNames) {
@@ -91,6 +98,12 @@ function createFixturePlatformPackage() {
   writeFileSync(path.join(platformReleaseDir, "config", "provider_config.json"), "{}\n");
   mkdirSync(path.join(platformReleaseDir, "tura_gui"), { recursive: true });
   writeFileSync(path.join(platformReleaseDir, "tura_gui", "index.html"), "<!doctype html><title>Tura fixture</title>\n");
+  for (const file of requiredReleaseRuntimeFiles) {
+    writeFixtureFile(file);
+  }
+  for (const configFile of requiredReleaseRuntimeFiles.filter((file) => file.endsWith(".json"))) {
+    writeFixtureFile(configFile, "{}\n");
+  }
   writeFileSync(
     path.join(platformRoot, "package.json"),
     `${JSON.stringify(

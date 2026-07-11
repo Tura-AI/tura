@@ -24,6 +24,7 @@ import {
   executableName,
   executableNames,
   missingReleaseFiles,
+  missingReleaseRuntimeFiles,
   platformPackageName,
   releaseArchiveName,
   releaseOutputRoot,
@@ -242,6 +243,12 @@ function verifyInstall() {
       `release archive did not install required files: ${missingRelease.map((file) => path.relative(packageRoot, file)).join(", ")}`,
     );
   }
+  const missingRuntime = missingReleaseRuntimeFiles(packageRoot);
+  if (missingRuntime.length > 0) {
+    fail(
+      `release archive did not install runtime config files: ${missingRuntime.map((file) => path.relative(packageRoot, file)).join(", ")}`,
+    );
+  }
 }
 
 function markReleaseExecutablesRunnable() {
@@ -281,6 +288,12 @@ function installFromPlatformPackage() {
   if (missingPlatform.length > 0) {
     fail(
       `platform package ${platformPackageName()} is incomplete: ${missingPlatform.map((file) => path.relative(platformRoot, file)).join(", ")}`,
+    );
+  }
+  const missingRuntime = missingReleaseRuntimeFiles(platformRoot);
+  if (missingRuntime.length > 0) {
+    fail(
+      `platform package ${platformPackageName()} is missing runtime config files: ${missingRuntime.map((file) => path.relative(platformRoot, file)).join(", ")}`,
     );
   }
 

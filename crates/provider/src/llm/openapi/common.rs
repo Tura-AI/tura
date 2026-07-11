@@ -31,14 +31,30 @@ pub(crate) fn should_pass_service_tier(provider: &str, model: &str) -> bool {
     model.starts_with("gpt-") || model.starts_with("o") || model.contains("codex")
 }
 
-pub(crate) fn normalized_reasoning_effort(options: &CallOptions) -> Option<String> {
+pub(crate) fn normalized_reasoning_effort(options: &CallOptions, model: &str) -> Option<String> {
     normalized_non_default_option(options.reasoning_effort.as_deref()).map(|value| {
         if value.eq_ignore_ascii_case("highest") {
             "xhigh".to_string()
+        } else if value.eq_ignore_ascii_case("max") && !model_supports_max_reasoning(model) {
+            "xhigh".to_string()
+        } else if value.eq_ignore_ascii_case("max") {
+            "max".to_string()
         } else {
             value
         }
     })
+}
+
+fn model_supports_max_reasoning(model: &str) -> bool {
+    let model = model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase();
+    matches!(
+        model.as_str(),
+        "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+    )
 }
 
 pub(crate) fn normalized_service_tier(options: &CallOptions) -> Option<String> {

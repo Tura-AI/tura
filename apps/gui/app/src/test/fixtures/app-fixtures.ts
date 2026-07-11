@@ -1022,6 +1022,75 @@ export function withInitialOverrides(
 export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
   const base = initialAppState(gatewayUrl);
   const now = Date.now();
+  if (fixture === "session-loading") {
+    const directory = "C:\\Users\\liuliu\\Documents\\tura";
+    const cachedSession: Session = {
+      id: "fixture-session-cached",
+      name: "Cached session",
+      directory,
+      model: "openai/gpt-5.5",
+      agent: "coding_agent",
+      session_type: "coding",
+      status: "idle",
+      created_at: now - 120_000,
+      updated_at: now - 60_000,
+      message_count: 1,
+    };
+    const uncachedSession: Session = {
+      ...cachedSession,
+      id: "fixture-session-uncached",
+      name: "Uncached session",
+      created_at: now - 90_000,
+      updated_at: now,
+    };
+    const cachedMessage: Message = {
+      id: "fixture-session-cached-message",
+      sessionID: cachedSession.id,
+      role: "assistant",
+      providerID: "openai",
+      modelID: "gpt-5.5",
+      created_at: now - 60_000,
+      updated_at: now - 60_000,
+      time: { created: now - 60_000, updated: now - 60_000 },
+      parts: [
+        {
+          id: "fixture-session-cached-message-part",
+          sessionID: cachedSession.id,
+          messageID: "fixture-session-cached-message",
+          type: "text",
+          text: "Cached conversation content",
+        },
+      ],
+    };
+    return {
+      ...base,
+      loading: false,
+      sessionsLoading: false,
+      bootstrapped: true,
+      connection: "connected",
+      activeTab: "conversation",
+      previousMainTab: "conversation",
+      directory,
+      sessions: [uncachedSession, cachedSession],
+      selectedSessionId: cachedSession.id,
+      messagesBySession: { [cachedSession.id]: [cachedMessage] },
+      messagePagingBySession: {
+        [cachedSession.id]: { hasEarlier: false, loadingEarlier: false },
+      },
+      selectedModel: FIXTURE_MODEL,
+      agents: FIXTURE_AGENTS,
+      personas: FIXTURE_PERSONAS,
+      selectedProviderId: "openai",
+      ...FIXTURE_PROVIDER_STATE,
+      projects: [
+        {
+          id: "fixture-project",
+          name: "tura",
+          worktree: directory,
+        },
+      ],
+    };
+  }
   if (fixture === "plan-sessions") {
     const directory = "C:\\Users\\liuliu\\Documents\\tura_workspace";
     const sessions = fixtureGatewaySessions(now, directory);

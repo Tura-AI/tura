@@ -138,6 +138,21 @@ function Test-PowerShellSyntax {
   }
 }
 
+function Get-PowerShellTestEngines {
+  $enginePaths = @()
+  $currentPowerShell = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
+  if ($currentPowerShell -and (Test-Path -LiteralPath $currentPowerShell -PathType Leaf)) {
+    $enginePaths += $currentPowerShell
+  }
+  foreach ($name in @("powershell.exe", "pwsh.exe")) {
+    $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
+    if ($command -and $command.Source) {
+      $enginePaths += $command.Source
+    }
+  }
+  return @($enginePaths | Where-Object { $_ } | Select-Object -Unique)
+}
+
 function Test-ShellSyntax {
   if (-not (Get-Command "sh" -ErrorAction SilentlyContinue)) {
     Write-Host "sh not found; skipping shell syntax checks on this runner."
@@ -241,6 +256,7 @@ function Test-NpmPostinstallChecksRuntimeDependenciesOnly {
   $source = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\npm\install-release.mjs") -Raw
   foreach ($required in @(
     "function ensureRuntimeDependencies",
+    "missingReleaseRuntimeFiles",
     "refreshRuntimePath",
     "TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK",
     'requireRuntimeCommand("sh"',
@@ -260,8 +276,63 @@ function Test-NpmPostinstallChecksRuntimeDependenciesOnly {
   }
 }
 
+function Test-NpmReleaseManifestOwnsRuntimeConfigCoverage {
+  Write-Step "Checking npm release manifest owns runtime config coverage"
+
+  $source = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\npm\release-artifacts.mjs") -Raw
+  foreach ($required in @(
+    "requiredReleaseRuntimeFiles",
+    "agents/src/balanced/agent_config.json",
+    "personas/src/tura/persona_config.json",
+    "crates/runtime/src/runtime_prompt/debug/prompt.md",
+    "missingReleaseRuntimeFiles"
+  )) {
+    if (-not $source.Contains($required)) {
+      throw "scripts/npm/release-artifacts.mjs is missing runtime config coverage: $required"
+    }
+  }
+}
+
+function Test-UvPythonProbeSafetyContract {
+  Write-Step "Checking every PowerShell installer safely handles uv probe stderr"
+
+  $installerPaths = @(
+    (Join-Path $RepoRoot "scripts\install.ps1"),
+    (Join-Path $RepoRoot "commands\read_media\install.ps1"),
+    (Join-Path $RepoRoot "commands\generate_media\install.ps1"),
+    (Join-Path $RepoRoot "commands\web_discover\install.ps1")
+  )
+  foreach ($installerPath in $installerPaths) {
+    $tokens = $null
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($installerPath, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) {
+      throw "Cannot inspect uv Python probe in $installerPath because it has syntax errors."
+    }
+    $probe = @($ast.FindAll({
+      param($node)
+      $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Test-UvPythonAvailable"
+    }, $true))
+    if ($probe.Count -ne 1) {
+      throw "Expected exactly one Test-UvPythonAvailable function in $installerPath, found $($probe.Count)."
+    }
+    $probeSource = $probe[0].Extent.Text
+    foreach ($required in @(
+      '$previousErrorActionPreference = $ErrorActionPreference',
+      '$ErrorActionPreference = "Continue"',
+      '$findExitCode = $LASTEXITCODE',
+      '$ErrorActionPreference = $previousErrorActionPreference',
+      'return $findExitCode -eq 0'
+    )) {
+      if (-not $probeSource.Contains($required)) {
+        throw "$installerPath does not preserve the safe uv native-probe contract: missing $required"
+      }
+    }
+  }
+}
+
 function Test-CommandInstallerInstallsPythonBeforeVenv {
-  Write-Step "Checking command installer prepares Python before creating venv"
+  Write-Step "Checking every command installer handles native stderr and prepares Python before venv"
 
   $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("tura-command-install-python-{0}" -f [Guid]::NewGuid())
   $fakeBin = Join-Path $tempRoot "fake-bin"
@@ -269,12 +340,9 @@ function Test-CommandInstallerInstallsPythonBeforeVenv {
   $logPath = Join-Path $tempRoot "uv.log"
   $fakePythonExe = Join-Path $fakeBin "python.exe"
   New-Item -ItemType Directory -Path $tempRoot, $fakeBin | Out-Null
-  Copy-Item -LiteralPath (Join-Path $RepoRoot "commands\web_discover\install.ps1") -Destination (Join-Path $tempRoot "install.ps1")
-  Copy-Item -LiteralPath (Join-Path $RepoRoot "commands\web_discover\requirements.txt") -Destination (Join-Path $tempRoot "requirements.txt")
-
   New-FakePythonExecutable -Path $fakePythonExe -ClassName "Program" -Message "web_discover python deps ok"
 
-  $fakeUv = Join-Path $fakeBin "uv.ps1"
+  $fakeUv = Join-Path $fakeBin "fake-uv.ps1"
   Set-Content -LiteralPath $fakeUv -Value @'
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
 $ErrorActionPreference = 'Stop'
@@ -285,6 +353,8 @@ if ($Args.Count -ge 3 -and $Args[0] -eq 'python' -and $Args[1] -eq 'find') {
     if ($Args -contains '--show-version') { Write-Output '3.12.9' } else { Write-Output (Join-Path $env:TURA_FAKE_UV_ROOT 'python.exe') }
     exit 0
   }
+  Set-Content -LiteralPath $env:TURA_FAKE_UV_STDERR_MARKER -Value 'missing Python was reported on native stderr'
+  [Console]::Error.WriteLine('error: No interpreter found for Python 3.12 in virtual environments, managed installations, search path, or registry')
   exit 1
 }
 
@@ -315,36 +385,78 @@ exit 0
   $fakeUvCmd = Join-Path $fakeBin "uv.cmd"
   Set-Content -LiteralPath $fakeUvCmd -Value @(
     "@echo off",
-    'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0uv.ps1" %*'
+    'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake-uv.ps1" %*'
   )
 
   $previousPath = $env:Path
   $previousLog = $env:TURA_FAKE_UV_LOG
   $previousState = $env:TURA_FAKE_UV_STATE
   $previousRoot = $env:TURA_FAKE_UV_ROOT
+  $previousStderrMarker = $env:TURA_FAKE_UV_STDERR_MARKER
+  $stderrMarkerPath = Join-Path $tempRoot "uv-stderr.txt"
   $env:Path = "$fakeBin$([IO.Path]::PathSeparator)$previousPath"
   $env:TURA_FAKE_UV_LOG = $logPath
   $env:TURA_FAKE_UV_STATE = $statePath
   $env:TURA_FAKE_UV_ROOT = $fakeBin
+  $env:TURA_FAKE_UV_STDERR_MARKER = $stderrMarkerPath
   try {
-    & (Join-Path $tempRoot "install.ps1")
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    $calls = @(Get-Content -LiteralPath $logPath)
-    $findIndex = [Array]::IndexOf($calls, "python find 3.12")
-    $installIndex = [Array]::IndexOf($calls, "python install 3.12")
-    $expectedVenv = [System.IO.Path]::GetFullPath((Join-Path $tempRoot ".venv"))
-    $venvIndex = [Array]::IndexOf($calls, "venv --python 3.12 $expectedVenv")
-    if ($findIndex -lt 0 -or $installIndex -lt 0 -or $venvIndex -lt 0) {
-      throw "Expected uv python find/install and uv venv calls were not observed. Calls: $($calls -join '; ')"
+    $enginePaths = @(Get-PowerShellTestEngines)
+    if ($enginePaths.Count -eq 0) {
+      throw "No PowerShell executable was available for uv stderr regression coverage."
     }
-    if (-not ($findIndex -lt $installIndex -and $installIndex -lt $venvIndex)) {
-      throw "uv calls were in the wrong order: $($calls -join '; ')"
+    if ($env:OS -eq "Windows_NT") {
+      foreach ($requiredEngine in @("powershell.exe", "pwsh.exe")) {
+        $matchingEngine = @($enginePaths | Where-Object { (Split-Path -Leaf $_) -ieq $requiredEngine })
+        if ($matchingEngine.Count -eq 0) {
+          throw "Required PowerShell engine $requiredEngine was not available for uv stderr regression coverage."
+        }
+      }
+    }
+
+    foreach ($commandId in @("read_media", "generate_media", "web_discover")) {
+      Copy-Item -LiteralPath (Join-Path $RepoRoot "commands\$commandId\install.ps1") -Destination (Join-Path $tempRoot "install.ps1") -Force
+      Copy-Item -LiteralPath (Join-Path $RepoRoot "commands\$commandId\requirements.txt") -Destination (Join-Path $tempRoot "requirements.txt") -Force
+
+      foreach ($enginePath in $enginePaths) {
+        Remove-Item -LiteralPath $logPath, $statePath, $stderrMarkerPath -Force -ErrorAction SilentlyContinue
+        $venvPath = Join-Path $tempRoot ".venv"
+        if (Test-Path -LiteralPath $venvPath) {
+          Remove-Item -LiteralPath $venvPath -Recurse -Force
+        }
+
+        Write-Host "uv stderr regression: $commandId under $enginePath"
+        & $enginePath -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tempRoot "install.ps1")
+        if ($LASTEXITCODE -ne 0) {
+          throw "$commandId installer failed uv stderr regression under $enginePath with exit code $LASTEXITCODE."
+        }
+
+        if (-not (Test-Path -LiteralPath $stderrMarkerPath -PathType Leaf)) {
+          throw "$commandId under $enginePath did not exercise the missing-Python stderr branch."
+        }
+        $stderrMarker = Get-Content -LiteralPath $stderrMarkerPath -Raw
+        if ($stderrMarker -notlike "*native stderr*") {
+          throw "$commandId under $enginePath produced an unexpected stderr marker: $stderrMarker"
+        }
+
+        $calls = @(Get-Content -LiteralPath $logPath)
+        $findIndex = [Array]::IndexOf($calls, "python find 3.12")
+        $installIndex = [Array]::IndexOf($calls, "python install 3.12")
+        $expectedVenv = [System.IO.Path]::GetFullPath($venvPath)
+        $venvIndex = [Array]::IndexOf($calls, "venv --python 3.12 $expectedVenv")
+        if ($findIndex -lt 0 -or $installIndex -lt 0 -or $venvIndex -lt 0) {
+          throw "Expected uv python find/install and uv venv calls were not observed for $commandId under $enginePath. Calls: $($calls -join '; ')"
+        }
+        if (-not ($findIndex -lt $installIndex -and $installIndex -lt $venvIndex)) {
+          throw "uv calls were in the wrong order for $commandId under ${enginePath}: $($calls -join '; ')"
+        }
+      }
     }
   } finally {
     $env:Path = $previousPath
     if ($null -eq $previousLog) { Remove-Item Env:TURA_FAKE_UV_LOG -ErrorAction SilentlyContinue } else { $env:TURA_FAKE_UV_LOG = $previousLog }
     if ($null -eq $previousState) { Remove-Item Env:TURA_FAKE_UV_STATE -ErrorAction SilentlyContinue } else { $env:TURA_FAKE_UV_STATE = $previousState }
     if ($null -eq $previousRoot) { Remove-Item Env:TURA_FAKE_UV_ROOT -ErrorAction SilentlyContinue } else { $env:TURA_FAKE_UV_ROOT = $previousRoot }
+    if ($null -eq $previousStderrMarker) { Remove-Item Env:TURA_FAKE_UV_STDERR_MARKER -ErrorAction SilentlyContinue } else { $env:TURA_FAKE_UV_STDERR_MARKER = $previousStderrMarker }
     if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
   }
 }
@@ -613,6 +725,8 @@ Test-RootInstallerBypassesChildPowerShellPolicy
 Test-DownloadedInstallerRefreshesPathBeforeExitCheck
 Test-RootInstallerEnsuresRustAndPowerShellPaths
 Test-NpmPostinstallChecksRuntimeDependenciesOnly
+Test-NpmReleaseManifestOwnsRuntimeConfigCoverage
+Test-UvPythonProbeSafetyContract
 Test-CommandInstallerInstallsPythonBeforeVenv
 Test-CommandInstallerUsesAbsoluteVenvPath
 Test-CommandInstallerRelativeInvocationUsesAbsoluteVenvPath

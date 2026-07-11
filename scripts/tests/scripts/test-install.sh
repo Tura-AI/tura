@@ -106,6 +106,7 @@ step "Checking npm postinstall checks runtime dependencies only"
 npm_install_source=$(cat "$REPO_ROOT/scripts/npm/install-release.mjs")
 for required in \
   "function ensureRuntimeDependencies" \
+  "missingReleaseRuntimeFiles" \
   "refreshRuntimePath" \
   "TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK" \
   'requireRuntimeCommand("sh"' \
@@ -113,6 +114,20 @@ for required in \
   case "$npm_install_source" in
     *"$required"*) ;;
     *) echo "scripts/npm/install-release.mjs is missing required runtime dependency behavior: $required" >&2; exit 1 ;;
+  esac
+done
+
+step "Checking npm release manifest owns runtime config coverage"
+release_artifacts_source=$(cat "$REPO_ROOT/scripts/npm/release-artifacts.mjs")
+for required in \
+  "requiredReleaseRuntimeFiles" \
+  "agents/src/balanced/agent_config.json" \
+  "personas/src/tura/persona_config.json" \
+  "crates/runtime/src/runtime_prompt/debug/prompt.md" \
+  "missingReleaseRuntimeFiles"; do
+  case "$release_artifacts_source" in
+    *"$required"*) ;;
+    *) echo "scripts/npm/release-artifacts.mjs is missing runtime config coverage: $required" >&2; exit 1 ;;
   esac
 done
 for forbidden in "run-install.mjs" "ensureProjectDependencies" ".cargo" "cargo" "rustc" "Bun" "uv"; do

@@ -114,7 +114,6 @@ function main() {
     model,
     "--agent-id",
     "fast",
-    "--sandbox",
     ...(process.env.COMMAND_RUN_AGENT_CODEX_SERVICE_TIER === "auto" ? [] : ["-p"]),
     "--model-reasoning-effort",
     reasoning,
@@ -166,4 +165,3 @@ function main() {
 }
 
 main()
-

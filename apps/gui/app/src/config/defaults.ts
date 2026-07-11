@@ -1,4 +1,4 @@
-export const DEFAULT_MODEL_ID = "openai/gpt-5.5";
+export const DEFAULT_MODEL_ID = "openai/gpt-5.6-sol";
 export const DEFAULT_AGENT_ID = "balanced";
 
 export const DEFAULT_MAIN_FONT =

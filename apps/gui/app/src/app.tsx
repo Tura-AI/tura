@@ -100,6 +100,8 @@ export function App() {
       },
     ),
   );
+  const [loadingSessionId, setLoadingSessionId] = createSignal<string>();
+  let sessionMessageLoadRequest = 0;
   const gatewayUrl = createMemo(() => state().gatewayUrl);
   const directory = createMemo(() => state().directory);
   const selectedSession = createMemo(() => activeSession(state()));
@@ -111,6 +113,9 @@ export function App() {
     const sessionId = state().selectedSessionId;
     return sessionId ? (state().messagesBySession[sessionId] ?? []) : [];
   });
+  const selectedSessionMessagesLoading = createMemo(
+    () => loadingSessionId() === state().selectedSessionId,
+  );
   const slashCommands = createMemo(() => {
     const text = state().composerText.trim();
     if (!text.startsWith("/")) {
@@ -201,6 +206,17 @@ export function App() {
   });
 
   async function openSession(sessionId: string, options: { forceRefreshMessages?: boolean } = {}) {
+    const requestId = ++sessionMessageLoadRequest;
+    const existingMessages = state().messagesBySession[sessionId] ?? [];
+    const shouldFetchMessages = shouldFetchSessionMessages(
+      existingMessages,
+      options.forceRefreshMessages,
+    );
+    if (shouldFetchMessages) {
+      setLoadingSessionId(sessionId);
+    } else {
+      setLoadingSessionId(undefined);
+    }
     writeLastSessionOpened(sessionId);
     acknowledgeSessionAttention(sessionId);
     setState((previous) => ({
@@ -210,8 +226,7 @@ export function App() {
       error: undefined,
     }));
     const client = directoryClient();
-    const existingMessages = state().messagesBySession[sessionId] ?? [];
-    if (!shouldFetchSessionMessages(existingMessages, options.forceRefreshMessages)) {
+    if (!shouldFetchMessages) {
       setState((previous) => ({
         ...previous,
         messagePagingBySession: {
@@ -224,25 +239,32 @@ export function App() {
       }));
       return;
     }
-    const [messagePage] = await Promise.all([
-      safe(() => client.messages(sessionId, { limit: MESSAGE_PAGE_FETCH_LIMIT }), existingMessages),
-    ]);
-    const hasEarlier = !e2eFixture && messagePage.length > MESSAGE_PAGE_SIZE;
-    const messages = hasEarlier ? messagePage.slice(-MESSAGE_PAGE_SIZE) : messagePage;
-    setState((previous) => ({
-      ...previous,
-      messagesBySession: {
-        ...previous.messagesBySession,
-        [sessionId]: mergeMessagePages(previous.messagesBySession[sessionId] ?? [], messages),
-      },
-      messagePagingBySession: {
-        ...previous.messagePagingBySession,
-        [sessionId]: {
-          hasEarlier,
-          loadingEarlier: false,
+    try {
+      const messagePage = await safe(
+        () => client.messages(sessionId, { limit: MESSAGE_PAGE_FETCH_LIMIT }),
+        existingMessages,
+      );
+      const hasEarlier = !e2eFixture && messagePage.length > MESSAGE_PAGE_SIZE;
+      const messages = hasEarlier ? messagePage.slice(-MESSAGE_PAGE_SIZE) : messagePage;
+      setState((previous) => ({
+        ...previous,
+        messagesBySession: {
+          ...previous.messagesBySession,
+          [sessionId]: mergeMessagePages(previous.messagesBySession[sessionId] ?? [], messages),
         },
-      },
-    }));
+        messagePagingBySession: {
+          ...previous.messagePagingBySession,
+          [sessionId]: {
+            hasEarlier,
+            loadingEarlier: false,
+          },
+        },
+      }));
+    } finally {
+      setLoadingSessionId((current) =>
+        requestId === sessionMessageLoadRequest && current === sessionId ? undefined : current,
+      );
+    }
   }
 
   async function loadEarlierMessages(sessionId: string): Promise<boolean> {
@@ -1133,6 +1155,7 @@ export function App() {
           toggleRailGroup,
           selectedSession,
           selectedMessages,
+          selectedSessionMessagesLoading,
           loadEarlierMessages,
           slashCommands,
           openBlankSession,

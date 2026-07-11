@@ -18,6 +18,7 @@ use super::session::final_text_from_session_db;
 
 const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
 const ROUTER_HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const ROUTER_HEALTH_TIMEOUT_ENV: &str = "TURA_ROUTER_HEALTH_TIMEOUT_SECS";
 
 /// Thin-client turn: dispatch to the detached `tura_router` daemon (which owns
 /// session_db and spawns the runtime worker), block for completion, then render
@@ -415,8 +416,9 @@ fn ensure_router_daemon() -> Result<String, String> {
     command
         .spawn()
         .map_err(|err| format!("failed to start router daemon: {err}"))?;
+    let timeout = router_health_timeout();
     let started = Instant::now();
-    while started.elapsed() < ROUTER_HEALTH_TIMEOUT {
+    while started.elapsed() < timeout {
         if let Some(addr) = reachable_router_addr() {
             return Ok(addr);
         }
@@ -424,10 +426,23 @@ fn ensure_router_daemon() -> Result<String, String> {
     }
     if let Some(error) = session_log::service::unreachable_owner_lock_message() {
         return Err(format!(
-            "router daemon did not become healthy within 20 seconds: {error}"
+            "router daemon did not become healthy within {} seconds: {error}",
+            timeout.as_secs()
         ));
     }
-    Err("router daemon did not become healthy within 20 seconds".to_string())
+    Err(format!(
+        "router daemon did not become healthy within {} seconds",
+        timeout.as_secs()
+    ))
+}
+
+fn router_health_timeout() -> Duration {
+    std::env::var(ROUTER_HEALTH_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(ROUTER_HEALTH_TIMEOUT)
 }
 
 fn router_final_text(response: &Value) -> Option<String> {
@@ -490,6 +505,8 @@ fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
         "TURA_COMMAND_RUN_STALL_CHECK_SECS",
         "TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS",
         "TURA_COMMAND_RUN_SHELL",
+        "TURA_BASH_DOCKER_CONTAINER",
+        "TURA_BASH_DOCKER_WORKDIR",
         "TURA_COMMAND_RUN_SANDBOX",
         "TURA_COMMAND_RUN_STRICT_JSON",
         "TURA_COMMAND_RUN_DISABLE_STRICT_JSON",
