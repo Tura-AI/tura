@@ -142,7 +142,7 @@ In the example below, the LLM can derive the optimal strategy for playing rock-p
 > Then map rock, paper, or scissors to the number.
 ```
 
-In programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is guided to reason through the full execution path, reconstruct the failure state, and identify the root cause before writing code. In the published DeepSWE comparison, Tura Balanced passed 10 more of 60 binary task verifiers than Codex CLI; in the GPT-5.6 rewrite comparison, it passed 389/472 checks versus 351/472 for Codex CLI.[^debug-manifests][^rewrite-manifest]
+In programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is guided to reason through the full execution path, reconstruct the failure state, and identify the root cause before writing code. In the published DeepSWE comparison, Tura Balanced passed 10 more of 60 binary task verifiers than Codex CLI. On the same selected 20-task subset, the official DeepSWE results show that increasing reasoning effort from Medium to High improves GPT-5.5 and GPT-5.6 by fewer than 8 percentage points under the standard DeepSWE harness.[^deepswe-effort-subset] Tura Balanced’s 16.7-point improvement is more than twice that observed effort-only gain, indicating that higher reasoning effort alone is unlikely to explain the result and that Tura’s runtime, context management, and execution strategy likely account for part of the improvement. In the GPT-5.6 rewrite comparison, Tura Balanced passed 389/472 checks versus 351/472 for Codex CLI.[^debug-manifests][^rewrite-manifest]
 
 
 ## Runtime Context and Prompt Manager
