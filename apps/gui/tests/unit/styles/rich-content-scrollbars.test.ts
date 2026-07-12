@@ -43,6 +43,9 @@ describe("rich content table scrollbars", () => {
       "padding: var(--space-3) 10px;",
     );
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
+      "min-width: calc(14.5rem / 3);",
+    );
+    expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
       "white-space: normal;",
     );
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
@@ -70,6 +73,9 @@ describe("rich content table scrollbars", () => {
   });
 
   test("lets the first column scroll horizontally with the rest of the table", () => {
+    expect(
+      cssBlock(".rich-table-scroll th:first-child,\n.rich-table-scroll td:first-child"),
+    ).toContain("min-width: calc(5.5rem / 3);");
     expect(
       cssBlock(".rich-table-scroll th:first-child,\n.rich-table-scroll td:first-child"),
     ).not.toContain("position: sticky;");

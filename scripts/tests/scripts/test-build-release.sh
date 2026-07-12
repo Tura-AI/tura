@@ -63,6 +63,48 @@ require_any_path() {
   exit 1
 }
 
+require_runtime_config_files() {
+  for file in \
+    agents/src/balanced/agent_config.json \
+    agents/src/balanced/prompt.md \
+    agents/src/direct/agent_config.json \
+    agents/src/direct/prompt.md \
+    agents/src/direct-text-only/agent_config.json \
+    agents/src/direct-text-only/prompt.md \
+    personas/src/communication_style/communication_style.md \
+    personas/src/communication_style/cli_communication_style.md \
+    personas/src/expression_manifest.json \
+    personas/src/pidan/persona_config.json \
+    personas/src/pidan/prompt/persona.md \
+    personas/src/tura/persona_config.json \
+    personas/src/tura/prompt/persona.md \
+    personas/src/wonderful/persona_config.json \
+    personas/src/wonderful/prompt/persona.md \
+    crates/runtime/src/runtime_prompt/data_research/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/data_research/prompt.md \
+    crates/runtime/src/runtime_prompt/debug/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/debug/prompt.md \
+    crates/runtime/src/runtime_prompt/devops/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/devops/prompt.md \
+    crates/runtime/src/runtime_prompt/editorial/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/editorial/prompt.md \
+    crates/runtime/src/runtime_prompt/frontend/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/frontend/prompt.md \
+    crates/runtime/src/runtime_prompt/interactive_and_3d/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/interactive_and_3d/prompt.md \
+    crates/runtime/src/runtime_prompt/new_build/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/new_build/prompt.md \
+    crates/runtime/src/runtime_prompt/refactoring/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/refactoring/prompt.md \
+    crates/runtime/src/runtime_prompt/visual/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/visual/prompt.md \
+    crates/runtime/src/runtime_prompt/website/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/website/prompt.md
+  do
+    require_path "$TARGET_DIR/$file" "Missing release runtime config or prompt: $file"
+  done
+}
+
 case "$RELEASE_PROBE" in
   release-v[0-9]*.[0-9]*.[0-9]*)
     ;;
@@ -109,9 +151,7 @@ do
 done
 require_path "$TARGET_DIR/config/provider_config.json" "Missing release provider config."
 if [ "$BINARY" -eq 0 ]; then
-  require_path "$TARGET_DIR/agents/src/direct/prompt.md" "Missing release agent prompt."
-  require_path "$TARGET_DIR/personas/src/tura/prompt/persona.md" "Missing release persona prompt."
-  require_path "$TARGET_DIR/crates/runtime/src/runtime_prompt/debug/prompt.md" "Missing release runtime prompt."
+  require_runtime_config_files
   require_path "$TARGET_DIR/crates/tools/src/commands/shell_command/schema.json" "Missing release tool command schema."
   require_path "$TARGET_DIR/commands/read_media/prompt.md" "Missing release external command prompt."
   require_path "$TARGET_DIR/scripts/register-cli.ps1" "Missing release CLI registration script."

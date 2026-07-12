@@ -5,18 +5,33 @@ on:
   pull_request:
     paths:
       - ".github/workflows/npm-install-matrix.yml"
+      - "agents/src/**"
+      - "personas/src/**"
+      - "crates/runtime/src/runtime_prompt/**"
       - "npm/**"
+      - "scripts/install.ps1"
+      - "scripts/install.sh"
       - "scripts/npm/**"
+      - "scripts/tests/scripts/test-install.ps1"
+      - "scripts/tests/scripts/test-install.sh"
       - "package.json"
       - "README.md"
       - "scripts/ARCHITECTURE.md"
   push:
     branches:
       - "codex/**"
+      - "fix/**"
     paths:
       - ".github/workflows/npm-install-matrix.yml"
+      - "agents/src/**"
+      - "personas/src/**"
+      - "crates/runtime/src/runtime_prompt/**"
       - "npm/**"
+      - "scripts/install.ps1"
+      - "scripts/install.sh"
       - "scripts/npm/**"
+      - "scripts/tests/scripts/test-install.ps1"
+      - "scripts/tests/scripts/test-install.sh"
       - "package.json"
       - "README.md"
       - "scripts/ARCHITECTURE.md"

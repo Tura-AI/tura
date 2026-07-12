@@ -10,10 +10,10 @@
   "report_to_user": true,
   "default_config": true,
   "reflection": false,
-  "op_manual": false,
+  "op_manual": true,
   "self_reflection": false,
   "provider": {
-    "current_model": "codex/gpt-5.5",
+    "current_model": "codex/gpt-5.6-sol",
     "default_model_tier": "thinking",
     "max_tokens": 0,
     "model_acceleration_enabled": true,

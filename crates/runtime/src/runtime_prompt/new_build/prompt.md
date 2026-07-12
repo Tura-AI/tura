@@ -26,7 +26,3 @@ Use this prompt when the task is to start a new frontend, backend, full-stack pr
 
 ### Validation:
 - Use lint, format, and typecheck tooling consistently; when practical, add or enable missing checks rather than relying on manual review.
-- Set sufficient lint and test gates to control code operability before considering implementation complete.
-- If the cause, risk, or correct fix is uncertain, say what is uncertain and what evidence is missing; do not invent a confident explanation to make the story sound complete.
-- In audits and reviews, do not focus on keyword counts alone. Focus on architecture decoupling, persistent state machines, protocol drift, patch-style fixes that only plug symptoms, meaningless branch tests, excessive defensive programming, and the performance, stability, and maintenance impact.
-- When auditing code, use the standards and constraints defined in this prompt as the review rubric, not only generic style or surface-level checks.

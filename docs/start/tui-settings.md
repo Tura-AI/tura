@@ -17,7 +17,7 @@
 | Agent | `active_agent` | Any discovered agent id | Selects the default agent behavior for new prompt execution in the workspace. |
 | Persona | `active_persona` | Any discovered persona id | Selects the assistant persona used for prompts and UI presentation defaults. Defaults to `tura`. |
 | Language | `language` | `en`, `zh-CN` | Changes the TUI language and persists the workspace language preference. |
-| Reasoning | `model_variant` | `low`, `medium`, `high`, `xhigh` | Sets the reasoning-effort variant sent with model execution. Defaults to `high`. |
+| Reasoning | `model_variant` | `low`, `medium`, `high`, `xhigh`, `max` | Sets the reasoning-effort variant sent with model execution. Defaults to `high`; `max` is sent only to GPT-5.6 models and maps to `xhigh` for older models. |
 | Priority | `model_acceleration_enabled` | `true`, `false` | Enables or disables priority/accelerated model routing where the selected provider supports it. Defaults to `false`. |
 
 ## Provider auth detail

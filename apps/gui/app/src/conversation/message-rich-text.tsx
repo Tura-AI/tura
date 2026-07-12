@@ -46,7 +46,7 @@ type RichTableRow = {
 
 type RichGroup = { kind: "node"; node: RichNode } | { kind: "gallery"; paths: string[] };
 
-const TABLE_CELL_MIN_CH = 26;
+const TABLE_CELL_MIN_CH = 26 / 3;
 const TABLE_CELL_MAX_CH = 96;
 
 type RichTag =

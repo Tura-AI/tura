@@ -55,6 +55,55 @@ step() {
   printf '\n==> %s\n' "$1"
 }
 
+require_file() {
+  file=$1
+  message=$2
+  [ -f "$file" ] || { echo "$message" >&2; exit 1; }
+}
+
+verify_runtime_config_sources() {
+  step "Checking runtime config and prompt sources"
+  for file in \
+    agents/src/balanced/agent_config.json \
+    agents/src/balanced/prompt.md \
+    agents/src/direct/agent_config.json \
+    agents/src/direct/prompt.md \
+    agents/src/direct-text-only/agent_config.json \
+    agents/src/direct-text-only/prompt.md \
+    personas/src/communication_style/communication_style.md \
+    personas/src/communication_style/cli_communication_style.md \
+    personas/src/expression_manifest.json \
+    personas/src/pidan/persona_config.json \
+    personas/src/pidan/prompt/persona.md \
+    personas/src/tura/persona_config.json \
+    personas/src/tura/prompt/persona.md \
+    personas/src/wonderful/persona_config.json \
+    personas/src/wonderful/prompt/persona.md \
+    crates/runtime/src/runtime_prompt/data_research/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/data_research/prompt.md \
+    crates/runtime/src/runtime_prompt/debug/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/debug/prompt.md \
+    crates/runtime/src/runtime_prompt/devops/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/devops/prompt.md \
+    crates/runtime/src/runtime_prompt/editorial/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/editorial/prompt.md \
+    crates/runtime/src/runtime_prompt/frontend/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/frontend/prompt.md \
+    crates/runtime/src/runtime_prompt/interactive_and_3d/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/interactive_and_3d/prompt.md \
+    crates/runtime/src/runtime_prompt/new_build/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/new_build/prompt.md \
+    crates/runtime/src/runtime_prompt/refactoring/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/refactoring/prompt.md \
+    crates/runtime/src/runtime_prompt/visual/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/visual/prompt.md \
+    crates/runtime/src/runtime_prompt/website/prompt_identity.json \
+    crates/runtime/src/runtime_prompt/website/prompt.md
+  do
+    require_file "$REPO_ROOT/$file" "Missing runtime config or prompt source: $file"
+  done
+}
+
 ensure_profile_file() {
   profile=$1
   [ -e "$profile" ] && return 0
@@ -805,6 +854,7 @@ install_js_workspace() {
 
 validate_option_contracts
 cd "$REPO_ROOT"
+verify_runtime_config_sources
 
 step "Checking root dependency installers"
 ensure_windows_powershell

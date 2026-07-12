@@ -1,4 +1,4 @@
-export const AGENT_REASONING_LEVELS = ["low", "medium", "high", "xhigh"] as const;
+export const AGENT_REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export type AgentReasoningLevel = (typeof AGENT_REASONING_LEVELS)[number];
 
@@ -128,6 +128,9 @@ export function normalizeAgentReasoningLevel(value: string | undefined): AgentRe
   }
   if (normalized === "xhigh" || normalized === "highest") {
     return "xhigh";
+  }
+  if (normalized === "max") {
+    return "max";
   }
   return "high";
 }

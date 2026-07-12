@@ -240,17 +240,19 @@ export function reducer(state: AppState, action: AppAction): AppState {
         | undefined;
       const sessionID = normalized.sessionID;
       if (!properties) return state;
-      if (state.session && sessionID !== state.session.id) return state;
+      if (!sessionID) return state;
+      const commandStatesBySession = updateCommandEventState(
+        state.commandStatesBySession,
+        sessionID,
+        properties,
+      );
+      if (state.session && sessionID !== state.session.id) {
+        return { ...state, commandStatesBySession };
+      }
       const messages = applyCommandUpdate(state.messages, sessionID, properties);
       return {
         ...state,
-        status: "busy",
-        session: state.session ? { ...state.session, status: "busy" } : state.session,
-        sessions: sessionID
-          ? state.sessions.map((session) =>
-              session.id === sessionID ? { ...session, status: "busy" } : session,
-            )
-          : state.sessions,
+        commandStatesBySession,
         messages,
         refreshState: refreshStateAfterMessages(
           state.refreshState,
@@ -348,8 +350,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
     if (action.event.payload?.type === "session.deleted") {
       const properties = action.event.payload.properties as { sessionID?: string } | undefined;
       const sessionID = properties?.sessionID;
-      if (sessionID)
-        return { ...state, sessions: state.sessions.filter((session) => session.id !== sessionID) };
+      if (sessionID) {
+        const { [sessionID]: _removed, ...commandStatesBySession } = state.commandStatesBySession;
+        return {
+          ...state,
+          sessions: state.sessions.filter((session) => session.id !== sessionID),
+          commandStatesBySession,
+        };
+      }
     }
     if (action.event.payload?.type === "permission.asked" && normalized.permission) {
       return { ...state, permissions: upsertById(state.permissions, normalized.permission) };
@@ -673,6 +681,30 @@ function updateSessionForMessage(
   return changed && message.role === "user"
     ? next.sort((left, right) => sessionSortAt(right) - sessionSortAt(left))
     : next;
+}
+
+function updateCommandEventState(
+  states: AppState["commandStatesBySession"],
+  sessionID: string,
+  update: CommandUpdatedEventProperties,
+): AppState["commandStatesBySession"] {
+  const sessionStates = states[sessionID] ?? {};
+  const previous = sessionStates[update.commandID];
+  const eventSeq = update.eventSeq ?? undefined;
+  const updatedAt = update.updatedAt ?? undefined;
+  if (
+    (previous?.eventSeq !== undefined && eventSeq !== undefined && eventSeq < previous.eventSeq) ||
+    (previous?.updatedAt !== undefined && updatedAt !== undefined && updatedAt < previous.updatedAt)
+  ) {
+    return states;
+  }
+  return {
+    ...states,
+    [sessionID]: {
+      ...sessionStates,
+      [update.commandID]: { status: update.status, eventSeq, updatedAt },
+    },
+  };
 }
 
 function messageTime(message: Message): number | undefined {

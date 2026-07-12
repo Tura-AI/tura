@@ -11,6 +11,7 @@
 
 # Rust build output
 target/
+/target-deep-swe-debug/
 /bin/
 /NONE
 
@@ -46,6 +47,7 @@ db/qdrant/qdrant.exe
 
 # Logs, benchmark output, screenshots, and temporary run artifacts
 log/
+/benchmark/
 crates/provider/log/
 artifacts/
 tmp/

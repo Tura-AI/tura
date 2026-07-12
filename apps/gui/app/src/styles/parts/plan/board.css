@@ -136,6 +136,13 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .plan-status-indicator.status-question::before {
+    animation: none;
+    opacity: 0.9;
+  }
+}
+
 .board-cards {
   align-content: start;
   gap: var(--space-3);

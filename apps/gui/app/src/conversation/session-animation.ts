@@ -8,6 +8,16 @@ export function sessionIsWorking(status: Session["status"] | undefined): boolean
   return sessionShowsBusyAnimation(status);
 }
 
+export function sessionHasRunningCommand(messages: Message[]): boolean {
+  return messages.some((message) =>
+    message.parts.some((part) => {
+      if (part.tool !== "command_run") return false;
+      const state = recordValue(part.state);
+      return isRunningCommandStatus(state.status);
+    }),
+  );
+}
+
 export function messagesWithSessionThinking(
   messages: Message[],
   session: Session | undefined,
@@ -36,4 +46,17 @@ function sessionThinkingMessage(session: Session): Message {
 
 function sessionUpdatedAt(session: Session): number | undefined {
   return session.updated_at ?? session.created_at;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function isRunningCommandStatus(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    /^(running|pending|busy|in[_ -]?progress|executing|started)$/iu.test(value.trim())
+  );
 }

@@ -45,6 +45,57 @@ function Write-Step {
   Write-Host "==> $Message"
 }
 
+function Assert-RuntimeConfigSource {
+  param([string]$RelativePath)
+  $path = Join-Path $RepoRoot $RelativePath
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    throw "Missing runtime config or prompt source: $RelativePath"
+  }
+}
+
+function Test-RuntimeConfigSources {
+  Write-Step "Checking runtime config and prompt sources"
+  foreach ($relativePath in @(
+    "agents\src\balanced\agent_config.json",
+    "agents\src\balanced\prompt.md",
+    "agents\src\direct\agent_config.json",
+    "agents\src\direct\prompt.md",
+    "agents\src\direct-text-only\agent_config.json",
+    "agents\src\direct-text-only\prompt.md",
+    "personas\src\communication_style\communication_style.md",
+    "personas\src\communication_style\cli_communication_style.md",
+    "personas\src\expression_manifest.json",
+    "personas\src\pidan\persona_config.json",
+    "personas\src\pidan\prompt\persona.md",
+    "personas\src\tura\persona_config.json",
+    "personas\src\tura\prompt\persona.md",
+    "personas\src\wonderful\persona_config.json",
+    "personas\src\wonderful\prompt\persona.md",
+    "crates\runtime\src\runtime_prompt\data_research\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\data_research\prompt.md",
+    "crates\runtime\src\runtime_prompt\debug\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\debug\prompt.md",
+    "crates\runtime\src\runtime_prompt\devops\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\devops\prompt.md",
+    "crates\runtime\src\runtime_prompt\editorial\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\editorial\prompt.md",
+    "crates\runtime\src\runtime_prompt\frontend\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\frontend\prompt.md",
+    "crates\runtime\src\runtime_prompt\interactive_and_3d\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\interactive_and_3d\prompt.md",
+    "crates\runtime\src\runtime_prompt\new_build\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\new_build\prompt.md",
+    "crates\runtime\src\runtime_prompt\refactoring\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\refactoring\prompt.md",
+    "crates\runtime\src\runtime_prompt\visual\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\visual\prompt.md",
+    "crates\runtime\src\runtime_prompt\website\prompt_identity.json",
+    "crates\runtime\src\runtime_prompt\website\prompt.md"
+  )) {
+    Assert-RuntimeConfigSource $relativePath
+  }
+}
+
 function Test-InstallOptionContracts {
   if ($SkipUv -and -not $SkipCommands) {
     throw "-SkipUv was supplied, but command installers require uv. Remove -SkipUv or also pass -SkipCommands."
@@ -723,8 +774,19 @@ function Test-UvPythonAvailable {
   if ($Offline) {
     $findArgs += "--offline"
   }
-  & uv @findArgs > $null 2>&1
-  return $LASTEXITCODE -eq 0
+  $findExitCode = 1
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    # Windows PowerShell 5.1 turns native stderr into an ErrorRecord. A missing
+    # interpreter is an expected probe result, so capture the exit code without
+    # allowing $ErrorActionPreference = "Stop" to terminate the installer.
+    $ErrorActionPreference = "Continue"
+    & uv @findArgs > $null 2>&1
+    $findExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  return $findExitCode -eq 0
 }
 
 function Ensure-CommandPython {
@@ -875,6 +937,7 @@ function Invoke-JsWorkspaceInstall {
 
 Test-InstallOptionContracts
 Set-Location $RepoRoot
+Test-RuntimeConfigSources
 
 Write-Step "Checking root dependency installers"
 Ensure-PowerShellTool

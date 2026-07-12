@@ -329,7 +329,7 @@ mod tests {
                         "type": "function_call",
                         "name": "command_run",
                         "call_id": "call_image",
-                        "arguments": "{\"commands\":[]}",
+                        "arguments": "{\"commands\":[{\"step\":1,\"command_type\":\"read_media\",\"command_line\":\"read_media image.png\"}]}",
                         "status": "completed"
                     },
                     {

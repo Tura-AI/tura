@@ -27,7 +27,7 @@ const env = {
   COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS: "0",
   COMMAND_RUN_AGENT_AGENTS:
     process.env.COMMAND_RUN_AGENT_AGENTS ||
-    "tura-fast-planning-shll,tura-fast-shll,current-shll,codex-main",
+    "tura-fast-planning-shll,tura-fast-shll,codex-cli",
   COMMAND_RUN_AGENT_CODEX_MODEL: process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5",
   COMMAND_RUN_AGENT_TURA_MODEL: process.env.COMMAND_RUN_AGENT_TURA_MODEL || "openai/gpt-5.5",
   COMMAND_RUN_AGENT_REASONING_EFFORT: process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low",

@@ -137,9 +137,9 @@
 
 .rich-table-scroll th,
 .rich-table-scroll td {
-  min-width: 14.5rem;
-  width: max(14.5rem, var(--rich-table-cell-width, 26ch));
-  max-width: max(14.5rem, var(--rich-table-cell-width, 26ch));
+  min-width: calc(14.5rem / 3);
+  width: max(calc(14.5rem / 3), var(--rich-table-cell-width, calc(26ch / 3)));
+  max-width: max(calc(14.5rem / 3), var(--rich-table-cell-width, calc(26ch / 3)));
   padding: var(--space-3) 10px;
   border: 0;
   overflow: visible;
@@ -166,9 +166,9 @@
 
 .rich-table-scroll th:first-child,
 .rich-table-scroll td:first-child {
-  min-width: 5.5rem;
-  width: max(5.5rem, var(--rich-table-cell-width, 12ch));
-  max-width: max(5.5rem, var(--rich-table-cell-width, 12ch));
+  min-width: calc(5.5rem / 3);
+  width: max(calc(5.5rem / 3), var(--rich-table-cell-width, 4ch));
+  max-width: max(calc(5.5rem / 3), var(--rich-table-cell-width, 4ch));
 }
 
 .rich-table-scroll th {

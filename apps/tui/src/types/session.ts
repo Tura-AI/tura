@@ -155,6 +155,13 @@ export function sessionStatusText(status: unknown): SessionStatusValue {
   return "idle";
 }
 
+export function sessionHasQuestionStatus(session: Session): boolean {
+  const management = objectValue(session.task_management);
+  if (management.status === "question") return true;
+  const tasks = management.tasks;
+  return Array.isArray(tasks) && tasks.some((task) => objectValue(task).status === "question");
+}
+
 export function sessionDirectory(session: Session): string {
   return session.directory ?? "";
 }

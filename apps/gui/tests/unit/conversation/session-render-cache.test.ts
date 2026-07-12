@@ -7,6 +7,10 @@ const conversationSource = readFileSync(
   resolve(import.meta.dir, "../../../app/src/conversation/conversation-view.tsx"),
   "utf8",
 );
+const conversationOutletSource = readFileSync(
+  resolve(import.meta.dir, "../../../app/src/app/conversation-page-outlet.tsx"),
+  "utf8",
+);
 const composerLayoutCss = readFileSync(
   resolve(import.meta.dir, "../../../app/src/styles/parts/layout/composer-controls.css"),
   "utf8",
@@ -14,12 +18,24 @@ const composerLayoutCss = readFileSync(
 
 describe("session render cache", () => {
   test("openSession reuses cached messages before calling the gateway", () => {
-    const guardIndex = appSource.indexOf("shouldFetchSessionMessages(existingMessages");
+    const guardIndex = appSource.indexOf("shouldFetchSessionMessages(");
     const fetchIndex = appSource.indexOf("client.messages(sessionId");
 
     expect(guardIndex).toBeGreaterThanOrEqual(0);
     expect(fetchIndex).toBeGreaterThan(guardIndex);
     expect(appSource).not.toContain("e2eFixture && existingMessages.length > 0");
+  });
+
+  test("uncached session switches show the existing text-free loading animation", () => {
+    expect(appSource).toContain("const [loadingSessionId, setLoadingSessionId]");
+    expect(appSource).toContain("setLoadingSessionId(sessionId)");
+    expect(appSource).toContain("const requestId = ++sessionMessageLoadRequest");
+    expect(appSource).toContain("setLoadingSessionId((current) =>");
+    expect(appSource).toContain("requestId === sessionMessageLoadRequest");
+    expect(appSource).toContain("current === sessionId ? undefined : current");
+    expect(conversationOutletSource).toContain("selectedSessionMessagesLoading");
+    expect(conversationOutletSource).toContain("<ConversationLoadingPlaceholder />");
+    expect(conversationOutletSource).toContain("when={!props.selectedSessionMessagesLoading()}");
   });
 
   test("transcript renders a bounded virtual window instead of keeping visited rows mounted", () => {

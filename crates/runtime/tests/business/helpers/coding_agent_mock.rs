@@ -802,6 +802,26 @@ pub(crate) fn task_status_doing_with_visible_reply_response(index: usize) -> Val
             }),
             "Done. The requested work is complete.",
         ),
+        1 => tool_response_with_content(
+            "call_task_status_doing_done",
+            "command_run",
+            json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "task_status",
+                        "command_line": json!({
+                            "task_group": "商城前端",
+                            "status": "done"
+                        }).to_string()
+                    }
+                ]
+            }),
+            &format!(
+                "I saw the doing task_status backfill. {}",
+                "x".repeat(1_050)
+            ),
+        ),
         _ => assistant_response("Unexpected follow-up turn."),
     }
 }
@@ -826,7 +846,28 @@ pub(crate) fn task_status_only_then_final_response(index: usize) -> Value {
             }),
             Value::Null,
         ),
-        _ => assistant_response("I saw the task_status backfill and Operation Manual."),
+        1 => tool_response_with_content(
+            "call_task_status_only_done",
+            "command_run",
+            json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "task_status",
+                        "command_line": json!({
+                            "task_group": "GUI avatar effect",
+                            "task_type": ["frontend", "visual"],
+                            "status": "done"
+                        }).to_string()
+                    }
+                ]
+            }),
+            &format!(
+                "I saw the task_status backfill and Operation Manual. {}",
+                "x".repeat(1_050)
+            ),
+        ),
+        _ => assistant_response("Unexpected follow-up turn."),
     }
 }
 
@@ -992,6 +1033,24 @@ pub(crate) fn write_llm_config(workspace: &Path, addr: SocketAddr) -> PathBuf {
     for route in ROUTES {
         routes.insert(
             (*route).to_string(),
+            json!({
+                "default_temperature": 0.0,
+                "providers": [{
+                    "provider": "openai",
+                    "model": "mock-coder",
+                    "temperature": 0.0
+                }]
+            }),
+        );
+    }
+    for route in [
+        "codex/gpt-5.6",
+        "codex/gpt-5.6-sol",
+        "codex/gpt-5.6-terra",
+        "codex/gpt-5.6-luna",
+    ] {
+        routes.insert(
+            route.to_string(),
             json!({
                 "default_temperature": 0.0,
                 "providers": [{

@@ -175,7 +175,13 @@ fn coding_agent_executes_command_run_command_before_stream_finishes() {
         workspace.join("streamed-first.txt").exists(),
         workspace.join("streamed-second.txt").exists()
     );
-    assert_eq!(result.session.state, SessionState::Completed);
+    assert_eq!(
+        result.session.state,
+        SessionState::Completed,
+        "final_error={:?}; session log: {:#?}",
+        result.final_error,
+        result.session.session_log
+    );
     assert!(
         workspace.join("streamed-first.txt").exists(),
         "first streamed command should create streamed-first.txt"
@@ -232,7 +238,13 @@ fn streamed_single_task_status_is_backfilled_when_final_response_lacks_tool_call
     )
     .expect("streamed task_status-only first turn should continue to a follow-up provider turn");
 
-    assert_eq!(result.session.state, SessionState::Completed);
+    assert_eq!(
+        result.session.state,
+        SessionState::Completed,
+        "final_error={:?}; session log: {:#?}",
+        result.final_error,
+        result.session.session_log
+    );
     assert_eq!(
         result.session.task_type,
         vec!["visual".to_string(), "frontend".to_string()]
@@ -269,7 +281,7 @@ fn streamed_single_task_status_is_backfilled_when_final_response_lacks_tool_call
 }
 
 #[test]
-fn non_planning_agent_visible_reply_with_task_status_doing_completes_without_followup_turn() {
+fn non_planning_agent_visible_reply_with_task_status_doing_is_backfilled_on_followup_turn() {
     let _session_db = session_db_support::SessionDbTestService::start(&ENV_LOCK);
     let workspace = create_rust_workspace();
     let provider = MockProvider::start_task_status_doing_with_visible_reply();
@@ -307,14 +319,30 @@ fn non_planning_agent_visible_reply_with_task_status_doing_completes_without_fol
         },
         workspace,
     )
-    .expect("non-planning task_status doing session should complete");
+    .expect("non-planning task_status doing session should backfill before completion");
 
-    assert_eq!(result.session.state, SessionState::Completed);
     assert_eq!(
-        result.session.task_plan.detailed_tasks.first().map(|task| task.status),
-        Some(runtime::state_machine::session_management::PlanStatus::Done),
-        "active doing task should be settled when the visible answer already completed the non-planning turn; log={:#?}",
+        result.session.state,
+        SessionState::Completed,
+        "final_error={:?}; session log: {:#?}",
+        result.final_error,
         result.session.session_log
+    );
+    let requests = provider
+        .requests
+        .lock()
+        .expect("mock provider requests lock");
+    assert!(
+        requests.len() >= 2,
+        "single doing task_status must be backfilled before the runtime loop can end; requests={requests:#?}"
+    );
+    let second_request = requests
+        .get(1)
+        .expect("second provider request should exist");
+    let serialized = second_request.to_string();
+    assert!(
+        serialized.contains("call_task_status_doing") && serialized.contains("task_status"),
+        "second provider request should replay the doing task_status output: {second_request:#?}"
     );
     assert!(result
         .session
@@ -381,7 +409,13 @@ fn task_status_only_first_turn_is_backfilled_with_manuals_on_followup_turn() {
     )
     .expect("task_status-only first turn should continue to a follow-up provider turn");
 
-    assert_eq!(result.session.state, SessionState::Completed);
+    assert_eq!(
+        result.session.state,
+        SessionState::Completed,
+        "final_error={:?}; session log: {:#?}",
+        result.final_error,
+        result.session.session_log
+    );
     assert_eq!(
         result.session.task_type,
         vec!["visual".to_string(), "frontend".to_string()]

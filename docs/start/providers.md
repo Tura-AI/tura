@@ -143,8 +143,8 @@ A route looks like this:
     "thinking": {
       "default_temperature": 0.2,
       "providers": [
-        { "provider": "codex", "model": "gpt-5.5" },
-        { "provider": "openai", "model": "gpt-5.5-pro" }
+        { "provider": "codex", "model": "gpt-5.6" },
+        { "provider": "openai", "model": "gpt-5.6-sol" }
       ]
     }
   }
@@ -170,7 +170,7 @@ tura config model-tier thinking
 Set the default model for a tier:
 
 ```bash
-tura config model-tier thinking openai/gpt-5.5-pro
+tura config model-tier thinking openai/gpt-5.6-sol
 ```
 
 That command updates the first provider in `routes.thinking.providers` in the
@@ -187,7 +187,7 @@ The key fields are:
 | `default_model_tier` | Tier name to use when the agent has no explicit current model. Usually `thinking` or `fast`. |
 | `tura_llm_name` | Legacy/runtime tier name. It is kept aligned with `default_model_tier`. |
 | `current_model` | Optional explicit `provider/model` override for that agent. |
-| `model_reasoning_effort` | Reasoning level passed with the runtime request: `low`, `medium`, `high`, or `xhigh`. |
+| `model_reasoning_effort` | Reasoning level passed with the runtime request: `low`, `medium`, `high`, `xhigh`, or `max`; `max` is sent only to GPT-5.6 models and maps to `xhigh` for older models. |
 | `model_acceleration_enabled` | Enables priority model routing for the agent when true. |
 | `service_tier` | Usually `priority` when acceleration is enabled. |
 | `temperature`, `stream`, `max_tokens`, `tool_choice`, `time_out_ms` | Runtime call options. |
@@ -206,7 +206,7 @@ agent.current_model -> provider/model
 
 So if `balanced` has `default_model_tier: "thinking"`, it uses the first model
 in `routes.thinking.providers`. If `balanced.provider.current_model` is set to
-`openai/gpt-5.5-pro`, that exact model wins over the tier default.
+`openai/gpt-5.6-sol`, that exact model wins over the tier default.
 
 Inspect an agent model binding:
 
@@ -217,7 +217,7 @@ tura agent model balanced
 Set an explicit model for an agent:
 
 ```bash
-tura agent model balanced openai/gpt-5.5-pro --reasoning high --priority
+tura agent model balanced openai/gpt-5.6-sol --reasoning high --priority
 ```
 
 This updates the agent config by writing `provider.current_model`, preserving the
@@ -240,8 +240,8 @@ tura provider list
 tura provider status openai
 tura provider set-auth openai --key "$OPENAI_API_KEY" --type api
 tura config model-tiers
-tura config model-tier thinking openai/gpt-5.5-pro
-tura agent model balanced openai/gpt-5.5-pro --reasoning high --priority
+tura config model-tier thinking openai/gpt-5.6-sol
+tura agent model balanced openai/gpt-5.6-sol --reasoning high --priority
 ```
 
 When editing JSON manually:

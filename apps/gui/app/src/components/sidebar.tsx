@@ -1,5 +1,6 @@
 import {
   type FileInfo,
+  type Message,
   type PlanStatus,
   type ProductIssue,
   type Project,
@@ -38,6 +39,7 @@ export function WorkspaceTree(props: {
   projects: Project[];
   directory?: string;
   sessions: Session[];
+  messagesBySession: Record<string, Message[]>;
   sessionsLoading: boolean;
   selectedSessionId?: string;
   productIssues: ProductIssue[];
@@ -77,14 +79,20 @@ export function WorkspaceTree(props: {
   function workspaceAttentionStatus(worktree: string): PlanStatus | undefined {
     const sessions = activeWorkspaceSessions(worktree)
       .filter((session) =>
-        shouldShowSessionAttention(session, props.attentionAcknowledged(session)),
+        shouldShowSessionAttention(
+          session,
+          props.attentionAcknowledged(session),
+          props.messagesBySession[session.id],
+        ),
       )
       .sort(
         (left, right) =>
           normalizeTimeMs(sessionUpdatedAt(right) ?? 0) -
           normalizeTimeMs(sessionUpdatedAt(left) ?? 0),
       );
-    return sessions[0] ? planSessionStatus(sessions[0]) : undefined;
+    return sessions[0]
+      ? planSessionStatus(sessions[0], props.messagesBySession[sessions[0].id])
+      : undefined;
   }
   const archivedWorkspaces = createMemo(() => {
     const groups = new Map<string, { project: Project; sessions: Session[] }>();
@@ -193,6 +201,7 @@ export function WorkspaceTree(props: {
                       activeTab={props.activeTab}
                       expandedGroup={props.expandedGroup}
                       sessions={activeWorkspaceSessions(project.worktree)}
+                      messagesBySession={props.messagesBySession}
                       sessionsLoading={props.sessionsLoading}
                       attentionAcknowledged={props.attentionAcknowledged}
                       selectedSessionId={props.selectedSessionId}

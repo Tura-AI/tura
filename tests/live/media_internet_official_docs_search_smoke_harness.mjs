@@ -163,7 +163,6 @@ async function main() {
     model,
     "--agent-id",
     turaCliAgentName(agentId),
-    "--sandbox",
     ...(process.env.COMMAND_RUN_AGENT_CODEX_SERVICE_TIER === "auto" ? [] : ["-p"]),
     "--model-reasoning-effort",
     reasoning,

@@ -63,6 +63,10 @@ export interface CommandUpdatedEventProperties {
   updatedAt: number;
 }
 
+export function commandStatusIsRunning(status: string): boolean {
+  return /^(running|pending|busy|in[_ -]?progress|executing|started)$/iu.test(status.trim());
+}
+
 export type GatewayEventPayload =
   | { type: "server.connected"; properties: Record<string, unknown> }
   | { type: "session.created"; properties: SessionEventProperties }

@@ -35,6 +35,7 @@ export interface AppState {
   sessions: Session[];
   messages: Message[];
   liveStreams: Record<string, LiveStream>;
+  commandStatesBySession: Record<string, Record<string, CommandEventState>>;
   refreshState: Record<string, RefreshSessionState>;
   sessionPreviews: Record<string, string>;
   seenSessionMessageCounts: Record<string, number>;
@@ -77,6 +78,12 @@ export interface LiveStream {
   text: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface CommandEventState {
+  status: string;
+  eventSeq?: number;
+  updatedAt?: number;
 }
 
 export interface RefreshSessionState {
@@ -149,6 +156,7 @@ export function initialState(cwd: string): AppState {
     sessions: [],
     messages: [],
     liveStreams: {},
+    commandStatesBySession: {},
     refreshState: {},
     sessionPreviews: {},
     seenSessionMessageCounts: {},

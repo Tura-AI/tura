@@ -184,11 +184,26 @@ pub(super) fn command_run_cached_context_messages_are_valid(
     for message in messages {
         match message.get("type").and_then(serde_json::Value::as_str) {
             Some("function_call") => {
-                if let Some(call_id) = message
-                    .get("call_id")
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|value| !value.trim().is_empty())
-                {
+                if message.get("name").and_then(serde_json::Value::as_str) == Some("command_run") {
+                    let Some(call_id) = message
+                        .get("call_id")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                    else {
+                        return false;
+                    };
+                    let Some(arguments) = message
+                        .get("arguments")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|arguments| {
+                            serde_json::from_str::<serde_json::Value>(arguments).ok()
+                        })
+                    else {
+                        return false;
+                    };
+                    if !(arguments.get("commands").is_some() || arguments.get("steps").is_some()) {
+                        return false;
+                    }
                     seen_calls.insert(call_id.to_string());
                 }
             }
@@ -203,11 +218,43 @@ pub(super) fn command_run_cached_context_messages_are_valid(
                 if !seen_calls.contains(call_id) {
                     return false;
                 }
+                if command_run_function_output_contains_command_identity(message) {
+                    return false;
+                }
             }
             _ => {}
         }
     }
     true
+}
+
+fn command_run_function_output_contains_command_identity(message: &serde_json::Value) -> bool {
+    let Some(output) = message.get("output") else {
+        return false;
+    };
+    match output {
+        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .is_some_and(|value| value_contains_command_identity(&value)),
+        serde_json::Value::Array(items) => items.iter().any(|item| {
+            item.get("text")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                .is_some_and(|value| value_contains_command_identity(&value))
+        }),
+        other => value_contains_command_identity(other),
+    }
+}
+
+fn value_contains_command_identity(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => map.iter().any(|(field, value)| {
+            matches!(field.as_str(), "step" | "command_type" | "command_line")
+                || value_contains_command_identity(value)
+        }),
+        serde_json::Value::Array(items) => items.iter().any(value_contains_command_identity),
+        _ => false,
+    }
 }
 
 fn command_run_provider_context_items(value: &serde_json::Value) -> Vec<serde_json::Value> {
@@ -439,32 +486,16 @@ fn command_run_context_result(
     input_command: Option<&serde_json::Value>,
 ) -> serde_json::Value {
     let mut item = serde_json::Map::new();
-    item.insert(
-        "step".to_string(),
-        result
-            .get("step")
-            .or_else(|| input_command.and_then(|input| input.get("step")))
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-    );
-    item.insert(
-        "command_type".to_string(),
-        result
-            .get("command_type")
-            .or_else(|| result.get("command"))
-            .or_else(|| result.get("command_name"))
-            .or_else(|| result.get("tool_name"))
-            .or_else(|| input_command.and_then(|input| input.get("command_type")))
-            .or_else(|| input_command.and_then(|input| input.get("command")))
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-    );
-    if let Some(command_line) = command_run_context_command_line(result, input_command) {
-        item.insert(
-            "command_line".to_string(),
-            serde_json::Value::String(command_line),
-        );
-    }
+    let command_type = result
+        .get("command_type")
+        .or_else(|| result.get("command"))
+        .or_else(|| result.get("command_name"))
+        .or_else(|| result.get("tool_name"))
+        .or_else(|| input_command.and_then(|input| input.get("command_type")))
+        .or_else(|| input_command.and_then(|input| input.get("command")))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let command_type_name = command_type.as_str().map(ToString::to_string);
     item.insert(
         "success".to_string(),
         result
@@ -473,9 +504,13 @@ fn command_run_context_result(
             .unwrap_or(serde_json::Value::Null),
     );
     if let Some(output) = result.get("output") {
+        let mut output = strip_command_run_context_noise(output.clone());
+        if command_type_name.as_deref() == Some("apply_patch") {
+            output = summarize_apply_patch_output_for_context(output);
+        }
         item.insert(
             "output".to_string(),
-            compact_command_run_context_value(strip_command_run_context_noise(output.clone())),
+            compact_command_run_context_value(output),
         );
     }
     if let Some(error) = result.get("error") {
@@ -487,17 +522,104 @@ fn command_run_context_result(
     serde_json::Value::Object(item)
 }
 
-fn command_run_context_command_line(
-    result: &serde_json::Value,
-    input_command: Option<&serde_json::Value>,
-) -> Option<String> {
-    input_command
-        .and_then(|input| input.get("command_line"))
-        .or_else(|| result.get("command_line"))
-        .map(|value| match value {
-            serde_json::Value::String(text) => text.clone(),
-            other => serde_json::to_string(other).unwrap_or_else(|_| other.to_string()),
-        })
+fn summarize_apply_patch_output_for_context(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) if looks_like_patch_change(&map) => {
+            summarize_patch_change_object(map)
+        }
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    let value = match key.as_str() {
+                        "changes" => summarize_patch_changes_value(value),
+                        "failed_change" => summarize_patch_change_value(value),
+                        _ => summarize_apply_patch_output_for_context(value),
+                    };
+                    (key, value)
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(summarize_apply_patch_output_for_context)
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn summarize_patch_changes_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(summarize_patch_change_value)
+                .collect(),
+        ),
+        other => summarize_patch_change_value(other),
+    }
+}
+
+fn summarize_patch_change_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => summarize_patch_change_object(map),
+        other => serde_json::json!({
+            "omitted_from_context": true,
+            "value_type": json_value_type(&other),
+        }),
+    }
+}
+
+fn summarize_patch_change_object(
+    map: serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let hunk_count = map
+        .get("hunks")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| items.len());
+    let line_count = map.get("hunks").map(count_patch_hunk_lines).unwrap_or(0);
+    let mut summary = serde_json::Map::new();
+    for key in ["kind", "path"] {
+        if let Some(value) = map.get(key).cloned() {
+            summary.insert(key.to_string(), value);
+        }
+    }
+    if let Some(count) = hunk_count {
+        summary.insert("hunk_count".to_string(), serde_json::json!(count));
+    }
+    if line_count > 0 {
+        summary.insert("line_count".to_string(), serde_json::json!(line_count));
+    }
+    summary.insert(
+        "hunks_omitted_from_context".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    serde_json::Value::Object(summary)
+}
+
+fn looks_like_patch_change(map: &serde_json::Map<String, serde_json::Value>) -> bool {
+    map.contains_key("hunks") && (map.contains_key("path") || map.contains_key("kind"))
+}
+
+fn count_patch_hunk_lines(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::String(_) => 1,
+        serde_json::Value::Array(items) => items.iter().map(count_patch_hunk_lines).sum(),
+        serde_json::Value::Object(map) => map.values().map(count_patch_hunk_lines).sum(),
+        _ => 0,
+    }
+}
+
+fn json_value_type(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
 }
 
 fn compact_command_run_context_value(value: serde_json::Value) -> serde_json::Value {
@@ -564,8 +686,9 @@ fn compact_json_to_string(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        command_run_function_output_for_context, command_run_summary_for_context,
-        immutable_tool_result_context_messages, tool_result_context_cache,
+        command_run_cached_context_messages_are_valid, command_run_function_output_for_context,
+        command_run_summary_for_context, immutable_tool_result_context_messages,
+        tool_result_context_cache,
     };
     use serde_json::{json, Value};
 
@@ -640,7 +763,9 @@ mod tests {
             !text.contains("ready"),
             "ready event leaked into model context: {text}"
         );
-        assert_eq!(context["results"][0]["command_line"], "echo ok");
+        assert!(context["results"][0].get("step").is_none());
+        assert!(context["results"][0].get("command_type").is_none());
+        assert!(context["results"][0].get("command_line").is_none());
     }
 
     #[test]
@@ -674,6 +799,7 @@ mod tests {
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["type"], "function_call");
+        assert_eq!(messages[0]["name"], "command_run");
         assert_eq!(messages[0]["call_id"], "call_task_status_only");
         let arguments: Value =
             serde_json::from_str(messages[0]["arguments"].as_str().expect("arguments string"))
@@ -686,7 +812,9 @@ mod tests {
         let output = messages[1]["output"].as_str().expect("output JSON string");
         let output = parse_command_run_context(output);
         assert_eq!(output["results"].as_array().expect("results").len(), 1);
-        assert_eq!(output["results"][0]["command_type"], "task_status");
+        assert!(output["results"][0].get("step").is_none());
+        assert!(output["results"][0].get("command_type").is_none());
+        assert!(output["results"][0].get("command_line").is_none());
         assert_eq!(
             output["results"][0]["output"]["task_status"]["task_group"],
             "runtime backfill"
@@ -727,10 +855,7 @@ mod tests {
 
         let context = parse_command_run_context(&text);
         assert_eq!(context["results"][0]["success"], false);
-        assert_eq!(
-            context["results"][0]["command_line"],
-            "cargo test -p runtime nope"
-        );
+        assert!(context["results"][0].get("command_line").is_none());
         assert_eq!(context["results"][0]["output"]["exit_code"], 101);
         assert_eq!(
             context["results"][0]["output"]["stdout"],
@@ -766,7 +891,7 @@ mod tests {
         }));
 
         let context = parse_command_run_context(&text);
-        assert_eq!(context["results"][0]["command_line"], "echo ok");
+        assert!(context["results"][0].get("command_line").is_none());
         assert_eq!(context["results"][0]["output"]["exit_code"], 0);
         assert_eq!(context["results"][0]["output"]["stdout"], "ok\n");
         assert_eq!(context["results"][0]["output"]["stderr"], "");
@@ -806,10 +931,9 @@ mod tests {
         }));
 
         let context = parse_command_run_context(&text);
-        assert_eq!(
-            context["results"][0]["command_line"],
-            "patch body omitted for renderer test"
-        );
+        assert!(context["results"][0].get("step").is_none());
+        assert!(context["results"][0].get("command_type").is_none());
+        assert!(context["results"][0].get("command_line").is_none());
         assert_eq!(
             context["results"][0]["output"]["stdout"],
             "Success. Updated files."
@@ -819,6 +943,17 @@ mod tests {
             context["results"][0]["output"]["changes"][0]["path"],
             "app.txt"
         );
+        assert_eq!(
+            context["results"][0]["output"]["changes"][0]["hunk_count"],
+            1
+        );
+        assert_eq!(
+            context["results"][0]["output"]["changes"][0]["line_count"],
+            2
+        );
+        assert!(context["results"][0]["output"]["changes"][0]
+            .get("hunks")
+            .is_none());
     }
 
     #[test]
@@ -858,10 +993,7 @@ mod tests {
 
         let context = parse_command_run_context(&text);
         assert_eq!(context["results"][0]["success"], false);
-        assert_eq!(
-            context["results"][0]["command_line"],
-            "patch body omitted for renderer test"
-        );
+        assert!(context["results"][0].get("command_line").is_none());
         assert_eq!(
             context["results"][0]["output"]["stderr"],
             "ContextMismatch: app.txt"
@@ -870,6 +1002,17 @@ mod tests {
             context["results"][0]["output"]["output"]["failed_change"]["path"],
             "app.txt"
         );
+        assert_eq!(
+            context["results"][0]["output"]["output"]["failed_change"]["hunk_count"],
+            1
+        );
+        assert_eq!(
+            context["results"][0]["output"]["output"]["failed_change"]["line_count"],
+            3
+        );
+        assert!(context["results"][0]["output"]["output"]["failed_change"]
+            .get("hunks")
+            .is_none());
     }
 
     #[test]
@@ -899,10 +1042,7 @@ mod tests {
         }));
 
         let context = parse_command_run_context(&text);
-        assert_eq!(
-            context["results"][0]["command_line"],
-            "{\"pattern\":\"needle\",\"path\":\"src\"}"
-        );
+        assert!(context["results"][0].get("command_line").is_none());
         assert_eq!(
             context["results"][0]["output"]["stdout"],
             "{\"results\":[{\"matches\":[{\"path\":\"src/lib.rs\",\"line_number\":12,\"content\":\"let needle = true;\"}]}]}"
@@ -1004,7 +1144,9 @@ mod tests {
         assert_eq!(arguments["commands"][0]["command_line"], "echo ok");
         let output = messages[1]["output"].as_str().expect("output JSON string");
         let output = parse_command_run_context(output);
-        assert_eq!(output["results"][0]["command_line"], "echo ok");
+        assert!(output["results"][0].get("step").is_none());
+        assert!(output["results"][0].get("command_type").is_none());
+        assert!(output["results"][0].get("command_line").is_none());
         value["context_cache"] = tool_result_context_cache(&value);
         assert!(command_run_function_output_for_context(&json!({
             "tool_name": "command_run",
@@ -1022,6 +1164,243 @@ mod tests {
             }
         }))
         .contains("\"stdout\": \"ok\\n\""));
+    }
+
+    #[test]
+    fn command_run_provider_replay_uses_paired_call_for_all_command_types() {
+        for command_type in [
+            "apply_patch",
+            "shell_command",
+            "bash",
+            "zsh",
+            "generate_media",
+            "web_discover",
+            "planning",
+            "task_status",
+            "read_media",
+        ] {
+            let value = json!({
+                "tool_name": "command_run",
+                "provider_metadata": { "id": format!("call_{command_type}") },
+                "input": {
+                    "commands": [{
+                        "step": 1,
+                        "command_type": command_type,
+                        "command_line": format!("input for {command_type}")
+                    }]
+                },
+                "output": {
+                    "results": [{
+                        "step": 1,
+                        "command_type": command_type,
+                        "success": true,
+                        "output": {
+                            "ok": true,
+                            "exit_code": 0,
+                            "stdout": format!("output for {command_type}\n"),
+                            "stderr": ""
+                        }
+                    }]
+                }
+            });
+            let messages = immutable_tool_result_context_messages(&value);
+            assert_eq!(messages.len(), 2, "{command_type}");
+            assert_eq!(messages[0]["type"], "function_call", "{command_type}");
+            assert_eq!(messages[0]["name"], "command_run", "{command_type}");
+            assert_eq!(messages[0]["call_id"], format!("call_{command_type}"));
+            let arguments: Value =
+                serde_json::from_str(messages[0]["arguments"].as_str().expect("arguments string"))
+                    .expect("arguments JSON");
+            assert_eq!(arguments["commands"][0]["command_type"], command_type);
+            assert_eq!(
+                arguments["commands"][0]["command_line"],
+                format!("input for {command_type}")
+            );
+
+            assert_eq!(
+                messages[1]["type"], "function_call_output",
+                "{command_type}"
+            );
+            assert_eq!(messages[1]["call_id"], format!("call_{command_type}"));
+            let output = messages[1]["output"]
+                .as_str()
+                .or_else(|| {
+                    messages[1]["output"]
+                        .as_array()
+                        .and_then(|items| items.first())
+                        .and_then(|item| item.get("text"))
+                        .and_then(Value::as_str)
+                })
+                .expect("output JSON string or media text item");
+            let output = parse_command_run_context(output);
+            assert!(output["results"][0].get("step").is_none(), "{command_type}");
+            assert!(
+                output["results"][0].get("command_type").is_none(),
+                "{command_type}"
+            );
+            assert!(
+                output["results"][0].get("command_line").is_none(),
+                "{command_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_run_read_media_replay_uses_paired_call_with_media_content() {
+        let value = json!({
+            "tool_name": "command_run",
+            "provider_metadata": { "id": "call_read_media" },
+            "input": {
+                "commands": [{
+                    "step": 1,
+                    "command_type": "read_media",
+                    "command_line": "read_media image.png"
+                }]
+            },
+            "output": {
+                "results": [{
+                    "step": 1,
+                    "command_type": "read_media",
+                    "success": true,
+                    "output": {
+                        "summary": "image preview",
+                        "visual_preview_count": 1,
+                        "visual_previews": [{
+                            "type": "image_url",
+                            "image_url": { "url": "data:image/png;base64,AAA" }
+                        }]
+                    }
+                }]
+            }
+        });
+        let messages = immutable_tool_result_context_messages(&value);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["type"], "function_call");
+        assert_eq!(messages[0]["name"], "command_run");
+        let arguments: Value =
+            serde_json::from_str(messages[0]["arguments"].as_str().expect("arguments string"))
+                .expect("arguments JSON");
+        assert_eq!(
+            arguments["commands"][0]["command_line"],
+            "read_media image.png"
+        );
+        let output = messages[1]["output"]
+            .as_array()
+            .expect("media output array");
+        assert_eq!(output[0]["type"], "input_text");
+        assert!(output.iter().any(|item| item["type"] == "input_image"));
+        assert!(messages[0].to_string().contains("read_media image.png"));
+    }
+
+    #[test]
+    fn command_run_cached_context_messages_require_paired_call_with_arguments() {
+        let old_messages = vec![
+            json!({
+                "type": "function_call",
+                "call_id": "call_old",
+                "name": "command_run",
+                "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"echo old\"}]}"
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "call_old",
+                "output": "{\"results\":[{\"command_type\":\"shell_command\",\"command_line\":\"echo old\"}]}"
+            }),
+        ];
+        assert!(!command_run_cached_context_messages_are_valid(
+            &old_messages
+        ));
+        let old_type_only_messages = vec![
+            json!({
+                "type": "function_call",
+                "call_id": "call_old_type",
+                "name": "command_run",
+                "arguments": "{\"commands\":[{\"command_type\":\"shell_command\"}]}"
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "call_old_type",
+                "output": "{\"results\":[{\"command_type\":\"shell_command\",\"command_line\":\"echo old\"}]}"
+            }),
+        ];
+        assert!(!command_run_cached_context_messages_are_valid(
+            &old_type_only_messages
+        ));
+        let orphan_output_messages = vec![json!({
+            "type": "function_call_output",
+            "call_id": "call_orphan",
+            "output": "{\"results\":[{\"command_type\":\"shell_command\",\"command_line\":\"echo old\"}]}"
+        })];
+        assert!(!command_run_cached_context_messages_are_valid(
+            &orphan_output_messages
+        ));
+        let old_empty_anchor_messages = vec![
+            json!({
+                "type": "function_call",
+                "call_id": "call_old_empty",
+                "name": "command_run",
+                "arguments": "{}"
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "call_old_empty",
+                "output": "{\"results\":[{\"command_type\":\"shell_command\",\"command_line\":\"echo old\"}]}"
+            }),
+        ];
+        assert!(!command_run_cached_context_messages_are_valid(
+            &old_empty_anchor_messages
+        ));
+        for (field, value) in [
+            ("command", "shell_command"),
+            ("command_name", "shell_command"),
+        ] {
+            let old_alias_messages = vec![
+                json!({
+                    "type": "function_call",
+                    "call_id": format!("call_old_{field}"),
+                    "name": "command_run",
+                    "arguments": serde_json::json!({
+                        "commands": [{ field: value }]
+                    }).to_string()
+                }),
+                json!({
+                    "type": "function_call_output",
+                    "call_id": format!("call_old_{field}"),
+                    "output": "{\"results\":[{\"command_type\":\"shell_command\",\"command_line\":\"echo old\"}]}"
+                }),
+            ];
+            assert!(
+                !command_run_cached_context_messages_are_valid(&old_alias_messages),
+                "cached context with {field} duplicated in output must be rebuilt"
+            );
+        }
+
+        let new_messages = immutable_tool_result_context_messages(&json!({
+            "tool_name": "command_run",
+            "provider_metadata": { "id": "call_new" },
+            "input": {
+                "commands": [
+                    { "step": 1, "command_type": "shell_command", "command_line": "echo new" }
+                ]
+            },
+            "output": {
+                "results": [{
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "success": true,
+                    "output": {
+                        "ok": true,
+                        "exit_code": 0,
+                        "stdout": "new\n",
+                        "stderr": ""
+                    }
+                }]
+            }
+        }));
+        assert!(command_run_cached_context_messages_are_valid(&new_messages));
+        assert_eq!(new_messages.len(), 2);
+        assert_eq!(new_messages[0]["type"], "function_call");
+        assert_eq!(new_messages[1]["type"], "function_call_output");
     }
 
     #[test]

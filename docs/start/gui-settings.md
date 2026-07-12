@@ -33,7 +33,7 @@
 | --- | --- | --- | --- |
 | Selected model | `model`, with derived `active_provider` and `active_model` in `<workspace>/.tura/config.conf` | Any selected `provider/model` pair | Selects the model used for workspace prompt execution. |
 | Active agent | `active_agent` in `<workspace>/.tura/config.conf` | Any discovered agent id | Selects the default agent used for workspace prompt execution. |
-| Reasoning effort | `model_variant` in `<workspace>/.tura/config.conf` | `low`, `medium`, `high`, `xhigh` | Sets the model reasoning-effort variant for workspace prompts. |
+| Reasoning effort | `model_variant` in `<workspace>/.tura/config.conf` | `low`, `medium`, `high`, `xhigh`, `max` | Sets the model reasoning-effort variant for workspace prompts. `max` is sent only to GPT-5.6 models and maps to `xhigh` for older models. |
 | Priority routing | `model_acceleration_enabled` in `<workspace>/.tura/config.conf` | `true`, `false` | Enables priority/accelerated routing where the selected provider supports it. |
 
 ## Model tier settings
@@ -62,7 +62,7 @@
 | Agent provider | `<project-root>/agents/src/<agent-id>/agent_config.json`, inside the agent `provider` config | Any provider from the model config options | Sets the provider used by that custom agent. |
 | Agent model | `<project-root>/agents/src/<agent-id>/agent_config.json`, inside the agent `provider` config | Any model available for the selected provider | Sets the model override used by that custom agent. If unset, the agent falls back to its default model tier. |
 | Agent default model tier | `<project-root>/agents/src/<agent-id>/agent_config.json`, inside the agent `provider` config | `thinking`, `fast` | Selects which model tier the agent uses when it has no concrete model override. |
-| Agent reasoning effort | `<project-root>/agents/src/<agent-id>/agent_config.json`, inside the agent `provider` config | `low`, `medium`, `high`, `xhigh` | Sets the reasoning-effort override for that agent. |
+| Agent reasoning effort | `<project-root>/agents/src/<agent-id>/agent_config.json`, inside the agent `provider` config | `low`, `medium`, `high`, `xhigh`, `max` | Sets the reasoning-effort override for that agent. |
 | Agent priority routing | `<project-root>/agents/src/<agent-id>/agent_config.json`, inside the agent `provider` config | `true`, `false` | Enables priority/accelerated routing for that agent where supported. |
 | Delete agent | `<project-root>/agents/src/<agent-id>/` | Dynamic non-default agents only | Deletes the custom agent directory. Static agents and `default_config` agents are protected. |
 

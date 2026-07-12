@@ -473,6 +473,7 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
 
 fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
     let mut patterns = vec![
+        "- Current call schema is mandatory: call `command_run` with a non-empty `commands` array only. Every command object must include `command_type`, `command_line`, and `step`. Historical replay may show `arguments: {}` as a bookkeeping placeholder; never copy that placeholder into a new call.",
         "- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.",
         "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch; independent commands with no output dependency must share one step.",
         "- Do not run test/probe invocations before you have read the relevant code and determined the actual CLI command set.",
@@ -482,7 +483,7 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
         "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
-        "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command, step 3 run multiple known test commands in the same step.",
+        "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command and use `apply_patch` to write or modify the testing scripts, step 3 run multiple known test commands in the same step.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
         "- Example long-running database check: step 1 run `sleep 60` with `timeout_ms` comfortably above 60000, step 2 run the known database probe script, step 3 read the script output log such as `logs/db-check.log` and summarize the findings.",
     ];
@@ -720,6 +721,32 @@ mod tests {
                     .map(serde_json::Value::String)
                     .collect()
             )
+        );
+    }
+
+    #[test]
+    fn command_run_description_warns_not_to_copy_replay_placeholder_arguments() {
+        let commands = default_command_run_commands();
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+            false,
+        );
+        let description = schema["function"]["description"]
+            .as_str()
+            .expect("command_run description should be a string");
+
+        assert!(
+            description.contains("Historical replay may show `arguments: {}`"),
+            "{description}"
+        );
+        assert!(
+            description.contains("never copy that placeholder"),
+            "{description}"
+        );
+        assert!(
+            description.contains("non-empty `commands` array"),
+            "{description}"
         );
     }
 

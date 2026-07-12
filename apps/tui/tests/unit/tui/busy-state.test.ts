@@ -47,3 +47,42 @@ test("closed session picker does not animate invisible background busy sessions"
 
   assert.equal(hasActiveAnimation(state), false);
 });
+
+test("session picker keeps heartbeat active for question sessions after opening them", () => {
+  const question = {
+    ...sessionFixture("question", "idle"),
+    task_management: { status: "question" },
+  };
+  const state = reducer(
+    reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session: question,
+      messages: [],
+      permissions: [],
+      sessions: [question],
+    }),
+    { type: "sessions", value: [question], open: true },
+  );
+
+  assert.equal(hasActiveAnimation(state), true);
+});
+
+test("session picker keeps heartbeat active for a session with a running command", () => {
+  const active = sessionFixture("active", "idle");
+  const commandSession = sessionFixture("command", "idle");
+  const state = {
+    ...reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session: active,
+      messages: [],
+      permissions: [],
+      sessions: [active, commandSession],
+    }),
+    sessionsOpen: true,
+    commandStatesBySession: {
+      command: { c1: { status: "running", eventSeq: 1 } },
+    },
+  };
+
+  assert.equal(hasActiveAnimation(state), true);
+});

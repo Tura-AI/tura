@@ -2,6 +2,7 @@ import type { Message, Session } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import {
   messagesWithSessionThinking,
+  sessionHasRunningCommand,
   sessionShowsBusyAnimation,
 } from "../../../app/src/conversation/session-animation";
 
@@ -84,6 +85,15 @@ describe("session busy animation state", () => {
       "user-1",
       "assistant-runtime",
     ]);
+  });
+
+  test("detects running command_run parts and stops on terminal status", () => {
+    const running = assistantRuntimeRunningMessage();
+    running.parts[0]!.tool = "command_run";
+    expect(sessionHasRunningCommand([running])).toBe(true);
+
+    running.parts[0]!.state = { status: "completed" };
+    expect(sessionHasRunningCommand([running])).toBe(false);
   });
 
   test("does not start thinking from a stale doing task on an idle session", () => {

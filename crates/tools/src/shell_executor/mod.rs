@@ -18,6 +18,8 @@ use std::process::Command;
 
 const BACKGROUND_PROCESS_KIND_ENV: &str = "TURA_BACKGROUND_PROCESS_KIND";
 const RUNTIME_SHELL_BACKGROUND_PROCESS_KIND: &str = "runtime_shell";
+const BASH_DOCKER_CONTAINER_ENV: &str = "TURA_BASH_DOCKER_CONTAINER";
+const BASH_DOCKER_WORKDIR_ENV: &str = "TURA_BASH_DOCKER_WORKDIR";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShellKind {
@@ -73,12 +75,20 @@ pub fn execute(
             .arg(shell::normalize_bash_command(&command_text));
         command
     } else if use_bash {
-        let bash = shell::bash_executable();
-        let mut command = Command::new(bash);
-        command
-            .arg("-lc")
-            .arg(shell::normalize_bash_command(&command_text));
-        command
+        if let Some((container, workdir)) = docker_bash_target() {
+            let mut command = Command::new("docker");
+            command
+                .args(["exec", "-w", &workdir, &container, "/bin/bash", "-lc"])
+                .arg(shell::normalize_bash_command(&command_text));
+            command
+        } else {
+            let bash = shell::bash_executable();
+            let mut command = Command::new(bash);
+            command
+                .arg("-lc")
+                .arg(shell::normalize_bash_command(&command_text));
+            command
+        }
     } else if cfg!(windows) {
         let windows_shell = shell::windows_shell_executable();
         let mut command = Command::new(windows_shell.executable);
@@ -150,12 +160,20 @@ pub async fn execute_async(
             .arg(shell::normalize_bash_command(&command_text));
         command
     } else if use_bash {
-        let bash = shell::bash_executable();
-        let mut command = tokio::process::Command::new(bash);
-        command
-            .arg("-lc")
-            .arg(shell::normalize_bash_command(&command_text));
-        command
+        if let Some((container, workdir)) = docker_bash_target() {
+            let mut command = tokio::process::Command::new("docker");
+            command
+                .args(["exec", "-w", &workdir, &container, "/bin/bash", "-lc"])
+                .arg(shell::normalize_bash_command(&command_text));
+            command
+        } else {
+            let bash = shell::bash_executable();
+            let mut command = tokio::process::Command::new(bash);
+            command
+                .arg("-lc")
+                .arg(shell::normalize_bash_command(&command_text));
+            command
+        }
     } else if cfg!(windows) {
         let windows_shell = shell::windows_shell_executable();
         let mut command = tokio::process::Command::new(windows_shell.executable);
@@ -190,6 +208,17 @@ pub async fn execute_async(
 
 pub fn looks_read_only(command_line: &str) -> bool {
     readonly::looks_read_only(command_line)
+}
+
+fn docker_bash_target() -> Option<(String, String)> {
+    let container = std::env::var(BASH_DOCKER_CONTAINER_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())?;
+    let workdir = std::env::var(BASH_DOCKER_WORKDIR_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "/testbed".to_string());
+    Some((container, workdir))
 }
 
 fn apply_current_dotenv_env(command: &mut Command) {

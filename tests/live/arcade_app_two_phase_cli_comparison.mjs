@@ -25,10 +25,10 @@ const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win
 const gatewayExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_gateway.exe" : "tura_gateway")
 const claudeExe = findClaudeExe()
 const piExe = findPiExe()
-const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "codex-gpt55,deepseek-coder,qwen-coder,google-flash-lite")
+const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "codex-cli,deepseek-coder,qwen-coder,google-flash-lite")
 
 const defaultModels = {
-  "codex-gpt55": process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "openai/gpt-5.5",
+  "codex-cli": process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "openai/gpt-5.5",
   "deepseek-coder": process.env.COMMAND_RUN_AGENT_DEEPSEEK_MODEL || "deepseek/deepseek-v4-pro",
   "qwen-coder": process.env.COMMAND_RUN_AGENT_QWEN_MODEL || "qwen/qwen3.6-max-preview",
   "google-flash-lite": process.env.COMMAND_RUN_AGENT_GOOGLE_MODEL || "google/gemini-3.1-flash-lite",
@@ -36,9 +36,7 @@ const defaultModels = {
 
 function parseAgents(value) {
   const alias = new Map([
-    ["codex", "codex-gpt55"],
-    ["codex-gpt55", "codex-gpt55"],
-    ["openai", "codex-gpt55"],
+    ["codex-cli", "codex-cli"],
     ["deepseek", "deepseek-coder"],
     ["deepseek-coder", "deepseek-coder"],
     ["qwen", "qwen-coder"],
@@ -620,7 +618,6 @@ async function runAgent(agent, template, index) {
       "exec",
       "--json",
       "--skip-git-repo-check",
-      "--sandbox",
       "--session-id",
       sessionId,
       "--agent-id",

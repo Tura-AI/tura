@@ -212,7 +212,7 @@ fn command_run_results(output: &Value) -> Option<Vec<Value>> {
     output.get("results")?.as_array().cloned()
 }
 
-fn command_run_sandbox_enabled() -> bool {
+pub(crate) fn command_run_sandbox_enabled() -> bool {
     std::env::var("TURA_COMMAND_RUN_SANDBOX")
         .ok()
         .map(|value| {

@@ -12,6 +12,7 @@ import {
   firstExistingPath,
   guiDistCandidates,
   missingPackageFiles,
+  missingReleaseRuntimeFiles,
   releaseArchiveName,
   releaseConfigFiles,
   releaseRuntimeExcludedDirs,
@@ -125,6 +126,10 @@ try {
         path.join(stageRelease, releaseRelative),
         releaseRelative
       );
+    }
+    const missingRuntime = missingReleaseRuntimeFiles(stageRoot);
+    if (missingRuntime.length > 0) {
+      fail(`release archive is missing runtime config files: ${missingRuntime.map((file) => path.relative(stageRoot, file)).join(", ")}`);
     }
   }
 

@@ -264,7 +264,7 @@ fn build_responses_payload(
     if let Some(tools) = &options.tools {
         payload["tools"] = Value::Array(tools.iter().map(codex_tool_schema).collect());
     }
-    if let Some(reasoning_effort) = normalized_reasoning_effort(options) {
+    if let Some(reasoning_effort) = normalized_reasoning_effort(options, model) {
         payload["reasoning"] = json!({ "effort": reasoning_effort });
         if profile.include_encrypted_reasoning {
             payload["include"] = json!(["reasoning.encrypted_content"]);

@@ -394,17 +394,6 @@ fn emit_command_run_events(
         }
         let command = display_command(&result);
         emit_jsonl(&json!({
-            "type": "item.started",
-            "item": {
-                "id": format!("item_{}", *item_index),
-                "type": "command_execution",
-                "command": command,
-                "aggregated_output": "",
-                "exit_code": null,
-                "status": "in_progress"
-            }
-        }))?;
-        emit_jsonl(&json!({
             "type": "item.completed",
             "item": {
                 "id": format!("item_{}", *item_index),
@@ -426,15 +415,6 @@ fn emit_file_change_event(
     cwd: &Path,
 ) -> Result<(), String> {
     let changes = file_changes(result, cwd);
-    emit_jsonl(&json!({
-        "type": "item.started",
-        "item": {
-            "id": format!("item_{}", *item_index),
-            "type": "file_change",
-            "changes": changes,
-            "status": "in_progress"
-        }
-    }))?;
     emit_jsonl(&json!({
         "type": "item.completed",
         "item": {

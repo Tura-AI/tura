@@ -177,7 +177,7 @@ export function AppLoadingPlaceholder(props: {
   );
 }
 
-function ConversationLoadingPlaceholder() {
+export function ConversationLoadingPlaceholder() {
   return (
     <section class="conversation-view" aria-label={t("loading")}>
       <div class="conversation-grid">

@@ -43,6 +43,44 @@ export const releaseRuntimeFiles = [
   ["scripts/unregister-cli.sh", "scripts/unregister-cli.sh"]
 ];
 
+export const requiredReleaseRuntimeFiles = [
+  "agents/src/balanced/agent_config.json",
+  "agents/src/balanced/prompt.md",
+  "agents/src/direct/agent_config.json",
+  "agents/src/direct/prompt.md",
+  "agents/src/direct-text-only/agent_config.json",
+  "agents/src/direct-text-only/prompt.md",
+  "personas/src/communication_style/communication_style.md",
+  "personas/src/communication_style/cli_communication_style.md",
+  "personas/src/expression_manifest.json",
+  "personas/src/pidan/persona_config.json",
+  "personas/src/pidan/prompt/persona.md",
+  "personas/src/tura/persona_config.json",
+  "personas/src/tura/prompt/persona.md",
+  "personas/src/wonderful/persona_config.json",
+  "personas/src/wonderful/prompt/persona.md",
+  "crates/runtime/src/runtime_prompt/data_research/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/data_research/prompt.md",
+  "crates/runtime/src/runtime_prompt/debug/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/debug/prompt.md",
+  "crates/runtime/src/runtime_prompt/devops/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/devops/prompt.md",
+  "crates/runtime/src/runtime_prompt/editorial/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/editorial/prompt.md",
+  "crates/runtime/src/runtime_prompt/frontend/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/frontend/prompt.md",
+  "crates/runtime/src/runtime_prompt/interactive_and_3d/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/interactive_and_3d/prompt.md",
+  "crates/runtime/src/runtime_prompt/new_build/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/new_build/prompt.md",
+  "crates/runtime/src/runtime_prompt/refactoring/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/refactoring/prompt.md",
+  "crates/runtime/src/runtime_prompt/visual/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/visual/prompt.md",
+  "crates/runtime/src/runtime_prompt/website/prompt_identity.json",
+  "crates/runtime/src/runtime_prompt/website/prompt.md"
+];
+
 export const releaseRuntimeExcludedDirs = [
   ".venv",
   "tests",
@@ -144,6 +182,15 @@ export function requiredDesktopReleaseFiles(root, platform = process.platform) {
 
 export function missingReleaseFiles(root, platform = process.platform) {
   return requiredReleaseFiles(root, platform).filter((file) => !existsSync(file));
+}
+
+export function requiredReleaseRuntimeConfigFiles(root) {
+  const releaseDir = releaseRoot(root);
+  return requiredReleaseRuntimeFiles.map((file) => path.join(releaseDir, file));
+}
+
+export function missingReleaseRuntimeFiles(root) {
+  return requiredReleaseRuntimeConfigFiles(root).filter((file) => !existsSync(file));
 }
 
 export function missingPackageFiles(root) {

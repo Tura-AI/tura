@@ -219,7 +219,7 @@
   "settingProviderHint": "Up/Down select a provider, Enter opens OAuth or API key settings; Esc returns to settings top.",
   "settingRootHint": "Up/Down select, Enter opens; Esc returns to chat.",
   "settingReasoning": "Reasoning effort",
-  "settingReasoningHint": "Up/Down select, Enter apply; Esc returns to settings top. Reasoning effort affects model thinking depth and latency; options are low, medium, high, and xhigh.",
+  "settingReasoningHint": "Up/Down select, Enter apply; Esc returns to settings top. Reasoning effort affects model thinking depth and latency; options are low, medium, high, xhigh, and max. Max is sent only to GPT-5.6 models; other models map it to xhigh.",
   "settingSession": "Session type",
   "settingSessionHint": "Up/Down select, Enter apply; Esc returns to settings top. Session type controls the runtime mode sent with new prompts.",
   "settingStallGuard": "Command stall guard",

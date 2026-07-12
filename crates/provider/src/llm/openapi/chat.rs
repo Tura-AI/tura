@@ -266,7 +266,7 @@ pub(crate) fn build_chat_payload(
     insert_opt(
         &mut payload,
         "reasoning_effort",
-        normalized_reasoning_effort(options).map(Value::from),
+        normalized_reasoning_effort(options, model).map(Value::from),
     );
     insert_opt(&mut payload, "prediction", options.prediction.clone());
     insert_opt(
@@ -397,7 +397,7 @@ fn should_pass_chat_tool_choice(provider: &str, model: &str, options: &CallOptio
     }
     if provider.eq_ignore_ascii_case("openrouter")
         && model.to_ascii_lowercase().starts_with("qwen/")
-        && normalized_reasoning_effort(options).is_some()
+        && normalized_reasoning_effort(options, model).is_some()
     {
         return false;
     }

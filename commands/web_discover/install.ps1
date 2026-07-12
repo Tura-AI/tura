@@ -38,8 +38,18 @@ function Test-UvPythonAvailable {
   if ($Offline) {
     $findArgs += "--offline"
   }
-  & uv @findArgs > $null 2>&1
-  return $LASTEXITCODE -eq 0
+  $findExitCode = 1
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    # Windows PowerShell 5.1 promotes native stderr to an ErrorRecord. Missing
+    # Python is an expected probe result and must be handled by the exit code.
+    $ErrorActionPreference = "Continue"
+    & uv @findArgs > $null 2>&1
+    $findExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  return $findExitCode -eq 0
 }
 
 function Ensure-PythonRuntime {

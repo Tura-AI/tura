@@ -537,7 +537,26 @@ pub fn process_manas_internal(
                 break;
             }
 
+            let has_visible_reply = visible_runtime_reply(&runtime).is_some();
+
             let has_active_doing_task = active_doing_task_user_message(session).is_some();
+            if has_visible_reply {
+                if complete_active_doing_task_after_non_planning_reply(
+                    session,
+                    !session.goal_mode && !supports_planning,
+                ) {
+                    persist_session_checkpoint(session, "task_auto_completed");
+                }
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    has_active_doing_task = has_active_doing_task,
+                    "turn completed without command_run but produced a user-visible reply; ending session after any required task_status backfill"
+                );
+                break;
+            }
             if !has_active_doing_task {
                 if should_retry_no_tool_task_status(
                     session,
@@ -566,10 +585,7 @@ pub fn process_manas_internal(
             }
 
             if !session.goal_mode && !supports_planning {
-                if complete_active_doing_task_after_non_planning_reply(
-                    session,
-                    visible_runtime_reply(&runtime).is_some(),
-                ) {
+                if complete_active_doing_task_after_non_planning_reply(session, false) {
                     persist_session_checkpoint(session, "task_auto_completed");
                 }
                 info!(
@@ -639,6 +655,37 @@ pub fn process_manas_internal(
     } else {
         "completed"
     };
+    commit_terminal_session_checkpoint(session, git_event);
+
+    for agent in agents.iter_mut() {
+        agent.state = if final_session_state == SessionState::Failed {
+            AgentState::Failed
+        } else {
+            AgentState::Completed
+        };
+        agent.updated_at = Utc::now();
+    }
+
+    let final_runtime = create_dummy_runtime(last_runtime_id.unwrap_or_default(), session)?;
+
+    Ok(ManasResult {
+        agents: agents.to_vec(),
+        session: session.clone(),
+        final_runtime,
+        final_error,
+    })
+}
+
+fn commit_terminal_session_checkpoint(session: &SessionManagement, git_event: &str) -> bool {
+    if crate::router_command_run::command_run_sandbox_enabled() {
+        info!(
+            session_id = %session.session_id,
+            event = git_event,
+            "skipping workspace session checkpoint commit because command_run sandbox is enabled"
+        );
+        return false;
+    }
+
     match crate::workspace_git::commit_session_checkpoint(session, git_event) {
         Ok(Some(commit)) => info!(
             session_id = %session.session_id,
@@ -658,24 +705,7 @@ pub fn process_manas_internal(
             "failed to commit workspace session checkpoint"
         ),
     }
-
-    for agent in agents.iter_mut() {
-        agent.state = if final_session_state == SessionState::Failed {
-            AgentState::Failed
-        } else {
-            AgentState::Completed
-        };
-        agent.updated_at = Utc::now();
-    }
-
-    let final_runtime = create_dummy_runtime(last_runtime_id.unwrap_or_default(), session)?;
-
-    Ok(ManasResult {
-        agents: agents.to_vec(),
-        session: session.clone(),
-        final_runtime,
-        final_error,
-    })
+    true
 }
 
 fn manas_max_turns() -> u64 {
@@ -736,17 +766,15 @@ fn complete_active_doing_task_after_non_planning_reply(
 }
 
 fn should_auto_complete_non_planning_doing_after_tool_turn(
-    goal_mode: bool,
-    supports_planning: bool,
-    terminal_task_status: Option<&str>,
-    visible_reply_already_published: bool,
-    terminal_status_followed_command: bool,
+    _goal_mode: bool,
+    _supports_planning: bool,
+    _terminal_task_status: Option<&str>,
+    _visible_reply_already_published: bool,
+    _terminal_status_followed_command: bool,
 ) -> bool {
-    !goal_mode
-        && !supports_planning
-        && terminal_task_status == Some("doing")
-        && visible_reply_already_published
-        && !terminal_status_followed_command
+    // A `doing` task_status is only a progress update. It must be replayed to the
+    // next model turn so newly activated manuals and task context can be used.
+    false
 }
 
 fn should_end_turn_without_task_status_backfill(
@@ -754,20 +782,23 @@ fn should_end_turn_without_task_status_backfill(
     terminal_task_status: Option<&str>,
     visible_reply: Option<&str>,
 ) -> bool {
-    terminal_task_status == Some("done")
-        && visible_reply
-            .is_some_and(|reply| reply.len() > DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF)
-        && command_run_has_only_done_task_status_result(tool_results)
+    let Some(status @ ("done" | "question")) = terminal_task_status else {
+        return false;
+    };
+
+    visible_reply.is_some_and(|reply| reply.len() > DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF)
+        && command_run_has_only_terminal_task_status_result(tool_results, status)
 }
 
-fn command_run_has_only_done_task_status_result(
+fn command_run_has_only_terminal_task_status_result(
     tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+    status: &str,
 ) -> bool {
     let [tool_result] = tool_results else {
         return false;
     };
     tool_result.tool_name == crate::manas::COMMAND_RUN_TOOL
-        && command_run_result_is_single_task_status(&tool_result.result, "done")
+        && command_run_result_is_single_task_status(&tool_result.result, status)
 }
 
 fn messages_with_initial_context_prefix(
@@ -911,7 +942,7 @@ fn terminal_status_needs_final_response_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_compact_summary_after_new_context,
+        auto_compact_summary_after_new_context, commit_terminal_session_checkpoint,
         complete_active_doing_task_after_non_planning_reply, increment_turn_with_fresh_timestamp,
         manas_max_turns, messages_with_initial_context_prefix,
         should_auto_complete_non_planning_doing_after_tool_turn,
@@ -1054,7 +1085,7 @@ mod tests {
 
     #[test]
     fn non_planning_tool_turn_auto_completes_only_visible_status_only_doing() {
-        assert!(should_auto_complete_non_planning_doing_after_tool_turn(
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
             false,
             false,
             Some("doing"),
@@ -1169,7 +1200,7 @@ mod tests {
     }
 
     #[test]
-    fn long_visible_done_task_status_can_end_without_backfill_only_when_single_status_call() {
+    fn long_visible_terminal_task_status_can_end_without_backfill_only_when_single_status_call() {
         let status_result = ToolExecutionResult {
             tool_name: "command_run".to_string(),
             arguments: json!({"commands":[{"command_type":"task_status"}]}),
@@ -1177,6 +1208,28 @@ mod tests {
                 "command_type":"task_status",
                 "success":true,
                 "output":{"task_status":{"status":"done"}}
+            }]}),
+            success: true,
+            error: None,
+        };
+        let question_status_result = ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"task_status"}]}),
+            result: json!({"results":[{
+                "command_type":"task_status",
+                "success":true,
+                "output":{"task_status":{"status":"question"}}
+            }]}),
+            success: true,
+            error: None,
+        };
+        let doing_status_result = ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"task_status"}]}),
+            result: json!({"results":[{
+                "command_type":"task_status",
+                "success":true,
+                "output":{"task_status":{"status":"doing"}}
             }]}),
             success: true,
             error: None,
@@ -1193,9 +1246,14 @@ mod tests {
             Some("done"),
             Some(&"x".repeat(1_000)),
         ));
-        assert!(!should_end_turn_without_task_status_backfill(
-            std::slice::from_ref(&status_result),
+        assert!(should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&question_status_result),
             Some("question"),
+            Some(&long_reply),
+        ));
+        assert!(!should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&doing_status_result),
+            Some("doing"),
             Some(&long_reply),
         ));
 
@@ -1256,6 +1314,22 @@ mod tests {
             true,
         ));
         assert!(!terminal_status_needs_final_response_turn(None, true, true));
+    }
+
+    #[test]
+    fn terminal_checkpoint_commit_skips_when_command_run_sandbox_is_enabled() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let _sandbox = EnvGuard::set("TURA_COMMAND_RUN_SANDBOX", "enabled");
+        let temp = tempfile::tempdir().expect("temp workspace");
+        std::fs::write(temp.path().join("src.txt"), "sandboxed change").expect("fixture file");
+        let mut session = test_session("session-sandbox-checkpoint");
+        session.session_directory = temp.path().to_path_buf();
+
+        assert!(!commit_terminal_session_checkpoint(&session, "completed"));
+        assert!(
+            !temp.path().join(".git").exists(),
+            "sandboxed runtime completion must not initialize git or create checkpoint commits"
+        );
     }
 
     fn test_session(id: &str) -> SessionManagement {
@@ -1323,5 +1397,28 @@ mod tests {
             token_per_second: 0.0,
         });
         runtime
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
     }
 }

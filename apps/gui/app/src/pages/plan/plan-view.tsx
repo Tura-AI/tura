@@ -368,6 +368,7 @@ export function PlanView(props: {
             <Match when={true}>
               <PlanBoard
                 sessions={visibleSessions()}
+                messagesBySession={props.state.messagesBySession}
                 selectedSessionId={props.state.planPreviewSessionId}
                 draftLane={props.state.planDraftLane}
                 onDraftLane={openDraft}
@@ -495,6 +496,7 @@ export function PlanView(props: {
 
 export function PlanBoard(props: {
   sessions: Session[];
+  messagesBySession: Record<string, Message[]>;
   selectedSessionId?: string;
   draftLane?: PlanStatus;
   onDraftLane: (value: PlanStatus | undefined) => void;
@@ -616,9 +618,15 @@ export function PlanBoard(props: {
                             when={shouldShowSessionAttention(
                               session,
                               props.attentionAcknowledged(session),
+                              props.messagesBySession[session.id],
                             )}
                           >
-                            <PlanStatusIndicator status={planSessionStatus(session)} />
+                            <PlanStatusIndicator
+                              status={planSessionStatus(
+                                session,
+                                props.messagesBySession[session.id],
+                              )}
+                            />
                           </Show>
                         </span>
                         <PlanTicketMeta session={session} />
@@ -658,14 +666,18 @@ export function PlanStatusIndicator(props: { status: PlanStatus }) {
   );
 }
 
-export function SessionRowMeta(props: { session: Session; attentionAcknowledged: boolean }) {
-  const status = createMemo(() => planSessionStatus(props.session));
+export function SessionRowMeta(props: {
+  session: Session;
+  messages?: Message[];
+  attentionAcknowledged: boolean;
+}) {
+  const status = createMemo(() => planSessionStatus(props.session, props.messages));
   return (
     <Show
-      when={shouldShowSessionAttention(props.session, props.attentionAcknowledged)}
+      when={shouldShowSessionAttention(props.session, props.attentionAcknowledged, props.messages)}
       fallback={<small class="session-row-time">{relativeSessionTime(props.session)}</small>}
     >
-      <span class="session-row-status">
+      <span class={classNames("session-row-status", status() === "question" && "status-question")}>
         <PlanStatusIndicator status={status()} />
       </span>
     </Show>

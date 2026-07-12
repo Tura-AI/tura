@@ -87,6 +87,7 @@ describe("message rich text table cells", () => {
   });
 
   test("sizes table cells from text length while leaving full content visible", () => {
+    expect(richTextSource).toContain("const TABLE_CELL_MIN_CH = 26 / 3;");
     expect(richTextSource).toContain("const TABLE_CELL_MAX_CH = 96;");
     expect(richTextSource).toContain("function tableCellWidthStyle");
     expect(richTextSource).toContain('class="rich-table-cell-content"');
