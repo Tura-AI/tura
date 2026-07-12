@@ -10,7 +10,7 @@ This benchmark evaluates coding agents on three complementary forms of long-hori
 
 The resulting suite contains **27 tasks in total**. Of these, **25 are harness-scored** and **2 are design-mode tasks without a harness**. The three subsets measure different capabilities and should be reported separately. A single aggregate score is not the primary result because binary repository repair, behavioral compatibility, full-stack reconstruction, and visual design are not commensurate measurements.
 
-This document describes the task-selection criteria, data normalization rules, evaluation boundaries, known anomalies, and limitations. The task inventory and executable contracts are taken from the benchmark repository snapshot at `C:\Users\liuliu\Documents\tura-benchmark`; public definitions are maintained in the [Tura Benchmark repository](https://github.com/Tura-AI/benchmark).
+This document describes the task-selection criteria, data normalization rules, evaluation boundaries, known anomalies, and limitations. The task inventory, executable contracts, selection logic, and published result artifacts are maintained in the [Tura Benchmark repository](https://github.com/Tura-AI/benchmark).
 
 ## 2. Design principles
 
@@ -47,7 +47,7 @@ The subset-selection artifact records these official inputs:
 - trial records: `https://deepswe.datacurve.ai/artifacts/v1.1/trials.json`;
 - official task count at selection time: **113**;
 - eligible official scored trials at selection time: **18,396**;
-- local selection schema: `tura.benchmark.deep-swe-selection.v1`.
+- selection schema: `tura.benchmark.deep-swe-selection.v1`.
 
 Only official trials satisfying all three conditions are used to estimate task difficulty:
 
@@ -368,4 +368,4 @@ Before publishing or comparing a run:
 
 [^summarized-benchmark]: Stephanie C. Mangul, Lana S. Martin, Brian L. Hill, Angela Ka-Mei Lam, Margaret G. Distler, Eleazar Eskin, and Jonathan Flint, “Reproducible and replicable comparisons using SummarizedBenchmark,” _Bioinformatics_ 35(8), 2019, <https://doi.org/10.1093/bioinformatics/bty627>.
 
-Additional implementation evidence for this methodology is available in the public [Tura Benchmark repository](https://github.com/Tura-AI/benchmark), including `deep_swe/select_tasks.py`, task-local `task.json` and `harness.json` files, runtime schemas, and published result manifests.
+Additional implementation evidence is available in the public [Tura Benchmark repository](https://github.com/Tura-AI/benchmark), including the [DeepSWE selection implementation](https://github.com/Tura-AI/benchmark/blob/main/deep_swe/select_tasks.py), [task definitions and harnesses](https://github.com/Tura-AI/benchmark/tree/main/tasks), [runtime schemas](https://github.com/Tura-AI/benchmark/tree/main/schema), and [published result manifests](https://github.com/Tura-AI/benchmark/tree/main/results).
