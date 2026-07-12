@@ -13,16 +13,13 @@
 <h1 align="center">Tura:77.5% fewer tokens; 16.7% better performance.</h1>
 
 Tura is a local open-source coding agent built for developers who are tired of useless skills, extensions that claim they can save tokens, and agents that wreck repos without judgment.
-
-Tura reduces model round trips and repeated context through its runtime and macro-command architecture. In the DeepSWE comparison, Balanced used 35.8% fewer turns and 31.1% fewer tokens than Codex CLI, while Direct used 69.1% fewer turns and 77.5% fewer tokens. Both Tura configurations ran GPT-5.6 SOL at High reasoning while still using fewer aggregate tokens than Codex CLI at Medium reasoning. Balanced prioritizes thorough investigation, implementation, and verification for higher task success; Direct follows a shorter execution path to minimize turn and token cost.[^debug-figure][^debug-manifests]
+Across 20 DeepSWE v1.1 tasks run three times per agent, Tura first creates a substantial token-budget advantage by reducing repeated context and model round trips. Users can then choose how to spend that advantage: Direct converts most of it into lower cost, using 77.5% fewer aggregate tokens than Codex CLI while achieving a comparable verifier success rate of 65.0% versus 63.3%; Balanced reinvests part of the saved budget into deeper reasoning, investigation, and verification, reaching an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
 
 ### Benchmark
 
 Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to measure coding-agent performance beyond isolated prompts. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
 
-> Across 20 DeepSWE v1.1 tasks run three times per agent, Tura first creates a substantial token-budget advantage by reducing repeated context and model round trips. Users can then choose how to spend that advantage: Direct converts most of it into lower cost, using 77.5% fewer aggregate tokens than Codex CLI while achieving a comparable verifier success rate of 65.0% versus 63.3%; Balanced reinvests part of the saved budget into deeper reasoning, investigation, and verification, reaching an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
-
-The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]
+> The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]
 
 The public [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md) gives the full evidence ledger: acquisition and storage, cohort alignment, retained Tura timeouts and severe long tails, the High-versus-Medium rationale, prompt-generation drift, compact-context and other missing ablations, and the next controlled experiments. It also audits eight same-model, same-High-effort design runs. Across those runs, Tura Direct used 43.6% fewer tokens and 24.1% fewer turns while recording 264 tool actions versus Codex CLI's 43. In the squid decks, all 20 Tura video links are resolvable, specific YouTube pages and 18/20 have exact-dish titles; all 20 Codex links are search-result pages, and 60% of Codex recipe citations are searches or broad indexes. In the Paris task, the public HTML artifacts expose the reported Codex angle/layer problems, while Tura's contracts record real-browser WebGL checks and inspected captures at 1440, 768, and 390 pixels.[^test-set-record]
 
