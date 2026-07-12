@@ -50,4 +50,5 @@ pages.
 2. [Testing](../../scripts/ARCHITECTURE.md#xtask-test-collection-scripts) - business, OS, live, release, performance, app, and benchmark test lanes.
 3. [Environment](settings.md) - operational settings and environment references for providers, sessions, CLI, and clients.
 4. [Architecture](../../ARCHITECTURE.md) - whole-project binary topology, repository layout, logs, services, and ownership.
-5. [Benchmark](../../benchmark/README.md) - long-horizon task declarations, agent launch config, reports, harnesses, and scoring.
+5. [Benchmark methodology](../benchmark/benchmark-methodology.md) - benchmark scope, task selection, scoring, and limitations.
+6. [Benchmark repository](https://github.com/Tura-AI/benchmark) - task declarations, agent launch config, reports, and harnesses.
