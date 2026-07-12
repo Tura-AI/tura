@@ -10,18 +10,17 @@
   <a href="https://www.npmjs.com/package/tura-ai"><img alt="npm package" title="Tura npm package" src="https://img.shields.io/npm/v/tura-ai?style=flat-square&amp;logo=npm&amp;label=npm&amp;labelColor=555555&amp;color=cb3837"></a>
 </p>
 
-<h1 align="center">Tura: 16.7 points higher success. Up to 77.5% fewer tokens.</h1>
+<h1 align="center">Tura:77.5% fewer tokens; 16.7% better performance.</h1>
 
 Tura is a local open-source coding agent built for developers who are tired of useless skills, extensions that claim they can save tokens, and agents that wreck repos without judgment.
 
 Tura reduces model round trips and repeated context through its runtime and macro-command architecture. In the DeepSWE comparison, Balanced used 35.8% fewer turns and 31.1% fewer tokens than Codex CLI, while Direct used 69.1% fewer turns and 77.5% fewer tokens. Both Tura configurations ran GPT-5.6 SOL at High reasoning while still using fewer aggregate tokens than Codex CLI at Medium reasoning. Balanced prioritizes thorough investigation, implementation, and verification for higher task success; Direct follows a shorter execution path to minimize turn and token cost.[^debug-figure][^debug-manifests]
 
+### Benchmark
 Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to measure coding-agent performance beyond isolated prompts. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
 > On 20 DeepSWE v1.1 tasks run three times per agent (180 sessions), Tura Balanced passed 48/60 task verifiers (80.0%) versus Codex CLI's 38/60 (63.3%), a 16.7 percentage-point improvement. Tura Direct used 75.1M aggregate tokens versus Codex CLI's 333.5M, or 77.5% fewer, while passing 39/60 verifiers (65.0%), 1.7 points above Codex CLI. In short: Balanced used 31.1% fewer tokens and improved verifier success by 16.7 points; Direct used 77.5% fewer tokens and improved verifier success by 1.7 points.[^debug-figure][^debug-manifests]
 
 The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]
-
-### Benchmark
 
 <p align="center">
   <img src="assets/data/benchmark-agent-comparison.svg" alt="DeepSWE Debug and Rewrite Repo benchmark comparison" width="800">
