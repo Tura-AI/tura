@@ -4014,6 +4014,16 @@
       "type": "oauth",
       "updated_at": "2026-07-10T08:42:13.517194200+00:00"
     },
+    "github": {
+      "auth_url": null,
+      "login": "api",
+      "login_env": "GITHUB_LOGIN",
+      "provider": "github",
+      "status": "connected",
+      "token_env": "GITHUB_TOKEN",
+      "type": "api_key",
+      "updated_at": "2026-07-11T15:24:26.994440300+00:00"
+    },
     "openai": {
       "account_env": "OPENAI_ACCOUNT_ID",
       "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=J9wXZDQtr8gRLsztUPe9GK5GwfPihKf7nf75p4g-8OI&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=9faec7d23bf0488ea91e49815be61733&originator=opencode",

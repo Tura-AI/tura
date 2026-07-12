@@ -114,6 +114,30 @@ describe("plan task contract", () => {
     expect(shouldShowSessionAttention(session("busy"), true)).toBe(true);
   });
 
+  test("treats an executing command as busy until its command status is terminal", () => {
+    const idle = session("idle", { status: "question", task_summary: "Need input" });
+    const commandMessage = {
+      id: "command-message",
+      sessionID: idle.id,
+      role: "assistant" as const,
+      parts: [
+        {
+          id: "command-part",
+          sessionID: idle.id,
+          messageID: "command-message",
+          type: "tool",
+          tool: "command_run",
+          state: { status: "running" },
+        },
+      ],
+    };
+
+    expect(planSessionStatus(idle, [commandMessage])).toBe("doing");
+    expect(shouldShowSessionAttention(idle, true, [commandMessage])).toBe(true);
+    commandMessage.parts[0]!.state = { status: "completed" };
+    expect(planSessionStatus(idle, [commandMessage])).toBe("question");
+  });
+
   test("does not keep completed non-planning sessions busy from a stale doing task", () => {
     const staleDoing = session("idle", {
       status: "doing",
@@ -124,12 +148,12 @@ describe("plan task contract", () => {
     expect(shouldShowSessionAttention(staleDoing, false)).toBe(false);
   });
 
-  test("allows question and done attention to be acknowledged", () => {
+  test("keeps question attention visible until status changes", () => {
     const question = session("idle", { status: "question", task_summary: "Need input" });
     const done = session("idle", { status: "done", task_summary: "Complete" });
 
     expect(shouldShowSessionAttention(question, false)).toBe(true);
-    expect(shouldShowSessionAttention(question, true)).toBe(false);
+    expect(shouldShowSessionAttention(question, true)).toBe(true);
     expect(shouldShowSessionAttention(done, false)).toBe(true);
     expect(shouldShowSessionAttention(done, true)).toBe(false);
   });

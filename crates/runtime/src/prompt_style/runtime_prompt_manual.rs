@@ -387,10 +387,27 @@ mod tests {
     use super::{
         active_manual_display_names, append_missing_runtime_prompt_manuals,
         capabilities_for_task_type_ids, normalize_task_type_ids,
-        RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE, RUNTIME_PROMPT_MANUAL_RECORD_TYPE,
+        static_manuals, RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE,
+        RUNTIME_PROMPT_MANUAL_RECORD_TYPE,
     };
     use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
+
+    #[test]
+    fn embedded_debug_manual_contains_recommended_tdd_workflow() {
+        let debug = static_manuals()
+            .into_iter()
+            .find(|manual| manual.id == "debug")
+            .expect("embedded debug manual");
+
+        assert!(debug.prompt.contains("## Recommended TDD Debug Workflow"));
+        assert!(debug
+            .prompt
+            .contains("1. Analyze the codebase by finding and reading relevant files"));
+        assert!(debug
+            .prompt
+            .contains("5. Test edge cases to ensure your fix is robust"));
+    }
 
     #[test]
     fn normalize_task_type_ids_expands_father_chain() {

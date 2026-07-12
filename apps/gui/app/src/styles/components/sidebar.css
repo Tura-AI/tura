@@ -266,6 +266,10 @@ button.section-title:focus-visible {
   display: none;
 }
 
+.session-row:hover .session-row-status.status-question {
+  display: inline-grid;
+}
+
 .session-row-status {
   display: inline-grid;
   justify-self: end;

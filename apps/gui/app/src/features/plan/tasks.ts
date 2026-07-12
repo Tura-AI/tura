@@ -1,10 +1,12 @@
 import {
   type PlanStatus,
+  type Message,
   type PollInterval,
   type Session,
   type StartCondition,
   type TaskManagement,
 } from "@tura/gateway-sdk";
+import { sessionHasRunningCommand } from "../../conversation/session-animation";
 import { t } from "../../i18n";
 import type { ComposerImage } from "../../state/global-store";
 import { sessionTitle, sessionUpdatedAt } from "../../state/global-store";
@@ -293,8 +295,8 @@ export function reorderTasksInSession(session: Session, orderedTasks: TaskManage
   };
 }
 
-export function planSessionStatus(session: Session): PlanStatus {
-  if (session.status === "busy") {
+export function planSessionStatus(session: Session, messages: Message[] = []): PlanStatus {
+  if (session.status === "busy" || sessionHasRunningCommand(messages)) {
     return "doing";
   }
   const task = sessionTaskState(session);
@@ -322,9 +324,13 @@ export function sessionAttentionKey(session: Session): string | undefined {
   return `${session.id}:${status}:${normalizeTimeMs(sessionUpdatedAt(session) ?? 0)}`;
 }
 
-export function shouldShowSessionAttention(session: Session, acknowledged: boolean): boolean {
-  const status = planSessionStatus(session);
-  return status === "doing" || (!acknowledged && (status === "question" || status === "done"));
+export function shouldShowSessionAttention(
+  session: Session,
+  acknowledged: boolean,
+  messages: Message[] = [],
+): boolean {
+  const status = planSessionStatus(session, messages);
+  return status === "doing" || status === "question" || (!acknowledged && status === "done");
 }
 
 export function planStoredPlanStatus(session: Session): PlanStatus | undefined {

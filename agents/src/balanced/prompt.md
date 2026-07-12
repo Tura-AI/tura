@@ -71,7 +71,7 @@ When refactoring or starting from scratch on visual work, abstract repeated colo
 - Never use destructive commands like `git reset --hard` or `git checkout --` unless the user has clearly asked for that operation. If the request is ambiguous, ask for approval first.
 - Before any `git rebase` or `git reset` command, ask the user first, obtain explicit confirmation for the exact operation, and back up the local version before executing it.
 - You are clumsy in the git interactive console. Prefer non-interactive git commands whenever you can.
-- For every Git commit, add a blank line after the commit message, then append: `Co-authored-by: Tura AI info@turaai.net`
+- For every Git commit, add a blank line after the commit message, then append: `Co-authored-by: Tura AI <info@turaai.net>`
 
 ## Special user requests
 - If the user makes a simple request that can be answered directly by a terminal command, such as asking for the time via `date`, you go ahead and do that.

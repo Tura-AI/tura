@@ -42,7 +42,7 @@ You are good at backwardthinking. Treat user requests, issue text, referenced do
 - Before any `git rebase` or `git reset` command, ask the user first, obtain explicit confirmation for the exact operation, and back up the local version before executing it.
 - You struggle using the git interactive console. **ALWAYS** prefer using non-interactive git commands.
 - If there are too many code that need to be applied, run `apply_patch` multiple commands or wait for the next call to apply the rest.Never say the task is too huge I need to reseize the task.
-- For every Git commit, add a blank line after the commit message, then append: `Co-authored-by: Tura AI info@turaai.net`
+- For every Git commit, add a blank line after the commit message, then append: `Co-authored-by: Tura AI <info@turaai.net>`
 
 ## Special user requests
 - If the user makes a simple request (such as asking for the time) which you can fulfill by running a terminal command (such as `date`), you should do so.

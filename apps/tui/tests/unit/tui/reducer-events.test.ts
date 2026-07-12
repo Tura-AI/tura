@@ -283,6 +283,50 @@ test("reducer merges command updates by command id and ignores stale event seq",
     permissions: [],
   });
 
+  test("reducer tracks background command busy state without mutating session status", () => {
+    const active = { ...session, id: "active", status: "idle" as const };
+    const background = { ...session, id: "background", status: "idle" as const };
+    let state = reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session: active,
+      sessions: [active, background],
+      messages: [],
+      permissions: [],
+    });
+    const event = (status: string, eventSeq: number) => ({
+      directory: "C:/repo",
+      payload: {
+        type: "command.updated" as const,
+        properties: {
+          sessionID: "background",
+          messageID: "background-command.message",
+          partID: "background-command.part",
+          runtimeID: "background-command",
+          commandRunID: "background-command.run",
+          commandID: "background-command:0",
+          eventSeq,
+          status,
+          createdAt: 1,
+          updatedAt: eventSeq,
+        },
+      },
+    });
+
+    state = reducer(state, { type: "event", event: event("running", 1) });
+    assert.equal(state.sessions.find((item) => item.id === "background")?.status, "idle");
+    assert.equal(
+      state.commandStatesBySession.background?.["background-command:0"]?.status,
+      "running",
+    );
+
+    state = reducer(state, { type: "event", event: event("completed", 2) });
+    state = reducer(state, { type: "event", event: event("running", 1) });
+    assert.equal(
+      state.commandStatesBySession.background?.["background-command:0"]?.status,
+      "completed",
+    );
+  });
+
   const event = (status: string, eventSeq: number, result: unknown = null) => ({
     directory: "C:/repo",
     payload: {

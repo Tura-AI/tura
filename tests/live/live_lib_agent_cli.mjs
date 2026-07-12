@@ -2,6 +2,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import process from "node:process"
+import { codexTokenUsageReport } from "../../benchmark/lib/codex_token_usage.mjs"
 
 export function agentHome() {
   return process.env.USERPROFILE || process.env.HOME || ""
@@ -111,6 +112,16 @@ export function opencodeArgs(prompt, options = {}) {
 }
 
 export function agentUsageFromJsonl(text) {
+  const codexUsage = codexTokenUsageReport(text)
+  if (codexUsage.raw_event_count > 0) {
+    return {
+      input: codexUsage.totals.input_tokens,
+      cached: codexUsage.totals.cached_input_tokens,
+      output: codexUsage.totals.output_tokens,
+      reasoning: codexUsage.totals.reasoning_tokens,
+      total: codexUsage.totals.total_tokens,
+    }
+  }
   const usage = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 }
   for (const event of parseJsonl(text)) {
     const candidates = [

@@ -1,6 +1,14 @@
 ## Debug Operation Manual
 Use this prompt when the work is to fix a bug, explain a failure, harden an edge case, or change behavior that is currently wrong.
 
+## Recommended TDD Debug Workflow
+
+1. Analyze the codebase by finding and reading relevant files
+2. Create a script to reproduce the issue
+3. Edit the source code to resolve the issue
+4. Verify your fix works by running your script again
+5. Test edge cases to ensure your fix is robust
+
 ### Implementation rule:
 - Prefer the smallest owning abstraction that can enforce the invariant for all callers.
 - Reuse existing structs, domain types, parsers, validators, and contracts whenever possible.

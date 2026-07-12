@@ -394,6 +394,75 @@ async function main() {
     await selectSession(page, session3);
     await sendPrompt(page, session3, "Daily chat 10: third session makes the final confirmation.");
 
+    const commandEvent = (status, eventSeq) => ({
+      sessionID: session3,
+      messageID: "session-command.message",
+      partID: "session-command.part",
+      runtimeID: "session-command",
+      commandRunID: "session-command.run",
+      commandID: "session-command:0",
+      eventSeq,
+      status,
+      createdAt: now(),
+      updatedAt: now(),
+    });
+    emit("command.updated", commandEvent("running", 1));
+    await page.evaluate(() => globalThis.__turaSendInput?.("\t"));
+    await delay(250);
+    const commandFrameA = await terminalText(page);
+    await delay(250);
+    const commandFrameB = await terminalText(page);
+    assert.match(commandFrameA, /Daily Session 3 [◇◆◈]/u);
+    assert.match(commandFrameB, /Daily Session 3 [◇◆◈]/u);
+    assert.notEqual(commandFrameA, commandFrameB, "busy command animation should advance");
+    const commandScreenshot = path.join(screenshotsDir, "command-busy-session.png");
+    await page.screenshot({ path: commandScreenshot, fullPage: false });
+    screenshots.push(commandScreenshot);
+    emit("command.updated", commandEvent("completed", 2));
+    await delay(250);
+    assert.doesNotMatch(await terminalText(page), /Daily Session 3 [◇◆◈]/u);
+    await page.evaluate(() => globalThis.__turaSendInput?.("\t"));
+    await delay(100);
+
+    const activeQuestion = {
+      ...sessions.find((session) => session.id === session3),
+      task_management: { status: "question", task_summary: "Needs user input" },
+    };
+    upsertSession(activeQuestion);
+    emit("session.updated", { sessionID: session3, info: activeQuestion });
+    await page.evaluate(() => globalThis.__turaSendInput?.("\t"));
+    await delay(250);
+    const questionFrameA = await terminalText(page);
+    assert.match(questionFrameA, /Daily Session 3 [?!‽¿.]/u);
+    const questionMarkerA = questionFrameA.match(/Daily Session 3 ([?!‽¿.])/u)?.[1];
+    let questionFrameB = questionFrameA;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await delay(100);
+      questionFrameB = await terminalText(page);
+      const marker = questionFrameB.match(/Daily Session 3 ([?!‽¿.])/u)?.[1];
+      if (marker && marker !== questionMarkerA) break;
+    }
+    assert.match(questionFrameB, /Daily Session 3 [?!‽¿.]/u);
+    assert.notEqual(
+      questionFrameB.match(/Daily Session 3 ([?!‽¿.])/u)?.[1],
+      questionMarkerA,
+      "question session animation should advance",
+    );
+
+    const questionScreenshot = path.join(screenshotsDir, "question-session-open.png");
+    await page.screenshot({ path: questionScreenshot, fullPage: false });
+    screenshots.push(questionScreenshot);
+
+    const activeDone = {
+      ...activeQuestion,
+      task_management: { status: "done", task_summary: "Resolved" },
+    };
+    upsertSession(activeDone);
+    emit("session.updated", { sessionID: session3, info: activeDone });
+    await delay(250);
+    const resolvedFrame = await terminalText(page);
+    assert.doesNotMatch(resolvedFrame, /Daily Session 3 [?!‽¿.]/u);
+
     const finalScreenshot = path.join(screenshotsDir, "multi-session-final.png");
     await page.screenshot({ path: finalScreenshot, fullPage: false });
     screenshots.push(finalScreenshot);

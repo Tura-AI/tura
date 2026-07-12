@@ -138,6 +138,78 @@ test("sessions panel shows names, previews, and status diamonds", () => {
     permissions: [],
     sessions: [active, busy, unread],
   });
+
+  test("sessions panel keeps question animation on the active session until status changes", () => {
+    const question = {
+      id: "sess-question",
+      session_display_name: "Needs Input",
+      status: "idle" as const,
+      message_count: 2,
+      task_management: { status: "question" },
+    };
+    const base = reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session: question,
+      messages: [],
+      permissions: [],
+      sessions: [question],
+    });
+
+    test("sessions panel uses busy animation while any command in the session is running", () => {
+      const commandSession = {
+        id: "sess-command",
+        session_display_name: "Command Chat",
+        status: "idle" as const,
+        message_count: 1,
+      };
+      const base = reducer(initialState("C:/repo"), {
+        type: "hydrate",
+        session: commandSession,
+        messages: [],
+        permissions: [],
+        sessions: [commandSession],
+      });
+      const state = {
+        ...base,
+        sessionsOpen: true,
+        thinkingFrame: 0,
+        commandStatesBySession: {
+          "sess-command": {
+            first: { status: "completed", eventSeq: 2 },
+            second: { status: "running", eventSeq: 1 },
+          },
+        },
+      };
+
+      assert.match(stripAnsi(render(state, richCapabilities())), /Command Chat ◇/);
+      const completed = {
+        ...state,
+        commandStatesBySession: {
+          "sess-command": {
+            first: { status: "completed", eventSeq: 2 },
+            second: { status: "completed", eventSeq: 2 },
+          },
+        },
+      };
+      assert.doesNotMatch(stripAnsi(render(completed, richCapabilities())), /Command Chat [◇◆◈]/u);
+    });
+    const state = { ...base, sessionsOpen: true, thinkingFrame: 0 };
+
+    const first = stripAnsi(render(state, richCapabilities()));
+    const next = stripAnsi(render({ ...state, thinkingFrame: 10 }, richCapabilities()));
+
+    assert.match(first, /Needs Input \?/);
+    assert.match(next, /Needs Input ‽/);
+
+    const resolved = {
+      ...question,
+      task_management: { status: "done" },
+    };
+    const resolvedOutput = stripAnsi(
+      render({ ...state, session: resolved, sessions: [resolved] }, richCapabilities()),
+    );
+    assert.doesNotMatch(resolvedOutput, /Needs Input [?!‽¿]/u);
+  });
   state = {
     ...state,
     sessionsOpen: true,

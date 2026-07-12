@@ -29,6 +29,7 @@ LOCAL_E2E = [
     "plan_session_backend_e2e.py",
     "plan_panel_constraints_playwright_e2e.py",
     "session_task_workspace_e2e.py",
+    "question_session_attention_e2e.py",
     "plan_board_smoke_e2e.py",
     "plan_navigation_smoke_e2e.py",
     "sub_session_tree_mock_e2e.py",

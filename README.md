@@ -6,18 +6,28 @@
 
 <p align="center">
   <a href="https://turaai.net/"><img alt="Website" title="Tura official website" src="https://img.shields.io/badge/Website-turaai.net-40e0d0?style=flat-square&amp;labelColor=555555"></a>
-  <a href="https://turaai.net/benchmark"><img alt="Benchmark" title="Tura benchmark results" src="https://img.shields.io/badge/Benchmark-results-9b59b6?style=flat-square&amp;labelColor=555555"></a>
+  <a href="https://turaai.net/benchmark"><img alt="Benchmark: 8,243 turns" title="Tura benchmark: 8,243 agent turns" src="https://img.shields.io/badge/Benchmark-8%2C243_turns-9b59b6?style=flat-square&amp;labelColor=555555"></a>
   <a href="https://www.npmjs.com/package/tura-ai"><img alt="npm package" title="Tura npm package" src="https://img.shields.io/npm/v/tura-ai?style=flat-square&amp;logo=npm&amp;label=npm&amp;labelColor=555555&amp;color=cb3837"></a>
 </p>
 
-<h1 align="center">Tura: 76% fewer tokens. 18% better performance.</h1>
+<h1 align="center">Tura: 16.7 points higher success. Up to 77.5% fewer tokens.</h1>
 
 Tura is a local open-source coding agent built for developers who are tired of useless skills, extensions that claim they can save tokens, and agents that wreck repos without judgment.
 
-Long-horizon task [benchmarks](https://turaai.net/benchmark) are one of the best ways to measure real-world coding-agent performance. Instead of testing agents on isolated prompts or simple Q&A tasks, Tura uses harness-based [benchmarks](https://turaai.net/benchmark) that simulate actual long-horizon development workflows.
-> Across 150+ long-horizon [benchmark](https://turaai.net/benchmark) tasks selected from the top 20% most difficult SWE-bench Pro, Deep SWE, and SWE-bench Verified cases, Tura reduced token usage by 75% and achieved an 89% score, outperforming Claude Code by 34%.
+Tura reduces model round trips and repeated context through its runtime and macro-command architecture. In the DeepSWE comparison, Balanced used 35.8% fewer turns and 31.1% fewer tokens than Codex CLI, while Direct used 69.1% fewer turns and 77.5% fewer tokens. Both Tura configurations ran GPT-5.6 SOL at High reasoning while still using fewer aggregate tokens than Codex CLI at Medium reasoning. Balanced prioritizes thorough investigation, implementation, and verification for higher task success; Direct follows a shorter execution path to minimize turn and token cost.[^debug-figure][^debug-manifests]
 
-You can compare Tura’s real-world performance against today’s most popular coding agents and extensions on the same [benchmark](https://turaai.net/benchmark) tasks.
+Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to measure coding-agent performance beyond isolated prompts. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
+> On 20 DeepSWE v1.1 tasks run three times per agent (180 sessions), Tura Balanced passed 48/60 task verifiers (80.0%) versus Codex CLI's 38/60 (63.3%), a 16.7 percentage-point improvement. Tura Direct used 75.1M aggregate tokens versus Codex CLI's 333.5M, or 77.5% fewer, while passing 39/60 verifiers (65.0%), 1.7 points above Codex CLI. In short: Balanced used 31.1% fewer tokens and improved verifier success by 16.7 points; Direct used 77.5% fewer tokens and improved verifier success by 1.7 points.[^debug-figure][^debug-manifests]
+
+The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]
+
+### Benchmark
+
+<p align="center">
+  <img src="assets/data/benchmark-agent-comparison.svg" alt="DeepSWE Debug and Rewrite Repo benchmark comparison" width="800">
+</p>
+
+<p align="center"><em>Harness success and aggregate token usage across 25 high-difficulty tasks, 6 agent-and-model configurations, and 270 sessions. Source and calculation notes are linked below.</em></p>
 
 ### Screenshots
 
@@ -33,7 +43,7 @@ You can compare Tura’s real-world performance against today’s most popular c
 
 <p align="center"><em>TUI page with multi-session concurrent work and HTML rich text support.</em></p>
 
-What makes Tura different is that it is built from eval data, not marketing claims. Tura is powered by a unique harness-driven framework built around four core systems:
+The results below are grounded in published benchmark artifacts rather than an uncited aggregate. Tura is built around three core systems:
 
 ## Macro CLI Command Run
 Most coding agents still depend on repetitive tool-calling loops: inspect, wait, patch, wait, build, wait, test, wait.
@@ -95,17 +105,13 @@ In the example below, Tura finishes in one LLM turn what a normal tool-calling a
   }
 }
 ```
-This reduces cached input token usage by up to 5x and improves total completion time by 3.4x in this case.
-
-In heavier workflows involving Playwright browser automation, multi-step internet research, and CI validation, the advantage can grow to 6–9x. You can check the [benchmark](https://turaai.net/benchmark) page for details.
+There is no ablation test proving that `command_run` alone causes Tura's lower turn and token usage. Across the full DeepSWE comparison, however, Balanced used 35.8% fewer turns and 31.1% fewer tokens than Codex CLI, while Direct used 69.1% fewer turns and 77.5% fewer tokens.[^debug-figure][^debug-manifests]
 
 
 ## Backward Reasoning
 However impressive LLMs can be, an LLM is still, at its core, a statistical induction model over text-token probabilities.
 
-If you ask an LLM to play rock-paper-scissors with you, depending on the provider, you will probably get something close to 50% rock, 35% paper, and 15% scissors. In other words, if you keep playing paper, you can easily win the game.
-
-This is simply because these words have different occurrence probabilities in English. If you ask the same question in Japanese, the distribution will change.
+For example, asking an LLM to choose among rock, paper, and scissors does not guarantee a uniform random result. If a true one-in-three distribution matters, the choice needs an external random-number source rather than an uncited assumption about model output probabilities.
 
 In coding tasks, this is often fatal.
 
@@ -133,30 +139,8 @@ In the example below, the LLM can derive the optimal strategy for playing rock-p
 > Then map rock, paper, or scissors to the number.
 ```
 
-In real programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is not pushed to cover the problem with a fallback, a guard clause, or a shallow patch. Instead, it is guided to reason through the full execution path, reconstruct the failure state, and identify the real root cause before writing code. This is one reason Tura can outperform other coding agents by 24% to 65% in [benchmarked](https://turaai.net/benchmark) coding tasks.
+In programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is guided to reason through the full execution path, reconstruct the failure state, and identify the root cause before writing code. In the published DeepSWE comparison, Tura Balanced passed 10 more of 60 binary task verifiers than Codex CLI; in the GPT-5.6 rewrite comparison, it passed 389/472 checks versus 351/472 for Codex CLI.[^debug-manifests][^rewrite-manifest]
 
-## Test-Driven Development
-In a very common debugging failure case, the reviewer or the test names a bug and gives an assertion about where the error happens.
-
-In these SWE-bench-style cases, agents are several times more likely than usual to write the wrong patch and hide the problem instead of fixing the real cause.
-
-Tura uses a standard TDD workflow to avoid this failure mode.
-
-First, Tura builds a complete end-to-end test that covers the full lifecycle of the behavior. The goal is not to guess where the bug is, but to reproduce the bug through the real execution path.
-
-Then Tura identifies the earliest invariant, the earliest point where the state becomes wrong, and the real root cause. It uses the failing assertion to reproduce the bug, fixes only the root cause, and reruns the test before considering the task complete.
-
-```
-> The user needs to fix a frontend bug where the same message sometimes appears twice.
-> The complete message lifecycle goes from the remote LLM provider, through the gateway, into the frontend.
-> The agent needs to analyze the earliest invariant state and the earliest point where duplication appears. Tura first reproduces the bug through a Playwright end-to-end test.
-> A likely wrong patch would be to hide the issue in the frontend with a fallback or a deduplication guard. That makes the system more fragile and introduces uncertainty into the deduplication behavior.
-> The earliest root cause is found in a race condition between the gateway live SSE event and the persisted session DB state.
-> The correct fix is to unify the session state machine, patch only that cause, and rerun the failing test before marking the task as complete.
-```
-In [benchmark](https://turaai.net/benchmark) samples, combining backward reasoning with a TDD workflow significantly reduced false completion.
-
-When the agent claimed that the issue was solved, Tura failed to actually solve the problem only 4% of the time. By comparison, Codex had a 25% false-completion rate, and Claude Code had a 28% false-completion rate.
 
 ## Runtime Context and Prompt Manager
 
@@ -180,12 +164,9 @@ Instead of relying on users to manually reset sessions or letting Markdown skill
 | Failure mode | Agent mixes old tasks, vague summaries, and irrelevant skills | Agent keeps execution aligned with the current task |
 | Tool/manual loading | Broad skills are loaded even when only part is useful | CLI commands and manuals are loaded through a recursive task tree |
 
-Because compaction is a CLI command, Tura can batch it through `command_run` together with the exact execution state. The next turn does not need to rediscover the task from a vague summary.
+Because compaction is a CLI operation, Tura can preserve exact execution state in `task_status.compact_context`. In the published benchmark sessions, Tura moved beyond read-only inspection and resumed execution an average of 2.6 rounds after compaction, compared with an estimated 5.4 rounds for Codex.[^compact-dynamodb][^compact-wasmi-r1][^compact-wasmi-r2][^compact-wasmi-r3][^compact-eza]
 
-In [benchmark](https://turaai.net/benchmark) samples, after a context compaction event, Tura resumed meaningful execution — either rerunning tests or applying a patch — in an average of 1.8 turns.
-
-Codex needed 4.3 turns, while Claude Code needed 7.2 turns.
-Across multiple debugging [benchmarks](https://turaai.net/benchmark), Tura was 54% more likely than Claude Code to locate the real issue in the hardest 20% of [benchmark](https://turaai.net/benchmark) tasks, and 34% more likely to fix the actual bug.
+Tura's 2.6-round result is calculated from explicit `compact_context` events in its archived round contracts. Codex does not expose equivalent compaction events, so its 5.4-round result is estimated from points where input-token usage drops sharply, excluding identifiable media-reading boundaries.
 
 
 ## Install and run
@@ -306,3 +287,16 @@ full navigation page is [docs/start/navigation.md](docs/start/navigation.md).
 ## License
 
 Tura is licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE).
+
+## Benchmark notes and sources
+
+The headline compares Tura Balanced and Tura Direct GPT-5.6 SOL High with Codex CLI GPT-5.6 SOL Medium on the DeepSWE group shown in the benchmark figure. "Success" is the binary DeepSWE verifier result summed over 60 sessions per agent. Balanced's reductions are `(3,140 - 2,017) / 3,140 = 35.8%` for turns and `(333.5M - 229.7M) / 333.5M = 31.1%` for tokens. Direct's reductions are `(3,140 - 969) / 3,140 = 69.1%` for turns and `(333.5M - 75.1M) / 333.5M = 77.5%` for tokens. Rewrite success is `sum(passed) / sum(total)` over the canonical manifest; it is not an average of per-run percentages. The reasoning-effort difference is part of the named configurations, not proof that architecture alone caused the measured outcome.[^debug-figure][^debug-manifests][^rewrite-manifest]
+
+[^debug-figure]: [DeepSWE and Rewrite Repo comparison figure](assets/data/benchmark-agent-comparison.svg). The figure states the task, session, verifier, turn, token, and aggregation scopes used by the README.
+[^debug-manifests]: [`tura-benchmark` DeepSWE replicate 1](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/manifest.json), [replicate 2](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/manifest.json), and [replicate 3](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/manifest.json). Each manifest contains 20 tasks across the same three agent configurations; together they contain 180 sessions.
+[^rewrite-manifest]: [`tura-benchmark` GPT-5.6 Rewrite Repo canonical manifest](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/canonical-manifest.json). The cited totals are Tura Balanced 389/472 and Codex CLI 351/472 across 10 sessions each.
+[^compact-dynamodb]: [`tura-benchmark` DynamoDB round 107 compact](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/dynamodb-toolbox-conditional-attribute-requirements/tura-balanced/dynamodb-toolbox-conditional-attribute-requirements-tura-balanced-run-01/metadata/contracts/rounds/round-0107.json) and [round 114 first later patch](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/dynamodb-toolbox-conditional-attribute-requirements/tura-balanced/dynamodb-toolbox-conditional-attribute-requirements-tura-balanced-run-01/metadata/contracts/rounds/round-0114.json).
+[^compact-wasmi-r1]: [`tura-benchmark` Wasmi replicate 1 round 43 compact](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-01/metadata/contracts/rounds/round-0043.json) and [round 44 first non-read action](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-01/metadata/contracts/rounds/round-0044.json). The run ends at round 46 without a later patch or test action.
+[^compact-wasmi-r2]: [`tura-benchmark` Wasmi replicate 2 round 26 compact](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-02/metadata/contracts/rounds/round-0026.json), [round 28 first non-read action](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-02/metadata/contracts/rounds/round-0028.json), and [round 39 first later patch/test](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-02/metadata/contracts/rounds/round-0039.json).
+[^compact-wasmi-r3]: [`tura-benchmark` Wasmi replicate 3 round 39 compact](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-03/metadata/contracts/rounds/round-0039.json) and [round 41 first later patch/test](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-03/metadata/contracts/rounds/round-0041.json).
+[^compact-eza]: [`tura-benchmark` eza round 23 compact](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/eza/tura-balanced/eza-tura-balanced-gpt56-sol-run-02/metadata/contracts/rounds/round-0023.json) and [round 24 first later test](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/eza/tura-balanced/eza-tura-balanced-gpt56-sol-run-02/metadata/contracts/rounds/round-0024.json).

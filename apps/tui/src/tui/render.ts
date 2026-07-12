@@ -1,6 +1,6 @@
 import { displayMessages, type AppState } from "./reducer.js";
 import type { Message } from "../types/session.js";
-import { messageText, sessionTitle } from "../types/session.js";
+import { messageText, sessionHasQuestionStatus, sessionTitle } from "../types/session.js";
 import { t } from "../i18n.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
 import {
@@ -19,7 +19,11 @@ import {
   wrap,
 } from "./render-terminal.js";
 import { composerLines } from "./render/composer.js";
-import { busyAnimationFrame, thinkingAnimationFrame } from "./render/busy-animation.js";
+import {
+  busyAnimationFrame,
+  questionAnimationFrame,
+  thinkingAnimationFrame,
+} from "./render/busy-animation.js";
 import {
   finalizeFrame,
   plainFrame,
@@ -36,7 +40,7 @@ import {
   type TranscriptRenderLine,
 } from "./render/transcript.js";
 import { secondaryText } from "./styles/text.js";
-import { isBusyState } from "./busy-state.js";
+import { isBusyState, sessionHasRunningCommand } from "./busy-state.js";
 import { runtimeModelFromConfig } from "./model-config.js";
 import {
   commandHelpEntries,
@@ -537,6 +541,12 @@ function richPrimary(): string {
 function sessionStateMarker(state: AppState, session: AppState["sessions"][number]): string {
   if (session.status === "busy") {
     return busyAnimationFrame(state.thinkingFrame, activeCapabilities.unicode);
+  }
+  if (sessionHasRunningCommand(state, session.id)) {
+    return busyAnimationFrame(state.thinkingFrame, activeCapabilities.unicode);
+  }
+  if (sessionHasQuestionStatus(session)) {
+    return questionAnimationFrame(state.thinkingFrame, activeCapabilities.unicode);
   }
   if (session.id === state.session?.id) return "";
   const seen = state.seenSessionMessageCounts[session.id] ?? session.message_count ?? 0;

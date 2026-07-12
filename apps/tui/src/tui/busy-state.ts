@@ -1,4 +1,6 @@
 import type { AppState } from "./reducer.js";
+import { sessionHasQuestionStatus } from "../types/session.js";
+import { commandStatusIsRunning } from "../types/event.js";
 
 export function hasActiveAnimation(state: AppState): boolean {
   if (state.sessionLoading) return true;
@@ -9,17 +11,33 @@ export function hasActiveAnimation(state: AppState): boolean {
 }
 
 function hasVisibleBusySession(state: AppState): boolean {
-  return state.sessionsOpen && state.sessions.some((session) => session.status === "busy");
+  return (
+    state.sessionsOpen &&
+    state.sessions.some(
+      (session) =>
+        session.status === "busy" ||
+        sessionHasRunningCommand(state, session.id) ||
+        sessionHasQuestionStatus(session),
+    )
+  );
+}
+
+export function sessionHasRunningCommand(state: AppState, sessionID: string): boolean {
+  return Object.values(state.commandStatesBySession[sessionID] ?? {}).some((command) =>
+    commandStatusIsRunning(command.status),
+  );
 }
 
 export function isBusyState(state: AppState): boolean {
   if (state.status === "error" || state.session?.status === "error") return false;
   const listStatus = activeSessionListStatus(state);
   if (listStatus === "error") return false;
+  const activeSessionID = state.session?.id;
   return (
     state.status === "busy" ||
     state.session?.status === "busy" ||
     listStatus === "busy" ||
+    Boolean(activeSessionID && sessionHasRunningCommand(state, activeSessionID)) ||
     hasPendingUserTurn(state) ||
     (!hasExplicitIdleState(state, listStatus) &&
       (hasActiveLiveStream(state) || hasRunningCommand(state)))

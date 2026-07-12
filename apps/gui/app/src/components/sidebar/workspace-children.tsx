@@ -1,4 +1,4 @@
-import { type FileInfo, type ProductIssue, type Session } from "@tura/gateway-sdk";
+import { type FileInfo, type Message, type ProductIssue, type Session } from "@tura/gateway-sdk";
 import { For, Match, Show, Switch, type Accessor, createMemo, createSignal } from "solid-js";
 import { t } from "../../i18n";
 import { SessionRowMeta } from "../../pages/plan/plan-view";
@@ -16,6 +16,7 @@ export function WorkspaceChildren(props: {
   activeTab: MainTab;
   expandedGroup?: string;
   sessions: Session[];
+  messagesBySession: Record<string, Message[]>;
   sessionsLoading: boolean;
   attentionAcknowledged: (session: Session) => boolean;
   selectedSessionId?: string;
@@ -71,6 +72,7 @@ export function WorkspaceChildren(props: {
             {(sessionId) => (
               <SessionButton
                 session={sessionById(sessionId)}
+                messages={() => props.messagesBySession[sessionId]}
                 selected={() => props.selectedSessionId === sessionId}
                 attentionAcknowledged={() => {
                   const session = sessionsById().get(sessionId);
@@ -97,6 +99,7 @@ export function WorkspaceChildren(props: {
             {(sessionId) => (
               <SessionButton
                 session={sessionById(sessionId)}
+                messages={() => props.messagesBySession[sessionId]}
                 depth={() => visibleSessionDepthById().get(sessionId) ?? 0}
                 selected={() => props.selectedSessionId === sessionId}
                 attentionAcknowledged={() => {
@@ -129,6 +132,7 @@ export function WorkspaceChildren(props: {
 
 function SessionButton(props: {
   session: Accessor<Session | undefined>;
+  messages: Accessor<Message[] | undefined>;
   depth?: Accessor<number>;
   selected: Accessor<boolean>;
   attentionAcknowledged: Accessor<boolean>;
@@ -155,6 +159,7 @@ function SessionButton(props: {
           <span>{shortSessionTitle(sessionTitle(session()))}</span>
           <SessionRowMeta
             session={session()}
+            messages={props.messages()}
             attentionAcknowledged={props.attentionAcknowledged()}
           />
           <button
