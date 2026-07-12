@@ -23,7 +23,7 @@ Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to meas
 The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]
 
 <details>
-<summary><strong>Benchmark comparison</strong></summary>
+<summary><strong>FULL BENCHMARK REPORT</strong></summary>
 
 <p align="center">
   <img src="assets/data/benchmark-agent-comparison.svg" alt="DeepSWE Debug and Rewrite Repo benchmark comparison" width="800">
