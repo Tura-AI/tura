@@ -18,7 +18,7 @@ Tura reduces model round trips and repeated context through its runtime and macr
 
 ### Benchmark
 Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to measure coding-agent performance beyond isolated prompts. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
-> On 20 DeepSWE v1.1 tasks run three times per agent (180 sessions), Tura Balanced passed 48/60 task verifiers (80.0%) versus Codex CLI's 38/60 (63.3%), a 16.7 percentage-point improvement. Tura Direct used 75.1M aggregate tokens versus Codex CLI's 333.5M, or 77.5% fewer, while passing 39/60 verifiers (65.0%), 1.7 points above Codex CLI. In short: Balanced used 31.1% fewer tokens and improved verifier success by 16.7 points; Direct used 77.5% fewer tokens and improved verifier success by 1.7 points.[^debug-figure][^debug-manifests]
+> Across 20 DeepSWE v1.1 tasks run three times per agent, Tura first creates a substantial token-budget advantage by reducing repeated context and model round trips. Users can then choose how to spend that advantage: Direct converts most of it into lower cost, using 77.5% fewer aggregate tokens than Codex CLI while achieving a comparable verifier success rate of 65.0% versus 63.3%; Balanced reinvests part of the saved budget into deeper reasoning, investigation, and verification, reaching an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
 
 The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]
 
@@ -142,7 +142,9 @@ In the example below, the LLM can derive the optimal strategy for playing rock-p
 > Then map rock, paper, or scissors to the number.
 ```
 
-In programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is guided to reason through the full execution path, reconstruct the failure state, and identify the root cause before writing code. In the published DeepSWE comparison, Tura Balanced passed 10 more of 60 binary task verifiers than Codex CLI; in the GPT-5.6 rewrite comparison, it passed 389/472 checks versus 351/472 for Codex CLI.[^debug-manifests][^rewrite-manifest]
+In programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is guided to reason through the full execution path, reconstruct the failure state, and identify the root cause before writing code. In the published DeepSWE comparison, Tura Balanced passed 10 more of 60 binary task verifiers than Codex CLI. 
+
+On the same 20-task subset, DeepSWE’s official mini-swe-agent results show an 8% gap between GPT-5.6 SOL High and Medium reasoning, while Tura Balanced leads Codex CLI by 16.7%. This indicates that higher reasoning effort alone does not explain Tura’s advantage.[^debug-manifests][^rewrite-manifest]
 
 
 ## Runtime Context and Prompt Manager
