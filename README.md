@@ -19,9 +19,7 @@ Across 20 DeepSWE v1.1 tasks run three times per agent, Tura first creates a sub
 
 Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to measure coding-agent performance beyond isolated prompts. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
 
-> The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]
-
-The public [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md) gives the full evidence ledger: acquisition and storage, cohort alignment, retained Tura timeouts and severe long tails, the High-versus-Medium rationale, prompt-generation drift, compact-context and other missing ablations, and the next controlled experiments. It also audits eight same-model, same-High-effort design runs. Across those runs, Tura Direct used 43.6% fewer tokens and 24.1% fewer turns while recording 264 tool actions versus Codex CLI's 43. In the squid decks, all 20 Tura video links are resolvable, specific YouTube pages and 18/20 have exact-dish titles; all 20 Codex links are search-result pages, and 60% of Codex recipe citations are searches or broad indexes. In the Paris task, the public HTML artifacts expose the reported Codex angle/layer problems, while Tura's contracts record real-browser WebGL checks and inspected captures at 1440, 768, and 390 pixels.[^test-set-record]
+> The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]. [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md). [^test-set-record]
 
 <details>
 <summary><strong>FULL BENCHMARK REPORT</strong></summary>
