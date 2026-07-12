@@ -11,7 +11,8 @@ source-owned references instead of duplicating long implementation notes.
 
 - [Start navigation](start/navigation.md) - the shortest path through user-facing docs.
 - [GitBook summary](SUMMARY.md) - the full table of contents.
-- [Benchmark methodology](benchmark/benchmark-methodology.md) - scope, selection, scoring, and limitations.
+- [Benchmark methodology](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md) - scope, selection, scoring, and limitations.
+- [Current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md) - acquisition, provenance, recomputed claims, anomalies, design observations, and missing ablations.
 - [Benchmark repository](https://github.com/Tura-AI/benchmark) - tasks, harnesses, and published results.
 - [Development architecture](../ARCHITECTURE.md) - how the repository is owned and built.
 

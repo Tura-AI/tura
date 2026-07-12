@@ -49,5 +49,6 @@
 - [Testing](../scripts/ARCHITECTURE.md#xtask-test-collection-scripts)
 - [Environment](start/settings.md)
 - [Architecture](../ARCHITECTURE.md)
-- [Benchmark methodology](benchmark/benchmark-methodology.md)
+- [Benchmark methodology](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md)
+- [Current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
 - [Benchmark repository](https://github.com/Tura-AI/benchmark)
