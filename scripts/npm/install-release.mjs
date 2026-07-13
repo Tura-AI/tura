@@ -2,15 +2,10 @@
 import {
   chmodSync,
   cpSync,
-  createWriteStream,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
 } from "node:fs";
-import { get } from "node:https";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
@@ -26,9 +21,6 @@ import {
   missingReleaseFiles,
   missingReleaseRuntimeFiles,
   platformPackageName,
-  releaseArchiveName,
-  releaseOutputRoot,
-  releaseTag,
 } from "./release-artifacts.mjs";
 
 const packageRoot = path.resolve(
@@ -48,20 +40,6 @@ function log(message) {
 function fail(message) {
   console.error(`[tura postinstall] ${message}`);
   process.exit(1);
-}
-
-function run(command, args, cwd = packageRoot) {
-  const result = spawnSync(command, args, {
-    cwd,
-    stdio: "inherit",
-    windowsHide: false,
-  });
-  if (result.error) {
-    fail(result.error.message);
-  }
-  if ((result.status ?? 1) !== 0) {
-    fail(`${command} ${args.join(" ")} failed with exit ${result.status}`);
-  }
 }
 
 function pathKey() {
@@ -166,76 +144,6 @@ function ensurePowerShellCliPath() {
   }
 }
 
-function releaseUrl() {
-  if (process.env.TURA_NPM_RELEASE_URL) {
-    return process.env.TURA_NPM_RELEASE_URL;
-  }
-  const baseUrl = (
-    process.env.TURA_NPM_RELEASE_BASE_URL ||
-    "https://github.com/Tura-AI/test-tura/releases/download"
-  ).replace(/\/$/, "");
-  const tag = releaseTag(packageJson.version);
-  return `${baseUrl}/${tag}/${releaseArchiveName(packageJson.version)}`;
-}
-
-function download(url, destination, redirects = 0) {
-  return new Promise((resolve, reject) => {
-    get(url, (response) => {
-      if ([301, 302, 303, 307, 308].includes(response.statusCode ?? 0)) {
-        response.resume();
-        if (!response.headers.location || redirects > 5) {
-          reject(new Error(`download redirect failed for ${url}`));
-          return;
-        }
-        download(
-          new URL(response.headers.location, url).toString(),
-          destination,
-          redirects + 1,
-        ).then(resolve, reject);
-        return;
-      }
-      if (response.statusCode !== 200) {
-        response.resume();
-        reject(
-          new Error(`download failed with HTTP ${response.statusCode}: ${url}`),
-        );
-        return;
-      }
-      const file = createWriteStream(destination);
-      response.pipe(file);
-      file.on("finish", () => file.close(resolve));
-      file.on("error", reject);
-    }).on("error", reject);
-  });
-}
-
-function extractArchive(archivePath) {
-  mkdirSync(releaseDir, { recursive: true });
-  if (archivePath.endsWith(".zip")) {
-    if (process.platform === "win32") {
-      const powerShell = ensureWindowsPowerShellCommand();
-      if (!powerShell) {
-        fail("PowerShell was not found. Restore Windows PowerShell to PATH, set TURA_POWERSHELL_PATH, or install PowerShell 7.");
-      }
-      run(powerShell, [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        `Expand-Archive -LiteralPath '${archivePath.replaceAll("'", "''")}' -DestinationPath '${packageRoot.replaceAll("'", "''")}' -Force`,
-      ]);
-      return;
-    }
-    run("unzip", ["-oq", archivePath, "-d", packageRoot]);
-    return;
-  }
-  if (archivePath.endsWith(".tar.gz") || archivePath.endsWith(".tgz")) {
-    run("tar", ["-xzf", archivePath, "-C", packageRoot]);
-    return;
-  }
-  fail(`unsupported release archive type: ${archivePath}`);
-}
-
 function verifyInstall() {
   const missingRelease = missingReleaseFiles(packageRoot);
   if (missingRelease.length > 0) {
@@ -308,26 +216,6 @@ function installFromPlatformPackage() {
   return true;
 }
 
-function localArchivePath() {
-  if (process.env.TURA_NPM_RELEASE_ARCHIVE) {
-    return path.resolve(process.env.TURA_NPM_RELEASE_ARCHIVE);
-  }
-  const candidate = path.join(
-    releaseOutputRoot(packageRoot),
-    releaseArchiveName(packageJson.version),
-  );
-  return existsSync(candidate) ? candidate : null;
-}
-
-if (
-  process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "1" ||
-  process.env.TURA_NPM_SKIP_RELEASE_DOWNLOAD === "true"
-) {
-  ensureRuntimeDependencies();
-  log("release download skipped by TURA_NPM_SKIP_RELEASE_DOWNLOAD");
-  process.exit(0);
-}
-
 ensureRuntimeDependencies();
 
 const existingMissing = missingReleaseFiles(packageRoot);
@@ -342,32 +230,7 @@ if (installFromPlatformPackage()) {
   process.exit(0);
 }
 
-const localArchive = localArchivePath();
-if (localArchive) {
-  extractArchive(localArchive);
-  markReleaseExecutablesRunnable();
-  verifyInstall();
-  registerCli();
-  log(
-    `release binaries installed from ${path.relative(packageRoot, localArchive)}`,
-  );
-  process.exit(0);
-}
-
-const tempRoot = mkdtempSync(path.join(tmpdir(), "tura-npm-release-"));
-try {
-  const archivePath = path.join(
-    tempRoot,
-    releaseArchiveName(packageJson.version),
-  );
-  const url = releaseUrl();
-  log(`downloading ${url}`);
-  await download(url, archivePath);
-  extractArchive(archivePath);
-  markReleaseExecutablesRunnable();
-  verifyInstall();
-  registerCli();
-  log("release binaries installed");
-} finally {
-  rmSync(tempRoot, { recursive: true, force: true });
-}
+const packageName = platformPackageName();
+fail(
+  `platform package ${packageName} is unavailable; reinstall ${packageJson.name} with optional dependencies enabled after confirming ${packageName}@${packageJson.version} is published`,
+);

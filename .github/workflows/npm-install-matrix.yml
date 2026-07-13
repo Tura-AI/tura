@@ -69,7 +69,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Continue"
           New-Item -ItemType Directory -Path .ci-results -Force | Out-Null
-          node --test scripts/npm/cli-path.test.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log"
+          node --test scripts/npm/cli-path.test.mjs scripts/npm/install-release.test.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log"
           $testExit = $LASTEXITCODE
           if ($testExit -eq 0) {
             node scripts/npm/verify-npm-install-fixture.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log" -Append
