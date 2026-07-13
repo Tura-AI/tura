@@ -85,16 +85,6 @@ export function WorkspaceChildren(props: {
           </For>
         </Match>
         <Match when={props.activeTab === "conversation"}>
-          <Show when={hiddenSessionCount() > 0}>
-            <button
-              type="button"
-              class="child-row rail-more"
-              style={{ "--depth": 1 }}
-              onClick={() => setExpandedSessions((value) => !value)}
-            >
-              {expandedSessions() ? t("collapse") : t("showMore", { count: hiddenSessionCount() })}
-            </button>
-          </Show>
           <For each={visibleSessionIds()} fallback={sessionFallback()}>
             {(sessionId) => (
               <SessionButton
@@ -111,6 +101,16 @@ export function WorkspaceChildren(props: {
               />
             )}
           </For>
+          <Show when={hiddenSessionCount() > 0}>
+            <button
+              type="button"
+              class="child-row rail-more"
+              style={{ "--depth": 1 }}
+              onClick={() => setExpandedSessions((value) => !value)}
+            >
+              {expandedSessions() ? t("collapse") : t("showMore", { count: hiddenSessionCount() })}
+            </button>
+          </Show>
         </Match>
         <Match when={props.activeTab === "files"}>
           <FileTreeRows

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { draw } from "../../../src/tui/app.js";
-import { drawChatChromeOverlay } from "../../../src/tui/draw.js";
+import { drawChatChromeOverlay, resetDrawState } from "../../../src/tui/draw.js";
 import { renderChatFrameParts } from "../../../src/tui/render.js";
 import { initialState, reducer } from "../../../src/tui/reducer.js";
 import { richCapabilities } from "../../../src/tui/capabilities.js";
@@ -43,6 +43,58 @@ test("draw clears terminal when opening the session picker over chat scrollback"
   });
 
   assert.ok(writes.join("").includes(terminalClear));
+});
+
+test("draw coalesces frames while stdout is backpressured", () => {
+  const busySession = { ...activeSession, status: "busy" as const };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: busySession,
+    messages: [],
+    permissions: [],
+    sessions: [busySession],
+  });
+  const writes: string[] = [];
+  let blocked = true;
+  const isTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  const columns = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+  const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+  const write = Object.getOwnPropertyDescriptor(process.stdout, "write");
+  resetDrawState();
+  Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+  Object.defineProperty(process.stdout, "columns", { configurable: true, value: 80 });
+  Object.defineProperty(process.stdout, "rows", { configurable: true, value: 20 });
+  Object.defineProperty(process.stdout, "write", {
+    configurable: true,
+    value: (chunk: string | Uint8Array): boolean => {
+      writes.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return !blocked;
+    },
+  });
+
+  try {
+    let previous = draw(state, richCapabilities(), "");
+    assert.equal(writes.length, 1, "the first frame must be accepted by the stream buffer");
+
+    state = reducer(state, { type: "tick" });
+    previous = draw(state, richCapabilities(), previous);
+    state = reducer(state, { type: "tick" });
+    previous = draw(state, richCapabilities(), previous);
+    assert.equal(writes.length, 1, "blocked stdout must not receive more animation frames");
+
+    blocked = false;
+    process.stdout.emit("drain");
+    draw(state, richCapabilities(), previous);
+    assert.equal(writes.length, 2, "the latest frame must render after stdout drains");
+  } finally {
+    blocked = false;
+    process.stdout.emit("drain");
+    resetDrawState();
+    restoreProperty(process.stdout, "isTTY", isTTY);
+    restoreProperty(process.stdout, "columns", columns);
+    restoreProperty(process.stdout, "rows", rows);
+    restoreProperty(process.stdout, "write", write);
+  }
 });
 
 test("draw clears terminal when the active session changes", () => {

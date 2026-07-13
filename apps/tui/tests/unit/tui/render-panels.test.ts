@@ -196,7 +196,7 @@ test("sessions panel shows names, previews, and status diamonds", () => {
     const state = { ...base, sessionsOpen: true, thinkingFrame: 0 };
 
     const first = stripAnsi(render(state, richCapabilities()));
-    const next = stripAnsi(render({ ...state, thinkingFrame: 10 }, richCapabilities()));
+    const next = stripAnsi(render({ ...state, thinkingFrame: 1 }, richCapabilities()));
 
     assert.match(first, /Needs Input \?/);
     assert.match(next, /Needs Input ‽/);

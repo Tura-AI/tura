@@ -8,7 +8,7 @@ import { isDraftSession, sessionTitle } from "../types/session.js";
 import { sessionConfigPatchFromAssignments } from "../commands/config-values.js";
 import { initialState, reducer, type AppAction, type AppState } from "./reducer.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
-import { TUI_DRAW_INTERVAL_MS } from "./frame-rate.js";
+import { TUI_ANIMATION_INTERVAL_MS, TUI_DRAW_INTERVAL_MS } from "./frame-rate.js";
 import { parseLanguage, setLanguage, t } from "../i18n.js";
 import { keySequence, printableSequence } from "./interactions/keyboard.js";
 import { selectedModel, selectedPersonaID, selectedSettingDetail } from "./logic/selection.js";
@@ -18,6 +18,7 @@ import {
   draw,
   drawChatChromeOverlay,
   resetDrawState,
+  setTerminalDrainHandler,
 } from "./draw.js";
 import {
   eventLoop,
@@ -167,6 +168,9 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     drawNow: () => performDraw(true),
     clearPendingDraw,
   });
+  setTerminalDrainHandler(() => {
+    if (!resizeDrawGate.isFrozen()) performDraw(true);
+  });
   const flushDraw = () => {
     if (resizeDrawGate.isFrozen()) return;
     performDraw();
@@ -195,7 +199,12 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   const dispatch = (action: Parameters<typeof reducer>[1]) => {
     const hadActiveLiveStreams = hasActiveLiveStreams(state);
     state = reducer(state, action);
-    if (action.type === "event" && action.event.payload?.type === "message.part.delta") {
+    if (
+      action.type === "event" &&
+      ["message.part.delta", "message.part.updated", "command.updated"].includes(
+        action.event.payload?.type ?? "",
+      )
+    ) {
       scheduleDraw();
       return;
     }
@@ -233,7 +242,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   const heartbeatTimer = setInterval(() => {
     if (!hasActiveAnimation(state)) return;
     dispatch({ type: "tick" });
-  }, TUI_DRAW_INTERVAL_MS);
+  }, TUI_ANIMATION_INTERVAL_MS);
   const sessionPickerRefreshTimer = setInterval(() => {
     if (!state.sessionsOpen || state.sessionLoading) return;
     void refreshOpenSessionPicker(client, () => state, dispatch);
@@ -305,6 +314,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   clearInterval(sessionPickerRefreshTimer);
   if (gatewayShutdownTimer) clearInterval(gatewayShutdownTimer);
   controller.abort();
+  setTerminalDrainHandler(undefined);
   resizeDrawGate.dispose();
   flushDraw();
   if (process.stdin.isTTY) process.stdin.setRawMode(false);

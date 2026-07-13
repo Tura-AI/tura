@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { TerminalCapabilities } from "../tui/capabilities.js";
-import { TUI_DRAW_INTERVAL_MS } from "../tui/frame-rate.js";
+import { TUI_ANIMATION_INTERVAL_MS } from "../tui/frame-rate.js";
 import { iconAnimationFrame } from "../tui/render/busy-animation.js";
 import { t } from "../i18n.js";
 import {
@@ -505,7 +505,7 @@ async function runWithSpinner(options: {
     process.stdout.write(options.capabilities.cursorControl ? `\r\x1b[2K${line}` : `${line}\n`);
   };
   draw();
-  const timer = setInterval(draw, TUI_DRAW_INTERVAL_MS);
+  const timer = setInterval(draw, TUI_ANIMATION_INTERVAL_MS);
   try {
     await options.run(draw);
     if (process.stdout.isTTY) {

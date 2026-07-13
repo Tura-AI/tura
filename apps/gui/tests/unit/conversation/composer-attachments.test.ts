@@ -55,12 +55,14 @@ describe("composer attachment drag and sizing", () => {
     expect(submitFromKeyboardBlock).not.toContain("props.onStop");
   });
 
-  test("keeps attachment chips at the current composer text height", () => {
+  test("keeps attachment chips at the full composer line height and centers their content", () => {
+    expect(composerCss).toContain("--composer-line-box: 1.74em;");
+    expect(composerCss).toContain("line-height: var(--composer-line-box);");
     expect(composerCss).toContain(".composer-attachment-token");
-    expect(composerCss).toContain("height: 1lh;");
-    expect(composerCss).toContain("line-height: 1;");
+    expect(composerCss).toContain("height: var(--composer-line-box);");
     expect(composerCss).toContain(".composer-attachment-token button");
-    expect(composerCss).toContain("height: 1lh;");
+    expect(composerCss).toContain("height: 100%;");
+    expect(composerCss).toContain("align-items: center;");
     expect(composerCss).toContain(".composer-attachment-token img");
     expect(composerCss).toContain("width: 1em;");
     expect(composerCss).toContain("height: 1em;");
