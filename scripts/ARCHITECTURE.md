@@ -94,7 +94,7 @@ Important scripts:
   under `release/`, for example `tura-v0.1.0-windows-x64.zip` or
   `tura-v0.1.0-macos-arm64.tar.gz`.
 
-Xtask test collection scripts:
+## Xtask test collection scripts
 
 - `xtask/scripts/run-ci-crate-tests.*`: GitHub-style crate matrix runner. It
   discovers default backend workspace packages, excludes `tura_gui`, and runs
