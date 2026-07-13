@@ -227,6 +227,7 @@ export function Composer(props: {
     if (fileInput) {
       fileInput.value = "";
     }
+  }
 
   async function attachNativePaths(paths: string[]) {
     try {
@@ -275,7 +276,6 @@ export function Composer(props: {
   function setAttachmentFailure(error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     setAttachmentError(t("attachmentSaveFailed", { message }));
-  }
   }
 
   function composerDataTransferHasFiles(dataTransfer: DataTransfer | null): boolean {

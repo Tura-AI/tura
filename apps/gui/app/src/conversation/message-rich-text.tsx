@@ -171,11 +171,7 @@ function isPlainStreamingText(text: string): boolean {
   return !/<\/?[A-Za-z][\s\S]*?>/u.test(text);
 }
 
-function RichNodeView(props: {
-  node: RichNode;
-  workspaceDirectory?: string;
-  gatewayUrl?: string;
-}) {
+function RichNodeView(props: { node: RichNode; workspaceDirectory?: string; gatewayUrl?: string }) {
   if (props.node.kind === "text") {
     return <>{props.node.text}</>;
   }
@@ -512,11 +508,7 @@ function GalleryMediaItem(props: {
   );
 }
 
-function FileMediaTile(props: {
-  path: string;
-  workspaceDirectory?: string;
-  gatewayUrl?: string;
-}) {
+function FileMediaTile(props: { path: string; workspaceDirectory?: string; gatewayUrl?: string }) {
   return (
     <button
       type="button"

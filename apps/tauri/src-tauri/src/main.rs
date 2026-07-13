@@ -475,15 +475,25 @@ fn native_input_files_from_path(path: &Path) -> Result<Vec<NativeInputFile>, Str
 }
 
 fn collect_input_file_paths(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = std::fs::read_dir(directory)
-        .map_err(|err| format!("failed to read input directory {}: {err}", directory.display()))?;
+    let entries = std::fs::read_dir(directory).map_err(|err| {
+        format!(
+            "failed to read input directory {}: {err}",
+            directory.display()
+        )
+    })?;
     for entry in entries {
         let entry = entry.map_err(|err| {
-            format!("failed to read input directory {}: {err}", directory.display())
+            format!(
+                "failed to read input directory {}: {err}",
+                directory.display()
+            )
         })?;
-        let file_type = entry
-            .file_type()
-            .map_err(|err| format!("failed to inspect input path {}: {err}", entry.path().display()))?;
+        let file_type = entry.file_type().map_err(|err| {
+            format!(
+                "failed to inspect input path {}: {err}",
+                entry.path().display()
+            )
+        })?;
         if file_type.is_file() {
             files.push(entry.path());
             if files.len() > MAX_NATIVE_INPUT_FILES {

@@ -206,6 +206,12 @@ of opening those files.
 
 The existing coding workbench keeps using these gateway routes:
 
+- Composer files, dropped paths, and clipboard images are persisted through
+  `POST /file/input` under the selected workspace's `.tura/media/input` before
+  the editor inserts attachment tokens. Sent image and non-image attachments
+  both use `[MEDIA:<workspace-relative-path>:MEDIA]`, so history rendering,
+  previews, and file-open actions remain gateway-backed after a GUI restart.
+
 ```text
 health                         GET    /global/health
 event stream                   GET    /event
