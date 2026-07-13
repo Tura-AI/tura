@@ -2,6 +2,8 @@ name: NPM Platform Release
 
 on:
   push:
+    branches:
+      - "npm-release/**"
     tags:
       - "v*"
       - "release*"
@@ -12,34 +14,13 @@ permissions:
   contents: write
   id-token: write
 
-jobs:
-  validate-npm-token:
-    name: Validate npm token
-    runs-on: ubuntu-latest
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
-    steps:
-      - name: Check npm publish token
-        run: |
-          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
-            echo "Skipping npm token check for non-tag workflow run."
-            exit 0
-          fi
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::notice title=NPM token missing::No npm token secret is configured in GitHub Actions. Release assets will still be built; npm publish steps will skip." >&2
-            exit 0
-          fi
-          printf '%s\n' \
-            "registry=https://registry.npmjs.org/" \
-            "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
-          if ! npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
-            echo "::warning title=NPM token invalid::The configured npm token is not accepted by registry.npmjs.org. Release assets will still be built; npm publish steps will skip." >&2
-            exit 0
-          fi
+env:
+  NPM_CLI_VERSION: "11.18.0"
 
+jobs:
   build-platform:
     name: Build ${{ matrix.package }}
-    needs: validate-npm-token
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -80,6 +61,9 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Install npm with trusted publishing support
+        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
 
       - name: Bun setup
         uses: oven-sh/setup-bun@v2
@@ -160,23 +144,10 @@ jobs:
       - name: Publish platform npm package
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
           if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
-          }
-          if (-not $env:NODE_AUTH_TOKEN) {
-            Write-Host "::notice title=NPM token missing::Skipping npm publish for this platform because no npm token secret is configured."
-            exit 0
-          }
-          npm whoami --registry=https://registry.npmjs.org/ *> $null
-          $whoamiExitCode = $LASTEXITCODE
-          $global:LASTEXITCODE = 0
-          if ($whoamiExitCode -ne 0) {
-            Write-Host "::warning title=NPM token invalid::Skipping npm publish for this platform because the configured token was rejected by npm."
-            exit 0
           }
           $packageDir = Get-ChildItem -LiteralPath release/npm-platform -Directory | Select-Object -First 1
           if (-not $packageDir) { throw "Platform package directory was not produced." }
@@ -188,15 +159,13 @@ jobs:
             Write-Host "$($packageJson.name)@$($packageJson.version) already exists on npm; skipping publish."
             exit 0
           }
-          npm publish $packageDir.FullName --access public --provenance
+          npm publish $packageDir.FullName --access public
 
   publish-main:
     name: Publish main npm package
     runs-on: ubuntu-latest
     needs: build-platform
     if: startsWith(github.ref, 'refs/tags/')
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Node setup
@@ -204,16 +173,10 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: Install npm with trusted publishing support
+        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
       - name: Verify and publish main package
         run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::notice title=NPM token missing::Skipping main npm publish because no npm token secret is configured." >&2
-            exit 0
-          fi
-          if ! npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
-            echo "::warning title=NPM token invalid::Skipping main npm publish because the configured token was rejected by npm." >&2
-            exit 0
-          fi
           node scripts/npm/prepack.mjs
           package_name="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).name")"
           version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
@@ -224,4 +187,81 @@ jobs:
           mkdir -p release/npm-main
           pack_json="$(npm pack --json --pack-destination release/npm-main)"
           package_file="$(PACK_JSON="$pack_json" node -e "const info = JSON.parse(process.env.PACK_JSON); console.log('release/npm-main/' + info[0].filename)")"
-          npm publish "$package_file" --access public --provenance
+          npm publish "$package_file" --access public
+
+  publish-existing-platform:
+    name: Publish existing ${{ matrix.package }}
+    if: startsWith(github.ref, 'refs/heads/npm-release/')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - tura-darwin-arm64
+          - tura-darwin-x64
+          - tura-linux-x64
+          - tura-win32-x64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Install npm with trusted publishing support
+        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+      - name: Download and publish verified release package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          $package = "${{ matrix.package }}"
+          npm view "$package@$version" version *> $null
+          $viewExitCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($viewExitCode -eq 0) {
+            Write-Host "$package@$version already exists on npm; skipping publish."
+            exit 0
+          }
+          $releaseTag = "v$version"
+          $archive = "$package-$version.tgz"
+          New-Item -ItemType Directory -Force -Path release/npm-existing | Out-Null
+          gh release download $releaseTag --pattern $archive --dir release/npm-existing
+          $packageJson = tar -xOf (Join-Path release/npm-existing $archive) package/package.json | ConvertFrom-Json
+          if ($packageJson.name -ne $package -or $packageJson.version -ne $version) {
+            throw "Release package metadata does not match $package@$version."
+          }
+          npm publish (Join-Path release/npm-existing $archive) --access public
+
+  publish-existing-main:
+    name: Publish existing main npm package
+    needs: publish-existing-platform
+    if: startsWith(github.ref, 'refs/heads/npm-release/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Install npm with trusted publishing support
+        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+      - name: Verify and publish main package
+        run: |
+          node scripts/npm/prepack.mjs
+          package_name="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).name")"
+          version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
+          if npm view "${package_name}@${version}" version >/dev/null 2>&1; then
+            echo "${package_name}@${version} already exists on npm; skipping publish."
+            exit 0
+          fi
+          mkdir -p release/npm-main
+          pack_json="$(npm pack --json --pack-destination release/npm-main)"
+          package_file="$(PACK_JSON="$pack_json" node -e "const info = JSON.parse(process.env.PACK_JSON); console.log('release/npm-main/' + info[0].filename)")"
+          npm publish "$package_file" --access public
