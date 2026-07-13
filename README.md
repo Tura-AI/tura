@@ -20,7 +20,7 @@ Across 20 DeepSWE v1.1 tasks run three times per agent, Tura first creates a sub
 
 Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to measure coding-agent performance beyond isolated prompts. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
 
-> The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]. [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md). [^test-set-record]
+> The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on 20 DeepSWE tasks, 5 rewrite tasks, and 2 separately reviewed design tasks. [^debug-figure]. [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md). [^test-set-record]
 
 The published results do not establish equivalent quality or performance for
 every configured provider. Broader Anthropic/Claude, Google/Gemini,

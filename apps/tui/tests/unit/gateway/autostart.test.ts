@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -210,7 +210,9 @@ test("ensureGatewayAvailable terminates stale active gateway and relaunches once
       ownUrl,
     );
     assert.equal(launches, 1);
-    assert.deepEqual(terminated, [{ pid: 42, processStartTime: 777, home }]);
+    assert.deepEqual(terminated, [
+      { pid: 42, processStartTime: 777, home: realpathSync.native(home) },
+    ]);
   } finally {
     restoreTimeout?.();
     restoreTerminator?.();

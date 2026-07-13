@@ -33,9 +33,9 @@ pub(crate) fn should_pass_service_tier(provider: &str, model: &str) -> bool {
 
 pub(crate) fn normalized_reasoning_effort(options: &CallOptions, model: &str) -> Option<String> {
     normalized_non_default_option(options.reasoning_effort.as_deref()).map(|value| {
-        if value.eq_ignore_ascii_case("highest") {
-            "xhigh".to_string()
-        } else if value.eq_ignore_ascii_case("max") && !model_supports_max_reasoning(model) {
+        if value.eq_ignore_ascii_case("highest")
+            || (value.eq_ignore_ascii_case("max") && !model_supports_max_reasoning(model))
+        {
             "xhigh".to_string()
         } else if value.eq_ignore_ascii_case("max") {
             "max".to_string()
