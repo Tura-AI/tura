@@ -23,6 +23,7 @@ LOCAL_E2E = [
     "workbench_smoke_e2e.py",
     "session_history_expand_e2e.py",
     "session_loading_placeholder_e2e.py",
+    "gui_tui_shared_gateway_stream_e2e.py",
     "settings_appearance_playwright_e2e.py",
     "settings_agents_playwright_e2e.py",
     "settings_full_flow_e2e.py",

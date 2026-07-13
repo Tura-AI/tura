@@ -106,7 +106,6 @@ export function useAppGatewayLifecycle(options: {
             ? applyGatewayEvent(previous, event)
             : previous,
         ),
-      onError: () => setState((previous) => ({ ...previous, connection: "disconnected" })),
     });
     onCleanup(() => stream.close());
   });
