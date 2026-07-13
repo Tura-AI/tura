@@ -544,7 +544,7 @@ export function materializeComposerContent(text: string, images: ComposerImage[]
       token,
       isImage
         ? `\n[Image ${index}: ${image.name}]\n[MEDIA:${image.dataUrl}:MEDIA]\n`
-        : `\n[File ${index}: ${image.name}]\n`,
+        : `\n[File ${index}: ${image.name}]\n[MEDIA:${image.dataUrl}:MEDIA]\n`,
     );
   }
   const trailing = images.filter((image) => !seen.has(image.id));
@@ -555,7 +555,7 @@ export function materializeComposerContent(text: string, images: ComposerImage[]
         index += 1;
         return isImage
           ? `[Image ${index}: ${image.name}]\n[MEDIA:${image.dataUrl}:MEDIA]`
-          : `[File ${index}: ${image.name}]`;
+          : `[File ${index}: ${image.name}]\n[MEDIA:${image.dataUrl}:MEDIA]`;
       })
       .join("\n\n");
     content = `${content.trim()}\n\n${appendix}`;

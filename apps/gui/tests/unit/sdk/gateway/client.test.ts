@@ -79,6 +79,42 @@ describe("GatewayClient", () => {
     expect(decodeURIComponent(observedHeader)).toBe(directory);
   });
 
+  test("saves composer input files through the scoped workspace endpoint", async () => {
+    let observedUrl = "";
+    let observedBody = "";
+    const client = new GatewayClient({
+      baseUrl: "http://gateway.test",
+      directory: "C:\\repo",
+      fetch: async (input, init) => {
+        observedUrl = String(input);
+        observedBody = String(init?.body ?? "");
+        return jsonResponse({
+          path: ".tura/media/input/1-shot.png",
+          absolute: "C:/repo/.tura/media/input/1-shot.png",
+          name: "1-shot.png",
+          mimeType: "image/png",
+          size_bytes: 3,
+        });
+      },
+    });
+
+    const saved = await client.saveInputFile({
+      name: "shot.png",
+      content: "YWJj",
+      encoding: "base64",
+      mimeType: "image/png",
+    });
+
+    expect(observedUrl).toBe("http://gateway.test/file/input?directory=C%3A%5Crepo");
+    expect(JSON.parse(observedBody)).toEqual({
+      name: "shot.png",
+      content: "YWJj",
+      encoding: "base64",
+      mimeType: "image/png",
+    });
+    expect(saved.path).toBe(".tura/media/input/1-shot.png");
+  });
+
   test("updates model config with a tier provider model selection", async () => {
     let observedBody = "";
     const client = new GatewayClient({

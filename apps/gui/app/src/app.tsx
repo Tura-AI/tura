@@ -64,6 +64,11 @@ const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
 const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
 const MESSAGE_PAGE_SIZE = 100;
 const MESSAGE_PAGE_FETCH_LIMIT = MESSAGE_PAGE_SIZE + 1;
+const MINIMUM_SESSION_LOADING_MS = 500;
+
+function minimumSessionLoadingDelay(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, MINIMUM_SESSION_LOADING_MS));
+}
 
 declare global {
   interface Window {
@@ -207,16 +212,13 @@ export function App() {
 
   async function openSession(sessionId: string, options: { forceRefreshMessages?: boolean } = {}) {
     const requestId = ++sessionMessageLoadRequest;
+    const minimumLoadingDelay = minimumSessionLoadingDelay();
     const existingMessages = state().messagesBySession[sessionId] ?? [];
     const shouldFetchMessages = shouldFetchSessionMessages(
       existingMessages,
       options.forceRefreshMessages,
     );
-    if (shouldFetchMessages) {
-      setLoadingSessionId(sessionId);
-    } else {
-      setLoadingSessionId(undefined);
-    }
+    setLoadingSessionId(sessionId);
     writeLastSessionOpened(sessionId);
     acknowledgeSessionAttention(sessionId);
     setState((previous) => ({
@@ -225,25 +227,29 @@ export function App() {
       selectedSessionId: sessionId,
       error: undefined,
     }));
-    const client = directoryClient();
-    if (!shouldFetchMessages) {
-      setState((previous) => ({
-        ...previous,
-        messagePagingBySession: {
-          ...previous.messagePagingBySession,
-          [sessionId]: previous.messagePagingBySession[sessionId] ?? {
-            hasEarlier: true,
-            loadingEarlier: false,
-          },
-        },
-      }));
-      return;
-    }
     try {
-      const messagePage = await safe(
-        () => client.messages(sessionId, { limit: MESSAGE_PAGE_FETCH_LIMIT }),
-        existingMessages,
-      );
+      const client = directoryClient();
+      if (!shouldFetchMessages) {
+        setState((previous) => ({
+          ...previous,
+          messagePagingBySession: {
+            ...previous.messagePagingBySession,
+            [sessionId]: previous.messagePagingBySession[sessionId] ?? {
+              hasEarlier: true,
+              loadingEarlier: false,
+            },
+          },
+        }));
+        await minimumLoadingDelay;
+        return;
+      }
+      const [messagePage] = await Promise.all([
+        safe(
+          () => client.messages(sessionId, { limit: MESSAGE_PAGE_FETCH_LIMIT }),
+          existingMessages,
+        ),
+        minimumLoadingDelay,
+      ]);
       const hasEarlier = !e2eFixture && messagePage.length > MESSAGE_PAGE_SIZE;
       const messages = hasEarlier ? messagePage.slice(-MESSAGE_PAGE_SIZE) : messagePage;
       setState((previous) => ({

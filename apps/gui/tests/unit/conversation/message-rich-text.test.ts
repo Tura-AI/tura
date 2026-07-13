@@ -25,6 +25,15 @@ describe("message rich text media paths", () => {
       "/file/media?path=shots%2Ffinal+image.png&directory=C%3A%2Frepo+with+space",
     );
   });
+
+  test("uses the connected gateway for Tauri media and renders files as interactive controls", () => {
+    expect(mediaSource(".tura/media/input/shot.png", "C:/repo", "http://127.0.0.1:4217")).toBe(
+      "http://127.0.0.1:4217/file/media?path=.tura%2Fmedia%2Finput%2Fshot.png&directory=C%3A%2Frepo",
+    );
+    expect(richTextSource).toContain("openMediaFile");
+    expect(richTextSource).toContain('class="rich-file-tile"');
+    expect(richTextSource).toContain("onClick={() => void openMediaFile");
+  });
 });
 
 describe("message text localization", () => {

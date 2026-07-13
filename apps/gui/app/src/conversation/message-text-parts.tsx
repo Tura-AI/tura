@@ -103,6 +103,7 @@ export function TextPartCell(props: {
   role: MessageRole;
   streaming: boolean;
   workspaceDirectory?: string;
+  gatewayUrl?: string;
 }) {
   const text = createMemo(() => stripReactionEmoji(partText(props.part)));
   return (
@@ -117,6 +118,7 @@ export function TextPartCell(props: {
             text={value()}
             active={props.streaming}
             workspaceDirectory={props.workspaceDirectory}
+            gatewayUrl={props.gatewayUrl}
             normalizePunctuation={props.role === "assistant"}
           />
         )}
@@ -130,6 +132,7 @@ export function TypingText(props: {
   text: string;
   active: boolean;
   workspaceDirectory?: string;
+  gatewayUrl?: string;
   normalizePunctuation?: boolean;
 }) {
   return (
@@ -137,6 +140,7 @@ export function TypingText(props: {
       text={props.text}
       active={props.active}
       workspaceDirectory={props.workspaceDirectory}
+      gatewayUrl={props.gatewayUrl}
       normalizePunctuation={props.normalizePunctuation}
     />
   );

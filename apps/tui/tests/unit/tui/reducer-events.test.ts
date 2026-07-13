@@ -142,6 +142,46 @@ test("reducer keeps streaming deltas that arrive before full message hydration",
   assert.equal(displayMessages(state)[0].parts[0].text, "hello");
 });
 
+test("reducer commits prior live messages when a new live message starts", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [],
+    permissions: [],
+  });
+
+  for (const [index, text] of ["first live response", "second live response"].entries()) {
+    const messageID = `runtime-live-${index}.message`;
+    state = reducer(state, {
+      type: "event",
+      event: {
+        directory: "C:/repo",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "sess-1",
+            messageID,
+            partID: messageID,
+            createdAt: index + 1,
+            updatedAt: index + 1,
+            field: "text",
+            delta: text,
+          },
+        },
+      },
+    });
+  }
+
+  assert.equal(Object.values(state.liveStreams).length, 1);
+  assert.equal(Object.values(state.liveStreams)[0]?.messageID, "runtime-live-1.message");
+  assert.equal(state.messages.length, 1);
+  assert.equal(state.messages[0]?.id, "runtime-live-0.message");
+  assert.deepEqual(
+    displayMessages(state).map((message) => messageText(message)),
+    ["first live response", "second live response"],
+  );
+});
+
 test("reducer keeps runtime text live while command parts update", () => {
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",

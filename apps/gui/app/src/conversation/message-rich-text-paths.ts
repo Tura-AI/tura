@@ -1,8 +1,12 @@
-export function mediaSource(path: string, workspaceDirectory?: string): string {
+export function mediaSource(
+  path: string,
+  workspaceDirectory?: string,
+  gatewayUrl?: string,
+): string {
   if (/^(https?:|data:)/iu.test(path) || path.startsWith("/assets/")) return path;
   const query = new URLSearchParams({ path: localPathQueryValue(path) });
   if (workspaceDirectory) query.set("directory", workspaceDirectory);
-  return `${gatewayBaseUrl()}/file/media?${query.toString()}`;
+  return `${gatewayBaseUrl(gatewayUrl)}/file/media?${query.toString()}`;
 }
 
 export function localPathQueryValue(value: string): string {
@@ -20,7 +24,8 @@ export function localPathQueryValue(value: string): string {
   }
 }
 
-export function gatewayBaseUrl(): string {
+export function gatewayBaseUrl(explicit?: string): string {
+  if (explicit?.trim()) return explicit.trim().replace(/\/+$/u, "");
   if (typeof window === "undefined") return "";
   const configured = new URLSearchParams(window.location.search).get("gatewayUrl")?.trim();
   if (configured) return configured.replace(/\/+$/u, "");

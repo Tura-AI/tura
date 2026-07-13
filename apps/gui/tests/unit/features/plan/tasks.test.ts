@@ -360,6 +360,7 @@ describe("plan task contract", () => {
     expect(content).toContain("[Image 1: screen.png]");
     expect(content).toContain("[MEDIA:data:image/png;base64,abc:MEDIA]");
     expect(content).toContain("[File 2: notes.txt]");
+    expect(content).toContain("[MEDIA:blob:notes:MEDIA]");
     expect(content).toContain("[Image 3: extra.png]");
     expect(content).not.toContain("[[image:img1]]");
   });

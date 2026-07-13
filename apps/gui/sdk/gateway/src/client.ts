@@ -7,6 +7,8 @@ import type {
   CreateSessionRequest,
   CurrentProjectResponse,
   FileContentResponse,
+  FileInputSaveRequest,
+  FileInputSaveResponse,
   FileOpenResponse,
   GatewayConfig,
   HealthResponse,
@@ -360,6 +362,10 @@ export class GatewayClient {
 
   fileContent(path: string): Promise<FileContentResponse> {
     return this.get("/file/content", { path }, true);
+  }
+
+  saveInputFile(payload: FileInputSaveRequest): Promise<FileInputSaveResponse> {
+    return this.post("/file/input", payload, undefined, true);
   }
 
   openFile(path: string): Promise<FileOpenResponse> {

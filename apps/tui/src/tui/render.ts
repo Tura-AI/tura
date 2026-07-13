@@ -182,22 +182,21 @@ export function renderChatFrameParts(
     state,
     groups.cache.length,
   );
-  const renderedCache =
-    reusableCache ?? renderChatCache(state, capabilities, renderCols, groups.cache);
-  const tailCacheMessages = groups.cache.slice(renderedCache.cacheMessageCount);
+  const baseCache = reusableCache ?? renderChatCache(state, capabilities, renderCols, groups.cache);
+  const tailCacheMessages = groups.cache.slice(baseCache.cacheMessageCount);
   const tailCacheRows = transcriptRenderLinesForMessages(state, renderCols, tailCacheMessages, {
     commandMode: "cache",
   });
+  const renderedCache = appendRenderedChatCache(
+    baseCache,
+    tailCacheRows,
+    tailCacheMessages.length,
+    renderCols,
+  );
   const activeLiveRows = transcriptRenderLinesForMessages(state, renderCols, groups.live, {
     commandMode: "live",
   });
-  const liveRowsForFrame =
-    tailCacheRows.length && activeLiveRows.length
-      ? [...tailCacheRows, { text: "", kind: "gap" as const }, ...activeLiveRows]
-      : tailCacheRows.length
-        ? tailCacheRows
-        : activeLiveRows;
-  const liveRows = liveLinesWithCacheBoundary(renderedCache.cacheRows, liveRowsForFrame);
+  const liveRows = liveLinesWithCacheBoundary(renderedCache.cacheRows, activeLiveRows);
   const cacheLines = renderedCache.cacheLines;
   const liveLines = liveRows.map((line) => line.text);
   const chromeLines = [
@@ -254,6 +253,25 @@ function renderChatCache(
     cacheRows,
     cacheLines,
     cacheFrame: cache.frame,
+  };
+}
+
+function appendRenderedChatCache(
+  cache: RenderedChatCache,
+  tailRows: TranscriptRenderLine[],
+  tailMessageCount: number,
+  renderCols: number,
+): RenderedChatCache {
+  if (!tailMessageCount) return cache;
+  const appendedRows = liveLinesWithCacheBoundary(cache.cacheRows, tailRows);
+  const appendedLines = appendedRows.map((line) => line.text);
+  const appendedFrame = finalizeFrame(appendedLines, 0, renderCols).frame;
+  return {
+    ...cache,
+    cacheMessageCount: cache.cacheMessageCount + tailMessageCount,
+    cacheRows: [...cache.cacheRows, ...appendedRows],
+    cacheLines: [...cache.cacheLines, ...appendedLines],
+    cacheFrame: [cache.cacheFrame, appendedFrame].filter(Boolean).join("\n"),
   };
 }
 

@@ -212,8 +212,15 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const activeSession = Boolean(
         state.session && (!sessionID || state.session.id === sessionID),
       );
+      const committed = commitLiveStreams(
+        state.messages,
+        state.liveStreams,
+        sessionID,
+        (stream) => stream.messageID !== properties?.messageID,
+      );
       return {
         ...state,
+        messages: committed.messages,
         status: activeSession ? "busy" : state.status,
         session:
           activeSession && state.session ? { ...state.session, status: "busy" } : state.session,
@@ -223,7 +230,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
             )
           : state.sessions,
         liveStreams: applyPartDelta(
-          state.liveStreams,
+          committed.liveStreams,
           properties?.messageID,
           properties?.partID,
           properties?.field,

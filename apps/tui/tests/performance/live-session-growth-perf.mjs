@@ -27,18 +27,26 @@ const result = withCapturedTerminal(() => {
   const live = measureLiveGrowth();
   const resumed = measureResumedSession();
   const liveP95 = live.steady.drawMs.p95;
+  const growthTailP95 = live.growth.lastWindowDrawMs.p95;
   const resumedP95 = resumed.steady.drawMs.p95;
   const improvementRatio = round(liveP95 / Math.max(0.01, resumedP95));
+  const liveMissesFrameBudget = liveP95 > config.frameBudgetMs;
+  const growthTailMissesFrameBudget = growthTailP95 > config.frameBudgetMs;
+  const retainedLiveStreams = live.finalLiveStreams;
   return {
     live,
     resumed,
     comparison: {
       liveSteadyDrawP95Ms: liveP95,
+      liveGrowthTailDrawP95Ms: growthTailP95,
       resumedSteadyDrawP95Ms: resumedP95,
       reentryImprovementRatio: improvementRatio,
       frameBudgetMs: round(config.frameBudgetMs),
-      liveMissesFrameBudget: liveP95 > config.frameBudgetMs,
-      reproduced: liveP95 > config.frameBudgetMs && improvementRatio >= 2,
+      retainedLiveStreams,
+      liveMissesFrameBudget,
+      growthTailMissesFrameBudget,
+      reproduced: (liveMissesFrameBudget || growthTailMissesFrameBudget) && improvementRatio >= 2,
+      passed: !liveMissesFrameBudget && !growthTailMissesFrameBudget && retainedLiveStreams <= 1,
     },
   };
 });
@@ -61,6 +69,7 @@ const summary = {
 await fs.mkdir(runRoot, { recursive: true });
 await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
 printSummary(summary);
+if (!summary.comparison.passed) process.exitCode = 1;
 
 function measureLiveGrowth() {
   resetDrawState();
@@ -293,11 +302,12 @@ function printSummary(value) {
   console.log(
     `[steady live] drawP95=${live.steady.drawMs.p95}ms writeP95=${Math.round(live.steady.writeBytes.p95)}B`,
   );
+  console.log(`[growth tail] drawP95=${live.growth.lastWindowDrawMs.p95}ms`);
   console.log(
     `[after reentry] coldDraw=${resumed.coldDrawMs}ms steadyDrawP95=${resumed.steady.drawMs.p95}ms writeP95=${Math.round(resumed.steady.writeBytes.p95)}B`,
   );
   console.log(
-    `[result] reproduced=${comparison.reproduced} frameBudget=${comparison.frameBudgetMs}ms reentryImprovement=${comparison.reentryImprovementRatio}x`,
+    `[result] passed=${comparison.passed} reproduced=${comparison.reproduced} retainedLiveStreams=${comparison.retainedLiveStreams} frameBudget=${comparison.frameBudgetMs}ms reentryImprovement=${comparison.reentryImprovementRatio}x`,
   );
 }
 
