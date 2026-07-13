@@ -33,6 +33,8 @@ export const zhCN = {
   attachFile: "添加附件",
   attachmentFile: "文件",
   attachmentImage: "图片",
+  attachmentSaveFailed: "无法添加附件：{message}",
+  attachmentWorkspaceRequired: "请先选择工作区，再添加附件。",
   backToApp: "返回应用",
   backgroundService: "后台服务",
   capabilities: "能力",

@@ -1408,6 +1408,7 @@ function MessageCell(props: {
                 role={props.message.role}
                 streaming={false}
                 workspaceDirectory={props.workspaceDirectory}
+                gatewayUrl={props.gatewayUrl}
               />
             )}
           </Index>
@@ -1445,6 +1446,7 @@ function MessageCell(props: {
                               role={props.message.role}
                               streaming={isAgentWorking()}
                               workspaceDirectory={props.workspaceDirectory}
+                              gatewayUrl={props.gatewayUrl}
                             />
                           )}
                         </Index>
@@ -1490,6 +1492,7 @@ function MessageCell(props: {
                     role="assistant"
                     streaming={true}
                     workspaceDirectory={props.workspaceDirectory}
+                    gatewayUrl={props.gatewayUrl}
                   />
                 </div>
               </Show>

@@ -37,6 +37,8 @@ export const en = {
   attachFile: "Attach file",
   attachmentFile: "File",
   attachmentImage: "Image",
+  attachmentSaveFailed: "Could not attach file: {message}",
+  attachmentWorkspaceRequired: "Choose a workspace before attaching files.",
   backToApp: "Back to app",
   backgroundService: "Background service",
   capabilities: "Capabilities",
