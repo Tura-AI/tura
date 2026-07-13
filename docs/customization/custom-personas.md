@@ -5,7 +5,8 @@ avatar/expression metadata. They do not control tool access, model choice, or
 task-specific operation manuals. That boundary is intentional: changing the
 assistant's voice should not accidentally grant shell access. Small mercy.
 
-This document explains persona customization from two views:
+Persona customization has two views. The files differ; the responsibility does
+not:
 
 - **release view**: configure personas in a built release directory;
 - **source view**: configure or develop personas in the repository checkout.

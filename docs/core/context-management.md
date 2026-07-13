@@ -1,10 +1,11 @@
 # Context Management
 
-Tura context management is the machinery that turns a long session log into the
-next provider prompt without letting old tool output swamp the active objective.
-It stores raw session events, builds provider messages from them, caches compact
+Context management answers a practical question: how does a long session keep
+working without carrying its entire attic into every provider call? Tura stores
+raw session events, builds provider messages from them, caches compact
 tool-result context, and replaces crowded history with structured compaction
-records when needed.
+records when needed. The active objective gets the desk; old tool output does
+not get every chair.
 
 ## Practical difference from ordinary agent context
 

@@ -1,9 +1,10 @@
 # Gateway Crate Architecture
 
-`crates/gateway` is the middleware between frontend clients and Tura backend
-crates. It provides the HTTP/SSE/WebSocket API surface consumed by the GUI,
-translates UI payloads into runtime/router/provider calls, persists UI-facing
-state, and streams backend events back to clients.
+`crates/gateway` is the boundary between frontend clients and Tura's backend
+crates. It gives the GUI one HTTP/SSE/WebSocket API surface, translates UI
+payloads into runtime/router/provider calls, persists UI-facing state, and
+streams backend events back to clients. Frontends should not need to know which
+crate answers the request; gateway does need to know, precisely.
 
 Gateway must not run the agent loop or own low-level command routing. Runtime
 work goes through `crates/runtime`; provider calls go through `crates/provider`;

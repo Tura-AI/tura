@@ -1,8 +1,9 @@
 # Custom commands
 
-Commands are local execution units routed through `command_run`. They are not the
-same thing as arbitrary shell commands. `shell_command` is a Tura command;
-`rg --files` is a CLI command executed inside it.
+Commands are local execution units routed through `command_run`. They are not
+arbitrary shell lines wearing a schema. `shell_command` is a Tura command;
+`rg --files` is a CLI command executed inside it. Keeping those layers separate
+makes policy and execution much easier to reason about.
 
 Tura has two command families:
 
@@ -11,8 +12,9 @@ Tura has two command families:
 | Core/internal commands | `crates/tools/src/commands/<id>` | Compiled into the tools/runtime path. |
 | External command packages | `commands/<id>` | Launched as a separate binary through Tura's JSON protocol. |
 
-For customization, prefer external command packages. Changing core commands is a
-source-code change and should be treated like runtime development.
+For customization, prefer external command packages. Changing a core command is
+a source-code change and deserves the same care as runtime development. The
+shorter path is not always the one through the engine room.
 
 ## Command discovery
 

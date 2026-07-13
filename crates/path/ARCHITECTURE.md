@@ -1,9 +1,10 @@
 # tura_path
 
 `tura_path` is the single source of truth for instance / home / path resolution
-across the Tura backend. Gateway, router, runtime, and session_log use it for
+across the Tura backend. Gateway, router, runtime, and session_log all use it for
 home selection, socket paths, lock paths, database directories, and workspace
-key normalization.
+key normalization. Path rules look small until two processes disagree about
+where home is. This crate keeps that argument from starting.
 
 ## instance_home model
 

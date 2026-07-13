@@ -2,9 +2,10 @@
 
 ## Goal
 
-`apps/tui` provides the terminal-facing Tura client. Both the non-interactive
-CLI and the interactive TUI are TypeScript/Node applications in the same package.
-They should follow the repository's own gateway/session/runtime boundaries and
+`apps/tui` is Tura's terminal-facing client. The non-interactive CLI and the
+interactive TUI are TypeScript/Node applications in the same package because
+they share the same gateway path, not because the terminal should grow its own
+backend. Both follow the repository's gateway/session/runtime boundaries and
 reuse terminal interaction patterns only when they fit the current code.
 
 The TypeScript CLI/TUI must not embed the agent runtime, provider calls, command

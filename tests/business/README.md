@@ -1,12 +1,13 @@
 # Business Tests
 
-This directory contains root backend business tests and shared business-test
-helpers. Backend business runners only execute Rust tests from this directory;
-they do not execute `.mjs` TUI, GUI, browser, OS testing, or app scripts.
+This directory is for deterministic backend behavior: root business tests and
+the helpers they share. Backend business runners execute only the Rust tests
+here. They do not wander into `.mjs` TUI, GUI, browser, OS testing, or app
+scripts because those surfaces have their own owners and failure modes.
 
-Root Rust tests in this directory are part of the backend business runner.
-Shared `.mjs` helper files are not executable app tests and must not be wired
-into CI or crate tests as one-off fixtures.
+Root Rust tests here belong to the backend business runner. Shared `.mjs` helper
+files are not executable app tests and must not be wired into CI or crate tests
+as one-off fixtures. A helper becoming a test by accident is not useful reuse.
 
 App-owned scripts belong under their app package, such as
 `apps/tui/tests/e2e/business/` or `apps/gui/e2e/business/`, and must be run
@@ -33,7 +34,8 @@ Do not write production logic or tests that pass by matching arbitrary
 exact-response prompt wording. Avoid assertions that only prove a prompt or
 provider description contains a particular sentence. Business assertions must
 be based on structured outputs, command exit/result shape, schema enums,
-protocol fields, files, or explicit parser contracts.
+protocol fields, files, or explicit parser contracts. Test the contract, not the
+model's choice of sentence on a Tuesday.
 
 ```powershell
 .\xtask\scripts\run-backend-business-tests.ps1 -List

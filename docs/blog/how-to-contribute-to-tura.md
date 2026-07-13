@@ -1,7 +1,5 @@
 # How to Contribute to Tura
 
-*Written July 13, 2026.*
-
 Let me start with the reassuring part: you do not need to understand all of Tura before contributing to it.
 
 Honestly, trying to understand the whole repository first is a good way to spend an evening reading architecture notes and changing nothing. Tura has a runtime, router, session database, provider layer, gateway, TUI, GUI, desktop shell, tools, and enough process boundaries to make "I'll just fix this quickly" a dangerous opening line.

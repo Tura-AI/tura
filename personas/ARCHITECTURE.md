@@ -1,13 +1,13 @@
 # Personas Crate Architecture
 
 `personas` owns persona identity, prompt resources, avatar media, and
-expression-to-media mapping. Agents bind to personas by `persona_name`; runtime
-loads the prompt fragments and gateway/front-end surfaces can read the media
-metadata.
+expression-to-media mapping. Agents bind to personas by `persona_name`; the
+runtime loads the prompt fragments, while gateway/front-end surfaces read the
+media metadata. Voice and presentation live here. Execution authority does not.
 
 Personas do not own runtime diagnostics. Session and task history belongs in
 `crates/session_log`; provider-call diagnostics live under `log/provider/` or
-`LOG_PATH`.
+`LOG_PATH`. A pleasant voice is not a second logging system.
 
 ## Current Layout
 

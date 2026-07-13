@@ -1,9 +1,9 @@
 # CLI Parameters
 
-This page is the command-line reference for starting Tura from a shell and for
-calling the CLI surfaces directly. It assumes Tura is already available as a
-binary or through the npm package entry; installation and interactive TUI/GUI
-usage are intentionally kept elsewhere.
+This is the command-line reference for starting Tura from a shell and calling
+the CLI surfaces directly. It assumes Tura is already available as a binary or
+through the npm package entry. Installation and interactive TUI/GUI usage live
+elsewhere so this page can remain a reference instead of becoming a small novel.
 
 ## Command surfaces
 

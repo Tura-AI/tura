@@ -1,7 +1,8 @@
 # Settings
 
-Settings are split by responsibility. Use this page as the GitBook entry, then
-follow the owner references for the full UI behavior.
+Settings are split by responsibility because one giant settings store would be
+convenient only until two surfaces disagreed. Use this page as the GitBook entry,
+then follow the owner reference for the full UI behavior.
 
 | Setting area | Owner reference |
 | --- | --- |

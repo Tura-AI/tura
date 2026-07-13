@@ -1,13 +1,14 @@
 ## Bug fixed
 
-Link the issue and describe the observed failure.
+Link the issue and describe what actually failed. Start with the behavior, not
+the patch.
 
 Fixes #
 
 ## Root cause and change
 
-Explain the root cause, why the previous flow missed it, and why this is the
-smallest sufficient fix.
+Explain the root cause, why the previous flow let it through, and why this is the
+smallest fix that closes the hole.
 
 ## Regression evidence
 

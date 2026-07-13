@@ -1,7 +1,5 @@
 # Why I'm Building Tura
 
-*Written July 13, 2026.*
-
 After vibe coding took off, new plugins and skills seemed to appear every day. Each one came with a bigger promise than the last: fewer tokens, better context, smarter planning, stronger reasoning, or an agent that could suddenly build almost anything. What was much harder to find was a benchmark showing the improvement on real coding tasks.
 
 This is not a difficult idea, and it should be a natural expectation. If a plugin says it makes an agent faster, cheaper, or more capable, run the same real task with and without it. Keep the prompts and outputs. Compare correctness, cost, and failures. We already expect that kind of evidence from databases, compilers, and infrastructure tools. Coding-agent extensions and skills should not be exempt simply because the demo looks impressive.

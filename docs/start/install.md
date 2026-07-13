@@ -1,9 +1,10 @@
 # Install and Uninstall
 
-This page describes how to install Tura from the source repository, how to run
-the GitHub-hosted installer with `curl`, how to unregister or remove a local
-installation, and how to clean local runtime state when you need a fresh
-environment.
+This page covers the full local lifecycle: install Tura from the source
+repository, run the GitHub-hosted installer with `curl`, unregister or remove a
+local installation, and clean local runtime state when you genuinely need a
+fresh environment. Installation is already enough of an adventure; the map
+should not add one.
 
 Tura is built from the repository. The dependency installers in `scripts/` are
 not standalone package managers: they expect to run from a Tura checkout so they

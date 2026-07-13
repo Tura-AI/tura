@@ -1,8 +1,9 @@
 # Live Tests
 
-This directory contains opt-in workspace tests that may use provider credentials,
-public network access, model quota, live gateway calls, or third-party services.
-Keep files directly under `tests/live`; do not create child directories.
+This directory contains the tests that leave the building. They are opt-in and
+may use provider credentials, public network access, model quota, live gateway
+calls, or third-party services. Keep files directly under `tests/live`; do not
+create child directories.
 
 `tests/live`, `tests/business`, `tests/os_testing`, `tests/performance`,
 `benchmark`, and `tests/release` are peer test types. Local deterministic
@@ -12,8 +13,8 @@ belong in `tests/os_testing`; all release-binary validation belongs in
 execution. Scoring and comparison suites belong in `benchmark`;
 performance, load, soak, and stress tests belong in `tests/performance`.
 
-The kept entry points cover each required live surface without duplicate wrapper
-scripts:
+The entry points below cover each required live surface without growing a second
+set of wrapper scripts. One route to a live failure is quite enough:
 
 | Profile | Surface | Entry point |
 | --- | --- | --- |
@@ -22,8 +23,9 @@ scripts:
 | `target/release` | TUI | `node ./tests/release/tui_release_run_all.mjs` |
 | `target/release` | GUI | `node ./tests/release/gui_release_run_all.mjs` |
 
-Backend live runners ignore release-binary scripts. Use `tests/release` or the
-app package aliases for release surfaces.
+Backend live runners deliberately ignore release-binary scripts. Use
+`tests/release` or the app package aliases for release surfaces; a live provider
+call and a packaged binary are different claims.
 
 Dedicated compact context live coverage:
 

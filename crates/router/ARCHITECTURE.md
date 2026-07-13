@@ -1,9 +1,10 @@
 # Router Crate Architecture
 
-`crates/router` owns CLI forwarding, agent registration metadata,
-runtime-worker dispatch, and worker lifecycle. It does not own command
-implementation, command alias canonicalization, agent loop logic, or port
-allocation.
+`crates/router` decides where work goes and how the worker lives. It owns CLI
+forwarding, agent registration metadata, runtime-worker dispatch, and worker
+lifecycle. It does not own command implementation, command alias
+canonicalization, agent loop logic, or port allocation. Routing work is already
+enough work.
 
 The Cargo package and default binary name should stay compatible with Tura:
 

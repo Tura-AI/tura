@@ -1,6 +1,7 @@
 # Custom providers
 
-This document explains how to add or change providers from two views:
+Adding a provider starts with knowing which layout you are changing. This guide
+covers both views:
 
 - **release view**: you are using a built Tura release directory;
 - **source view**: you are running or developing from the repository checkout.
@@ -8,7 +9,8 @@ This document explains how to add or change providers from two views:
 Providers are the services Tura can call at runtime. For LLM work, the important
 parts are the provider catalog, model tier routes, base URLs, and credentials.
 For media, search, or other services, the catalog can also describe service
-metadata, but metadata alone does not create a runtime adapter.
+metadata, but metadata alone does not create a runtime adapter. A catalog entry
+is a description, not an implementation with excellent confidence.
 
 ## Files and resolution order
 

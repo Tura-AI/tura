@@ -1,8 +1,9 @@
 # Contribution Guide
 
-This guide turns Tura's contribution principles into a practical review
-contract. It defines how to choose evidence without making every change satisfy
-the same checklist.
+This guide turns Tura's contribution principles into a review contract people
+can actually use. The central idea is simple: choose evidence for the behavior
+that changed instead of making every pull request perform the same ceremonial
+checklist. Rigor should follow risk, not page length.
 
 ## Contribution paths
 
@@ -20,8 +21,9 @@ not public issue or pull-request templates.
 
 ## Test ownership
 
-Choose the smallest layer that can fail for the real defect or acceptance
-criterion. Escalate only when the behavior crosses a boundary.
+Start with the smallest layer that can expose the real defect or acceptance
+criterion. Move outward only when the behavior crosses a boundary. A parser bug
+does not become safer because it made the GUI test suite nervous too.
 
 | Layer | Owns | Typical entrypoint |
 | --- | --- | --- |
@@ -36,7 +38,8 @@ criterion. Escalate only when the behavior crosses a boundary.
 A parser fix normally needs a parser or crate regression test. Add GUI coverage
 only if GUI behavior or its serialization boundary allowed the defect to escape.
 An installer PATH defect belongs in OS/install coverage rather than a provider
-suite. This is how regression depth stays consistent with YAGNI.
+suite. This keeps regression depth consistent with YAGNI while still testing the
+place where the failure was visible.
 
 When stable automation is not possible, document why and provide the strongest
 durable substitute. Acceptable substitutes include deterministic fault

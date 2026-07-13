@@ -2,7 +2,8 @@
 
 Agents are Tura's runtime work profiles. An agent controls prompt resources,
 allowed command-run capabilities, provider/model route preferences, operation
-manual policy, reporting flags, and validator settings.
+manual policy, reporting flags, and validator settings. In other words, this is
+where work behavior belongs; voice and credentials have their own owners.
 
 Keep the boundary clear:
 
@@ -13,7 +14,8 @@ Keep the boundary clear:
 | Runtime prompt | Task-specific operation manuals selected by `task_type`. |
 | Provider config | Concrete providers, models, base URLs, credentials, fallback routes. |
 
-This document explains custom agents from both release and source views.
+This document covers custom agents from both release and source views, because
+the same profile should not become two different rituals depending on the build.
 
 ## Agent root
 

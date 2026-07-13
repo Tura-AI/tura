@@ -1,7 +1,7 @@
 ## Documentation change
 
-Describe the reader problem and the corrected or added guidance. Link an issue
-when one exists.
+Describe where the reader got stuck and what guidance now resolves it. Link an
+issue when one exists.
 
 ## Sources checked
 

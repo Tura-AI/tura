@@ -1,9 +1,10 @@
 # Tura GUI
 
 `apps/gui` is the Bun/Solid/Vite graphical client and gateway SDK workspace for
-Tura. The app talks to `crates/gateway` through `@tura/gateway-sdk`; it does not
-call Rust crates, provider code, tools, shell commands, or session storage
-directly.
+Tura. The app talks to `crates/gateway` through `@tura/gateway-sdk`. It does not
+reach around that boundary to call Rust crates, provider code, tools, shell
+commands, or session storage directly. One client path is easier to trust than
+several clever shortcuts.
 
 ## Layout
 

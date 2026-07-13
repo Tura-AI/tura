@@ -1,10 +1,11 @@
 # HTML Rich Text
 
 Tura uses a small HTML-flavored rich text protocol for normal interactive
-messages, and a separate plain terminal style for CLI sessions. This is not the
-same as asking an ordinary agent to answer in Markdown. The model is given
-different communication instructions depending on the frontend, and the clients
-render a deliberately limited subset instead of trusting arbitrary markup.
+messages and a separate plain terminal style for CLI sessions. That split is not
+cosmetic. The model receives communication rules for the frontend in use, and
+the clients render a deliberately limited subset instead of trusting arbitrary
+markup. Asking every surface to make its own guess about Markdown would be
+easier right up to the first streaming table.
 
 The split is simple:
 

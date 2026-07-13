@@ -1,12 +1,14 @@
 ## User problem
 
-Link the approved issue. Describe the current user problem and workaround.
+Link the approved issue. Describe the problem a user has today and the workaround
+they are currently carrying.
 
 Closes #
 
 ## Acceptance criteria
 
-List observable behavior. Avoid implementation-only criteria.
+List behavior someone can observe. An internal implementation detail is not an
+acceptance criterion by itself.
 
 - [ ]
 

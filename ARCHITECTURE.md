@@ -1,12 +1,12 @@
 # Tura Architecture
 
-This is the whole-project architecture document for the current `tura`
-directory. The target design is CLI-driven: runtime, gateway, provider, tools,
-and router behavior are implemented as crates and command modules, not as
-independent long-running services.
+This document is the map of the current `tura` architecture. The design is
+CLI-driven: runtime, gateway, provider, tools, and router behavior belong in
+crates and command modules, not in a collection of independent long-running
+services that happen to know about one another.
 
-Project root is the repository root. All paths in docs and config should be
-relative to the project root.
+The project root is the repository root. Paths in docs and config are relative
+to it. One root is enough; inventing another would mostly create archaeology.
 
 ## Operational Logs
 

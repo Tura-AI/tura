@@ -3,12 +3,12 @@
 ## Supported versions
 
 Security fixes target the latest published 0.1.x release and the current `main`
-branch. Older 0.1.x builds may be asked to upgrade before a fix is backported.
-Unreleased 0.2 work is supported only on `main`.
+branch. If you are on an older 0.1.x build, we may ask you to upgrade before a
+fix is backported. Unreleased 0.2 work is supported only on `main`.
 
 ## Report a vulnerability
 
-Do not open a public issue for suspected vulnerabilities. Email
+Please do not open a public issue for a suspected vulnerability. Email
 `info@turaai.net` with:
 
 - affected version or commit and operating system;

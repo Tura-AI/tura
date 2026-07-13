@@ -1,6 +1,8 @@
 # Tests
 
-Test scripts are split by runtime cost and blast radius.
+Test scripts are split by runtime cost and blast radius. The directory name is
+not decoration: it tells the runner what the test may own, how isolated it must
+be, and how much of the machine it is allowed to inconvenience.
 
 ## Required Workspace OS Tests
 
@@ -9,13 +11,15 @@ backend checks. Process, daemon, socket-owner, shutdown, and cross-OS policy
 tests live directly under `tests/os_testing/` and run serially through the OS
 test runner. `business`, `os_testing`, `performance`, `live`, `release`, and
 `benchmark` are peer directories, and typed directories are scanned one level
-deep.
+deep. Keeping them as peers prevents a convenient local test from quietly
+becoming a process-owning integration suite.
 
 `tests/os_testing/process_state_management_e2e.rs` starts the real debug `tura_gateway`,
 `tura_router serve-socket`, and `tura_session_db` binaries under isolated
 `TURA_HOME` directories.
 
-It covers the process/state cases that must never regress:
+It covers the process/state cases that must not regress. They are ordinary only
+until a stale daemon keeps the next test company:
 
 - stale `router.addr` and `service.addr` files are probed, removed, and replaced;
 - a gateway can restart the router/session_db pair for the same home after a

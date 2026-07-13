@@ -12,13 +12,13 @@
 
 <h1 align="center">Tura:77.5% fewer tokens; 16.7% better performance.</h1>
 
-Tura is a local open-source coding agent built for developers who are tired of useless skills, extensions that claim they can save tokens, and agents that wreck repos without judgment.
+Tura is a local, open-source coding agent for developers who are tired of vague skill claims, token-saving extensions with no evidence, and agents that change a repository before understanding it.
 
-Across 20 DeepSWE v1.1 tasks run three times per agent, Tura first creates a substantial token-budget advantage by reducing repeated context and model round trips. Users can then choose how to spend that advantage: Direct converts most of it into lower cost, using 77.5% fewer aggregate tokens than Codex CLI while achieving a comparable verifier success rate of 65.0% versus 63.3%; Balanced reinvests part of the saved budget into deeper reasoning, investigation, and verification, reaching an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
+Across 20 DeepSWE v1.1 tasks, each run three times per agent, Tura creates a substantial token-budget advantage by reducing repeated context and model round trips. You can spend that advantage in two ways. Direct turns most of it into lower cost: 77.5% fewer aggregate tokens than Codex CLI, with a comparable verifier success rate of 65.0% versus 63.3%. Balanced puts more of the saved budget back into reasoning, investigation, and verification. It reached an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
 
 ### Benchmark
 
-Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to measure coding-agent performance beyond isolated prompts. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
+Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to look past a polished isolated prompt and see how an agent handles real work. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
 
 > The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on 20 DeepSWE tasks, 5 rewrite tasks, and 2 separately reviewed design tasks. [^debug-figure]. [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md). [^test-set-record]
 
@@ -52,7 +52,7 @@ cross-OS measurements remain part of the documented
 
 <p align="center"><em>TUI page with multi-session concurrent work and HTML rich text support.</em></p>
 
-The results below are grounded in published benchmark artifacts rather than an uncited aggregate. Tura is built around three core systems:
+The results below come from published benchmark artifacts, not an uncited aggregate. Three systems do most of the work:
 
 ## Macro CLI Command Run
 
@@ -96,9 +96,9 @@ cargo test -p runtime --lib
 cargo clippy -p runtime --all-targets
 ```
 
-Tura takes a different approach. Instead of exposing dozens of small tools to the model, Tura exposes a single macro tool: `command_run`. This lets the agent construct a multi-step execution tree and run related actions in one LLM turn.
+Tura takes a different route. Instead of exposing dozens of small tools to the model, it exposes one macro tool: `command_run`. The agent can then build a multi-step execution tree and run related actions in one LLM turn.
 
-In the example below, Tura finishes in one LLM turn what a normal tool-calling agent needs five turns to complete. Both agents run the same commands. The difference is that Tura executes them as one structured macro workflow, while the traditional agent must pay the cost of repeated model round trips.
+In the example below, both agents run the same commands. A normal tool-calling agent needs five LLM turns; Tura handles the sequence as one structured macro workflow. The saved work is conversational overhead, not engineering discipline.
 
 _**Tura macro CLI command:**_
 
@@ -189,17 +189,7 @@ Tura treats context as part of the runtime state machine.
 
 Instead of relying on users to manually reset sessions or letting Markdown skills pile up, Tura uses `task_status`, runtime prompts, and recursive execution manuals to keep the active context scoped to the current task.
 
-| Area                  | Traditional Skill-Based Agent                                            | Tura                                                                  |
-| --------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| Session model         | Same session keeps running until the user manually starts a new one      | Session state can be renamed, refreshed, and managed automatically    |
-| Skill loading         | Loads Markdown skill files into context                                  | Dynamically loads task-specific runtime prompts and execution manuals |
-| Prompt strength       | Skills behave like weak contextual instructions or tool output           | Runtime prompts are tied to the active task state                     |
-| Context pollution     | Old skills and irrelevant context remain active until compacted or reset | Irrelevant context can be removed, compacted, or replaced             |
-| Compaction            | Separate long compaction turn                                            | Compaction is handled as a CLI operation                              |
-| Information preserved | Usually compressed summaries only                                        | Code locations, patches, tests, and task status can be preserved      |
-| Token cost            | High because stale context stays active                                  | Lower because context is task-scoped                                  |
-| Failure mode          | Agent mixes old tasks, vague summaries, and irrelevant skills            | Agent keeps execution aligned with the current task                   |
-| Tool/manual loading   | Broad skills are loaded even when only part is useful                    | CLI commands and manuals are loaded through a recursive task tree     |
+Traditional skill-based agents usually keep one session running until the user starts another, load broad Markdown skills into that session, and leave them active until a reset or compaction. Tura instead ties runtime prompts to explicit task state: sessions can be renamed, refreshed, and managed automatically; task-specific manuals and CLI commands are loaded through a recursive task tree; and irrelevant context can be removed, replaced, or compacted from the CLI. The checkpoint can retain code locations, patches, tests, and task status rather than only a loose summary. In practice, that means less stale context, lower task-scoped token cost, and fewer chances for an old skill or vague summary to steer the current job.
 
 Because compaction is a CLI operation, Tura can preserve exact execution state in `task_status.compact_context`. In the published benchmark sessions, Tura moved beyond read-only inspection and resumed execution an average of 2.6 rounds after compaction, compared with an estimated 5.4 rounds for Codex.[^compact-dynamodb][^compact-wasmi-r1][^compact-wasmi-r2][^compact-wasmi-r3][^compact-eza]
 

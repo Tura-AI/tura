@@ -1,8 +1,9 @@
 # Tura Tauri Shell
 
-This directory contains only the Tauri desktop shell for the existing GUI.
-The web frontend stays in `apps/gui`, and Tauri points at that build output.
-The desktop process and packaged binary are named `tura_gui`.
+This directory contains only the Tauri desktop shell for the existing GUI. The
+web frontend stays in `apps/gui`; Tauri points at that build output instead of
+growing a second frontend. The desktop process and packaged binary are named
+`tura_gui`.
 
 Development:
 

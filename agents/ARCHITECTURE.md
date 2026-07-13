@@ -1,9 +1,10 @@
 # Agents Crate Architecture
 
-`agents` is the canonical home for agent definitions. Runtime code loads agent
-configuration, prompt resources, provider route preferences, and tool
-capabilities from this crate instead of hard-coding them in the MANO/MANAS
-runtime loop.
+`agents` is the canonical home for agent definitions. The runtime comes here for
+agent configuration, prompt resources, provider route preferences, and tool
+capabilities instead of burying them in the MANO/MANAS runtime loop. That keeps
+an agent inspectable as a configuration, not a scavenger hunt through execution
+code.
 
 The Cargo package and library names stay compatible with Tura:
 

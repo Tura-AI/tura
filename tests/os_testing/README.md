@@ -1,14 +1,16 @@
 # OS Testing
 
-`tests/os_testing/` contains local tests that own backend processes, sockets,
-locks, service lifecycles, shutdown behavior, or cross-OS policy. These tests
-are gated by `os-tests` and run serially.
+`tests/os_testing/` contains the local tests that are allowed to own backend
+processes, sockets, locks, service lifecycles, shutdown behavior, or cross-OS
+policy. They are gated by `os-tests` and run serially. Parallelism is lovely
+until two tests both believe they own the same daemon.
 
 Use this category for router/session_db ownership, gateway front leases,
 runtime worker lifecycle, command_run process-tree cleanup, and OS policy
 matrix coverage. Session_db or router stress tests that open IPC services or
 local sockets also belong here so they run serially. Keep ordinary business
-behavior in `tests/business/`.
+behavior in `tests/business/`; process ownership is not an ordinary business
+detail.
 
 ```powershell
 .\xtask\scripts\run-backend-os-tests.ps1 -List

@@ -1,7 +1,5 @@
 # We Need More Benchmark Data and Test Reports
 
-*Written July 13, 2026.*
-
 Tura has benchmark results I am happy to publish. It also has a much larger pile of questions those results do not answer.
 
 Both statements can be true.
