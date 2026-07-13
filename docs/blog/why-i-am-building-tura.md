@@ -2,11 +2,13 @@
 
 *Written July 13, 2026.*
 
-I did not start Tura because the world needed another chat box with a terminal attached. We already have plenty of those.
+After vibe coding took off, new plugins and skills seemed to appear every day. Each one came with a bigger promise than the last: fewer tokens, better context, smarter planning, stronger reasoning, or an agent that could suddenly build almost anything. What was much harder to find was a benchmark showing the improvement on real coding tasks.
 
-The name comes from the Sanskrit word *tura* (तुर), which can carry senses such as quick, swift, or prompt, as well as strong, powerful, or excelling. I liked the combination: an agent should move quickly, but speed is not worth much unless the work is strong. The dictionary entries are collected [here](https://kosha.sanskrit.today/word/sa/tura).
+This is not a difficult idea, and it should be a natural expectation. If a plugin says it makes an agent faster, cheaper, or more capable, run the same real task with and without it. Keep the prompts and outputs. Compare correctness, cost, and failures. We already expect that kind of evidence from databases, compilers, and infrastructure tools. Coding-agent extensions and skills should not be exempt simply because the demo looks impressive.
 
-I started it because coding agents were getting much better at writing code, while the part around the model still felt strangely clumsy. A normal session could look like this:
+I did not start Tura because the world needed another chat box with a terminal attached. We already have plenty of those. I started it because I wanted to test whether changing the architecture around the model could produce a measurable improvement on real work.
+
+Coding agents were getting much better at writing code, while the part around the model still felt strangely clumsy. A normal session could look like this:
 
 1. inspect a file;
 2. wait for the model;
@@ -108,6 +110,10 @@ This post is the conversational version. These complete Markdown files are the s
 - [docs/core/command-run.md](https://github.com/Tura-AI/tura/blob/main/docs/core/command-run.md) — the macro command model and its safety boundaries.
 - [docs/core/context-management.md](https://github.com/Tura-AI/tura/blob/main/docs/core/context-management.md) — context rebuilding, checkpoints, and compaction.
 - [docs/KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md) — known limitations and evidence gaps.
+
+## Why the name Tura?
+
+The name comes from the Sanskrit word *tura* (तुर), which can carry senses such as quick, swift, or prompt, as well as strong, powerful, or excelling. I liked the combination: an agent should move quickly, but speed is not worth much unless the work is strong. The dictionary entries are collected [here](https://kosha.sanskrit.today/word/sa/tura).
 
 ## Contact
 
