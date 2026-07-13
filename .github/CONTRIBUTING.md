@@ -16,7 +16,28 @@ prove the behavior it owns.
 
 Read the [contribution guide](../docs/contributing-guide.md) for the test
 ownership model, benchmark format, evidence-sanitization rules, and affected
-test matrix.
+test matrix. Participation in this project is governed by the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Core code and architecture
+
+Read the [repository architecture](../ARCHITECTURE.md) before changing a system
+boundary. The main implementation owners are:
+
+- [runtime](../crates/runtime/src/) and its
+  [architecture](../crates/runtime/ARCHITECTURE.md);
+- [session DB](../crates/session_log/src/) and its
+  [architecture](../crates/session_log/ARCHITECTURE.md);
+- [gateway](../crates/gateway/src/) and its
+  [architecture](../crates/gateway/ARCHITECTURE.md);
+- [tools](../crates/tools/src/) and their
+  [architecture](../crates/tools/ARCHITECTURE.md);
+- [TUI](../apps/tui/src/) and its [architecture](../apps/tui/ARCHITECTURE.md);
+- [GUI](../apps/gui/app/src/) and its
+  [architecture](../apps/gui/ARCHITECTURE.md).
+
+Follow existing ownership and contract boundaries rather than adding a parallel
+state model, parser, protocol, or test hierarchy.
 
 ## Choose the contribution type
 
@@ -60,6 +81,17 @@ full benchmark evidence defined in the
 Changes whose primary value is simpler code, a lower resource ceiling, or a
 better worst case may use that as their acceptance criterion; do not relabel
 them as an average-speed improvement without evidence.
+
+## Contribution license and provenance
+
+By submitting a contribution, you agree that it may be distributed under the
+repository's license and confirm that you have the right to submit it. Do not
+include third-party code, data, prompts, fixtures, or generated material whose
+license or provenance is unclear.
+
+See [LICENSE](../LICENSE) for the repository license. Identify any compatible
+third-party material and its source in the pull request when it is necessary to
+review provenance or redistribution rights.
 
 ## Bug fixes and regression coverage
 
@@ -169,11 +201,13 @@ the affected behavior lacks reasonable regression coverage.
 
 ## Authorship and tool assistance
 
-Human submitters are responsible for correctness, licensing, provenance, and
-the statements made in a pull request. Do not add an AI system as a
-`Co-authored-by` identity. You may disclose meaningful tool or AI assistance in
-the pull request when it helps reviewers understand provenance or verification;
-disclosure does not transfer responsibility away from the human contributors.
+A human must be the primary submitter of every contribution. The primary human
+submitter is responsible for correctness, licensing, provenance, verification,
+and every statement made in the pull request. Meaningful tool or AI assistance
+may be disclosed in the pull request or acknowledged through the repository's
+normal commit conventions. Such acknowledgement does not make the tool the
+responsible submitter and does not transfer responsibility away from the human
+contributors.
 
 Use clear imperative commit subjects and follow the repository's existing
 history for commit structure.

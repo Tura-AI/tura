@@ -35,6 +35,7 @@ template and evidence contract instead.
 ## Safety and responsibility
 
 - [ ] No credentials, private session data, unsafe provider logs, or generated local state are included.
-- [ ] Human contributors accept responsibility for correctness, licensing, and provenance.
+- [ ] A human is the primary submitter and accepts responsibility for correctness, licensing, provenance, verification, and the statements in this pull request.
+- [ ] I have the right to submit all included material under the repository license.
 
 Meaningful tool or AI assistance, if useful to reviewers (optional):

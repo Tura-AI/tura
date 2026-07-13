@@ -29,6 +29,7 @@ changed.
 ## Safety and responsibility
 
 - [ ] No credentials, private session data, restricted content, or unsafe logs are included.
-- [ ] Human contributors accept responsibility for accuracy, licensing, and provenance.
+- [ ] A human is the primary submitter and accepts responsibility for accuracy, licensing, provenance, verification, and the statements in this pull request.
+- [ ] I have the right to submit all included material under the repository license.
 
 Meaningful tool or AI assistance, if useful to reviewers (optional):

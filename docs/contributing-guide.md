@@ -136,6 +136,17 @@ Before opening a pull request:
 6. Link the issue when the contribution type requires one.
 7. Explain compatibility, migration, and rollback concerns when they exist.
 
-The human submitter remains responsible for the contribution even when coding,
-analysis, or writing tools were used. Tool assistance may be disclosed in the
-PR, but an AI system should not be listed as a `Co-authored-by` identity.
+The primary submitter must be human and remains responsible for the contribution
+even when coding, analysis, or writing tools were used. Tool or AI assistance
+may be disclosed in the pull request or acknowledged through normal repository
+commit conventions, but responsibility for correctness, licensing, provenance,
+verification, and review statements remains with the human contributors.
+
+By submitting a contribution, you agree that it may be distributed under the
+repository's license and confirm that you have the right to submit it. Do not
+include third-party code, data, prompts, fixtures, or generated material whose
+license or provenance is unclear. Review the
+[Code of Conduct](../.github/CODE_OF_CONDUCT.md), the
+[repository architecture](../ARCHITECTURE.md), and the core-code links in
+[CONTRIBUTING.md](../.github/CONTRIBUTING.md#core-code-and-architecture) before
+changing ownership or system boundaries.

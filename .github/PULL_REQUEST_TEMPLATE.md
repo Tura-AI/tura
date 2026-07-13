@@ -48,6 +48,7 @@ substitute evidence.
 
 - [ ] No credentials, private session data, unsafe provider logs, or generated local state are included.
 - [ ] Public evidence was sanitized according to `docs/contributing-guide.md`.
-- [ ] Human contributors accept responsibility for correctness, licensing, and provenance.
+- [ ] A human is the primary submitter and accepts responsibility for correctness, licensing, provenance, verification, and the statements in this pull request.
+- [ ] I have the right to submit all included code, data, prompts, fixtures, and generated material under the repository license.
 
 Meaningful tool or AI assistance, if useful to reviewers (optional):
