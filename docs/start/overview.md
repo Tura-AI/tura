@@ -7,12 +7,12 @@ result before calling the work done.
 
 Tura is framed around four ideas:
 
-| Frame | Meaning in the runtime |
-| --- | --- |
-| Macro CLI | One `command_run` call can batch known reads, edits, checks, and state updates. |
+| Frame     | Meaning in the runtime                                                                  |
+| --------- | --------------------------------------------------------------------------------------- |
+| Macro CLI | One `command_run` call can batch known reads, edits, checks, and state updates.         |
 | Reasoning | The agent works backward from the desired verified outcome to the next necessary state. |
-| Prompt | Runtime prompt manuals are loaded by task type instead of pasted into every turn. |
-| TDD | Debug and repair work starts with reproduction and ends with evidence. |
+| Prompt    | Runtime prompt manuals are loaded by task type instead of pasted into every turn.       |
+| TDD       | Debug and repair work starts with reproduction and ends with evidence.                  |
 
 The system is built for long-horizon repository tasks. It can inspect the
 workspace, make narrow changes, run checks, keep session state, and attach
@@ -29,5 +29,6 @@ evidence before claiming success. "Done" is more useful when it has receipts.
 
 ## Next
 
-Install Tura with [Install](install.md), then choose a front end in
-[How to start](how-to-start.md).
+Install Tura with [Install](install.md), configure a model provider with
+[Provider setup](providers.md#first-run-configure-an-llm-provider), then choose
+a front end in [How to start](how-to-start.md).

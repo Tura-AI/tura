@@ -6,6 +6,7 @@ import { initialAppState } from "../../../../app/src/state/global-store";
 import { providerStartupSettingsRedirect } from "../../../../app/src/app-state-utils";
 import { mainTabEntries } from "../../../../app/src/pages/settings/main-tabs";
 import { providerDomains } from "../../../../app/src/pages/settings/provider-domain";
+import { settingsRoutes } from "../../../../app/src/pages/settings/settings-router";
 import {
   configDraftToPatch,
   providerAuthDisplayState,
@@ -22,6 +23,14 @@ const navigationCss = readFileSync(
 );
 const appShellSource = readFileSync(
   resolve(import.meta.dir, "../../../../app/src/app/app-shell.tsx"),
+  "utf8",
+);
+const aboutPanelSource = readFileSync(
+  resolve(import.meta.dir, "../../../../app/src/pages/settings/about-panel.tsx"),
+  "utf8",
+);
+const gatewayServerSource = readFileSync(
+  resolve(import.meta.dir, "../../../../../../crates/gateway/src/web/server.rs"),
   "utf8",
 );
 const providerConfig = JSON.parse(
@@ -141,6 +150,36 @@ describe("MainTabs", () => {
 
     expect(entries).toEqual([{ id: "conversation", label: "Session" }]);
     expect(entries.some((entry) => entry.id === "plan")).toBe(false);
+  });
+
+  describe("About settings", () => {
+    test("is the final settings destination and uses the shared Gateway client", () => {
+      expect(settingsRoutes().at(-1)?.id).toBe("about");
+      expect(settingsViewSource).toContain('props.section === "about"');
+      for (const method of [
+        "aboutInfo",
+        "starTuraRepository",
+        "openAboutTarget",
+        "checkTuraUpdate",
+        "installTuraUpdate",
+      ]) {
+        expect(aboutPanelSource).toContain(method);
+      }
+    });
+
+    test("uses fixed About routes and the existing confirmation dialog", () => {
+      for (const route of [
+        "/about",
+        "/about/star",
+        "/about/open",
+        "/about/update/check",
+        "/about/update/install",
+      ]) {
+        expect(gatewayServerSource).toContain(route);
+      }
+      expect(aboutPanelSource).toContain('class="name-dialog"');
+      expect(aboutPanelSource).toContain('t("aboutUpdateWarning"');
+    });
   });
 
   test("uses the no-icon grid so the session label is not clipped into the icon column", () => {

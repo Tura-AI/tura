@@ -222,6 +222,7 @@ function settingsSectionTitle(section: AppState["settingsSection"]): string {
     models: t("models"),
     agents: t("agentSettings"),
     personalization: t("personalization"),
+    about: t("about"),
   };
   return labels[section];
 }

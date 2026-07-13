@@ -1,4 +1,12 @@
 import type { AgentUpsertRequest, StoredAgent } from "../types/agent.js";
+import type {
+  AboutInfo,
+  AboutOpenResponse,
+  AboutOpenTarget,
+  AboutStarResponse,
+  AboutUpdateCheckResponse,
+  AboutUpdateInstallResponse,
+} from "../types/about.js";
 import type { SessionConfig } from "../types/config.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
 import type {
@@ -67,6 +75,29 @@ export class GatewayClient {
 
   async health(): Promise<{ healthy: boolean; version: string }> {
     return this.get("/global/health");
+  }
+
+  async aboutInfo(): Promise<AboutInfo> {
+    return this.get("/about");
+  }
+
+  async starTuraRepository(): Promise<AboutStarResponse> {
+    return this.post("/about/star", {});
+  }
+
+  async openAboutTarget(target: AboutOpenTarget): Promise<AboutOpenResponse> {
+    return this.post("/about/open", { target });
+  }
+
+  async checkTuraUpdate(): Promise<AboutUpdateCheckResponse> {
+    return this.get("/about/update/check");
+  }
+
+  async installTuraUpdate(
+    version: string,
+    sessionID?: string,
+  ): Promise<AboutUpdateInstallResponse> {
+    return this.post("/about/update/install", { version, session_id: sessionID });
   }
 
   async syncWorkspace(): Promise<void> {
@@ -377,13 +408,15 @@ export class GatewayClient {
     path: string,
     body?: unknown,
     query?: Record<string, string | number | boolean>,
+    timeoutMs?: number,
   ): Promise<T> {
     const url = this.url(path, query);
     if (this.verbose) console.error(`[gateway] ${method} ${url}`);
     let response: Response;
     const controller = new AbortController();
+    const requestTimeoutMs = timeoutMs ?? this.timeoutMs;
     const timer =
-      this.timeoutMs > 0 ? setTimeout(() => controller.abort(), this.timeoutMs) : undefined;
+      requestTimeoutMs > 0 ? setTimeout(() => controller.abort(), requestTimeoutMs) : undefined;
     try {
       response = await fetch(url, {
         method,

@@ -42,7 +42,8 @@ export type SettingsSection =
   | "providers"
   | "models"
   | "agents"
-  | "personalization";
+  | "personalization"
+  | "about";
 export type ThemeMode = "light" | "dark" | "caral" | "uruk" | "liangzhu";
 export type CornerRadiusMode = "0px" | "2px" | "8px" | "9.6px";
 export type PlanMode = "todo" | "gantt";

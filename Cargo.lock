@@ -1669,6 +1669,7 @@ dependencies = [
  "reqwest 0.12.28",
  "router",
  "runtime",
+ "semver",
  "serde",
  "serde_json",
  "session_log",

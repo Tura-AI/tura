@@ -1,4 +1,12 @@
 import type { AgentUpsertRequest, StoredAgent } from "../types/agent.js";
+import type {
+  AboutInfo,
+  AboutOpenResponse,
+  AboutOpenTarget,
+  AboutStarResponse,
+  AboutUpdateCheckResponse,
+  AboutUpdateInstallResponse,
+} from "../types/about.js";
 import type { SessionConfig } from "../types/config.js";
 import { t } from "../i18n.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
@@ -69,6 +77,35 @@ export class MockGatewayClient {
 
   async health(): Promise<{ healthy: boolean; version: string }> {
     return { healthy: true, version: "mock" };
+  }
+
+  async aboutInfo(): Promise<AboutInfo> {
+    return {
+      release_version: "0.1.30",
+      system: {
+        operating_system: process.platform,
+        os_version: "mock",
+        architecture: process.arch,
+      },
+    };
+  }
+
+  async starTuraRepository(): Promise<AboutStarResponse> {
+    return { outcome: "starred" };
+  }
+
+  async openAboutTarget(target: AboutOpenTarget): Promise<AboutOpenResponse> {
+    return { opened: true, target };
+  }
+
+  async checkTuraUpdate(): Promise<AboutUpdateCheckResponse> {
+    return process.env.TURA_TUI_MOCK_ABOUT_UPDATE === "1"
+      ? { update: { current_version: "0.1.30", latest_version: "0.1.31" } }
+      : {};
+  }
+
+  async installTuraUpdate(version: string): Promise<AboutUpdateInstallResponse> {
+    return { scheduled: true, version };
   }
 
   async syncWorkspace(): Promise<void> {}

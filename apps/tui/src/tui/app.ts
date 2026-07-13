@@ -270,6 +270,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
         authStatuses: next.authStatuses,
         sessionConfig: next.sessionConfig,
         modelConfig: next.modelConfig,
+        aboutInfo: next.aboutInfo,
       });
       if (next.settingsOpen && next.settingDetail) {
         dispatch({
@@ -432,6 +433,8 @@ export async function handleTuiKeypress(
       if (state.settingsOpen) {
         if (state.settingDetail === "providerAuth")
           dispatch({ type: "open-setting-detail", detail: "provider" });
+        else if (state.settingDetail === "about" && state.aboutUpdate)
+          dispatch({ type: "about-update", value: undefined });
         else if (state.settingDetail) dispatch({ type: "close-setting-detail" });
         else dispatch({ type: "toggle-settings" });
       }
@@ -550,9 +553,12 @@ export async function handleTuiKeypress(
       }
       if (state.settingsOpen && !state.composer.trim()) {
         if (state.settingDetail) {
-          await applySelectedSetting(client, getState, dispatch);
+          await applySelectedSetting(client, getState, dispatch, onExit);
         } else {
           const detail = selectedSettingDetail(state);
+          if (detail === "about") {
+            dispatch({ type: "about-info", value: await client.aboutInfo() });
+          }
           if (detail) dispatch({ type: "open-setting-detail", detail });
         }
         return;

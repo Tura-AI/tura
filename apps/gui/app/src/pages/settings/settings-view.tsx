@@ -38,6 +38,7 @@ import { AppearanceSelect, CONFIGURE_PROVIDER_OPTION } from "./appearance-select
 import { providerDomains } from "./provider-domain";
 import { ProviderConfigGroup } from "./provider-settings";
 import { AgentSettingsPanel } from "./agent-settings-panel";
+import { AboutPanel } from "./about-panel";
 import { mainTabEntries } from "./main-tabs";
 import { settingsRoutes, settingsRouteTitle } from "./settings-router";
 import {
@@ -423,6 +424,9 @@ export function SettingsView(props: {
                 saving={props.state.settingsSaving}
                 onSave={props.onSavePersonalization}
               />
+            </Match>
+            <Match when={props.section === "about"}>
+              <AboutPanel sessionId={props.state.selectedSessionId} />
             </Match>
           </Switch>
         </section>

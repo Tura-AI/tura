@@ -45,6 +45,11 @@ export function settingsEntries(state: AppState): SettingEntry[] {
       label: t("settingPriority"),
       value: config.model_acceleration_enabled ?? false,
     },
+    {
+      detail: "about",
+      label: t("settingAbout"),
+      value: state.aboutInfo?.release_version ?? t("unknown"),
+    },
   ];
 }
 
@@ -168,6 +173,7 @@ function settingHint(state: AppState): string {
   if (detail === "session") return t("settingSessionHint");
   if (detail === "validator") return t("settingValidatorHint");
   if (detail === "stallGuard") return t("settingStallGuardHint");
+  if (detail === "about") return t("settingAboutHint");
   return t("settingDetailHint");
 }
 
@@ -190,6 +196,7 @@ function settingLabel(detail: Exclude<SettingDetail, "providerAuth">): string {
     priority: t("settingPriority"),
     validator: t("settingValidator"),
     stallGuard: t("settingStallGuard"),
+    about: t("settingAbout"),
   };
   return labels[detail];
 }
@@ -207,6 +214,7 @@ function settingCommandLabel(detail: SettingDetail): string {
     priority: "/priority <on/off>",
     validator: "/validator <on/off>",
     stallGuard: "/stall-guard <profile>",
+    about: "/settings",
   };
   return labels[detail];
 }
@@ -214,6 +222,21 @@ function settingCommandLabel(detail: SettingDetail): string {
 export function settingOptions(state: AppState): Array<[string, string, unknown]> {
   const active = state.sessionConfig;
   if (!state.settingDetail || !active) return [];
+  if (state.settingDetail === "about") {
+    if (state.aboutUpdate) {
+      return [
+        [t("aboutUpdateNow"), t("aboutUpdateNowDescription"), "confirmUpdate"],
+        [t("aboutUpdateCancel"), t("aboutUpdateCancelDescription"), "cancelUpdate"],
+      ];
+    }
+    return [
+      [t("aboutAddStar"), t("aboutAddStarDescription"), "addStar"],
+      [t("aboutReportBug"), t("aboutReportBugDescription"), "reportBug"],
+      [t("aboutContribute"), t("aboutContributeDescription"), "contribute"],
+      [t("aboutUpdate"), t("aboutUpdateDescription"), "update"],
+      [t("aboutContact"), t("aboutContactDescription"), "contact"],
+    ];
+  }
   if (state.settingDetail === "model") {
     const rows: Array<[string, string, string]> = [];
     for (const provider of state.providers?.all ?? []) {
@@ -320,9 +343,9 @@ function settingDetailLines(state: AppState, cols: number, maxLines: number): st
     options.map(([label]) => label),
     cols,
   );
-  const lines: string[] = [];
+  const lines = state.settingDetail === "about" ? aboutInformationLines(state, cols) : [];
   const active = activeSettingValue(state);
-  const visibleEntries = Math.max(1, maxLines);
+  const visibleEntries = Math.max(1, maxLines - lines.length);
   const start = pageStartForIndex(state.selectedSettingOptionIndex, visibleEntries, options.length);
   for (const [offset, [label, description, value]] of options.slice(start).entries()) {
     if (offset >= visibleEntries) break;
@@ -337,6 +360,39 @@ function settingDetailLines(state: AppState, cols: number, maxLines: number): st
     );
     if (lines.length + rendered.length > maxLines) break;
     lines.push(...rendered);
+  }
+  return lines;
+}
+
+function aboutInformationLines(state: AppState, cols: number): string[] {
+  const width = menuLabelWidthFor([t("aboutReleaseVersion"), t("system")], cols);
+  const info = state.aboutInfo;
+  const system = info
+    ? `${info.system.operating_system} ${info.system.os_version} (${info.system.architecture})`
+    : t("unknown");
+  const lines = [
+    ...menuEntryLines(
+      t("aboutReleaseVersion"),
+      info?.release_version ?? t("unknown"),
+      width,
+      cols,
+      false,
+    ),
+    ...menuEntryLines(t("system"), system, width, cols, false),
+    sectionBlankLine(cols),
+  ];
+  if (state.aboutUpdate) {
+    lines.push(
+      sectionBodyLine(
+        secondaryText(
+          t("aboutUpdateConfirmation", {
+            current: state.aboutUpdate.current_version,
+            latest: state.aboutUpdate.latest_version,
+          }),
+        ),
+        cols,
+      ),
+    );
   }
   return lines;
 }

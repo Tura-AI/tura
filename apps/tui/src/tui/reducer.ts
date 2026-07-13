@@ -95,6 +95,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       authStatuses: action.authStatuses ?? state.authStatuses,
       sessionConfig: action.sessionConfig ?? state.sessionConfig,
       modelConfig: action.modelConfig ?? state.modelConfig,
+      aboutInfo: action.aboutInfo ?? state.aboutInfo,
       sessionLoading: undefined,
       status: action.session.status ?? "idle",
       selectedSessionIndex:
@@ -555,6 +556,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       ...state,
       settingsOpen: true,
       settingDetail: action.detail,
+      aboutUpdate: action.detail === "about" ? state.aboutUpdate : undefined,
       selectedProviderID: action.providerID ?? state.selectedProviderID,
       settingInput: undefined,
       sessionsOpen: false,
@@ -573,6 +575,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       settingDetail: undefined,
       selectedProviderID: undefined,
       settingInput: undefined,
+      aboutUpdate: undefined,
       selectedSettingOptionIndex: 0,
     };
   }
@@ -587,6 +590,10 @@ export function reducer(state: AppState, action: AppAction): AppState {
   }
   if (action.type === "setting-input") {
     return { ...state, settingInput: action.value, composer: action.value ? "" : state.composer };
+  }
+  if (action.type === "about-info") return { ...state, aboutInfo: action.value };
+  if (action.type === "about-update") {
+    return { ...state, aboutUpdate: action.value, selectedSettingOptionIndex: 0 };
   }
   if (action.type === "tick") return { ...state, thinkingFrame: state.thinkingFrame + 1 };
   if (action.type === "toggle-help") return { ...state, help: !state.help };
@@ -633,6 +640,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       settingDetail: !state.settingsOpen ? undefined : state.settingDetail,
       selectedProviderID: !state.settingsOpen ? undefined : state.selectedProviderID,
       settingInput: !state.settingsOpen ? undefined : state.settingInput,
+      aboutUpdate: !state.settingsOpen ? undefined : state.aboutUpdate,
       sessionsOpen: false,
       modelsOpen: false,
       authOpen: false,
@@ -649,6 +657,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       settingDetail: undefined,
       selectedProviderID: undefined,
       settingInput: undefined,
+      aboutUpdate: undefined,
     };
   if (action.type === "close-panels")
     return {
@@ -660,6 +669,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       settingDetail: undefined,
       selectedProviderID: undefined,
       settingInput: undefined,
+      aboutUpdate: undefined,
       personasOpen: false,
       help: false,
     };
@@ -754,6 +764,7 @@ function closedPanelsState(): Pick<
   | "settingDetail"
   | "selectedProviderID"
   | "settingInput"
+  | "aboutUpdate"
   | "personasOpen"
   | "help"
 > {
@@ -765,6 +776,7 @@ function closedPanelsState(): Pick<
     settingDetail: undefined,
     selectedProviderID: undefined,
     settingInput: undefined,
+    aboutUpdate: undefined,
     personasOpen: false,
     help: false,
   };

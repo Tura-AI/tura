@@ -27,6 +27,7 @@ export function selectedSettingOptionIndex(state: AppState, detail: SettingDetai
     return index >= 0 ? index : 0;
   }
   if (detail === "providerAuth") return 0;
+  if (detail === "about") return 0;
   if (detail === "agent") {
     const active = config?.active_agent;
     const index = state.agents.findIndex((agent) => storedAgentID(agent) === active);

@@ -16,15 +16,15 @@ The source installer checks these tools and installs the missing ones when the
 current platform has a supported installer. In `CheckOnly` or `Offline` mode it
 only verifies them and fails with the manual step needed.
 
-| Tool | Required for | Notes |
-| --- | --- | --- |
-| Git | cloning the repository | Windows users can use Git for Windows. |
-| Rust and Cargo | backend binaries | `scripts/install.*` can install the minimal rustup toolchain and add the Cargo bin directory to PATH. |
-| PowerShell | Windows scripts | Windows PowerShell or PowerShell 7 works. On Windows, `scripts/install.*` and npm postinstall ensure PowerShell is discoverable; npm does not require Rust/Cargo. |
-| POSIX shell and Bash | Linux/macOS scripts and command execution | Linux normally has these already. |
-| zsh | macOS default command surface | On Windows, MSYS2 zsh can be used. |
-| Bun | TUI, GUI, and Tauri release builds | `scripts/install.*` can install user-local Bun and add it to PATH. |
-| uv and Python 3.12 | command package environments | `scripts/install.*` can install user-local uv, Python 3.12, and command virtual environments. |
+| Tool                 | Required for                              | Notes                                                                                                                                                             |
+| -------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Git                  | cloning the repository                    | Windows users can use Git for Windows.                                                                                                                            |
+| Rust and Cargo       | backend binaries                          | `scripts/install.*` can install the minimal rustup toolchain and add the Cargo bin directory to PATH.                                                             |
+| PowerShell           | Windows scripts                           | Windows PowerShell or PowerShell 7 works. On Windows, `scripts/install.*` and npm postinstall ensure PowerShell is discoverable; npm does not require Rust/Cargo. |
+| POSIX shell and Bash | Linux/macOS scripts and command execution | Linux normally has these already.                                                                                                                                 |
+| zsh                  | macOS default command surface             | On Windows, MSYS2 zsh can be used.                                                                                                                                |
+| Bun                  | TUI, GUI, and Tauri release builds        | `scripts/install.*` can install user-local Bun and add it to PATH.                                                                                                |
+| uv and Python 3.12   | command package environments              | `scripts/install.*` can install user-local uv, Python 3.12, and command virtual environments.                                                                     |
 
 The source install scripts check Git, Rust/Cargo, PowerShell, `shell_command`,
 `bash`, `zsh`, Bun, uv, and Python 3.12 coverage. They update PATH for the
@@ -67,15 +67,20 @@ for future terminals:
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 .\scripts\install.ps1
-tura exec "Inspect this workspace"
+tura
 ```
 
 ```bash
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 ./scripts/install.sh
-tura exec "Inspect this workspace"
+tura
 ```
+
+The final `tura` command opens the TUI; it does not send a model request. The
+installer does not provide an API key, token, or subscription login. Before the
+first prompt, follow [Provider setup](providers.md#first-run-configure-an-llm-provider)
+to authenticate a provider and select one of its models.
 
 By default, `scripts/install.*` installs source-checkout dependencies, builds the
 full release into `target/release`, and registers that directory on the user
@@ -109,7 +114,7 @@ mkdir -p tura-install
 tar -xzf tura-main.tar.gz -C tura-install --strip-components=1
 cd tura-install
 ./scripts/install.sh
-tura exec "Inspect this workspace"
+tura
 ```
 
 If you already have a checkout and only want to run the GitHub-hosted install
@@ -134,7 +139,7 @@ Expand-Archive -Path "tura-main.zip" -DestinationPath "tura-main-expanded" -Forc
 $repo = Get-ChildItem -Path "tura-main-expanded" -Directory | Select-Object -First 1
 Set-Location $repo.FullName
 .\scripts\install.ps1
-tura exec "Inspect this workspace"
+tura
 ```
 
 If you already have a checkout and only want the GitHub-hosted install file:
@@ -149,15 +154,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
 Only `-EnvironmentOnly` or `--environment-only` changes the installer into a
 dependency-only flow. Dependency-only switches must be paired with that option.
 
-| PowerShell | Bash | Meaning |
-| --- | --- | --- |
+| PowerShell         | Bash                 | Meaning                                                                        |
+| ------------------ | -------------------- | ------------------------------------------------------------------------------ |
 | `-EnvironmentOnly` | `--environment-only` | Install or verify dependencies only; skip release build and PATH registration. |
-| `-SkipCommands` | `--skip-commands` | Skip `commands/*/install.*` command package setup. |
-| `-SkipApps` | `--skip-apps` | Skip JavaScript installs for TUI, GUI, and Tauri workspaces. |
-| `-SkipUv` | `--skip-uv` | Do not install or verify uv. Requires skipping command installers. |
-| `-SkipBun` | `--skip-bun` | Do not install or verify Bun. Requires skipping app installers. |
-| `-CheckOnly` | `--check-only` | Verify expected tools and environments without installing. |
-| `-Offline` | `--offline` | Use offline or cache-only flags where supported. |
+| `-SkipCommands`    | `--skip-commands`    | Skip `commands/*/install.*` command package setup.                             |
+| `-SkipApps`        | `--skip-apps`        | Skip JavaScript installs for TUI, GUI, and Tauri workspaces.                   |
+| `-SkipUv`          | `--skip-uv`          | Do not install or verify uv. Requires skipping command installers.             |
+| `-SkipBun`         | `--skip-bun`         | Do not install or verify Bun. Requires skipping app installers.                |
+| `-CheckOnly`       | `--check-only`       | Verify expected tools and environments without installing.                     |
+| `-Offline`         | `--offline`          | Use offline or cache-only flags where supported.                               |
 
 Examples:
 
@@ -187,28 +192,34 @@ and command source files.
 
 Useful build switches:
 
-| PowerShell | Bash | Meaning |
-| --- | --- | --- |
-| `-BackendOnly` | `--backend-only` | Build Rust backend release artifacts only. |
-| `-Binary` | `--binary` | Keep only binaries and minimal provider config in release output. |
-| `-SkipTui` | `--skip-tui` | Skip the compiled TUI executable. |
-| `-SkipGui` | `--skip-gui` | Skip the GUI web build. |
-| `-SkipTauri` | `--skip-tauri` | Skip the Tauri desktop bundle. |
-| `-Clean` | `-clean` or `--clean` | Remove repository-local runtime state before building. |
+| PowerShell     | Bash                  | Meaning                                                           |
+| -------------- | --------------------- | ----------------------------------------------------------------- |
+| `-BackendOnly` | `--backend-only`      | Build Rust backend release artifacts only.                        |
+| `-Binary`      | `--binary`            | Keep only binaries and minimal provider config in release output. |
+| `-SkipTui`     | `--skip-tui`          | Skip the compiled TUI executable.                                 |
+| `-SkipGui`     | `--skip-gui`          | Skip the GUI web build.                                           |
+| `-SkipTauri`   | `--skip-tauri`        | Skip the Tauri desktop bundle.                                    |
+| `-Clean`       | `-clean` or `--clean` | Remove repository-local runtime state before building.            |
 
 ## Verify the install
 
-After registration, open a new terminal and run:
+After registration, open a new terminal and verify that the executable starts:
 
 ```powershell
 tura --help
-tura exec "Say hello from this installation"
+tura
 ```
 
 ```bash
 tura --help
-tura exec "Say hello from this installation"
+tura
 ```
+
+`tura --help` verifies the installation without calling a provider. Running
+`tura` opens the TUI, where an installation with no configured LLM provider is
+sent to Provider settings. A successful model prompt is a provider check, not an
+installation check; complete [Provider setup](providers.md#first-run-configure-an-llm-provider)
+first.
 
 For a local dependency-only check without changing the build output:
 
@@ -257,13 +268,13 @@ delete. Obvious, yes. Still where people lose afternoons.
 
 Tura stores runtime and session state in two places:
 
-| Location | Contents |
-| --- | --- |
-| `<TURA_HOME>/db/session_log/index.sqlite3` | per-home session DB index and queue |
-| `<TURA_HOME>/.tura/` | sockets, locks, active gateway file, and per-home runtime state |
-| `<workspace>/.tura/session_log.sqlite3` | workspace session history |
-| `<workspace>/.tura/config.conf` | workspace settings |
-| `log/provider/YYYY-MM-DD/*.json` | provider request and response diagnostics |
+| Location                                   | Contents                                                        |
+| ------------------------------------------ | --------------------------------------------------------------- |
+| `<TURA_HOME>/db/session_log/index.sqlite3` | per-home session DB index and queue                             |
+| `<TURA_HOME>/.tura/`                       | sockets, locks, active gateway file, and per-home runtime state |
+| `<workspace>/.tura/session_log.sqlite3`    | workspace session history                                       |
+| `<workspace>/.tura/config.conf`            | workspace settings                                              |
+| `log/provider/YYYY-MM-DD/*.json`           | provider request and response diagnostics                       |
 
 When `TURA_HOME` is not set and you run from the source checkout, the checkout
 itself is the instance home. The release build cleanup switch removes only these
