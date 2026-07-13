@@ -51,9 +51,10 @@ Important scripts:
 - `run-release-dry-run.*`: release dry-run orchestrator. It runs install, the CI
   flow, and release artifact build without publishing.
 - `scripts/npm/install-release.mjs`: npm postinstall release installer for the
-  public `tura-ai` package. It first uses an installed platform package such as
-  `tura-win32-x64`, then a local archive from `release/`, and finally a GitHub
-  Release archive. The installed runtime layout is `target/release` with
+  public `tura-ai` package. It uses the installed platform package such as
+  `tura-win32-x64` and fails directly when that optional dependency is
+  unavailable; postinstall does not download release archives. The installed
+  runtime layout is `target/release` with
   `config/provider_config.json`, backend binaries, TUI, GUI dist, and Tauri
   bundle artifacts. After verifying the release files it calls
   `scripts/npm/cli-path.mjs` so npm installs register the `tura` command on the
@@ -179,4 +180,5 @@ GitHub Actions:
 
 Local source builds still resolve directly from `target/release`. Published npm
 installs resolve through the main `tura-ai` package plus the matching platform
-package, with GitHub Release archives as the fallback install route.
+package. A missing platform package is an installation error; there is no
+postinstall download fallback.

@@ -37,6 +37,47 @@ describe("GatewayClient", () => {
     expect(messages[0]?.parts[0]?.text).toBe("hello");
   });
 
+  test("maps About operations to the shared fixed Gateway endpoints", async () => {
+    const seen: Array<{ method: string; url: string; body?: unknown }> = [];
+    const client = new GatewayClient({
+      baseUrl: "http://gateway.test",
+      fetch: async (input, init) => {
+        const url = String(input);
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        seen.push({ method: init?.method ?? "GET", url, body });
+        if (url.endsWith("/about")) {
+          return jsonResponse({
+            release_version: "0.1.30",
+            system: { operating_system: "Windows", os_version: "11", architecture: "x86_64" },
+          });
+        }
+        if (url.endsWith("/about/star")) return jsonResponse({ outcome: "starred" });
+        if (url.endsWith("/about/open")) {
+          return jsonResponse({ opened: true, target: "contact" });
+        }
+        if (url.endsWith("/about/update/check")) return jsonResponse({});
+        return jsonResponse({ scheduled: true, version: "0.1.31" });
+      },
+    });
+
+    expect((await client.aboutInfo()).release_version).toBe("0.1.30");
+    expect((await client.starTuraRepository()).outcome).toBe("starred");
+    expect((await client.openAboutTarget("contact")).target).toBe("contact");
+    expect((await client.checkTuraUpdate()).update).toBeUndefined();
+    expect((await client.installTuraUpdate("0.1.31", "session-1")).scheduled).toBe(true);
+    expect(seen).toEqual([
+      { method: "GET", url: "http://gateway.test/about", body: undefined },
+      { method: "POST", url: "http://gateway.test/about/star", body: {} },
+      { method: "POST", url: "http://gateway.test/about/open", body: { target: "contact" } },
+      { method: "GET", url: "http://gateway.test/about/update/check", body: undefined },
+      {
+        method: "POST",
+        url: "http://gateway.test/about/update/install",
+        body: { version: "0.1.31", session_id: "session-1" },
+      },
+    ]);
+  });
+
   test("scopes directory query and header for workspace requests", async () => {
     let observedUrl = "";
     let observedHeader = "";
@@ -77,6 +118,42 @@ describe("GatewayClient", () => {
     expect(observedUrl).toContain(`directory=${encodedDirectory}`);
     expect(observedHeader).toBe(encodedDirectory);
     expect(decodeURIComponent(observedHeader)).toBe(directory);
+  });
+
+  test("saves composer input files through the scoped workspace endpoint", async () => {
+    let observedUrl = "";
+    let observedBody = "";
+    const client = new GatewayClient({
+      baseUrl: "http://gateway.test",
+      directory: "C:\\repo",
+      fetch: async (input, init) => {
+        observedUrl = String(input);
+        observedBody = String(init?.body ?? "");
+        return jsonResponse({
+          path: ".tura/media/input/1-shot.png",
+          absolute: "C:/repo/.tura/media/input/1-shot.png",
+          name: "1-shot.png",
+          mimeType: "image/png",
+          size_bytes: 3,
+        });
+      },
+    });
+
+    const saved = await client.saveInputFile({
+      name: "shot.png",
+      content: "YWJj",
+      encoding: "base64",
+      mimeType: "image/png",
+    });
+
+    expect(observedUrl).toBe("http://gateway.test/file/input?directory=C%3A%5Crepo");
+    expect(JSON.parse(observedBody)).toEqual({
+      name: "shot.png",
+      content: "YWJj",
+      encoding: "base64",
+      mimeType: "image/png",
+    });
+    expect(saved.path).toBe(".tura/media/input/1-shot.png");
   });
 
   test("updates model config with a tier provider model selection", async () => {

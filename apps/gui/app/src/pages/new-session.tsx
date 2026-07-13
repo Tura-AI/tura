@@ -56,6 +56,8 @@ export function ConversationEmptyView(props: {
           images={props.state.composerImages}
           submitting={props.state.submitting}
           slashCommands={props.slashCommands}
+          gatewayUrl={props.state.gatewayUrl}
+          directory={props.state.directory}
           onText={props.onComposerText}
           onImages={props.onComposerImages}
           onSubmit={props.onSubmit}

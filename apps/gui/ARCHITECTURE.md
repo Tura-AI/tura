@@ -206,6 +206,12 @@ of opening those files.
 
 The existing coding workbench keeps using these gateway routes:
 
+- Composer files, dropped paths, and clipboard images are persisted through
+  `POST /file/input` under the selected workspace's `.tura/media/input` before
+  the editor inserts attachment tokens. Sent image and non-image attachments
+  both use `[MEDIA:<workspace-relative-path>:MEDIA]`, so history rendering,
+  previews, and file-open actions remain gateway-backed after a GUI restart.
+
 ```text
 health                         GET    /global/health
 event stream                   GET    /event
@@ -1014,6 +1020,12 @@ GUI settings must cover:
 - Repositories/GitHub installation
 - Agents, Runtimes, Skills, Autopilots management shortcuts
 - Desktop-only daemon and update tabs when desktop shell exists
+- About as the final settings page, with release/system information and support
+  actions. GUI and TUI must use the shared gateway SDK methods
+  `aboutInfo`, `starTuraRepository`, `openAboutTarget`, `checkTuraUpdate`, and
+  `installTuraUpdate`; clients must not read tokens, call GitHub/npm, open URLs,
+  or install updates directly. Gateway owns the fixed `/about`, `/about/star`,
+  `/about/open`, `/about/update/check`, and `/about/update/install` routes.
 
 ### Attachments And Editor
 

@@ -3,6 +3,7 @@ import { isDraftSession } from "../types/session.js";
 import { parseLanguage, setLanguage, t } from "../i18n.js";
 import { settingOptions } from "./render.js";
 import { settingPatch } from "./logic/selection.js";
+import type { AboutOpenTarget, AboutUiAction } from "../types/about.js";
 import type { AppState } from "./reducer.js";
 import {
   fetchAuthSurface,
@@ -16,6 +17,7 @@ export async function applySelectedSetting(
   client: TuiGatewayClient,
   getState: TuiGetState,
   dispatch: TuiDispatch,
+  onExit?: () => void,
 ): Promise<void> {
   const state = getState();
   const detail = state.settingDetail;
@@ -23,6 +25,10 @@ export async function applySelectedSetting(
   const selected = settingOptions(state)[state.selectedSettingOptionIndex];
   if (!selected) return;
   const value = selected[2];
+  if (detail === "about" && typeof value === "string") {
+    await applyAboutAction(client, getState, dispatch, value as AboutUiAction, onExit);
+    return;
+  }
   if (detail === "model") {
     if (typeof value !== "string") return;
     const config = await client.patchSessionConfig(settingPatch(detail, value) ?? { model: value });
@@ -55,6 +61,55 @@ export async function applySelectedSetting(
   }
   dispatch({ type: "session-config", value: config });
   dispatch({ type: "notice", value: undefined });
+}
+
+export async function applyAboutAction(
+  client: TuiGatewayClient,
+  getState: TuiGetState,
+  dispatch: TuiDispatch,
+  action: AboutUiAction,
+  onExit?: () => void,
+): Promise<void> {
+  if (action === "addStar") {
+    const result = await client.starTuraRepository();
+    dispatch({
+      type: "notice",
+      value: result.outcome === "starred" ? t("aboutStarred") : t("aboutStarOpened"),
+    });
+    return;
+  }
+  const target = aboutOpenTarget(action);
+  if (target) {
+    await client.openAboutTarget(target);
+    dispatch({ type: "notice", value: t("aboutLinkOpened", { target }) });
+    return;
+  }
+  if (action === "update") {
+    dispatch({ type: "notice", value: t("aboutCheckingUpdate") });
+    const result = await client.checkTuraUpdate();
+    dispatch({ type: "about-update", value: result.update });
+    dispatch({ type: "notice", value: result.update ? undefined : t("aboutNoUpdate") });
+    return;
+  }
+  if (action === "cancelUpdate") {
+    dispatch({ type: "about-update", value: undefined });
+    dispatch({ type: "notice", value: t("aboutUpdateCancelled") });
+    return;
+  }
+  const update = getState().aboutUpdate;
+  if (action !== "confirmUpdate" || !update) return;
+  dispatch({ type: "notice", value: t("aboutUpdating") });
+  const result = await client.installTuraUpdate(update.latest_version, getState().session?.id);
+  dispatch({ type: "about-update", value: undefined });
+  dispatch({ type: "notice", value: t("aboutUpdated", { version: result.version }) });
+  onExit?.();
+}
+
+function aboutOpenTarget(action: AboutUiAction): AboutOpenTarget | undefined {
+  if (action === "reportBug") return "report_bug";
+  if (action === "contribute") return "contribute";
+  if (action === "contact") return "contact";
+  return undefined;
 }
 
 export async function updateActiveSession(

@@ -153,7 +153,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       ...previous,
       composerText: feedbackComposerText(session),
       planNotice: {
-        message: "这个工单没有可执行任务，请先输入命令或者反馈。",
+        message: t("planInputRequired"),
         code: PLAN_INPUT_REQUIRED_CODE,
       },
       error: undefined,
@@ -352,7 +352,7 @@ export function usePlanActions(options: PlanActionsOptions) {
                   sessionID: session.id,
                   messageID: `${messageId}:gateway-response`,
                   type: "text",
-                  text: `Gateway 已接收立即执行任务：${taskSummaryText(task)}`,
+                  text: t("planTaskAccepted", { task: taskSummaryText(task) }),
                 },
               ],
             },
@@ -387,7 +387,7 @@ export function usePlanActions(options: PlanActionsOptions) {
         ...previous,
         planNotice: timeout
           ? {
-              message: "Gateway 30 秒内没有响应立即执行请求。",
+              message: t("planRunTimeout"),
               code: PLAN_RUN_TIMEOUT_CODE,
             }
           : {

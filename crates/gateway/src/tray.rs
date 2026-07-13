@@ -4,7 +4,6 @@ use session_log::{SessionSummary, WorkspaceSummary};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
@@ -13,7 +12,6 @@ use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, 
 const MAX_TRAY_SESSIONS: usize = 12;
 const SESSION_TITLE_MAX_CHARS: usize = 24;
 const SESSION_WORKSPACE_MAX_CHARS: usize = 18;
-const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const OPEN_GUI_ID: &str = "action:open-gui";
 const KILL_BACKGROUND_PROCESSES_ID: &str = "action:kill-background-processes";
 const QUIT_ID: &str = "action:quit";
@@ -22,7 +20,12 @@ const QUIT_ID: &str = "action:quit";
 enum TrayUserEvent {
     Menu(MenuEvent),
     Tray(TrayIconEvent),
-    Refresh,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrayClickAction {
+    OpenGui,
+    RefreshMenu,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -106,6 +109,7 @@ impl GatewayTrayApp {
             .with_icon(load_tura_icon()?)
             .with_menu(Box::new(menu.clone()))
             .with_menu_on_left_click(false)
+            .with_menu_on_right_click(cfg!(target_os = "linux"))
             .build()
             .context("failed to create Tura gateway tray icon")?;
 
@@ -134,23 +138,15 @@ impl GatewayTrayApp {
             port,
             menu,
             menu_handle,
-            _tray_icon: tray_icon,
+            tray_icon,
             snapshot,
             session_actions,
             launched_clients: Vec::new(),
         };
-        let proxy = event_loop.create_proxy();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(REFRESH_INTERVAL);
-            if proxy.send_event(TrayUserEvent::Refresh).is_err() {
-                break;
-            }
-        });
 
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Wait;
             match event {
-                Event::UserEvent(TrayUserEvent::Refresh) => state.refresh(),
                 Event::UserEvent(TrayUserEvent::Tray(event)) => state.handle_tray_event(event),
                 Event::UserEvent(TrayUserEvent::Menu(event)) => {
                     if state.handle_menu_event(event) {
@@ -167,7 +163,7 @@ struct GatewayTrayState {
     port: u16,
     menu: Menu,
     menu_handle: TrayMenuHandle,
-    _tray_icon: TrayIcon,
+    tray_icon: TrayIcon,
     snapshot: TraySnapshot,
     session_actions: HashMap<String, ActiveSessionItem>,
     launched_clients: Vec<Child>,
@@ -175,10 +171,24 @@ struct GatewayTrayState {
 
 impl GatewayTrayState {
     fn handle_tray_event(&mut self, event: TrayIconEvent) {
-        if !is_left_click_release(&event) {
+        let TrayIconEvent::Click {
+            button,
+            button_state,
+            ..
+        } = event
+        else {
             return;
+        };
+        match tray_click_action(button, button_state) {
+            Some(TrayClickAction::OpenGui) => {
+                self.launch_gui(self.snapshot.last_workspace.clone(), None)
+            }
+            Some(TrayClickAction::RefreshMenu) => {
+                self.refresh();
+                self.tray_icon.show_menu();
+            }
+            None => {}
         }
-        self.launch_gui(self.snapshot.last_workspace.clone(), None);
     }
 
     fn refresh(&mut self) {
@@ -237,7 +247,6 @@ impl GatewayTrayState {
             return;
         };
         stop_all_session_processes(Path::new(&directory));
-        self.refresh();
     }
 
     fn shutdown_clients(&mut self) {
@@ -572,15 +581,15 @@ fn parse_tray_language(value: &str) -> Option<TrayLanguage> {
     }
 }
 
-fn is_left_click_release(event: &TrayIconEvent) -> bool {
-    matches!(
-        event,
-        TrayIconEvent::Click {
-            button: MouseButton::Left,
-            button_state: MouseButtonState::Up,
-            ..
-        }
-    )
+fn tray_click_action(
+    button: MouseButton,
+    button_state: MouseButtonState,
+) -> Option<TrayClickAction> {
+    match (button, button_state) {
+        (MouseButton::Left, MouseButtonState::Up) => Some(TrayClickAction::OpenGui),
+        (MouseButton::Right, MouseButtonState::Up) => Some(TrayClickAction::RefreshMenu),
+        _ => None,
+    }
 }
 
 fn snapshots_equal(left: &TraySnapshot, right: &TraySnapshot) -> bool {
@@ -761,8 +770,8 @@ fn is_gateway_client_process(process: &sysinfo::Process, gateway_url: &str) -> b
 mod tests {
     use super::{
         gui_args, is_active_session, load_tura_icon, menu_model, parse_tray_language,
-        same_menu_structure, session_label, tray_enabled, tray_text, ActiveSessionItem,
-        TrayLanguage, TraySnapshot, TrayText,
+        same_menu_structure, session_label, tray_click_action, tray_enabled, tray_text,
+        ActiveSessionItem, TrayClickAction, TrayLanguage, TraySnapshot, TrayText,
     };
     use serde_json::json;
     use session_log::SessionSummary;
@@ -771,6 +780,7 @@ mod tests {
     use std::sync::Mutex;
     use std::thread;
     use std::time::{Duration, Instant};
+    use tray_icon::{MouseButton, MouseButtonState};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -895,8 +905,33 @@ mod tests {
     }
 
     #[test]
-    fn tray_refreshes_background_process_status_every_second() {
-        assert_eq!(super::REFRESH_INTERVAL, Duration::from_secs(1));
+    fn tray_refreshes_menu_only_on_right_click_release() {
+        assert_eq!(
+            tray_click_action(MouseButton::Right, MouseButtonState::Up),
+            Some(TrayClickAction::RefreshMenu)
+        );
+        assert_eq!(
+            tray_click_action(MouseButton::Right, MouseButtonState::Down),
+            None
+        );
+        assert_eq!(
+            tray_click_action(MouseButton::Left, MouseButtonState::Up),
+            Some(TrayClickAction::OpenGui)
+        );
+
+        let source = include_str!("tray.rs");
+        let production_source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("tray production source");
+        let periodic_refresh_event = ["TrayUserEvent", "::", "Refresh"].concat();
+        let background_thread = ["std::thread", "::", "spawn"].concat();
+        assert!(!production_source.contains(&periodic_refresh_event));
+        assert!(!production_source.contains(&background_thread));
+        assert_eq!(production_source.matches("self.refresh();").count(), 1);
+        assert!(production_source
+            .replace("\r\n", "\n")
+            .contains("self.refresh();\n                self.tray_icon.show_menu();"));
     }
 
     #[test]

@@ -70,6 +70,7 @@ quick_html2md = "0.2.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 sha2 = "0.10"
 sysinfo = "0.30"
 tauri = "2"

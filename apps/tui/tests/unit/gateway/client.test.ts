@@ -15,6 +15,7 @@ test("GatewayClient sends workspace directory through query and header", async (
         directoryHeader: req.headers["x-opencode-directory"] as string,
         body,
       });
+
       sendJson(res, session("sess-1", { directory: "C:/repo with spaces" }));
     },
     async (baseUrl) => {
@@ -27,6 +28,47 @@ test("GatewayClient sends workspace directory through query and header", async (
   assert.equal(seen[0].url, "/session?directory=C%3A%2Frepo+with+spaces");
   assert.equal(seen[0].directoryHeader, "C%3A%2Frepo%20with%20spaces");
   assert.deepEqual(seen[0].body, { directory: "C:/repo with spaces", agent: "fast" });
+});
+
+test("GatewayClient maps About operations to fixed Gateway endpoints", async () => {
+  const seen: Array<{ method?: string; url?: string; body?: unknown }> = [];
+  await withServer(
+    async (req, res) => {
+      seen.push({ method: req.method, url: req.url, body: await readBody(req) });
+      if (req.url === "/about") {
+        return sendJson(res, {
+          release_version: "0.1.30",
+          system: { operating_system: "Windows", os_version: "11", architecture: "x86_64" },
+        });
+      }
+      if (req.url === "/about/star") return sendJson(res, { outcome: "starred" });
+      if (req.url === "/about/open") {
+        return sendJson(res, { opened: true, target: "report_bug" });
+      }
+      if (req.url === "/about/update/check") return sendJson(res, {});
+      return sendJson(res, { scheduled: true, version: "0.1.31" });
+    },
+    async (baseUrl) => {
+      const client = new GatewayClient({ baseUrl, directory: "C:/repo" });
+      assert.equal((await client.aboutInfo()).release_version, "0.1.30");
+      assert.equal((await client.starTuraRepository()).outcome, "starred");
+      assert.equal((await client.openAboutTarget("report_bug")).target, "report_bug");
+      assert.equal((await client.checkTuraUpdate()).update, undefined);
+      assert.equal((await client.installTuraUpdate("0.1.31", "session-1")).scheduled, true);
+    },
+  );
+
+  assert.deepEqual(seen, [
+    { method: "GET", url: "/about", body: undefined },
+    { method: "POST", url: "/about/star", body: {} },
+    { method: "POST", url: "/about/open", body: { target: "report_bug" } },
+    { method: "GET", url: "/about/update/check", body: undefined },
+    {
+      method: "POST",
+      url: "/about/update/install",
+      body: { version: "0.1.31", session_id: "session-1" },
+    },
+  ]);
 });
 
 test("GatewayClient reads strict gateway message arrays", async () => {

@@ -437,6 +437,7 @@ export function ConversationView(props: {
             avatarSettings={selectedAgentAvatar()}
             expressionEmoji={latestStickerEmoji()}
             workspaceDirectory={props.state.directory}
+            gatewayUrl={props.state.gatewayUrl}
             followBottom={transcriptPinned()}
             onFollowBottom={() => scrollTranscriptToBottom("auto")}
             onTranscript={(element) => {
@@ -471,6 +472,8 @@ export function ConversationView(props: {
           images={props.state.composerImages}
           submitting={props.state.submitting}
           slashCommands={props.slashCommands}
+          gatewayUrl={props.state.gatewayUrl}
+          directory={props.state.directory}
           onText={props.onComposerText}
           onImages={props.onComposerImages}
           onSubmit={props.onSubmit}
@@ -521,6 +524,7 @@ function Transcript(props: {
   avatarSettings: AgentAvatarConfig;
   expressionEmoji?: string;
   workspaceDirectory?: string;
+  gatewayUrl?: string;
   followBottom: boolean;
   onFollowBottom: () => void;
   onTranscript: (element: HTMLElement) => void;
@@ -1084,6 +1088,7 @@ function Transcript(props: {
                       latestAssistantId={latestAssistantId()}
                       sessionStatus={props.session?.status}
                       workspaceDirectory={props.workspaceDirectory}
+                      gatewayUrl={props.gatewayUrl}
                       showAvatarSpace={
                         avatarMode() !== "hidden" && entry.item().message.role !== "user"
                       }
@@ -1237,6 +1242,7 @@ function VirtualMessageCell(props: {
   latestAssistantId?: string;
   sessionStatus?: Session["status"];
   workspaceDirectory?: string;
+  gatewayUrl?: string;
   showAvatarSpace: boolean;
   onTool: (part: MessagePart, parts: MessagePart[]) => void;
   onMeasure: (messageId: string, height: number, top: number) => void;
@@ -1282,6 +1288,7 @@ function VirtualMessageCell(props: {
         isLatestAssistant={props.latestAssistantId === props.entry.item().message.id}
         sessionStatus={props.sessionStatus}
         workspaceDirectory={props.workspaceDirectory}
+        gatewayUrl={props.gatewayUrl}
         showAvatarSpace={props.showAvatarSpace}
         onTool={props.onTool}
       />
@@ -1297,6 +1304,7 @@ function MessageCell(props: {
   isLatestAssistant: boolean;
   sessionStatus?: Session["status"];
   workspaceDirectory?: string;
+  gatewayUrl?: string;
   showAvatarSpace: boolean;
   onTool: (part: MessagePart, parts: MessagePart[]) => void;
 }) {
@@ -1400,6 +1408,7 @@ function MessageCell(props: {
                 role={props.message.role}
                 streaming={false}
                 workspaceDirectory={props.workspaceDirectory}
+                gatewayUrl={props.gatewayUrl}
               />
             )}
           </Index>
@@ -1437,6 +1446,7 @@ function MessageCell(props: {
                               role={props.message.role}
                               streaming={isAgentWorking()}
                               workspaceDirectory={props.workspaceDirectory}
+                              gatewayUrl={props.gatewayUrl}
                             />
                           )}
                         </Index>
@@ -1482,6 +1492,7 @@ function MessageCell(props: {
                     role="assistant"
                     streaming={true}
                     workspaceDirectory={props.workspaceDirectory}
+                    gatewayUrl={props.gatewayUrl}
                   />
                 </div>
               </Show>

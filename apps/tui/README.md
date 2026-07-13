@@ -341,7 +341,13 @@ npm test
 npm run test:e2e:profiles
 npm run test:stream
 npm run test:business
+npm run test:performance:live-growth
 ```
+
+`test:performance:live-growth` grows one active session to 500 independent live
+messages, measures redraw and terminal-write pressure, then hydrates the same
+messages as stable history to compare the recovered performance after reentry.
+The JSON report is written under `test-results/performance/live-growth/`.
 
 Live/release tests still require a real gateway/provider setup and should be run
 only when validating the installed release surface.

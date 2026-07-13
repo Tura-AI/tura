@@ -262,6 +262,55 @@ test("completed user and assistant turn moves from live into transcript cache", 
   assert.doesNotMatch(liveRows, /CACHE_USER_TEXT|CACHE_AGENT_TEXT/);
 });
 
+test("render cache absorbs stable messages that precede the active live message", () => {
+  const session = {
+    id: "sess-growing-live-cache",
+    title: "Growing Live Cache",
+    status: "busy" as const,
+  };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+    sessions: [session],
+  });
+
+  state = reducer(state, liveDelta("msg-growing-live-1", "FIRST_LIVE_MESSAGE", 1));
+  const first = renderChatFrameParts(state, richCapabilities());
+  state = reducer(state, liveDelta("msg-growing-live-2", "SECOND_LIVE_MESSAGE", 2));
+  const handoff = renderChatFrameParts(state, richCapabilities(), { cache: first.cache });
+  const steady = renderChatFrameParts(state, richCapabilities(), { cache: handoff.cache });
+
+  assert.equal(handoff.tailCacheMessageCount, 1);
+  assert.equal(handoff.cache.cacheMessageCount, 1);
+  assert.equal(steady.tailCacheMessageCount, 0);
+  assert.match(stripAnsi(steady.cacheFrame), /FIRST_LIVE_MESSAGE/);
+  assert.doesNotMatch(stripAnsi(steady.liveFrame), /FIRST_LIVE_MESSAGE/);
+  assert.match(stripAnsi(steady.liveFrame), /SECOND_LIVE_MESSAGE/);
+
+  function liveDelta(messageID: string, delta: string, updatedAt: number) {
+    return {
+      type: "event" as const,
+      event: {
+        directory: "C:/repo",
+        payload: {
+          type: "message.part.delta" as const,
+          properties: {
+            sessionID: session.id,
+            messageID,
+            partID: `${messageID}-part`,
+            createdAt: updatedAt,
+            updatedAt,
+            field: "text",
+            delta,
+          },
+        },
+      },
+    };
+  }
+});
+
 test("live assistant text keeps event order before a later user message", () => {
   const session = { id: "sess-live-user-order", title: "Live Order", status: "busy" as const };
   let state = reducer(initialState("C:/repo"), {

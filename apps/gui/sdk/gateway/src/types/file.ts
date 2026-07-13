@@ -43,3 +43,18 @@ export type FileOpenResponse = {
   path: string;
   opened: boolean;
 };
+
+export type FileInputSaveRequest = {
+  name: string;
+  content: string;
+  encoding: "base64";
+  mimeType?: string | null;
+};
+
+export type FileInputSaveResponse = {
+  path: string;
+  absolute: string;
+  name: string;
+  mimeType?: string | null;
+  size_bytes: number;
+};

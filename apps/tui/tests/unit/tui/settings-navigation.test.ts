@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { draw } from "../../../src/tui/draw.js";
-import { settingsLines } from "../../../src/tui/render/settings.js";
+import { settingOptions, settingsLines } from "../../../src/tui/render/settings.js";
 import { renderFrame } from "../../../src/tui/render.js";
 import { richCapabilities } from "../../../src/tui/capabilities.js";
+import { setLanguage } from "../../../src/i18n.js";
+import { personaCommunicationStyle } from "../../../src/persona-display.js";
 import { setActiveCapabilities, stripAnsi } from "../../../src/tui/render-terminal.js";
 import { initialState, reducer, type AppState } from "../../../src/tui/reducer.js";
 import { hydrate } from "../../../src/tui/runtime.js";
@@ -146,6 +148,38 @@ test("persona setting marker follows session config over stale session persona",
   assert.match(rendered, /wonderful\s+[✓*]/u);
   assert.doesNotMatch(rendered, /tura\s+[✓*]/u);
   assert.equal(state.selectedSettingOptionIndex, 1);
+});
+
+test("built-in persona descriptions follow the selected TUI language", () => {
+  const state = {
+    ...baseState(),
+    settingDetail: "persona" as const,
+    personas: [
+      {
+        summary: {
+          id: "wonderful",
+          source: "static",
+          description: "Quiet and sparse, reporting only the most important information.",
+        },
+        communication_style: "Keep the response quiet and concise.",
+      },
+    ],
+  };
+
+  try {
+    setLanguage("zh-CN");
+    assert.match(settingOptions(state)[0]?.[1] ?? "", /安静/u);
+    assert.doesNotMatch(settingOptions(state)[0]?.[1] ?? "", /Quiet/u);
+
+    const rendered = stripAnsi(settingsLines({ ...state, personasOpen: true }, 96, 12).join("\n"));
+    assert.doesNotMatch(rendered, /Keep the response/u);
+
+    setLanguage("en");
+    assert.match(settingOptions(state)[0]?.[1] ?? "", /Quiet/u);
+    assert.match(personaCommunicationStyle(state.personas[0]!), /Keep the response/u);
+  } finally {
+    setLanguage(undefined);
+  }
 });
 
 test("settings root hides removed command validator stall guard and session type entries", () => {

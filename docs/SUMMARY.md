@@ -9,10 +9,10 @@
 
 - [Overview](start/overview.md)
 - [Install](start/install.md)
+- [Providers](start/providers.md)
 - [How to start](start/how-to-start.md)
 - [CLI parameters](start/cli-parameters.md)
 - [Settings](start/settings.md)
-- [Providers](start/providers.md)
 - [Sessions](start/sessions.md)
 - [Navigation](start/navigation.md)
 

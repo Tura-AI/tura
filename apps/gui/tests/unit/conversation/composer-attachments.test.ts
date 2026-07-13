@@ -12,6 +12,15 @@ const composerCss = readFileSync(
 );
 
 describe("composer attachment drag and sizing", () => {
+  test("persists every attachment before inserting its rich composer token", () => {
+    expect(composerSource).toContain("saveInputFile");
+    expect(composerSource).toContain("read_clipboard_image");
+    expect(composerSource).toContain("read_input_file");
+    expect(composerSource).toContain("onDragDropEvent");
+    expect(composerSource).toContain("handleComposerPaste");
+    expect(composerSource).toContain("saved.path");
+  });
+
   test("owns file drag and drop on the full composer surface", () => {
     expect(composerSource).toContain("function composerDataTransferHasFiles");
     expect(composerSource).toContain("function handleComposerDragEnter");

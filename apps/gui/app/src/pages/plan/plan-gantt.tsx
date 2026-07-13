@@ -261,7 +261,7 @@ export function PlanGanttView(props: {
                 class="plan-timeline-day plan-pipeline-step"
                 data-plan-step={String(index() + 1)}
               >
-                <strong>步骤{index() + 1}</strong>
+                <strong>{t("stepNumber", { number: index() + 1 })}</strong>
               </span>
             )}
           </For>

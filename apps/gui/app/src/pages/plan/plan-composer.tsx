@@ -83,7 +83,7 @@ export function PlanConversationFeedbackNotice(props: {
     <div class={classNames("plan-feedback-prompt", props.code && "error")}>
       <span aria-hidden="true" />
       <p>
-        {props.message ?? "请输入命令或者反馈"}
+        {props.message ?? t("planFeedbackRequired")}
         <Show when={props.code}>{(code) => <small>{code()}</small>}</Show>
         <Show when={props.providerId}>
           {(providerId) => (
@@ -92,7 +92,7 @@ export function PlanConversationFeedbackNotice(props: {
               class="plan-feedback-provider-link"
               onClick={() => props.onOpenProviderSettings?.(providerId())}
             >
-              查看供应商
+              {t("viewProvider")}
             </button>
           )}
         </Show>

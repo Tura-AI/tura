@@ -2,6 +2,7 @@ import { displayMessages, type AppState } from "./reducer.js";
 import type { Message } from "../types/session.js";
 import { messageText, sessionHasQuestionStatus, sessionTitle } from "../types/session.js";
 import { t } from "../i18n.js";
+import { personaCommunicationStyle, personaDescription } from "../persona-display.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
 import {
   activeCapabilities,
@@ -181,22 +182,21 @@ export function renderChatFrameParts(
     state,
     groups.cache.length,
   );
-  const renderedCache =
-    reusableCache ?? renderChatCache(state, capabilities, renderCols, groups.cache);
-  const tailCacheMessages = groups.cache.slice(renderedCache.cacheMessageCount);
+  const baseCache = reusableCache ?? renderChatCache(state, capabilities, renderCols, groups.cache);
+  const tailCacheMessages = groups.cache.slice(baseCache.cacheMessageCount);
   const tailCacheRows = transcriptRenderLinesForMessages(state, renderCols, tailCacheMessages, {
     commandMode: "cache",
   });
+  const renderedCache = appendRenderedChatCache(
+    baseCache,
+    tailCacheRows,
+    tailCacheMessages.length,
+    renderCols,
+  );
   const activeLiveRows = transcriptRenderLinesForMessages(state, renderCols, groups.live, {
     commandMode: "live",
   });
-  const liveRowsForFrame =
-    tailCacheRows.length && activeLiveRows.length
-      ? [...tailCacheRows, { text: "", kind: "gap" as const }, ...activeLiveRows]
-      : tailCacheRows.length
-        ? tailCacheRows
-        : activeLiveRows;
-  const liveRows = liveLinesWithCacheBoundary(renderedCache.cacheRows, liveRowsForFrame);
+  const liveRows = liveLinesWithCacheBoundary(renderedCache.cacheRows, activeLiveRows);
   const cacheLines = renderedCache.cacheLines;
   const liveLines = liveRows.map((line) => line.text);
   const chromeLines = [
@@ -253,6 +253,25 @@ function renderChatCache(
     cacheRows,
     cacheLines,
     cacheFrame: cache.frame,
+  };
+}
+
+function appendRenderedChatCache(
+  cache: RenderedChatCache,
+  tailRows: TranscriptRenderLine[],
+  tailMessageCount: number,
+  renderCols: number,
+): RenderedChatCache {
+  if (!tailMessageCount) return cache;
+  const appendedRows = liveLinesWithCacheBoundary(cache.cacheRows, tailRows);
+  const appendedLines = appendedRows.map((line) => line.text);
+  const appendedFrame = finalizeFrame(appendedLines, 0, renderCols).frame;
+  return {
+    ...cache,
+    cacheMessageCount: cache.cacheMessageCount + tailMessageCount,
+    cacheRows: [...cache.cacheRows, ...appendedRows],
+    cacheLines: [...cache.cacheLines, ...appendedLines],
+    cacheFrame: [cache.cacheFrame, appendedFrame].filter(Boolean).join("\n"),
   };
 }
 
@@ -711,10 +730,8 @@ function personaLines(state: AppState, cols: number, maxLines: number): string[]
   const entries = state.personas.map((persona) => {
     const id = personaID(persona) ?? t("unknown");
     const marker = id === active ? t("active") : (persona.summary?.source ?? "");
-    const description =
-      persona.summary?.description ?? stringField(persona.config, "description") ?? "";
-    const style =
-      typeof persona.communication_style === "string" ? persona.communication_style.trim() : "";
+    const description = personaDescription(persona);
+    const style = personaCommunicationStyle(persona);
     return [
       id,
       [marker, description, style ? style.replace(/\s+/g, " ") : undefined]
@@ -840,11 +857,6 @@ function serviceState(value: unknown): string {
 function personaID(persona: AppState["personas"][number]): string | undefined {
   const configName = persona.config?.persona_name;
   return persona.summary?.id ?? (typeof configName === "string" ? configName : undefined);
-}
-
-function stringField(value: Record<string, unknown> | undefined, key: string): string | undefined {
-  const item = value?.[key];
-  return typeof item === "string" ? item : undefined;
 }
 
 function stringOrUndefined(value: unknown): string | undefined {

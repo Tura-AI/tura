@@ -5,6 +5,7 @@ import {
   type GatewayClient,
 } from "@tura/gateway-sdk";
 import { createEffect, createSignal, type Accessor, type Setter } from "solid-js";
+import { t } from "../i18n";
 import { fixtureFileContent, fixtureFiles } from "../test/fixtures/app-fixtures";
 import type { AppState } from "../state/global-store";
 import { safe } from "../utils/safe";
@@ -126,7 +127,7 @@ export function useFileBrowserActions(options: {
     if (state().connection !== "connected") {
       setState((previous) => ({
         ...previous,
-        error: "Gateway 未连接，无法调用系统默认应用打开文件。",
+        error: t("fileOpenGatewayUnavailable"),
       }));
       return;
     }
@@ -144,7 +145,7 @@ export function useFileBrowserActions(options: {
     if (state().connection !== "connected") {
       setState((previous) => ({
         ...previous,
-        error: "Gateway 未连接，无法在系统文件浏览器中打开。",
+        error: t("fileRevealGatewayUnavailable"),
       }));
       return;
     }

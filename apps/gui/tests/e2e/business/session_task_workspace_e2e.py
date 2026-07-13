@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import json
+import mimetypes
 import os
 import shutil
 import socket
@@ -91,6 +93,7 @@ class SessionTaskGateway(ThreadingHTTPServer):
         super().__init__(address, SessionTaskGatewayHandler)
         self.alpha = str(ROOT)
         self.beta = str(ROOT / "tmp" / "session-task-workspace-beta")
+        Path(self.beta).mkdir(parents=True, exist_ok=True)
         self.workspaces = [
             {"id": "alpha", "name": "tura", "worktree": self.alpha, "directory": self.alpha},
             {"id": "beta", "name": "beta workspace", "worktree": self.beta, "directory": self.beta},
@@ -265,6 +268,23 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
                     {"name": "Cargo.toml", "path": f"{directory}/Cargo.toml", "kind": "file", "type": "file"},
                 ]
             )
+        if path == "/file/media":
+            directory = Path(self.server.directory_from(self, query))
+            requested = Path(query.get("path", [""])[0])
+            target = requested if requested.is_absolute() else directory / requested
+            if not target.is_file():
+                return self.send_json({"error": "not found"}, 404)
+            body = target.read_bytes()
+            self.send_response(200)
+            self.send_header("access-control-allow-origin", "*")
+            self.send_header("content-type", mimetypes.guess_type(target.name)[0] or "application/octet-stream")
+            self.send_header("content-length", str(len(body)))
+            self.send_header("connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+            self.close_connection = True
+            return
         if path == "/session":
             directory = self.server.directory_from(self, query)
             sessions = [item for item in self.server.sessions if item.get("directory") == directory]
@@ -343,6 +363,30 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
             self.server.messages[item["id"]] = []
             self.server.records.append({"type": "session.create", "payload": payload, "session": item})
             return self.send_json(item)
+        if path == "/file/input":
+            query = parse_qs(urlparse(self.path).query)
+            directory = Path(self.server.directory_from(self, query))
+            media_directory = directory / ".tura" / "media" / "input"
+            media_directory.mkdir(parents=True, exist_ok=True)
+            requested_name = Path(str(payload.get("name") or "attachment.bin")).name
+            safe_name = "".join(
+                character if character.isalnum() or character in "._-" else "-"
+                for character in requested_name
+            ).strip(".-_") or "attachment.bin"
+            name = f"{now_ms()}-{len(self.server.records)}-{safe_name}"
+            content = base64.b64decode(payload.get("content") or "", validate=True)
+            target = media_directory / name
+            target.write_bytes(content)
+            relative = target.relative_to(directory).as_posix()
+            response = {
+                "path": relative,
+                "absolute": str(target),
+                "name": name,
+                "mimeType": payload.get("mimeType"),
+                "size_bytes": len(content),
+            }
+            self.server.records.append({"type": "file.input", "payload": payload, "saved": response})
+            return self.send_json(response)
         if path.endswith("/prompt_async"):
             session_id = path.strip("/").split("/")[1]
             item = self.server.find_session(session_id)
@@ -763,6 +807,47 @@ async def send_composer(page, root_selector: str):
     await button.click()
 
 
+async def attach_dropped_file(page, name: str, content: str, mime_type: str):
+    await page.evaluate(
+        """([name, content, mimeType]) => {
+            const composer = document.querySelector('.bottom-composer');
+            if (!composer) throw new Error('missing composer');
+            const transfer = new DataTransfer();
+            transfer.items.add(new File([content], name, { type: mimeType }));
+            const init = { bubbles: true, cancelable: true, composed: true, dataTransfer: transfer };
+            composer.dispatchEvent(new DragEvent('dragenter', init));
+            composer.dispatchEvent(new DragEvent('dragover', init));
+            composer.dispatchEvent(new DragEvent('drop', init));
+          }""",
+        [name, content, mime_type],
+    )
+
+
+async def paste_clipboard_image(page, name: str):
+    await page.evaluate(
+        """(name) => {
+            const editor = document.querySelector('.bottom-composer .composer-rich-editor');
+            if (!editor) throw new Error('missing composer editor');
+            const png = Uint8Array.from([
+              137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+              0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137,
+              0, 0, 0, 13, 73, 68, 65, 84, 8, 215, 99, 248, 207, 192, 240,
+              31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69,
+              78, 68, 174, 66, 96, 130
+            ]);
+            const transfer = new DataTransfer();
+            transfer.items.add(new File([png], name, { type: 'image/png' }));
+            editor.dispatchEvent(new ClipboardEvent('paste', {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              clipboardData: transfer,
+            }));
+          }""",
+        name,
+    )
+
+
 async def debug_submit_state(page, name: str):
     state = await page.evaluate(
         """
@@ -838,8 +923,31 @@ async def run_flow():
             ".bottom-composer",
             "排队巡检任务\n\n从 GUI 创建并同步到 gateway/session management",
         )
+        await attach_dropped_file(page, "drop-notes.txt", "dropped attachment", "text/plain")
+        await page.wait_for_function(
+            "() => document.querySelectorAll('.composer-attachment-token').length === 1",
+            timeout=5000,
+        )
+        await paste_clipboard_image(page, "clipboard-shot.png")
+        await page.wait_for_function(
+            """() => {
+                const tokens = document.querySelectorAll('.composer-attachment-token');
+                const value = document.querySelector('.bottom-composer textarea')?.value ?? '';
+                return tokens.length === 2 && value.includes('[[file:') && value.includes('[[image:');
+            }""",
+            timeout=5000,
+        )
         await choose_trigger(page, "排队执行")
-        await shot(page, "05-queued-task-composed")
+        await shot(page, "05-attachments-composed")
+        attachment_metrics = await page_metrics(page)
+        results.append(
+            {
+                "name": "drop-and-paste-remain-as-rich-attachments",
+                "ok": "[[file:" in attachment_metrics["composerText"]
+                and "[[image:" in attachment_metrics["composerText"],
+                "metrics": attachment_metrics,
+            }
+        )
         await send_composer(page, ".bottom-composer")
         await page.wait_for_timeout(1000)
         await shot(page, "06-queued-session-created")
@@ -881,10 +989,26 @@ async def run_flow():
         records = json.loads(response.read().decode("utf-8"))
     record_types = [item["type"] for item in records["records"]]
     payload_text = json.dumps(records["records"], ensure_ascii=False)
+    saved_inputs = [item["saved"] for item in records["records"] if item["type"] == "file.input"]
+    saved_input_paths = [Path(item["absolute"]) for item in saved_inputs]
     results.extend(
         [
             {"name": "gateway-create-session-called", "ok": "session.create" in record_types, "records": records["records"]},
             {"name": "gateway-prompt-async-called", "ok": "session.prompt_async" in record_types, "records": records["records"]},
+            {
+                "name": "attachments-saved-under-selected-workspace",
+                "ok": len(saved_input_paths) == 2
+                and all(path.is_file() for path in saved_input_paths)
+                and all("session-task-workspace-beta/.tura/media/input" in path.as_posix() for path in saved_input_paths),
+                "paths": [str(path) for path in saved_input_paths],
+            },
+            {
+                "name": "prompt-keeps-image-and-file-media-references",
+                "ok": payload_text.count("[MEDIA:.tura/media/input/") >= 2
+                and "[File 1: drop-notes.txt]" in payload_text
+                and "[Image 2: clipboard-shot.png]" in payload_text,
+                "records": records["records"],
+            },
             {"name": "gateway-created-session-in-beta-workspace", "ok": "session-task-workspace-beta" in payload_text and "排队巡检任务" in payload_text, "records": records["records"]},
             {"name": "gateway-did-not-record-timed-task", "ok": "scheduled_task" not in payload_text and "polling_task" not in payload_text, "records": records["records"]},
             {"name": "no-browser-errors", "ok": not browser_errors, "errors": browser_errors},
@@ -900,11 +1024,22 @@ async def run_flow():
 
 async def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    start_gateway()
+    gateway = start_gateway()
     gui = start_gui_server()
-    await wait_for_url(GATEWAY_URL + "/global/health")
-    await wait_for_url(GUI_URL, gui)
-    await run_flow()
+    try:
+        await wait_for_url(GATEWAY_URL + "/global/health")
+        await wait_for_url(GUI_URL, gui)
+        await run_flow()
+    finally:
+        if gui:
+            gui.terminate()
+            try:
+                gui.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                gui.kill()
+        if gateway:
+            gateway.shutdown()
+            gateway.server_close()
 
 
 if __name__ == "__main__":

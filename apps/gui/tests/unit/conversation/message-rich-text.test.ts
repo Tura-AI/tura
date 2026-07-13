@@ -25,6 +25,15 @@ describe("message rich text media paths", () => {
       "/file/media?path=shots%2Ffinal+image.png&directory=C%3A%2Frepo+with+space",
     );
   });
+
+  test("uses the connected gateway for Tauri media and renders files as interactive controls", () => {
+    expect(mediaSource(".tura/media/input/shot.png", "C:/repo", "http://127.0.0.1:4217")).toBe(
+      "http://127.0.0.1:4217/file/media?path=.tura%2Fmedia%2Finput%2Fshot.png&directory=C%3A%2Frepo",
+    );
+    expect(richTextSource).toContain("openMediaFile");
+    expect(richTextSource).toContain('class="rich-file-tile"');
+    expect(richTextSource).toContain("onClick={() => void openMediaFile");
+  });
 });
 
 describe("message text localization", () => {
@@ -87,8 +96,9 @@ describe("message rich text table cells", () => {
   });
 
   test("sizes table cells from text length while leaving full content visible", () => {
-    expect(richTextSource).toContain("const TABLE_CELL_MIN_CH = 26 / 3;");
     expect(richTextSource).toContain("const TABLE_CELL_MAX_CH = 96;");
+    expect(richTextSource).not.toContain("TABLE_CELL_MIN_CH");
+    expect(richTextSource).toContain("Math.ceil(textLength / 3)");
     expect(richTextSource).toContain("function tableCellWidthStyle");
     expect(richTextSource).toContain('class="rich-table-cell-content"');
     expect(richTextSource).toContain('"--rich-table-cell-width"');

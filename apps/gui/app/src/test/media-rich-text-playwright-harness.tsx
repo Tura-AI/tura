@@ -5,6 +5,7 @@ import "../styles/index.css";
 
 const params = new URLSearchParams(window.location.search);
 const workspaceDirectory = params.get("workspace") ?? undefined;
+const gatewayUrl = params.get("gatewayUrl") ?? undefined;
 const paths = params.getAll("path").filter(Boolean);
 const text = params.get("text") ?? paths.map((path) => `[MEDIA:${path}:MEDIA]`).join("\n");
 const normalizePunctuation = params.get("normalize-punctuation") === "true";
@@ -19,6 +20,7 @@ render(
     <RichText
       text={text}
       workspaceDirectory={workspaceDirectory}
+      gatewayUrl={gatewayUrl}
       normalizePunctuation={normalizePunctuation}
     />
   ),

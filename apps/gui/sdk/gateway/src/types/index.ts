@@ -1,4 +1,5 @@
 export * from "./agent";
+export * from "./about";
 export * from "./command";
 export * from "./common";
 export * from "./config";

@@ -37,6 +37,11 @@ pub fn build_router() -> Router {
         .route("/event", get(api::global::global_event))
         .route("/model_config", get(api::global::get_tura_config))
         .route("/model_config", put(api::global::put_tura_config))
+        .route("/about", get(api::about::get_about))
+        .route("/about/star", post(api::about::star_repository))
+        .route("/about/open", post(api::about::open_target))
+        .route("/about/update/check", get(api::about::check_update))
+        .route("/about/update/install", post(api::about::install_update))
         // Multica-compatible product surface
         .route("/api/config", get(api::product::public_config))
         .route("/api/me", get(api::product::current_user))

@@ -1,3 +1,4 @@
+import { GatewayClient } from "@tura/gateway-sdk";
 import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
 import Crop from "lucide-solid/icons/crop";
@@ -47,7 +48,6 @@ type RichTableRow = {
 
 type RichGroup = { kind: "node"; node: RichNode } | { kind: "gallery"; paths: string[] };
 
-const TABLE_CELL_MIN_CH = 26 / 3;
 const TABLE_CELL_MAX_CH = 96;
 
 type RichTag =
@@ -66,6 +66,7 @@ export function RichText(props: {
   text: string;
   active?: boolean;
   workspaceDirectory?: string;
+  gatewayUrl?: string;
   normalizePunctuation?: boolean;
 }) {
   const nodes = createMemo(() => {
@@ -99,12 +100,14 @@ export function RichText(props: {
                     <RichNodeView
                       node={(group as Extract<RichGroup, { kind: "node" }>).node}
                       workspaceDirectory={props.workspaceDirectory}
+                      gatewayUrl={props.gatewayUrl}
                     />
                   }
                 >
                   <MediaGallery
                     paths={(group as Extract<RichGroup, { kind: "gallery" }>).paths}
                     workspaceDirectory={props.workspaceDirectory}
+                    gatewayUrl={props.gatewayUrl}
                     onOpen={(path) => setViewerIndex(galleryPaths().indexOf(path))}
                   />
                 </Show>
@@ -116,6 +119,7 @@ export function RichText(props: {
                   paths={galleryPaths()}
                   index={viewerIndex() ?? 0}
                   workspaceDirectory={props.workspaceDirectory}
+                  gatewayUrl={props.gatewayUrl}
                   onIndex={setViewerIndex}
                   onClose={() => setViewerIndex(undefined)}
                 />
@@ -166,12 +170,18 @@ function isPlainStreamingText(text: string): boolean {
   return !/<\/?[A-Za-z][\s\S]*?>/u.test(text);
 }
 
-function RichNodeView(props: { node: RichNode; workspaceDirectory?: string }) {
+function RichNodeView(props: { node: RichNode; workspaceDirectory?: string; gatewayUrl?: string }) {
   if (props.node.kind === "text") {
     return <>{props.node.text}</>;
   }
   if (props.node.kind === "media") {
-    return <MediaNode path={props.node.path} workspaceDirectory={props.workspaceDirectory} />;
+    return (
+      <MediaNode
+        path={props.node.path}
+        workspaceDirectory={props.workspaceDirectory}
+        gatewayUrl={props.gatewayUrl}
+      />
+    );
   }
   if (props.node.kind === "emoji") {
     return <span class={`rich-emoji rich-${props.node.variant}`}>{props.node.value}</span>;
@@ -182,16 +192,24 @@ function RichNodeView(props: { node: RichNode; workspaceDirectory?: string }) {
         caption={props.node.caption}
         rows={props.node.rows}
         workspaceDirectory={props.workspaceDirectory}
+        gatewayUrl={props.gatewayUrl}
       />
     );
   }
-  return <RichElement node={props.node} workspaceDirectory={props.workspaceDirectory} />;
+  return (
+    <RichElement
+      node={props.node}
+      workspaceDirectory={props.workspaceDirectory}
+      gatewayUrl={props.gatewayUrl}
+    />
+  );
 }
 
 function RichTableView(props: {
   caption: RichNode[];
   rows: RichTableRow[];
   workspaceDirectory?: string;
+  gatewayUrl?: string;
 }) {
   const caption = createMemo(() => plainText(props.caption).trim());
   const [scrollWidth, setScrollWidth] = createSignal(0);
@@ -273,6 +291,7 @@ function RichTableView(props: {
                             <RichNodeView
                               node={node}
                               workspaceDirectory={props.workspaceDirectory}
+                              gatewayUrl={props.gatewayUrl}
                             />
                           )}
                         </For>
@@ -328,20 +347,24 @@ function RichTableView(props: {
 
 function tableCellWidthStyle(cell: RichTableCell): Record<string, string> {
   const textLength = plainText(cell.children).trim().length;
-  const widthCh = Math.min(
-    TABLE_CELL_MAX_CH,
-    Math.max(TABLE_CELL_MIN_CH, Math.ceil(textLength / 3)),
-  );
+  const widthCh = Math.min(TABLE_CELL_MAX_CH, Math.ceil(textLength / 3));
   return { "--rich-table-cell-width": `${widthCh}ch` };
 }
 
 function RichElement(props: {
   node: Extract<RichNode, { kind: "element" }>;
   workspaceDirectory?: string;
+  gatewayUrl?: string;
 }) {
   const children = () => (
     <For each={props.node.children}>
-      {(node) => <RichNodeView node={node} workspaceDirectory={props.workspaceDirectory} />}
+      {(node) => (
+        <RichNodeView
+          node={node}
+          workspaceDirectory={props.workspaceDirectory}
+          gatewayUrl={props.gatewayUrl}
+        />
+      )}
     </For>
   );
   return (
@@ -394,18 +417,24 @@ function RichElement(props: {
   );
 }
 
-function MediaNode(props: { path: string; workspaceDirectory?: string }) {
+function MediaNode(props: { path: string; workspaceDirectory?: string; gatewayUrl?: string }) {
   const isImage = createMemo(() => isImagePath(props.path));
   const [failed, setFailed] = createSignal(false);
   return (
     <figure class="rich-media">
       <Show
         when={isImage() && !failed()}
-        fallback={<FileMediaTile path={props.path} workspaceDirectory={props.workspaceDirectory} />}
+        fallback={
+          <FileMediaTile
+            path={props.path}
+            workspaceDirectory={props.workspaceDirectory}
+            gatewayUrl={props.gatewayUrl}
+          />
+        }
       >
         <div class="rich-media-thumb" title={props.path}>
           <img
-            src={mediaSource(props.path, props.workspaceDirectory)}
+            src={mediaSource(props.path, props.workspaceDirectory, props.gatewayUrl)}
             alt=""
             loading="lazy"
             onError={() => setFailed(true)}
@@ -420,6 +449,7 @@ function MediaNode(props: { path: string; workspaceDirectory?: string }) {
 function MediaGallery(props: {
   paths: string[];
   workspaceDirectory?: string;
+  gatewayUrl?: string;
   onOpen: (path: string) => void;
 }) {
   return (
@@ -429,6 +459,7 @@ function MediaGallery(props: {
           <GalleryMediaItem
             path={path}
             workspaceDirectory={props.workspaceDirectory}
+            gatewayUrl={props.gatewayUrl}
             onOpen={props.onOpen}
           />
         )}
@@ -440,6 +471,7 @@ function MediaGallery(props: {
 function GalleryMediaItem(props: {
   path: string;
   workspaceDirectory?: string;
+  gatewayUrl?: string;
   onOpen: (path: string) => void;
 }) {
   const [failed, setFailed] = createSignal(false);
@@ -447,7 +479,13 @@ function GalleryMediaItem(props: {
   return (
     <Show
       when={isImage() && !failed()}
-      fallback={<FileMediaTile path={props.path} workspaceDirectory={props.workspaceDirectory} />}
+      fallback={
+        <FileMediaTile
+          path={props.path}
+          workspaceDirectory={props.workspaceDirectory}
+          gatewayUrl={props.gatewayUrl}
+        />
+      }
     >
       <button
         type="button"
@@ -456,7 +494,7 @@ function GalleryMediaItem(props: {
         title={props.path}
       >
         <img
-          src={mediaSource(props.path, props.workspaceDirectory)}
+          src={mediaSource(props.path, props.workspaceDirectory, props.gatewayUrl)}
           alt=""
           loading="lazy"
           onError={() => setFailed(true)}
@@ -466,19 +504,29 @@ function GalleryMediaItem(props: {
   );
 }
 
-function FileMediaTile(props: { path: string; workspaceDirectory?: string }) {
+function FileMediaTile(props: { path: string; workspaceDirectory?: string; gatewayUrl?: string }) {
   return (
-    <div class="rich-file-tile" title={props.path}>
+    <button
+      type="button"
+      class="rich-file-tile"
+      title={props.path}
+      onClick={() => void openMediaFile(props.path, props.workspaceDirectory, props.gatewayUrl)}
+    >
       <span class="rich-file-name">{fileName(props.path)}</span>
       <span class="rich-file-ext">{fileExtension(props.path) || t("open")}</span>
-    </div>
+    </button>
   );
+}
+
+async function openMediaFile(path: string, workspaceDirectory?: string, gatewayUrl?: string) {
+  await new GatewayClient({ baseUrl: gatewayUrl, directory: workspaceDirectory }).openFile(path);
 }
 
 export function ImageLightbox(props: {
   paths: string[];
   index: number;
   workspaceDirectory?: string;
+  gatewayUrl?: string;
   onIndex: (index: number) => void;
   onClose: () => void;
 }) {
@@ -537,7 +585,7 @@ export function ImageLightbox(props: {
       </button>
       <img
         class={classNames("media-lightbox-image", fill() && "fill")}
-        src={mediaSource(currentPath(), props.workspaceDirectory)}
+        src={mediaSource(currentPath(), props.workspaceDirectory, props.gatewayUrl)}
         alt=""
         style={{
           transform: `scale(${scale()}) rotate(${rotation()}deg)`,

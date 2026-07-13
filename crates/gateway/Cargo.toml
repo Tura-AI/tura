@@ -11,6 +11,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+semver.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 chrono.workspace = true

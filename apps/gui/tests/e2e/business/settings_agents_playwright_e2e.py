@@ -138,6 +138,12 @@ async def main() -> None:
                 f"{GUI_URL}/?tab=settings&e2eFixture=communication-protocol",
                 ".settings-view",
             )
+            await page.locator('[data-section="application"]').click()
+            await page.locator(".settings-panel .field-row .appearance-select-button").click()
+            await page.locator(".appearance-select-menu").get_by_role(
+                "button", name="English", exact=True
+            ).click()
+            await expect(page.get_by_role("heading", name="Application settings")).to_be_visible()
             await page.locator('[data-section="models"]').click()
             await expect(page.get_by_role("heading", name="Default model config")).to_be_visible()
             await expect(page.locator(".model-config-panel .field-row")).to_have_count(2)
@@ -197,14 +203,68 @@ async def main() -> None:
 
             await page.locator('[data-section="personalization"]').click()
             await expect(page.get_by_role("heading", name="Personalization")).to_be_visible()
+            english_personalization = await page.locator(".personalization-panel").inner_text()
+            for text in [
+                "Configurable personas",
+                "Balanced and energetic",
+                "Quiet and concise",
+                "Relaxed and calm",
+                "Avatar display",
+                "Hidden",
+                "Static",
+                "Dynamic",
+                "Pixel art",
+                "Threshold",
+                "Avatar preview",
+            ]:
+                assert text in english_personalization
+            assert not any("\u3400" <= char <= "\u9fff" for char in english_personalization)
             await expect(page.locator(".agent-avatar-stage")).to_have_count(1)
             await expect(page.locator(".agent-avatar-loading")).to_have_count(1)
             await page.locator("#agent-avatar-pixel").fill("12")
             await page.locator("#agent-avatar-threshold").fill("160")
             await page.get_by_role("button", name="Save").click()
             await expect(page.locator("#agent-avatar-scale")).to_have_count(0)
-            await page.screenshot(path=OUT / "04-personalization.png", full_page=True)
+            await page.screenshot(path=OUT / "04-personalization-en.png", full_page=True)
             checks.append({"name": "personalization-avatar-controls", "ok": True})
+
+            await page.locator('[data-section="application"]').click()
+            await page.locator(".field-row").filter(has_text="Language").locator(
+                ".appearance-select-button"
+            ).click()
+            await page.locator(".appearance-select-menu").get_by_role(
+                "button", name="简体中文", exact=True
+            ).click()
+            await expect(page.get_by_role("heading", name="应用设置")).to_be_visible()
+            await page.locator('[data-section="personalization"]').click()
+            await expect(page.get_by_role("heading", name="个性化设置")).to_be_visible()
+            chinese_personalization = await page.locator(".personalization-panel").inner_text()
+            for text in [
+                "可配置人格",
+                "均衡而有活力",
+                "安静简洁",
+                "松弛平静",
+                "头像显示",
+                "隐藏",
+                "静态",
+                "动态",
+                "像素画",
+                "阈值",
+                "头像预览",
+            ]:
+                assert text in chinese_personalization
+            for text in [
+                "Configurable personas",
+                "Balanced and energetic",
+                "Quiet and concise",
+                "Relaxed and calm",
+                "Avatar display",
+                "Pixel art",
+                "Avatar preview",
+            ]:
+                assert text not in chinese_personalization
+            await page.screenshot(path=OUT / "05-personalization-zh-CN.png", full_page=True)
+            checks.append({"name": "personalization-i18n-en-zh", "ok": True})
 
             mobile = await browser.new_page(
                 viewport={"width": 390, "height": 844},
@@ -219,7 +279,7 @@ async def main() -> None:
             await expect(
                 mobile.locator(".agent-pick-row").filter(has_text="Direct").first
             ).to_be_visible()
-            await mobile.screenshot(path=OUT / "05-agent-settings-mobile.png", full_page=True)
+            await mobile.screenshot(path=OUT / "06-agent-settings-mobile.png", full_page=True)
             checks.append({"name": "mobile-agent-settings-visible", "ok": True})
 
             checks.append(

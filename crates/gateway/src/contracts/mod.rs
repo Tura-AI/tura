@@ -1,5 +1,6 @@
 //! HTTP API contract types shared by gateway handlers and internal clients.
 
+pub mod about;
 pub mod agent;
 pub mod command;
 pub mod common;
@@ -19,6 +20,7 @@ pub mod session_log;
 pub mod session_shell;
 pub mod session_summary;
 
+pub use about::*;
 pub use agent::*;
 pub use command::*;
 pub use common::*;

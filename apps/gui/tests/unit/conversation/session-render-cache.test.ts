@@ -26,9 +26,14 @@ describe("session render cache", () => {
     expect(appSource).not.toContain("e2eFixture && existingMessages.length > 0");
   });
 
-  test("uncached session switches show the existing text-free loading animation", () => {
+  test("all session switches show the existing text-free loading animation for at least 500ms", () => {
+    expect(appSource).toContain("const MINIMUM_SESSION_LOADING_MS = 500");
     expect(appSource).toContain("const [loadingSessionId, setLoadingSessionId]");
     expect(appSource).toContain("setLoadingSessionId(sessionId)");
+    expect(appSource).toContain("minimumSessionLoadingDelay");
+    expect(appSource).not.toContain(
+      "if (shouldFetchMessages) {\n      setLoadingSessionId(sessionId)",
+    );
     expect(appSource).toContain("const requestId = ++sessionMessageLoadRequest");
     expect(appSource).toContain("setLoadingSessionId((current) =>");
     expect(appSource).toContain("requestId === sessionMessageLoadRequest");

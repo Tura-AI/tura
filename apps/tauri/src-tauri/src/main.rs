@@ -14,6 +14,8 @@ use tauri::Manager;
 use url::Url;
 
 const GATEWAY_BUILD_KIND: &str = "release";
+const MAX_NATIVE_INPUT_FILES: usize = 100;
+const MAX_NATIVE_INPUT_FILE_BYTES: u64 = 25 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -419,8 +421,8 @@ fn env_path_for_runtime_root(runtime_root: &Path) -> Option<PathBuf> {
 }
 
 #[tauri::command]
-fn read_input_file(path: String) -> Result<NativeInputFile, String> {
-    native_input_file_from_path(Path::new(&path))
+fn read_input_file(path: String) -> Result<Vec<NativeInputFile>, String> {
+    native_input_files_from_path(Path::new(&path))
 }
 
 #[tauri::command]
@@ -431,6 +433,15 @@ fn read_clipboard_image() -> Result<Option<NativeInputFile>, String> {
 fn native_input_file_from_path(path: &Path) -> Result<NativeInputFile, String> {
     if !path.is_file() {
         return Err(format!("input path is not a file: {}", path.display()));
+    }
+    let size = std::fs::metadata(path)
+        .map_err(|err| format!("failed to inspect input file {}: {err}", path.display()))?
+        .len();
+    if size > MAX_NATIVE_INPUT_FILE_BYTES {
+        return Err(format!(
+            "input file exceeds the 25 MB limit: {}",
+            path.display()
+        ));
     }
     let bytes = std::fs::read(path)
         .map_err(|err| format!("failed to read input file {}: {err}", path.display()))?;
@@ -444,6 +455,57 @@ fn native_input_file_from_path(path: &Path) -> Result<NativeInputFile, String> {
         content_base64: general_purpose::STANDARD.encode(bytes),
         mime_type: mime_type_for_path(path),
     })
+}
+
+fn native_input_files_from_path(path: &Path) -> Result<Vec<NativeInputFile>, String> {
+    if path.is_file() {
+        return native_input_file_from_path(path).map(|file| vec![file]);
+    }
+    if !path.is_dir() {
+        return Err(format!("input path does not exist: {}", path.display()));
+    }
+
+    let mut paths = Vec::new();
+    collect_input_file_paths(path, &mut paths)?;
+    paths.sort();
+    paths
+        .iter()
+        .map(|file| native_input_file_from_path(file))
+        .collect()
+}
+
+fn collect_input_file_paths(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(directory).map_err(|err| {
+        format!(
+            "failed to read input directory {}: {err}",
+            directory.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|err| {
+            format!(
+                "failed to read input directory {}: {err}",
+                directory.display()
+            )
+        })?;
+        let file_type = entry.file_type().map_err(|err| {
+            format!(
+                "failed to inspect input path {}: {err}",
+                entry.path().display()
+            )
+        })?;
+        if file_type.is_file() {
+            files.push(entry.path());
+            if files.len() > MAX_NATIVE_INPUT_FILES {
+                return Err(format!(
+                    "input directory contains more than {MAX_NATIVE_INPUT_FILES} files"
+                ));
+            }
+        } else if file_type.is_dir() {
+            collect_input_file_paths(&entry.path(), files)?;
+        }
+    }
+    Ok(())
 }
 
 fn native_input_file_from_clipboard_image() -> Result<Option<NativeInputFile>, String> {
@@ -1279,13 +1341,14 @@ mod tests {
         let file = temp.join("shot.png");
         fs::write(&file, [137_u8, 80, 78, 71, 13, 10, 26, 10]).expect("write png");
 
-        let payload = native_input_file_from_path(&file).expect("read input file");
+        let payloads = native_input_files_from_path(&file).expect("read input file");
+        let payload = &payloads[0];
 
         assert_eq!(payload.name, "shot.png");
         assert_eq!(payload.mime_type, Some("image/png"));
         assert_eq!(
             general_purpose::STANDARD
-                .decode(payload.content_base64)
+                .decode(&payload.content_base64)
                 .expect("decode payload"),
             vec![137_u8, 80, 78, 71, 13, 10, 26, 10]
         );
@@ -1293,12 +1356,18 @@ mod tests {
     }
 
     #[test]
-    fn native_input_file_rejects_non_file_path() {
+    fn native_input_directory_recursively_reads_files_in_stable_order() {
         let temp = test_temp_dir("native-input-directory");
+        let nested = temp.join("nested");
+        fs::create_dir_all(&nested).expect("nested directory");
+        fs::write(temp.join("b.txt"), b"b").expect("root file");
+        fs::write(nested.join("a.txt"), b"a").expect("nested file");
 
-        let err = native_input_file_from_path(&temp).expect_err("directory should fail");
+        let payloads = native_input_files_from_path(&temp).expect("read input directory");
 
-        assert!(err.contains("input path is not a file"));
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0].name, "b.txt");
+        assert_eq!(payloads[1].name, "a.txt");
         let _ = fs::remove_dir_all(temp);
     }
 

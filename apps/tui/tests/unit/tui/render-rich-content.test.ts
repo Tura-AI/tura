@@ -698,9 +698,9 @@ test("render shows agent persona summary and persona panel", () => {
   assert.match(panel, /> tura/);
   assert.match(panel, /\x1b\[48;2;20;23;24m/);
   assert.match(panel, /tura/);
-  assert.match(panel, /calm technical collaborator/);
+  assert.match(panel, /Balanced and energetic/);
   assert.match(stripAnsi(panel), /concise, direct, fri/u);
-  assert.match(stripAnsi(panel), /fri…|fri\.\.\./u);
+  assert.match(stripAnsi(panel), /concise, direct, friendly/u);
   const personaLine = panel.split("\n").find((line) => stripAnsi(line).includes("> tura"));
   assert.ok(personaLine);
   assertWideMenuGap(personaLine, "tura", "current");

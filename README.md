@@ -204,7 +204,6 @@ Mac and Linux:
 ```bash
 npm install tura-ai
 tura
-tura exec "Inspect this workspace and summarize the risky parts"
 ```
 
 Windows:
@@ -212,8 +211,12 @@ Windows:
 ```powershell
 npm install -g tura-ai
 tura
-tura exec "Inspect this workspace and summarize the risky parts"
 ```
+
+Tura does not bundle provider credentials. On first launch, configure an LLM
+provider and select one of its models before sending a prompt. See
+[Provider setup](docs/start/providers.md#first-run-configure-an-llm-provider) for
+the CLI, TUI, and GUI flows.
 
 ### Source checkout
 
@@ -223,7 +226,7 @@ Windows PowerShell:
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 .\scripts\install.ps1
-tura exec "Inspect this workspace"
+tura
 ```
 
 macOS or Linux shell:
@@ -232,7 +235,7 @@ macOS or Linux shell:
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 ./scripts/install.sh
-tura exec "Inspect this workspace"
+tura
 ```
 
 The source installer performs the complete environment setup, release build,

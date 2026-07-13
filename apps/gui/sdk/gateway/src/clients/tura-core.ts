@@ -3,6 +3,13 @@ import type { GatewayClient } from "../client";
 export function turaCoreClient(client: GatewayClient) {
   return {
     health: () => client.health(),
+    aboutInfo: () => client.aboutInfo(),
+    starTuraRepository: () => client.starTuraRepository(),
+    openAboutTarget: (target: Parameters<GatewayClient["openAboutTarget"]>[0]) =>
+      client.openAboutTarget(target),
+    checkTuraUpdate: () => client.checkTuraUpdate(),
+    installTuraUpdate: (...input: Parameters<GatewayClient["installTuraUpdate"]>) =>
+      client.installTuraUpdate(...input),
     config: () => client.config(),
     patchConfig: (payload: Parameters<GatewayClient["patchConfig"]>[0]) =>
       client.patchConfig(payload),

@@ -1,12 +1,20 @@
 import { GatewayError } from "./errors";
 import type {
   Agent,
+  AboutInfo,
+  AboutOpenResponse,
+  AboutOpenTarget,
+  AboutStarResponse,
+  AboutUpdateCheckResponse,
+  AboutUpdateInstallResponse,
   AgentUpsertRequest,
   StoredPersona,
   Command,
   CreateSessionRequest,
   CurrentProjectResponse,
   FileContentResponse,
+  FileInputSaveRequest,
+  FileInputSaveResponse,
   FileOpenResponse,
   GatewayConfig,
   HealthResponse,
@@ -78,6 +86,29 @@ export class GatewayClient {
 
   health(): Promise<HealthResponse> {
     return this.get("/global/health");
+  }
+
+  aboutInfo(): Promise<AboutInfo> {
+    return this.get("/about");
+  }
+
+  starTuraRepository(): Promise<AboutStarResponse> {
+    return this.request("/about/star", {
+      method: "POST",
+      body: "{}",
+    });
+  }
+
+  openAboutTarget(target: AboutOpenTarget): Promise<AboutOpenResponse> {
+    return this.post("/about/open", { target });
+  }
+
+  checkTuraUpdate(): Promise<AboutUpdateCheckResponse> {
+    return this.get("/about/update/check");
+  }
+
+  installTuraUpdate(version: string, sessionId?: string): Promise<AboutUpdateInstallResponse> {
+    return this.post("/about/update/install", { version, session_id: sessionId });
   }
 
   config(): Promise<GatewayConfig> {
@@ -360,6 +391,10 @@ export class GatewayClient {
 
   fileContent(path: string): Promise<FileContentResponse> {
     return this.get("/file/content", { path }, true);
+  }
+
+  saveInputFile(payload: FileInputSaveRequest): Promise<FileInputSaveResponse> {
+    return this.post("/file/input", payload, undefined, true);
   }
 
   openFile(path: string): Promise<FileOpenResponse> {

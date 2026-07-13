@@ -269,13 +269,65 @@ async def main() -> None:
             )
             await page.screenshot(path=OUT / "02-loaded.png", full_page=True)
 
+            await page.evaluate(
+                """
+                () => {
+                  window.__sessionLoadingTiming = { startedAt: null, finishedAt: null };
+                  const timing = window.__sessionLoadingTiming;
+                  const observer = new MutationObserver(() => {
+                    const loading = Boolean(
+                      document.querySelector('.transcript-loading-placeholder')
+                    );
+                    if (loading && timing.startedAt === null) {
+                      timing.startedAt = performance.now();
+                    } else if (!loading && timing.startedAt !== null && timing.finishedAt === null) {
+                      timing.finishedAt = performance.now();
+                      observer.disconnect();
+                    }
+                  });
+                  observer.observe(document.body, { childList: true, subtree: true });
+                }
+                """
+            )
             await page.locator('.session-row[title="Cached session"]').click()
-            await expect(page.get_by_text("Cached conversation content")).to_be_visible(timeout=5_000)
+            await expect(placeholder).to_be_visible(timeout=1_000)
+            await page.wait_for_function(
+                "window.__sessionLoadingTiming?.startedAt !== null", timeout=1_000
+            )
+            await page.wait_for_timeout(350)
             checks.append(
                 {
-                    "name": "cached-session-does-not-flash-loading-animation",
-                    "ok": await placeholder.count() == 0,
+                    "name": "cached-session-keeps-loading-animation-for-at-least-500ms",
+                    "ok": await placeholder.count() == 1
+                    and await page.get_by_text("Cached conversation content").count() == 0,
                 }
+            )
+            await expect(page.get_by_text("Cached conversation content")).to_be_visible(timeout=1_000)
+            cached_switch_timing = await page.evaluate("window.__sessionLoadingTiming")
+            checks.append(
+                {
+                    "name": "cached-session-renders-after-minimum-loading-duration",
+                    "ok": cached_switch_timing["finishedAt"] - cached_switch_timing["startedAt"]
+                    >= 500,
+                    "elapsedMs": cached_switch_timing["finishedAt"]
+                    - cached_switch_timing["startedAt"],
+                }
+            )
+
+            await page.locator('.session-row[title="Uncached session"]').click()
+            await expect(placeholder).to_be_visible(timeout=1_000)
+            await page.wait_for_timeout(300)
+            await page.locator('.session-row[title="Cached session"]').click()
+            await page.wait_for_timeout(250)
+            checks.append(
+                {
+                    "name": "stale-session-timer-does-not-release-new-session",
+                    "ok": await placeholder.count() == 1
+                    and await page.get_by_text("Cached conversation content").count() == 0,
+                }
+            )
+            await expect(page.get_by_text("Cached conversation content")).to_be_visible(
+                timeout=1_000
             )
             checks.append(
                 {"name": "no-console-errors", "ok": not page_errors, "errors": page_errors}

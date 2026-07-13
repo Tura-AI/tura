@@ -8,6 +8,7 @@ import type {
 } from "../../types/provider.js";
 import type { SessionConfig } from "../../types/config.js";
 import type { StoredAgent } from "../../types/agent.js";
+import type { AboutInfo, AboutUpdate } from "../../types/about.js";
 import type { StoredPersona, TuraConfigResponse } from "../../types/gateway.js";
 import type { SettingDetail } from "../settings-catalog.js";
 
@@ -60,6 +61,8 @@ export interface AppState {
   settingDetail?: SettingDetail;
   selectedProviderID?: string;
   settingInput?: SettingInputState;
+  aboutInfo?: AboutInfo;
+  aboutUpdate?: AboutUpdate;
   sessionLoading?: SessionLoadingState;
   personasOpen: boolean;
   selectedSessionIndex: number;
@@ -107,6 +110,7 @@ export type AppAction =
       authStatuses?: Record<string, ProviderAuthStatus>;
       sessionConfig?: SessionConfig;
       modelConfig?: TuraConfigResponse;
+      aboutInfo?: AboutInfo;
       closePanels?: boolean;
     }
   | { type: "event"; event: GatewayEventEnvelope }
@@ -140,6 +144,8 @@ export type AppAction =
   | { type: "open-setting-detail"; detail: SettingDetail; providerID?: string }
   | { type: "close-setting-detail" }
   | { type: "setting-input"; value?: SettingInputState }
+  | { type: "about-info"; value: AboutInfo }
+  | { type: "about-update"; value?: AboutUpdate }
   | { type: "select-setting-option"; delta: number }
   | { type: "tick" }
   | { type: "toggle-help" }
@@ -175,6 +181,8 @@ export function initialState(cwd: string): AppState {
     settingDetail: undefined,
     selectedProviderID: undefined,
     settingInput: undefined,
+    aboutInfo: undefined,
+    aboutUpdate: undefined,
     sessionLoading: undefined,
     personasOpen: false,
     selectedSessionIndex: 0,

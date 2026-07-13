@@ -1,5 +1,14 @@
 import type { AgentUpsertRequest, StoredAgent } from "../types/agent.js";
+import type {
+  AboutInfo,
+  AboutOpenResponse,
+  AboutOpenTarget,
+  AboutStarResponse,
+  AboutUpdateCheckResponse,
+  AboutUpdateInstallResponse,
+} from "../types/about.js";
 import type { SessionConfig } from "../types/config.js";
+import { t } from "../i18n.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
 import type { ListMessagesOptions } from "./client.js";
 import type { StoredPersona, TuraConfigResponse, TuraConfigUpdate } from "../types/gateway.js";
@@ -40,9 +49,7 @@ export class MockGatewayClient {
     this.directory = options.directory;
     const session = this.mockSession("mock-session-1", "Mock TUI Session");
     this.sessions = [session];
-    let messages = [
-      this.message(session.id, "assistant", "Mock TUI 已启动。当前不会连接真实 gateway。"),
-    ];
+    let messages = [this.message(session.id, "assistant", t("mockStartup"))];
     if (process.env.TURA_TUI_MOCK_LOCAL_LINKS === "1") {
       messages = [this.message(session.id, "assistant", this.localLinkFixtureText())];
     } else if (process.env.TURA_TUI_MOCK_STREAM_ORDER === "1") {
@@ -70,6 +77,35 @@ export class MockGatewayClient {
 
   async health(): Promise<{ healthy: boolean; version: string }> {
     return { healthy: true, version: "mock" };
+  }
+
+  async aboutInfo(): Promise<AboutInfo> {
+    return {
+      release_version: "0.1.30",
+      system: {
+        operating_system: process.platform,
+        os_version: "mock",
+        architecture: process.arch,
+      },
+    };
+  }
+
+  async starTuraRepository(): Promise<AboutStarResponse> {
+    return { outcome: "starred" };
+  }
+
+  async openAboutTarget(target: AboutOpenTarget): Promise<AboutOpenResponse> {
+    return { opened: true, target };
+  }
+
+  async checkTuraUpdate(): Promise<AboutUpdateCheckResponse> {
+    return process.env.TURA_TUI_MOCK_ABOUT_UPDATE === "1"
+      ? { update: { current_version: "0.1.30", latest_version: "0.1.31" } }
+      : {};
+  }
+
+  async installTuraUpdate(version: string): Promise<AboutUpdateInstallResponse> {
+    return { scheduled: true, version };
   }
 
   async syncWorkspace(): Promise<void> {}
@@ -175,7 +211,7 @@ export class MockGatewayClient {
       this.message(
         sessionID,
         "assistant",
-        `Mock response: ${text || "收到空消息"}\n\n这是本地 mock 回复，没有请求生产 gateway。`,
+        t("mockResponse", { text: text || t("mockEmptyMessage") }),
       ),
     );
     this.messagesBySession.set(sessionID, messages);

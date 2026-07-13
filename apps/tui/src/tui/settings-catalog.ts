@@ -6,6 +6,7 @@ export const SETTING_DETAILS = [
   "language",
   "variant",
   "priority",
+  "about",
 ] as const;
 
 export type HiddenSettingDetail = "session" | "validator" | "stallGuard";

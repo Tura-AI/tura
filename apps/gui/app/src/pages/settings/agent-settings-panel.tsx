@@ -162,7 +162,7 @@ export function AgentSettingsPanel(props: {
           <div class="settings-list provider-config-list agent-config-list">
             <div class="provider-config-group agent-configured-group">
               <div class="provider-config-group-title">
-                <span>默认智能体</span>
+                <span>{t("defaultAgents")}</span>
                 <small>{configuredAgentCount()}</small>
               </div>
               <div class="workspace-picker-list agent-list-scroll">
@@ -287,7 +287,7 @@ export function AgentSettingsPanel(props: {
             <div class="agent-capability-list">
               <Show
                 when={selectedCapabilities().length > 0}
-                fallback={<span class="settings-note">暂无能力</span>}
+                fallback={<span class="settings-note">{t("noCapabilities")}</span>}
               >
                 <For each={selectedCapabilities()}>{(capability) => <code>{capability}</code>}</For>
               </Show>

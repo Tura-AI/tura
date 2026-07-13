@@ -1,5 +1,6 @@
 //! API module - OpenCode-compatible HTTP API handlers
 
+pub mod about;
 pub mod agent;
 pub mod command;
 pub mod directory_picker;

@@ -6,17 +6,29 @@ removal, provider details, and the full CLI parameter reference stay in their
 own documents. For the full command surface, see
 [CLI Parameters](cli-parameters.md).
 
+## Before the first prompt
+
+Installation makes the executables available; it does not include an API key,
+token, or provider subscription login. Start with `tura`. When no LLM provider
+is configured, the TUI opens Provider settings automatically. Authenticate a
+provider, select one of its models, and only then send a prompt.
+
+The GUI has the same guard and opens **Settings > Providers** when it cannot find
+a configured LLM provider. For exact CLI, TUI, and GUI steps, see
+[Provider setup](providers.md#first-run-configure-an-llm-provider). Every
+prompt-bearing command later on this page assumes that setup is complete.
+
 Before starting Tura, make sure the operating system can resolve both the Tura
 executables and the shell executors used by `command_run`. PATH problems look
 like agent problems, which is rude but traditional.
 
 ## OS PATH and executor support
 
-| OS | PATH should resolve | If it is missing | Register Tura on PATH |
-| --- | --- | --- | --- |
-| Windows | `powershell.exe` or `pwsh`, `git`, Git/MSYS `bash`, optional MSYS2 `zsh`, and Tura release binaries. | Install PowerShell 7 with `winget install --id Microsoft.PowerShell --source winget`; install Git with `winget install --id Git.Git --source winget`; install MSYS2 with `winget install --id MSYS2.MSYS2 --source winget`, then add `C:\msys64\usr\bin` to PATH or set `TURA_ZSH_PATH` to `zsh.exe`. If PowerShell is installed outside PATH, set `TURA_POWERSHELL_PATH`. | Run `.\scripts\install.ps1`, then open a new terminal. |
-| macOS | `git`, `bash`, `zsh`, package-manager paths such as `/opt/homebrew/bin` or `/usr/local/bin`, and Tura release binaries. | Install Apple command line tools with `xcode-select --install`. If Homebrew tools are needed, run `brew install git bash zsh` and make sure Homebrew's bin directory is in your shell profile. If zsh is custom-installed, set `TURA_ZSH_PATH`. | Run `./scripts/install.sh`, then open a new terminal. |
-| Linux | `git`, `bash`, optional `zsh`, normal system bin paths, and Tura release binaries. | Debian/Ubuntu: `sudo apt-get install git bash zsh`. Fedora: `sudo dnf install git bash zsh`. Arch: `sudo pacman -S git bash zsh`. If zsh lives outside PATH, set `TURA_ZSH_PATH`. | Run `./scripts/install.sh`, then open a new terminal. |
+| OS      | PATH should resolve                                                                                                     | If it is missing                                                                                                                                                                                                                                                                                                                                                           | Register Tura on PATH                                  |
+| ------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Windows | `powershell.exe` or `pwsh`, `git`, Git/MSYS `bash`, optional MSYS2 `zsh`, and Tura release binaries.                    | Install PowerShell 7 with `winget install --id Microsoft.PowerShell --source winget`; install Git with `winget install --id Git.Git --source winget`; install MSYS2 with `winget install --id MSYS2.MSYS2 --source winget`, then add `C:\msys64\usr\bin` to PATH or set `TURA_ZSH_PATH` to `zsh.exe`. If PowerShell is installed outside PATH, set `TURA_POWERSHELL_PATH`. | Run `.\scripts\install.ps1`, then open a new terminal. |
+| macOS   | `git`, `bash`, `zsh`, package-manager paths such as `/opt/homebrew/bin` or `/usr/local/bin`, and Tura release binaries. | Install Apple command line tools with `xcode-select --install`. If Homebrew tools are needed, run `brew install git bash zsh` and make sure Homebrew's bin directory is in your shell profile. If zsh is custom-installed, set `TURA_ZSH_PATH`.                                                                                                                            | Run `./scripts/install.sh`, then open a new terminal.  |
+| Linux   | `git`, `bash`, optional `zsh`, normal system bin paths, and Tura release binaries.                                      | Debian/Ubuntu: `sudo apt-get install git bash zsh`. Fedora: `sudo dnf install git bash zsh`. Arch: `sudo pacman -S git bash zsh`. If zsh lives outside PATH, set `TURA_ZSH_PATH`.                                                                                                                                                                                          | Run `./scripts/install.sh`, then open a new terminal.  |
 
 `scripts/install.*` checks and installs source-checkout dependencies, including
 Git, Rust/Cargo, PowerShell, `shell_command`, `bash`, `zsh`, Bun, uv, and Python
@@ -33,27 +45,25 @@ If PATH registration is not available yet, start by direct binary path:
 
 ```powershell
 .\target\release\tura.exe
-.\target\release\tura.exe exec "Inspect this workspace"
 ```
 
 ```bash
 ./target/release/tura
-./target/release/tura exec "Inspect this workspace"
 ```
 
 Use the smallest front end that fits the job:
 
-| Start method | Best for | Command |
-| --- | --- | --- |
-| TUI | Interactive terminal work | `tura` |
-| CLI one-shot | Direct prompt from a shell or script | `tura exec "..."` |
-| CLI via gateway | Scriptable prompt with gateway streaming/history | `tura run "..."` |
-| GUI desktop | Visual workspace and session management | `tura_gui` |
-| Web GUI/gateway | Browser-based GUI and HTTP/SSE API | `tura_gateway` |
-| TUI with initial prompt | Open the terminal UI from a command line prompt | `tura "..."` |
-| Source shortcut | Start from the checkout | `scripts/start.*` |
-| Source GUI dev | Run the GUI frontend during local development | `bun --cwd apps/gui dev` |
-| Source desktop dev | Run the Tauri desktop app during local development | `bun --cwd apps/tauri dev` |
+| Start method            | Best for                                           | Command                    |
+| ----------------------- | -------------------------------------------------- | -------------------------- |
+| TUI                     | Interactive terminal work                          | `tura`                     |
+| CLI one-shot            | Direct prompt from a shell or script               | `tura exec "..."`          |
+| CLI via gateway         | Scriptable prompt with gateway streaming/history   | `tura run "..."`           |
+| GUI desktop             | Visual workspace and session management            | `tura_gui`                 |
+| Web GUI/gateway         | Browser-based GUI and HTTP/SSE API                 | `tura_gateway`             |
+| TUI with initial prompt | Open the terminal UI from a command line prompt    | `tura "..."`               |
+| Source shortcut         | Start from the checkout                            | `scripts/start.*`          |
+| Source GUI dev          | Run the GUI frontend during local development      | `bun --cwd apps/gui dev`   |
+| Source desktop dev      | Run the Tauri desktop app during local development | `bun --cwd apps/tauri dev` |
 
 ## Start the TUI
 
@@ -70,7 +80,9 @@ tura
 Use the TUI when you want an ongoing terminal conversation with the agent while
 keeping the current workspace as the operating context.
 
-You can also open the TUI with an initial prompt from the command line:
+On a first run, finish the Provider and Model settings before using an initial
+prompt. After that, you can also open the TUI with a prompt from the command
+line:
 
 ```powershell
 tura "Inspect this workspace"
@@ -297,15 +309,15 @@ tura run "Summarize the current project"
 
 ## Which start should I use?
 
-| Need | Use |
-| --- | --- |
-| Ongoing terminal conversation | `tura` |
-| Terminal conversation opened with an initial prompt | `tura "..."` |
-| One command from a shell, script, CI job, or terminal shortcut | `tura exec "..."` |
-| Gateway-backed terminal run with streamed events | `tura run "..."` |
-| Shell-specific command execution behavior | `tura bash`, `tura zsh`, or `tura shel` |
-| Visual app for workspace/session/file/plan work | `tura_gui` |
-| Explicit local HTTP/SSE service or browser GUI | `tura_gateway` |
-| Running from the source checkout | `scripts/start.ps1` or `scripts/start.sh` |
-| Frontend development GUI | `bun --cwd apps/gui dev` |
-| Desktop development GUI | `bun --cwd apps/tauri dev` |
+| Need                                                           | Use                                       |
+| -------------------------------------------------------------- | ----------------------------------------- |
+| Ongoing terminal conversation                                  | `tura`                                    |
+| Terminal conversation opened with an initial prompt            | `tura "..."`                              |
+| One command from a shell, script, CI job, or terminal shortcut | `tura exec "..."`                         |
+| Gateway-backed terminal run with streamed events               | `tura run "..."`                          |
+| Shell-specific command execution behavior                      | `tura bash`, `tura zsh`, or `tura shel`   |
+| Visual app for workspace/session/file/plan work                | `tura_gui`                                |
+| Explicit local HTTP/SSE service or browser GUI                 | `tura_gateway`                            |
+| Running from the source checkout                               | `scripts/start.ps1` or `scripts/start.sh` |
+| Frontend development GUI                                       | `bun --cwd apps/gui dev`                  |
+| Desktop development GUI                                        | `bun --cwd apps/tauri dev`                |

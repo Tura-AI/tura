@@ -144,6 +144,7 @@ async function main() {
     env: {
       PORT: String(port),
       TURA_TUI_MOCK: "1",
+      TURA_TUI_MOCK_ABOUT_UPDATE: "1",
     },
   });
   await waitForUrl(`http://127.0.0.1:${port}`);
@@ -156,7 +157,7 @@ async function main() {
     });
     await page.waitForFunction(() => window.__turaTerminal);
     await page.evaluate(() => window.__turaFit());
-    await waitForTerminalText(page, /Enter to send|回车输入/u, 30_000);
+    await waitForTerminalText(page, /Enter(?::| to) send|回车输入/u, 30_000);
 
     await submit(page, "/settings");
     await waitForTerminalText(page, /settings|设置/iu);
@@ -169,20 +170,55 @@ async function main() {
     }
     await screenshot(page, "01-settings-root.png");
 
-    await send(page, "\x1b");
-    await waitForTerminalText(page, /Enter to send|回车输入/u);
-    await submit(page, "/variant");
-    await waitForTerminalText(page, />\s+low/u);
+    for (let index = 0; index < 7; index += 1) {
+      await send(page, "\x1b[B");
+    }
+    await waitForTerminalText(page, />\s+About/u);
+    await send(page, "\r");
+    await waitForTerminalText(page, /Release version\s+0\.1\.30/u);
+    await waitForTerminalText(page, />\s+Add star/u);
+    await screenshot(page, "02-about-actions.png");
+
+    for (const label of ["Report bug", "Contribute", "Update", "Contact"]) {
+      await send(page, "\x1b[B");
+      await waitForTerminalText(page, new RegExp(`>\\s+${label}`, "u"));
+    }
+    await screenshot(page, "03-about-contact.png");
+
+    await send(page, "\x1b[A");
+    await waitForTerminalText(page, />\s+Update/u);
+    await send(page, "\r");
+    await waitForTerminalText(page, /session will be interrupted/u);
     text = await terminalText(page);
-    if (!/>\s+low/u.test(text)) {
-      throw new Error(`setting detail should start at first option:\n${text}`);
+    if (!/Update now/u.test(text) || !/Cancel/u.test(text)) {
+      throw new Error(`About update confirmation should use Update/Cancel selection:\n${text}`);
+    }
+    await screenshot(page, "04-about-update-confirmation.png");
+
+    await send(page, "\x1b");
+    await waitForTerminalText(page, /Add star/u);
+    text = await terminalText(page);
+    if (/session will be interrupted/u.test(text)) {
+      throw new Error(`Esc should cancel the update confirmation:\n${text}`);
+    }
+    await screenshot(page, "05-about-update-cancelled.png");
+
+    await send(page, "\x1b");
+    await waitForTerminalText(page, />\s+About/u);
+    await send(page, "\x1b");
+    await waitForTerminalText(page, /Enter(?::| to) send|回车输入/u);
+    await submit(page, "/variant");
+    await waitForTerminalText(page, />\s+high/u);
+    text = await terminalText(page);
+    if (!/>\s+high/u.test(text)) {
+      throw new Error(`setting detail should start at the active option:\n${text}`);
     }
     if (await visibleCursor(page)) {
       throw new Error("setting detail should hide the terminal cursor");
     }
-    await screenshot(page, "02-reasoning-first-option.png");
+    await screenshot(page, "06-reasoning-first-option.png");
 
-    await send(page, "\x1b[B");
+    await send(page, "\x1b[A");
     await waitForTerminalText(page, />\s+medium/u);
     await send(page, "\r");
     await page.waitForTimeout(500);
@@ -203,12 +239,12 @@ async function main() {
     if (!/>\s+high/u.test(text)) {
       throw new Error(`setting detail should show selected item on the next page:\n${text}`);
     }
-    await screenshot(page, "03-reasoning-next-page.png");
+    await screenshot(page, "07-reasoning-next-page.png");
 
     await page.goto(`http://127.0.0.1:${port}/rich?instance=settings-navigation-sessions`, {
       waitUntil: "domcontentloaded",
     });
-    await waitForTerminalText(page, /Enter to send|回车输入/u, 30_000);
+    await waitForTerminalText(page, /Enter(?::| to) send|回车输入/u, 30_000);
     await submit(page, "/sessions");
     await waitForTerminalText(page, /New session|新会话/u);
     text = await terminalText(page);
@@ -218,7 +254,7 @@ async function main() {
     if (await visibleCursor(page)) {
       throw new Error("session page should hide the terminal cursor");
     }
-    await screenshot(page, "04-sessions-page-count.png");
+    await screenshot(page, "08-sessions-page-count.png");
   } finally {
     await browser.close();
   }
