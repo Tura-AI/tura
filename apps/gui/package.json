@@ -19,6 +19,7 @@
     "e2e:session-task": "python tests/e2e/business/session_task_workspace_e2e.py",
     "e2e:plan-session": "python tests/e2e/business/plan_session_backend_e2e.py",
     "e2e:settings-full": "python tests/e2e/business/settings_full_flow_e2e.py",
+    "e2e:settings-about": "python tests/e2e/business/settings_about_playwright_e2e.py",
     "e2e:settings-appearance": "python tests/e2e/business/settings_appearance_playwright_e2e.py",
     "e2e:settings-agents": "python tests/e2e/business/settings_agents_playwright_e2e.py",
     "e2e:plan-panel": "python tests/e2e/business/plan_panel_constraints_playwright_e2e.py",

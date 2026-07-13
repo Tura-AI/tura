@@ -124,7 +124,9 @@ export function settingsPageInfo(
   const headerLines = sectionLines(settingTitle(state), 80).length;
   const promptLines = 1 + settingInputLines(state, 80).length;
   if (state.settingDetail) {
-    const pageSize = Math.max(1, maxLines - headerLines - promptLines - 1);
+    const informationLines =
+      state.settingDetail === "about" ? aboutInformationLines(state, 80).length : 0;
+    const pageSize = Math.max(1, maxLines - headerLines - promptLines - informationLines - 1);
     return {
       label: settingPageLabel(state),
       ...pageInfoForIndex(state.selectedSettingOptionIndex, pageSize, settingOptions(state).length),
@@ -173,7 +175,14 @@ function settingHint(state: AppState): string {
   if (detail === "session") return t("settingSessionHint");
   if (detail === "validator") return t("settingValidatorHint");
   if (detail === "stallGuard") return t("settingStallGuardHint");
-  if (detail === "about") return t("settingAboutHint");
+  if (detail === "about") {
+    return state.aboutUpdate
+      ? t("aboutUpdateConfirmation", {
+          current: state.aboutUpdate.current_version,
+          latest: state.aboutUpdate.latest_version,
+        })
+      : t("settingAboutHint");
+  }
   return t("settingDetailHint");
 }
 
@@ -365,36 +374,21 @@ function settingDetailLines(state: AppState, cols: number, maxLines: number): st
 }
 
 function aboutInformationLines(state: AppState, cols: number): string[] {
-  const width = menuLabelWidthFor([t("aboutReleaseVersion"), t("system")], cols);
+  if (state.aboutUpdate) {
+    return [];
+  }
   const info = state.aboutInfo;
   const system = info
     ? `${info.system.operating_system} ${info.system.os_version} (${info.system.architecture})`
     : t("unknown");
-  const lines = [
-    ...menuEntryLines(
-      t("aboutReleaseVersion"),
-      info?.release_version ?? t("unknown"),
-      width,
-      cols,
-      false,
-    ),
-    ...menuEntryLines(t("system"), system, width, cols, false),
-    sectionBlankLine(cols),
-  ];
-  if (state.aboutUpdate) {
-    lines.push(
-      sectionBodyLine(
-        secondaryText(
-          t("aboutUpdateConfirmation", {
-            current: state.aboutUpdate.current_version,
-            latest: state.aboutUpdate.latest_version,
-          }),
-        ),
-        cols,
+  return [
+    sectionBodyLine(
+      secondaryText(
+        `${t("aboutReleaseVersion")} ${info?.release_version ?? t("unknown")} | ${t("system")} ${system}`,
       ),
-    );
-  }
-  return lines;
+      cols,
+    ),
+  ];
 }
 
 function pageStartForIndex(index: number, pageSize: number, total: number): number {

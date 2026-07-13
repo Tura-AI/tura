@@ -157,7 +157,7 @@ async function main() {
     });
     await page.waitForFunction(() => window.__turaTerminal);
     await page.evaluate(() => window.__turaFit());
-    await waitForTerminalText(page, /Enter to send|回车输入/u, 30_000);
+    await waitForTerminalText(page, /Enter(?::| to) send|回车输入/u, 30_000);
 
     await submit(page, "/settings");
     await waitForTerminalText(page, /settings|设置/iu);
@@ -176,17 +176,16 @@ async function main() {
     await waitForTerminalText(page, />\s+About/u);
     await send(page, "\r");
     await waitForTerminalText(page, /Release version\s+0\.1\.30/u);
-    text = await terminalText(page);
-    for (const label of ["Add star", "Report bug", "Contribute", "Update", "Contact"]) {
-      if (!text.includes(label)) {
-        throw new Error(`About should show ${label}:\n${text}`);
-      }
-    }
+    await waitForTerminalText(page, />\s+Add star/u);
     await screenshot(page, "02-about-actions.png");
 
-    for (let index = 0; index < 3; index += 1) {
+    for (const label of ["Report bug", "Contribute", "Update", "Contact"]) {
       await send(page, "\x1b[B");
+      await waitForTerminalText(page, new RegExp(`>\\s+${label}`, "u"));
     }
+    await screenshot(page, "03-about-contact.png");
+
+    await send(page, "\x1b[A");
     await waitForTerminalText(page, />\s+Update/u);
     await send(page, "\r");
     await waitForTerminalText(page, /session will be interrupted/u);
@@ -194,7 +193,7 @@ async function main() {
     if (!/Update now/u.test(text) || !/Cancel/u.test(text)) {
       throw new Error(`About update confirmation should use Update/Cancel selection:\n${text}`);
     }
-    await screenshot(page, "03-about-update-confirmation.png");
+    await screenshot(page, "04-about-update-confirmation.png");
 
     await send(page, "\x1b");
     await waitForTerminalText(page, /Add star/u);
@@ -202,10 +201,12 @@ async function main() {
     if (/session will be interrupted/u.test(text)) {
       throw new Error(`Esc should cancel the update confirmation:\n${text}`);
     }
-    await screenshot(page, "04-about-update-cancelled.png");
+    await screenshot(page, "05-about-update-cancelled.png");
 
     await send(page, "\x1b");
-    await waitForTerminalText(page, /Enter to send|回车输入/u);
+    await waitForTerminalText(page, />\s+About/u);
+    await send(page, "\x1b");
+    await waitForTerminalText(page, /Enter(?::| to) send|回车输入/u);
     await submit(page, "/variant");
     await waitForTerminalText(page, />\s+low/u);
     text = await terminalText(page);
@@ -215,7 +216,7 @@ async function main() {
     if (await visibleCursor(page)) {
       throw new Error("setting detail should hide the terminal cursor");
     }
-    await screenshot(page, "05-reasoning-first-option.png");
+    await screenshot(page, "06-reasoning-first-option.png");
 
     await send(page, "\x1b[B");
     await waitForTerminalText(page, />\s+medium/u);
@@ -238,12 +239,12 @@ async function main() {
     if (!/>\s+high/u.test(text)) {
       throw new Error(`setting detail should show selected item on the next page:\n${text}`);
     }
-    await screenshot(page, "06-reasoning-next-page.png");
+    await screenshot(page, "07-reasoning-next-page.png");
 
     await page.goto(`http://127.0.0.1:${port}/rich?instance=settings-navigation-sessions`, {
       waitUntil: "domcontentloaded",
     });
-    await waitForTerminalText(page, /Enter to send|回车输入/u, 30_000);
+    await waitForTerminalText(page, /Enter(?::| to) send|回车输入/u, 30_000);
     await submit(page, "/sessions");
     await waitForTerminalText(page, /New session|新会话/u);
     text = await terminalText(page);
@@ -253,7 +254,7 @@ async function main() {
     if (await visibleCursor(page)) {
       throw new Error("session page should hide the terminal cursor");
     }
-    await screenshot(page, "07-sessions-page-count.png");
+    await screenshot(page, "08-sessions-page-count.png");
   } finally {
     await browser.close();
   }

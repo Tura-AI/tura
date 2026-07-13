@@ -30,9 +30,10 @@ test("About is the final settings entry and uses the existing selection componen
       ["Contact", "contact"],
     ],
   );
-  const rendered = stripAnsi(settingsLines(state, 100, 20).join("\n"));
+  const rendered = stripAnsi(settingsLines(state, 100, 6).join("\n"));
   assert.match(rendered, /Release version\s+0\.1\.30/u);
   assert.match(rendered, /system\s+Windows 11 \(x86_64\)/u);
+  assert.match(rendered, />\s+Add star/u);
 });
 
 test("About actions call only the shared Gateway client", async () => {

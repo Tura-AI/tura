@@ -1020,6 +1020,12 @@ GUI settings must cover:
 - Repositories/GitHub installation
 - Agents, Runtimes, Skills, Autopilots management shortcuts
 - Desktop-only daemon and update tabs when desktop shell exists
+- About as the final settings page, with release/system information and support
+  actions. GUI and TUI must use the shared gateway SDK methods
+  `aboutInfo`, `starTuraRepository`, `openAboutTarget`, `checkTuraUpdate`, and
+  `installTuraUpdate`; clients must not read tokens, call GitHub/npm, open URLs,
+  or install updates directly. Gateway owns the fixed `/about`, `/about/star`,
+  `/about/open`, `/about/update/check`, and `/about/update/install` routes.
 
 ### Attachments And Editor
 
