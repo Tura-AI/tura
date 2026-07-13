@@ -262,6 +262,7 @@ function drawSurface(state: AppState): string {
   if (state.settingsOpen) return "settings";
   if (state.personasOpen) return "personas";
   if (state.modelsOpen) return "models";
+  if (state.sessionLoading && !state.messages.length) return "session-loading";
   return "chat";
 }
 

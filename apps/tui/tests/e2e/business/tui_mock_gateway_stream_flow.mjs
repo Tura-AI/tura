@@ -59,6 +59,7 @@ let session = {
   message_count: 1,
 };
 let promptCounter = 0;
+let initialHistoryRequest = true;
 const eventMessageCreatedAt = new Map();
 const config = {
   model: "mock/gpt-test",
@@ -271,11 +272,16 @@ function createGatewayServer() {
       await readJson(req);
       return sendJson(res, session);
     }
-    if (req.method === "GET" && url.pathname === `/session/${sessionID}/message`)
+    if (req.method === "GET" && url.pathname === `/session/${sessionID}/message`) {
+      if (initialHistoryRequest) {
+        initialHistoryRequest = false;
+        await delay(2_000);
+      }
       return sendJson(
         res,
         [...messages].sort((left, right) => (left.created_at ?? 0) - (right.created_at ?? 0)),
       );
+    }
     if (req.method === "POST" && url.pathname === `/session/${sessionID}/prompt_async`) {
       handlePromptPayload(await readJson(req));
       return sendJson(res, {});
@@ -384,9 +390,25 @@ async function main() {
     await page.goto(`http://127.0.0.1:${webPort}/rich?instance=mock-stream`, {
       waitUntil: "domcontentloaded",
     });
-    await page.waitForFunction(() => /Mock Stream/.test(document.body.innerText), null, {
-      timeout: 15_000,
-    });
+    await page.waitForFunction(
+      () => /Loading session Mock Stream/.test(document.body.innerText),
+      null,
+      {
+        timeout: 15_000,
+      },
+    );
+    captures.push(await capture(page, "00-session-loading"));
+    assert.match(
+      captures.at(-1).visibleText,
+      /Loading session Mock Stream/u,
+      "startup should show which session history is loading",
+    );
+    assert.equal(
+      captures.at(-1).hasComposerHint,
+      false,
+      "startup loading should hide the composer until history is ready",
+    );
+    await waitForComposer(page, 15_000);
     captures.push(await capture(page, "00-initial"));
 
     await submitTypedPrompt(page, "TYPED_USER_1 hello there");
@@ -765,7 +787,7 @@ async function main() {
       "handoff command should finalize into cache",
     );
 
-    for (const phase of captures) {
+    for (const phase of captures.filter(({ name }) => name !== "00-session-loading")) {
       assert.equal(
         phase.defaultTitleCount,
         0,
