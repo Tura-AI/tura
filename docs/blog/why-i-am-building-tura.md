@@ -108,3 +108,7 @@ This post is the conversational version. These complete Markdown files are the s
 - [docs/core/command-run.md](https://github.com/Tura-AI/tura/blob/main/docs/core/command-run.md) — the macro command model and its safety boundaries.
 - [docs/core/context-management.md](https://github.com/Tura-AI/tura/blob/main/docs/core/context-management.md) — context rebuilding, checkpoints, and compaction.
 - [docs/KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md) — known limitations and evidence gaps.
+
+## Contact
+
+Email: [info@turaai.net](mailto:info@turaai.net)

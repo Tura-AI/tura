@@ -163,3 +163,7 @@ This post is the friendly route through the process. These complete Markdown fil
 - [docs/KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md) — current benchmark, frontend, runtime, and cross-OS evidence gaps.
 - [.github/CODE_OF_CONDUCT.md](https://github.com/Tura-AI/tura/blob/main/.github/CODE_OF_CONDUCT.md) — community expectations.
 - [.github/SECURITY.md](https://github.com/Tura-AI/tura/blob/main/.github/SECURITY.md) — private vulnerability reporting.
+
+## Contact
+
+Email: [info@turaai.net](mailto:info@turaai.net)

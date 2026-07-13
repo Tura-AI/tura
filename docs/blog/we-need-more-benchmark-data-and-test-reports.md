@@ -179,3 +179,7 @@ This post is the conversational request for evidence. These complete documents d
 - [ROADMAP.md](https://github.com/Tura-AI/tura/blob/main/ROADMAP.md) — stabilization priorities and exit criteria.
 - [docs/contributing-guide.md](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md) — test ownership, benchmark evidence, and artifact sanitization.
 - [tests/README.md](https://github.com/Tura-AI/tura/blob/main/tests/README.md) — test layers, locations, and runner conventions.
+
+## Contact
+
+Email: [info@turaai.net](mailto:info@turaai.net)
