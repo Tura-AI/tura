@@ -14,6 +14,10 @@ source-owned references instead of duplicating long implementation notes.
 - [Benchmark methodology](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md) - scope, selection, scoring, and limitations.
 - [Current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md) - acquisition, provenance, recomputed claims, anomalies, design observations, and missing ablations.
 - [Benchmark repository](https://github.com/Tura-AI/benchmark) - tasks, harnesses, and published results.
+- [Roadmap](../ROADMAP.md) - 0.1.x stabilization and 0.2 planning priorities.
+- [Known issues](KNOWN_ISSUES.md) - architectural risks and missing evidence.
+- [Contributing](../.github/CONTRIBUTING.md) - regression and benchmark requirements.
+- [Contribution guide](contributing-guide.md) - contribution types, test ownership, evidence format, and affected matrices.
 - [Development architecture](../ARCHITECTURE.md) - how the repository is owned and built.
 
 ## Documentation policy

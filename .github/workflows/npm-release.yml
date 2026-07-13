@@ -48,19 +48,19 @@ jobs:
         include:
           - runner: ubuntu-latest
             package: tura-linux-x64
-            install: sh scripts/install.sh
+            install: sh scripts/install.sh --environment-only
             build: sh scripts/build-release.sh --skip-tauri
           - runner: macos-15-intel
             package: tura-darwin-x64
-            install: sh scripts/install.sh
+            install: sh scripts/install.sh --environment-only
             build: sh scripts/build-release.sh --skip-tauri
           - runner: macos-15
             package: tura-darwin-arm64
-            install: sh scripts/install.sh
+            install: sh scripts/install.sh --environment-only
             build: sh scripts/build-release.sh --skip-tauri
           - runner: windows-2022
             package: tura-win32-x64
-            install: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1
+            install: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -EnvironmentOnly
             build: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -SkipTauri
 
     steps:

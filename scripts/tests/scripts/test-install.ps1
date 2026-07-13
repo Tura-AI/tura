@@ -184,7 +184,7 @@ function Test-WindowsInstallFindsCurrentPowerShellWithoutPath {
   $command = @"
 `$ErrorActionPreference = 'Stop'
 `$env:Path = 'C:\definitely-missing'
-& '.\scripts\install.ps1' -CheckOnly -SkipCommands -SkipApps -SkipUv -SkipBun
+& '.\scripts\install.ps1' -EnvironmentOnly -CheckOnly -SkipCommands -SkipApps -SkipUv -SkipBun
 if (`$?) { exit 0 }
 exit 1
 "@
@@ -247,6 +247,29 @@ function Test-RootInstallerEnsuresRustAndPowerShellPaths {
   }
   if ($source -notmatch 'function Add-UserPathEntry[\s\S]*\$CheckOnly') {
     throw "scripts/install.ps1 must not persist user PATH entries in -CheckOnly mode."
+  }
+}
+
+function Test-RootInstallerCompleteFlowContract {
+  Write-Step "Checking root installer complete-flow contract"
+
+  $source = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\install.ps1") -Raw
+  foreach ($required in @(
+    '[switch]$EnvironmentOnly',
+    'if ($EnvironmentOnly)',
+    'build-release.ps1',
+    'register-cli.ps1'
+  )) {
+    if (-not $source.Contains($required)) {
+      throw "scripts/install.ps1 is missing complete-flow behavior: $required"
+    }
+  }
+
+  $environmentOnlyIndex = $source.IndexOf('if ($EnvironmentOnly)', [StringComparison]::Ordinal)
+  $buildIndex = $source.IndexOf('build-release.ps1', $environmentOnlyIndex, [StringComparison]::Ordinal)
+  $registerIndex = $source.IndexOf('register-cli.ps1', $buildIndex, [StringComparison]::Ordinal)
+  if ($environmentOnlyIndex -lt 0 -or $buildIndex -lt 0 -or $registerIndex -lt 0 -or $buildIndex -gt $registerIndex) {
+    throw "install.ps1 must stop only for -EnvironmentOnly, then build release artifacts before registering PATH."
   }
 }
 
@@ -724,6 +747,7 @@ Test-WindowsInstallFindsCurrentPowerShellWithoutPath
 Test-RootInstallerBypassesChildPowerShellPolicy
 Test-DownloadedInstallerRefreshesPathBeforeExitCheck
 Test-RootInstallerEnsuresRustAndPowerShellPaths
+Test-RootInstallerCompleteFlowContract
 Test-NpmPostinstallChecksRuntimeDependenciesOnly
 Test-NpmReleaseManifestOwnsRuntimeConfigCoverage
 Test-UvPythonProbeSafetyContract
@@ -740,29 +764,29 @@ try {
   if ($Full.IsPresent) {
     Write-Host "Install mode: full"
     if ($SkipApps.IsPresent -and $Offline.IsPresent) {
-      & .\scripts\install.ps1 -SkipApps -Offline
+      & .\scripts\install.ps1 -EnvironmentOnly -SkipApps -Offline
     } elseif ($SkipApps.IsPresent) {
-      & .\scripts\install.ps1 -SkipApps
+      & .\scripts\install.ps1 -EnvironmentOnly -SkipApps
     } elseif ($Offline.IsPresent) {
-      & .\scripts\install.ps1 -Offline
+      & .\scripts\install.ps1 -EnvironmentOnly -Offline
     } else {
-      & .\scripts\install.ps1
+      & .\scripts\install.ps1 -EnvironmentOnly
     }
   } else {
     $needsCommandInstall = $SkipApps.IsPresent -and -not $Offline.IsPresent
     if ($needsCommandInstall) {
       Write-Host "Install mode: command dependency install"
-      & .\scripts\install.ps1 -SkipApps
+      & .\scripts\install.ps1 -EnvironmentOnly -SkipApps
     } else {
       Write-Host "Install mode: check-only"
       if ($SkipApps.IsPresent -and $Offline.IsPresent) {
-        & .\scripts\install.ps1 -CheckOnly -SkipApps -Offline
+        & .\scripts\install.ps1 -EnvironmentOnly -CheckOnly -SkipApps -Offline
       } elseif ($SkipApps.IsPresent) {
-        & .\scripts\install.ps1 -CheckOnly -SkipApps
+        & .\scripts\install.ps1 -EnvironmentOnly -CheckOnly -SkipApps
       } elseif ($Offline.IsPresent) {
-        & .\scripts\install.ps1 -CheckOnly -Offline
+        & .\scripts\install.ps1 -EnvironmentOnly -CheckOnly -Offline
       } else {
-        & .\scripts\install.ps1 -CheckOnly
+        & .\scripts\install.ps1 -EnvironmentOnly -CheckOnly
       }
     }
   }

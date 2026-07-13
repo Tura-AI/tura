@@ -22,6 +22,12 @@ Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to meas
 
 > The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]. [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md). [^test-set-record]
 
+The published results do not establish equivalent quality or performance for
+every configured provider. Broader Anthropic/Claude, Google/Gemini,
+OpenAI-compatible, local-provider, UI-latency, runtime/session parsing, and
+cross-OS measurements remain part of the documented
+[roadmap](ROADMAP.md) and [known evidence gaps](docs/KNOWN_ISSUES.md).
+
 <details>
 <summary><strong>FULL BENCHMARK REPORT</strong></summary>
 
@@ -227,8 +233,6 @@ Windows PowerShell:
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 .\scripts\install.ps1
-.\scripts\build-release.ps1
-.\scripts\register-cli.ps1
 tura exec "Inspect this workspace"
 ```
 
@@ -238,10 +242,13 @@ macOS or Linux shell:
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 ./scripts/install.sh
-./scripts/build-release.sh
-./scripts/register-cli.sh
 tura exec "Inspect this workspace"
 ```
+
+The source installer performs the complete environment setup, release build,
+and user PATH registration flow. Pass `-EnvironmentOnly` on PowerShell or
+`--environment-only` on macOS/Linux only when you intentionally want dependency
+setup without building or registering Tura.
 
 ### Common entrypoints
 
@@ -315,6 +322,27 @@ full navigation page is [docs/start/navigation.md](docs/start/navigation.md).
 - [Benchmark methodology](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md)
 - [Current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
 - [Benchmark artifacts](https://github.com/Tura-AI/benchmark/tree/main/results)
+
+## Contributing and project governance
+
+Contributions should be small, reviewable, and supported by evidence at the
+test layer that owns the affected behavior. Choose the matching issue and pull
+request type rather than applying one checklist to every change.
+
+- [Contributing](.github/CONTRIBUTING.md) - start here for contribution types,
+  development setup, test selection, and pull-request steps.
+- [Contribution guide](docs/contributing-guide.md) - test ownership, affected
+  matrices, performance evidence, and artifact-sanitization rules.
+- [Roadmap](ROADMAP.md) - current 0.1.x stabilization priorities and the planned
+  0.2 task-planning workspace.
+- [Known issues and evidence gaps](docs/KNOWN_ISSUES.md) - open architecture,
+  provider, benchmark, performance, and cross-OS work.
+- [Code of Conduct](.github/CODE_OF_CONDUCT.md) - community standards and the
+  open agent-harness principle.
+- [Security policy](.github/SECURITY.md) - supported versions and private
+  vulnerability reporting.
+- [Support](.github/SUPPORT.md) - where to report bugs, request features, or ask
+  setup and usage questions.
 
 ## License
 

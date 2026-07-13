@@ -8,13 +8,13 @@ permission = "network"
 cache_key = "node"
 
 [tool.node.install.windows]
-command = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1 -SkipCommands -SkipApps -SkipUv"
+command = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1 -EnvironmentOnly -SkipCommands -SkipApps -SkipUv"
 
 [tool.node.install.linux]
-command = "sh scripts/install.sh --skip-commands --skip-apps --skip-uv"
+command = "sh scripts/install.sh --environment-only --skip-commands --skip-apps --skip-uv"
 
 [tool.node.install.macos]
-command = "sh scripts/install.sh --skip-commands --skip-apps --skip-uv"
+command = "sh scripts/install.sh --environment-only --skip-commands --skip-apps --skip-uv"
 
 [tool.playwright]
 id = "playwright"

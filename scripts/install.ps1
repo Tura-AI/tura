@@ -3,6 +3,7 @@ param(
   [switch]$SkipApps,
   [switch]$SkipUv,
   [switch]$SkipBun,
+  [switch]$EnvironmentOnly,
   [switch]$CheckOnly,
   [switch]$Offline,
   [Alias("h")]
@@ -21,7 +22,8 @@ if ($Help) {
 Usage:
   .\scripts\install.ps1 [OPTIONS]
 
-Installs project dependencies without building Tura. The root installer verifies
+Installs project dependencies, builds the release, and registers the release
+directory on the user PATH. The root installer verifies
 Git, Rust/Cargo, PowerShell, shell_command/bash/zsh coverage, installs missing
 Git/bash/zsh/Rust dependencies when possible, ensures user-local uv/bun are
 available, runs command-owned installers under commands/*, and installs
@@ -32,6 +34,8 @@ Options:
   -SkipApps      skip JavaScript installs for apps/tui, apps/gui, and apps/tauri
   -SkipUv        do not install or verify uv; requires -SkipCommands
   -SkipBun       do not install or verify bun; requires -SkipApps for Bun workspaces
+  -EnvironmentOnly
+                  install or verify dependencies only; do not build or register Tura
   -CheckOnly     verify expected tools/environments without installing
   -Offline       pass offline/cache-only flags where supported
   -Help          show this help
@@ -102,6 +106,9 @@ function Test-InstallOptionContracts {
   }
   if ($SkipBun -and -not $SkipApps) {
     throw "-SkipBun was supplied, but JavaScript workspace installs require bun. Remove -SkipBun or pass -SkipApps."
+  }
+  if (-not $EnvironmentOnly -and ($SkipCommands -or $SkipApps -or $SkipUv -or $SkipBun -or $CheckOnly)) {
+    throw "Dependency-only options require -EnvironmentOnly. Without it, install.ps1 performs the complete environment, release build, and PATH registration flow."
   }
 }
 
@@ -958,4 +965,18 @@ if (-not $SkipApps) {
 }
 
 Write-Step "Tura dependency install completed"
-Write-Host "No Rust binaries were built. Use scripts\build-debug.ps1 or scripts\build-release.ps1 when you want binaries."
+if ($EnvironmentOnly) {
+  Write-Host "Environment-only mode completed; release build and PATH registration were skipped."
+  return
+}
+
+Write-Step "Building Tura release"
+& (Join-Path $ScriptDir "build-release.ps1")
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Step "Registering Tura release commands"
+& (Join-Path $ScriptDir "register-cli.ps1")
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Step "Tura installation completed"
+Write-Host "Open a new terminal and run: tura --help"

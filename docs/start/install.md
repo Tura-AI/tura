@@ -39,12 +39,33 @@ surfaces to fail instead of warn.
 
 Clone the repository and run the platform installer from the checkout root.
 
+### Contributor dependency setup
+
+If you are preparing a checkout for development or tests, start with
+environment-only mode. It installs or verifies dependencies without building a
+release and without modifying your user PATH:
+
+```powershell
+git clone https://github.com/Tura-AI/tura.git
+cd tura
+.\scripts\install.ps1 -EnvironmentOnly
+```
+
+```bash
+git clone https://github.com/Tura-AI/tura.git
+cd tura
+./scripts/install.sh --environment-only
+```
+
+### Full source installation
+
+Use the default installer when you want a runnable release command registered
+for future terminals:
+
 ```powershell
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 .\scripts\install.ps1
-.\scripts\build-release.ps1
-.\scripts\register-cli.ps1
 tura exec "Inspect this workspace"
 ```
 
@@ -52,16 +73,25 @@ tura exec "Inspect this workspace"
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 ./scripts/install.sh
-./scripts/build-release.sh
-./scripts/register-cli.sh
 tura exec "Inspect this workspace"
 ```
 
-`scripts/install.*` installs source-checkout dependency tools and workspace
-dependencies, including Rust/Cargo when missing. It does not build Tura.
-`scripts/build-release.*` builds release artifacts into `target/release`.
-`scripts/register-cli.*` adds `target/release` to your user PATH so `tura` and
-`tura exec` resolve from a new terminal.
+By default, `scripts/install.*` installs source-checkout dependencies, builds the
+full release into `target/release`, and registers that directory on the user
+PATH. `scripts/build-release.*` and `scripts/register-cli.*` remain available
+for targeted development and release work.
+
+The PATH change is user-scoped. On Windows, the installer adds the checkout's
+`target\release` directory to the user PATH. On Linux, it adds a marked block to
+existing `.profile`, `.bash_profile`, `.bashrc`, `.zprofile`, or `.zshrc` files
+and ensures `.profile` exists. On macOS, it also ensures `.zprofile` and `.zshrc`
+exist. It does not overwrite unrelated entries, but the new entry can take
+precedence over another `tura` executable. PATH registration itself does not
+require administrator privileges; dependency package managers may separately
+request elevation.
+
+Use `scripts/unregister-cli.*` to remove the registered release path. The command
+does not delete the checkout, release files, provider data, or session data.
 
 ## Install with curl from GitHub
 
@@ -78,8 +108,6 @@ mkdir -p tura-install
 tar -xzf tura-main.tar.gz -C tura-install --strip-components=1
 cd tura-install
 ./scripts/install.sh
-./scripts/build-release.sh
-./scripts/register-cli.sh
 tura exec "Inspect this workspace"
 ```
 
@@ -105,8 +133,6 @@ Expand-Archive -Path "tura-main.zip" -DestinationPath "tura-main-expanded" -Forc
 $repo = Get-ChildItem -Path "tura-main-expanded" -Directory | Select-Object -First 1
 Set-Location $repo.FullName
 .\scripts\install.ps1
-.\scripts\build-release.ps1
-.\scripts\register-cli.ps1
 tura exec "Inspect this workspace"
 ```
 
@@ -119,10 +145,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
 
 ## Installer options
 
-Use these options when you only need part of the dependency setup.
+Only `-EnvironmentOnly` or `--environment-only` changes the installer into a
+dependency-only flow. Dependency-only switches must be paired with that option.
 
 | PowerShell | Bash | Meaning |
 | --- | --- | --- |
+| `-EnvironmentOnly` | `--environment-only` | Install or verify dependencies only; skip release build and PATH registration. |
 | `-SkipCommands` | `--skip-commands` | Skip `commands/*/install.*` command package setup. |
 | `-SkipApps` | `--skip-apps` | Skip JavaScript installs for TUI, GUI, and Tauri workspaces. |
 | `-SkipUv` | `--skip-uv` | Do not install or verify uv. Requires skipping command installers. |
@@ -133,13 +161,13 @@ Use these options when you only need part of the dependency setup.
 Examples:
 
 ```powershell
-.\scripts\install.ps1 -CheckOnly
-.\scripts\install.ps1 -SkipApps
+.\scripts\install.ps1 -EnvironmentOnly -CheckOnly
+.\scripts\install.ps1 -EnvironmentOnly -SkipApps
 ```
 
 ```bash
-./scripts/install.sh --check-only
-./scripts/install.sh --skip-apps
+./scripts/install.sh --environment-only --check-only
+./scripts/install.sh --environment-only --skip-apps
 ```
 
 ## Build options
@@ -184,11 +212,11 @@ tura exec "Say hello from this installation"
 For a local dependency-only check without changing the build output:
 
 ```powershell
-.\scripts\install.ps1 -CheckOnly
+.\scripts\install.ps1 -EnvironmentOnly -CheckOnly
 ```
 
 ```bash
-./scripts/install.sh --check-only
+./scripts/install.sh --environment-only --check-only
 ```
 
 ## Uninstall the CLI registration
@@ -304,15 +332,11 @@ you no longer need request diagnostics.
 ```powershell
 git pull
 .\scripts\install.ps1
-.\scripts\build-release.ps1
-.\scripts\register-cli.ps1
 ```
 
 ```bash
 git pull
 ./scripts/install.sh
-./scripts/build-release.sh
-./scripts/register-cli.sh
 ```
 
 Use the cleanup build switch during update only when you intentionally want to

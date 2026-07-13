@@ -126,7 +126,7 @@ jobs:
       - name: Run backend business tests
         run: sh xtask/scripts/run-backend-business-tests.sh --jobs 4 --timeout-seconds 300
 
-  tui-local:
+  tui-tests:
     name: TUI Unit And E2E
     runs-on: ubuntu-latest
     needs: quality
@@ -148,7 +148,7 @@ jobs:
       - name: Run TUI e2e tests
         run: npm --prefix apps/tui run test:e2e
 
-  gui-local:
+  gui-tests:
     name: GUI Unit
     runs-on: ubuntu-latest
     needs: quality
@@ -231,8 +231,8 @@ jobs:
     needs:
       - crate-tests
       - backend-business
-      - tui-local
-      - gui-local
+      - tui-tests
+      - gui-tests
       - install-script-tests
     steps:
       - run: echo "CI flow passed"
@@ -269,6 +269,6 @@ jobs:
             commands/web_discover/.venv
           key: ${{ runner.os }}-command-venv-${{ hashFiles('commands/*/requirements.txt', 'commands/*/pyproject.toml') }}
       - name: Install dependencies
-        run: sh scripts/install.sh
+        run: sh scripts/install.sh --environment-only
       - name: Build release artifacts without publishing
         run: sh scripts/run-release-dry-run.sh --skip-install --skip-ci --jobs 4

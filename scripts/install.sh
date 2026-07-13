@@ -12,6 +12,7 @@ SKIP_COMMANDS=0
 SKIP_APPS=0
 SKIP_UV=0
 SKIP_BUN=0
+ENVIRONMENT_ONLY=0
 CHECK_ONLY=0
 OFFLINE=0
 APT_UPDATED=0
@@ -22,6 +23,7 @@ while [ "$#" -gt 0 ]; do
     --skip-apps) SKIP_APPS=1 ;;
     --skip-uv) SKIP_UV=1 ;;
     --skip-bun) SKIP_BUN=1 ;;
+    --environment-only) ENVIRONMENT_ONLY=1 ;;
     --check-only) CHECK_ONLY=1 ;;
     --offline) OFFLINE=1 ;;
     -h|--help)
@@ -29,7 +31,8 @@ while [ "$#" -gt 0 ]; do
 Usage:
   scripts/install.sh [OPTIONS]
 
-Installs project dependencies without building Tura. The root installer verifies
+Installs project dependencies, builds the release, and registers the release
+directory on the user PATH. The root installer verifies
 Git, Rust/Cargo, PowerShell, shell_command/bash/zsh coverage, installs missing
 Git/bash/zsh/Rust dependencies when possible, ensures user-local uv/bun are
 available, runs command-owned installers under commands/*, and installs
@@ -40,6 +43,8 @@ Options:
   --skip-apps      skip JavaScript installs for apps/tui, apps/gui, and apps/tauri
   --skip-uv        do not install or verify uv; requires --skip-commands
   --skip-bun       do not install or verify bun; requires --skip-apps for Bun workspaces
+  --environment-only
+                    install or verify dependencies only; do not build or register Tura
   --check-only     verify expected tools/environments without installing
   --offline        pass offline/cache-only flags where supported
   -h, --help       show this help
@@ -225,6 +230,10 @@ validate_option_contracts() {
   fi
   if [ "$SKIP_BUN" -eq 1 ] && [ "$SKIP_APPS" -eq 0 ]; then
     echo "--skip-bun was supplied, but JavaScript workspace installs require bun. Remove --skip-bun or pass --skip-apps." >&2
+    exit 1
+  fi
+  if [ "$ENVIRONMENT_ONLY" -eq 0 ] && { [ "$SKIP_COMMANDS" -eq 1 ] || [ "$SKIP_APPS" -eq 1 ] || [ "$SKIP_UV" -eq 1 ] || [ "$SKIP_BUN" -eq 1 ] || [ "$CHECK_ONLY" -eq 1 ]; }; then
+    echo "Dependency-only options require --environment-only. Without it, install.sh performs the complete environment, release build, and PATH registration flow." >&2
     exit 1
   fi
 }
@@ -875,4 +884,16 @@ if [ "$SKIP_APPS" -eq 0 ]; then
 fi
 
 step "Tura dependency install completed"
-echo "No Rust binaries were built. Use scripts/build-debug.sh or scripts/build-release.sh when you want binaries."
+if [ "$ENVIRONMENT_ONLY" -eq 1 ]; then
+  echo "Environment-only mode completed; release build and PATH registration were skipped."
+  exit 0
+fi
+
+step "Building Tura release"
+sh "$SCRIPT_DIR/build-release.sh"
+
+step "Registering Tura release commands"
+sh "$SCRIPT_DIR/register-cli.sh"
+
+step "Tura installation completed"
+echo "Open a new terminal and run: tura --help"

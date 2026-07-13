@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contribution guide
+    url: https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md
+    about: Choose a contribution type, test layer, evidence format, and pull-request template.
+  - name: Security vulnerability
+    url: mailto:info@turaai.net
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Support and usage questions
+    url: mailto:info@turaai.net
+    about: Ask setup and usage questions without exposing credentials or private session data.
