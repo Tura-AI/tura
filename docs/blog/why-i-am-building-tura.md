@@ -4,6 +4,8 @@
 
 I did not start Tura because the world needed another chat box with a terminal attached. We already have plenty of those.
 
+The name comes from the Sanskrit word *tura* (तुर), which can carry senses such as quick, swift, or prompt, as well as strong, powerful, or excelling. I liked the combination: an agent should move quickly, but speed is not worth much unless the work is strong. The dictionary entries are collected [here](https://kosha.sanskrit.today/word/sa/tura).
+
 I started it because coding agents were getting much better at writing code, while the part around the model still felt strangely clumsy. A normal session could look like this:
 
 1. inspect a file;
@@ -93,6 +95,8 @@ It should read before editing. It should group work that belongs together. It sh
 That is a slower sentence than "AI that writes your app for you."
 
 It is also the product I actually want to use.
+
+The goal is ambitious: I want to make Tura the strongest-performing open-source coding agent.
 
 ## The formal documents
 

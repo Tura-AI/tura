@@ -164,7 +164,9 @@ But an issue is not the only door. You do not have to wait until you have a poli
 
 I watch both. Write down your comment in plain language and include whatever you have: an idea, a screenshot, raw output, a command, an error message, or just the situation that felt wrong. They give me a practical way to find feedback outside the repository and turn an isolated observation into a reproducible issue, a test, or a better benchmark case.
 
-The goal is ambitious: I want to make Tura the strongest-performing open-source coding agent. We will not get there by calling it the strongest before the evidence exists. We get there by collecting honest reports, testing the architecture from angles I have missed, and improving the parts that fail in public.
+The goal is ambitious: I want to make Tura the strongest-performing open-source coding agent.
+
+We will not get there by calling it the strongest before the evidence exists. We get there by collecting honest reports, testing the architecture from angles I have missed, and improving the parts that fail in public.
 
 ## The formal documents
 

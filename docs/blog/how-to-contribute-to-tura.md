@@ -147,7 +147,9 @@ A documentation link that points to the right place. A reproducible parser edge 
 
 You do not need to arrive with a new agent architecture. Start with one thing you can observe, fix, and verify. Once that is merged, the repository will make much more sense than it did from the doorway.
 
-If a full issue or test report feels too formal, share what you found on any social platform and mention `@tura-ai-agent` or use `#tura-ai-agent`. I watch both, and the feedback helps me find the failures, environments, and workflows I would otherwise miss. That is how you can help me work toward the real goal: making Tura the strongest-performing open-source coding agent we can actually prove.
+If a full issue or test report feels too formal, share what you found on any social platform and mention `@tura-ai-agent` or use `#tura-ai-agent`. I watch both, and the feedback helps me find the failures, environments, and workflows I would otherwise miss.
+
+The goal is ambitious: I want to make Tura the strongest-performing open-source coding agent.
 
 ## The formal documents
 
