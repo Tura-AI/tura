@@ -14,8 +14,8 @@ the same checklist.
 | Provider | Protocol behavior, fixture coverage, external-system metadata, and any live limitations | Every model sold by the provider |
 | Documentation | Accuracy against an owning source, valid links, and readable structure | Code regression tests unless executable behavior changed |
 
-Security reports follow `.github/SECURITY.md`, not public issue or pull-request
-templates.
+Security reports follow the [security policy](../.github/SECURITY.md), not
+public issue or pull-request templates.
 
 ## Test ownership
 

@@ -190,7 +190,8 @@ will ask you to select a type and provide the matching evidence.
   product.
 - Update documentation when setup, behavior, architecture, compatibility, or
   a public claim changes.
-- Update `ROADMAP.md` or `docs/KNOWN_ISSUES.md` only when evidence changes their
+- Update the [roadmap](../ROADMAP.md) or
+  [known issues](../docs/KNOWN_ISSUES.md) only when evidence changes their
   status.
 - Keep credentials, private session data, unsafe provider logs, and generated
   local state out of commits and pull requests.
