@@ -42,8 +42,9 @@ describe("rich content table scrollbars", () => {
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
       "padding: var(--space-3) 10px;",
     );
+    expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain("min-width: 40px;");
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
-      "min-width: calc(14.5rem / 3);",
+      "width: max(40px, var(--rich-table-cell-width, 40px));",
     );
     expect(cssBlock(".rich-table-scroll th,\n.rich-table-scroll td")).toContain(
       "white-space: normal;",
@@ -76,6 +77,9 @@ describe("rich content table scrollbars", () => {
     expect(
       cssBlock(".rich-table-scroll th:first-child,\n.rich-table-scroll td:first-child"),
     ).toContain("min-width: calc(5.5rem / 3);");
+    expect(
+      cssBlock(".rich-table-scroll th:first-child,\n.rich-table-scroll td:first-child"),
+    ).toContain("calc(26ch / 3)");
     expect(
       cssBlock(".rich-table-scroll th:first-child,\n.rich-table-scroll td:first-child"),
     ).not.toContain("position: sticky;");

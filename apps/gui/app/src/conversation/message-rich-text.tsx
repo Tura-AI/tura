@@ -48,7 +48,6 @@ type RichTableRow = {
 
 type RichGroup = { kind: "node"; node: RichNode } | { kind: "gallery"; paths: string[] };
 
-const TABLE_CELL_MIN_CH = 26 / 3;
 const TABLE_CELL_MAX_CH = 96;
 
 type RichTag =
@@ -348,10 +347,7 @@ function RichTableView(props: {
 
 function tableCellWidthStyle(cell: RichTableCell): Record<string, string> {
   const textLength = plainText(cell.children).trim().length;
-  const widthCh = Math.min(
-    TABLE_CELL_MAX_CH,
-    Math.max(TABLE_CELL_MIN_CH, Math.ceil(textLength / 3)),
-  );
+  const widthCh = Math.min(TABLE_CELL_MAX_CH, Math.ceil(textLength / 3));
   return { "--rich-table-cell-width": `${widthCh}ch` };
 }
 
