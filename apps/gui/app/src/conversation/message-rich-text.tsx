@@ -11,6 +11,7 @@ import { Portal } from "solid-js/web";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
 import { openExternalUrl } from "../utils/external-url";
+import { normalizeEnglishPunctuation } from "./message-punctuation";
 import { RICH_TOKEN_PATTERN } from "./message-rich-protocol";
 import { mediaSource } from "./message-rich-text-paths";
 
@@ -61,8 +62,19 @@ type RichTag =
   | "blockquote"
   | "pre";
 
-export function RichText(props: { text: string; active?: boolean; workspaceDirectory?: string }) {
-  const nodes = createMemo(() => parseRichText(props.text));
+export function RichText(props: {
+  text: string;
+  active?: boolean;
+  workspaceDirectory?: string;
+  normalizePunctuation?: boolean;
+}) {
+  const nodes = createMemo(() => {
+    const parsed = parseRichText(props.text);
+    return props.normalizePunctuation ? normalizeRichTextNodes(parsed) : parsed;
+  });
+  const streamingText = createMemo(() =>
+    props.normalizePunctuation ? normalizeEnglishPunctuation(props.text) : props.text,
+  );
   const groups = createMemo(() => groupMediaNodes(nodes()));
   const [viewerIndex, setViewerIndex] = createSignal<number>();
   const galleryPaths = createMemo(() =>
@@ -112,10 +124,36 @@ export function RichText(props: { text: string; active?: boolean; workspaceDirec
           </>
         }
       >
-        {props.text}
+        {streamingText()}
       </Show>
     </div>
   );
+}
+
+function normalizeRichTextNodes(nodes: RichNode[]): RichNode[] {
+  return nodes.map((node) => {
+    if (node.kind === "text") {
+      return { ...node, text: normalizeEnglishPunctuation(node.text) };
+    }
+    if (node.kind === "element") {
+      return node.tag === "code" || node.tag === "pre"
+        ? node
+        : { ...node, children: normalizeRichTextNodes(node.children) };
+    }
+    if (node.kind === "table") {
+      return {
+        ...node,
+        caption: normalizeRichTextNodes(node.caption),
+        rows: node.rows.map((row) => ({
+          cells: row.cells.map((cell) => ({
+            ...cell,
+            children: normalizeRichTextNodes(cell.children),
+          })),
+        })),
+      };
+    }
+    return node;
+  });
 }
 
 function isPlainStreamingText(text: string): boolean {
