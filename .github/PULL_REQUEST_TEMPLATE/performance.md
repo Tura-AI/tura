@@ -46,6 +46,7 @@ that criterion directly.
 
 - [ ] Artifacts were scanned and sanitized as required by `docs/contributing-guide.md`.
 - [ ] No credentials, authorization headers, private prompts/sessions, restricted inputs, or unsafe provider logs are included.
-- [ ] Human contributors accept responsibility for the claim, correctness, licensing, and provenance.
+- [ ] A human is the primary submitter and accepts responsibility for the claim, correctness, licensing, provenance, verification, and the statements in this pull request.
+- [ ] I have the right to submit all included material and benchmark evidence under the repository license.
 
 Meaningful tool or AI assistance, if useful to reviewers (optional):
