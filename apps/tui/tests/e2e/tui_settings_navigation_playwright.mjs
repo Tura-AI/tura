@@ -208,17 +208,17 @@ async function main() {
     await send(page, "\x1b");
     await waitForTerminalText(page, /Enter(?::| to) send|回车输入/u);
     await submit(page, "/variant");
-    await waitForTerminalText(page, />\s+low/u);
+    await waitForTerminalText(page, />\s+high/u);
     text = await terminalText(page);
-    if (!/>\s+low/u.test(text)) {
-      throw new Error(`setting detail should start at first option:\n${text}`);
+    if (!/>\s+high/u.test(text)) {
+      throw new Error(`setting detail should start at the active option:\n${text}`);
     }
     if (await visibleCursor(page)) {
       throw new Error("setting detail should hide the terminal cursor");
     }
     await screenshot(page, "06-reasoning-first-option.png");
 
-    await send(page, "\x1b[B");
+    await send(page, "\x1b[A");
     await waitForTerminalText(page, />\s+medium/u);
     await send(page, "\r");
     await page.waitForTimeout(500);
