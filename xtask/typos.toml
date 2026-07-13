@@ -16,7 +16,12 @@ extend-exclude = [
   "workspace/docs/**",
   "apps/gui/test-results/",
   "apps/gui/app/public/assets/",
+  "docs/github-star-api-current/",
+  "docs/github-star-api/",
+  "docs/npm-update-check/",
+  "docs/npm-update-current/",
   "personas/src/**/media/",
+  "scripts/packages/playwright_node/node_modules/",
 ]
 
 [default.extend-words]

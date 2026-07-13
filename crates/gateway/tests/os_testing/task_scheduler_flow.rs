@@ -702,6 +702,18 @@ async fn gateway_task_scheduler_business_flow_concurrent_edits_race_scheduler_ti
     );
     let due = Utc::now() - chrono::Duration::minutes(1);
     let future = Utc::now() + chrono::Duration::hours(1);
+    let _ = update_session_task_management(
+        Path(session.id.clone()),
+        Json(UpdateSessionTaskManagementRequest {
+            task_management: json!({
+                "task_id": "race-due",
+                "task_summary": "Claim the shared due task once",
+                "status": "todo",
+                "start_at": due.to_rfc3339()
+            }),
+        }),
+    )
+    .await;
     let worker_count = 12;
     let barrier = Arc::new(Barrier::new(worker_count + 1));
     let mut workers = Vec::new();
@@ -709,35 +721,29 @@ async fn gateway_task_scheduler_business_flow_concurrent_edits_race_scheduler_ti
     for index in 0..8 {
         let session_id = session.id.clone();
         let barrier = Arc::clone(&barrier);
-        let due = due.to_rfc3339();
         let future = future.to_rfc3339();
         workers.push(tokio::spawn(async move {
             barrier.wait().await;
             let _ = update_session_task_management(
+                Path(session_id.clone()),
+                Json(UpdateSessionTaskManagementRequest {
+                    task_management: json!({
+                        "task_id": format!("manual-edit-{index}"),
+                        "task_summary": format!("Manual edit {index} must stay manual"),
+                        "status": "todo",
+                        "start_condition": "user_action"
+                    }),
+                }),
+            )
+            .await;
+            let _ = update_session_task_management(
                 Path(session_id),
                 Json(UpdateSessionTaskManagementRequest {
                     task_management: json!({
-                        "plan_summary": format!("Scheduler edit race plan {index}"),
-                        "tasks": [
-                            {
-                                "task_id": "race-due",
-                                "task_summary": "Claim the shared due task once",
-                                "status": "todo",
-                                "start_at": due
-                            },
-                            {
-                                "task_id": format!("manual-edit-{index}"),
-                                "task_summary": format!("Manual edit {index} must stay manual"),
-                                "status": "todo",
-                                "start_condition": "user_action"
-                            },
-                            {
-                                "task_id": format!("future-edit-{index}"),
-                                "task_summary": format!("Future edit {index} must not run"),
-                                "status": "todo",
-                                "start_at": future
-                            }
-                        ]
+                        "task_id": format!("future-edit-{index}"),
+                        "task_summary": format!("Future edit {index} must not run"),
+                        "status": "todo",
+                        "start_at": future
                     }),
                 }),
             )
