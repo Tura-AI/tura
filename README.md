@@ -322,10 +322,27 @@ full navigation page is [docs/start/navigation.md](docs/start/navigation.md).
 - [Benchmark methodology](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md)
 - [Current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
 - [Benchmark artifacts](https://github.com/Tura-AI/benchmark/tree/main/results)
-- [Roadmap](ROADMAP.md)
-- [Known issues](docs/KNOWN_ISSUES.md)
-- [Contributing](.github/CONTRIBUTING.md)
-- [Contribution guide](docs/contributing-guide.md)
+
+## Contributing and project governance
+
+Contributions should be small, reviewable, and supported by evidence at the
+test layer that owns the affected behavior. Choose the matching issue and pull
+request type rather than applying one checklist to every change.
+
+- [Contributing](.github/CONTRIBUTING.md) - start here for contribution types,
+  development setup, test selection, and pull-request steps.
+- [Contribution guide](docs/contributing-guide.md) - test ownership, affected
+  matrices, performance evidence, and artifact-sanitization rules.
+- [Roadmap](ROADMAP.md) - current 0.1.x stabilization priorities and the planned
+  0.2 task-planning workspace.
+- [Known issues and evidence gaps](docs/KNOWN_ISSUES.md) - open architecture,
+  provider, benchmark, performance, and cross-OS work.
+- [Code of Conduct](.github/CODE_OF_CONDUCT.md) - community standards and the
+  open agent-harness principle.
+- [Security policy](.github/SECURITY.md) - supported versions and private
+  vulnerability reporting.
+- [Support](.github/SUPPORT.md) - where to report bugs, request features, or ask
+  setup and usage questions.
 
 ## License
 
