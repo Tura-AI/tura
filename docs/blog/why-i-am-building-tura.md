@@ -1,5 +1,7 @@
 # Why I'm Building Tura
 
+*Written July 13, 2026.*
+
 I did not start Tura because the world needed another chat box with a terminal attached. We already have plenty of those.
 
 I started it because coding agents were getting much better at writing code, while the part around the model still felt strangely clumsy. A normal session could look like this:
@@ -38,6 +40,8 @@ Those numbers are evidence for named configurations on a bounded set of tasks. T
 
 I would rather publish a limited claim that can be checked than a sweeping one that cannot.
 
+And the current claim is still much narrower than the question I actually care about. We need comparisons across reasoning levels, model providers, and genuinely different agent architectures. We also need ablations that isolate Tura's own features instead of crediting the whole system for every result. I wrote the missing work down in [We Need More Benchmark Data and Test Reports](https://github.com/Tura-AI/tura/blob/main/docs/blog/we-need-more-benchmark-data-and-test-reports.md).
+
 ## Context should not become a junk drawer
 
 A lot of agent systems treat context like luggage packed five minutes before a flight. Add a skill. Add another prompt. Add a pile of instructions "just in case." Eventually the model spends part of every turn sorting through advice that has nothing to do with the current job.
@@ -68,15 +72,17 @@ So Tura's rule is that project-controlled logic needed to reproduce a public cla
 
 This is also why contributions that claim something is faster or cheaper need the raw, sanitized evidence behind the sentence. It is slightly more work. It saves everyone much more work later.
 
-## Tura is not finished, and I do not want to pretend otherwise
+## Tura is not mature, and I do not want to pretend otherwise
 
-The tempting thing in an agent project is to keep adding surface area. There is always another provider, panel, mode, or clever abstraction nearby.
+Tura is not a mature project. The tempting thing in an agent project is to hide that fact by adding surface area. There is always another provider, panel, mode, or clever abstraction nearby.
 
 The current 0.1.x work is intentionally less exciting: installation, session persistence, recovery, process cleanup, provider evidence, cross-OS behavior, and repeatable performance baselines. The rule is YAGNI: do not add speculative machinery before there is a demonstrated requirement for it.
 
 That is not a lack of ambition. It is the order of operations. Planning and task-workspace features are much more useful when the state underneath them does not wobble.
 
 The honest list of what comes next, what still lacks evidence, and what counts as done is in the complete [ROADMAP.md](https://github.com/Tura-AI/tura/blob/main/ROADMAP.md).
+
+I still believe Tura will change how later coding agents are architected. Not because one benchmark settles the question—it does not—but because macro execution, explicit task state, selective runtime instructions, durable sessions, and shared backend ownership address problems that keep reappearing across agent products. That is my conviction about the direction. The project still has to earn the evidence.
 
 ## So, why Tura?
 

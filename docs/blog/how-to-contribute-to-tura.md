@@ -1,5 +1,7 @@
 # How to Contribute to Tura
 
+*Written July 13, 2026.*
+
 Let me start with the reassuring part: you do not need to understand all of Tura before contributing to it.
 
 Honestly, trying to understand the whole repository first is a good way to spend an evening reading architecture notes and changing nothing. Tura has a runtime, router, session database, provider layer, gateway, TUI, GUI, desktop shell, tools, and enough process boundaries to make "I'll just fix this quickly" a dangerous opening line.
@@ -101,6 +103,14 @@ Do not silently delete outliers. Do not trade correctness for a faster median. A
 
 The complete evidence format is in [docs/contributing-guide.md](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#performance-and-efficiency-evidence).
 
+## Test reports are contributions too
+
+Tura needs code, but it also needs more independent evidence. The published benchmark does not yet cover enough reasoning levels, model providers, or agent architectures, and it does not isolate every Tura feature with a clean ablation. The GUI, TUI, packaged desktop app, and OS-specific lifecycle paths also have plenty of room for failures that one development machine will never reveal.
+
+A useful contribution can therefore be a reproducible test report: the exact Tura commit, model and provider version, reasoning setting, operating system, hardware, command, workload, expected behavior, observed result, and sanitized artifacts. A failed run is not wasted work. If someone else can reproduce it, it has already narrowed the problem.
+
+The longer version—including the comparisons, ablations, frontend cases, and cross-OS reports we need—is in [We Need More Benchmark Data and Test Reports](https://github.com/Tura-AI/tura/blob/main/docs/blog/we-need-more-benchmark-data-and-test-reports.md). Open gaps are tracked in [KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md).
+
 ## Open a pull request that tells the truth
 
 Create a focused branch and commit only related files:
@@ -137,6 +147,8 @@ A documentation link that points to the right place. A reproducible parser edge 
 
 You do not need to arrive with a new agent architecture. Start with one thing you can observe, fix, and verify. Once that is merged, the repository will make much more sense than it did from the doorway.
 
+If a full issue or test report feels too formal, share what you found on any social platform and mention `@tura-ai-agent` or use `#tura-ai-agent`. I watch both, and the feedback helps me find the failures, environments, and workflows I would otherwise miss. That is how you can help me work toward the real goal: making Tura the strongest-performing open-source coding agent we can actually prove.
+
 ## The formal documents
 
 This post is the friendly route through the process. These complete Markdown files are the source of truth:
@@ -146,5 +158,6 @@ This post is the friendly route through the process. These complete Markdown fil
 - [ARCHITECTURE.md](https://github.com/Tura-AI/tura/blob/main/ARCHITECTURE.md) — repository boundaries and implementation ownership.
 - [tests/README.md](https://github.com/Tura-AI/tura/blob/main/tests/README.md) — the complete testing reference.
 - [docs/start/install.md](https://github.com/Tura-AI/tura/blob/main/docs/start/install.md) — setup behavior, installed files, PATH effects, and cleanup.
+- [docs/KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md) — current benchmark, frontend, runtime, and cross-OS evidence gaps.
 - [.github/CODE_OF_CONDUCT.md](https://github.com/Tura-AI/tura/blob/main/.github/CODE_OF_CONDUCT.md) — community expectations.
 - [.github/SECURITY.md](https://github.com/Tura-AI/tura/blob/main/.github/SECURITY.md) — private vulnerability reporting.
