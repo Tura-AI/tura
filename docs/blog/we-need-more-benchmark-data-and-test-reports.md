@@ -77,6 +77,23 @@ Each ablation should change one thing, keep the rest fixed, repeat enough times 
 
 Some of these experiments will be awkward to build. Good. If a feature cannot be isolated, we should be cautious about assigning it a percentage of the credit.
 
+## One benchmark case I would like to see
+
+Here is a concrete example. Take a small fixed set of long-horizon repair tasks and run the same model through four cells:
+
+| Cell | Agent setup | Reasoning level | What it helps isolate |
+| --- | --- | --- | --- |
+| A | Tura Balanced | Medium | Tura's full reasoning-oriented configuration |
+| B | Tura Balanced | High | The effect of additional reasoning within the same architecture |
+| C | Tura Direct | Medium | The difference between Tura's two named configurations |
+| D | Another reproducible agent | Medium | An architectural comparison at a matched reasoning level |
+
+Keep the task revisions, model version, provider, timeout, machine, evaluation, and run count fixed. Repeat each cell at least three times. Record verifier success, turns, input and output tokens, wall time, cost, failures, and the raw run artifacts.
+
+Then run one narrower Tura ablation on the same tasks: macro `command_run` batching enabled versus equivalent single-action model turns. That does not answer every question, but it starts separating the effect of reasoning effort, preset, agent architecture, and one specific Tura feature.
+
+This is only one useful case. A provider matrix, a GUI memory-growth report, or a Windows process-cleanup failure can be equally valuable. If you have only one cell, one task, or one failed run, send that too. Partial evidence is how a complete benchmark often begins.
+
 ## Agent benchmarks do not test the whole product
 
 A coding benchmark can finish with a correct patch while the local product still leaks memory, loses a session, hangs during shutdown, or renders a transcript badly. The verifier does not care. The user does.
@@ -101,9 +118,13 @@ We still need lifecycle and soak reports around signals, process trees, antiviru
 
 When you find one of these failures, please keep the ugly details. The exact OS version, shell, filesystem path, command, exit code, and relevant log tail are often the difference between a fix and a ghost story.
 
-## What a useful report looks like
+## What a useful report can look like
 
-You do not need to produce a paper. You do need to leave enough information for another person to check the result.
+You do not need to produce a paper, and you do not need to make every submission conform 100% to the benchmark contract or report schema. Those contracts matter when we turn a result into a reproducible public claim or merge it as a canonical benchmark artifact. They are not a ticket you must present before telling us something useful.
+
+You can send raw output. You can send one failed run. You can describe a benchmark case you think we should add. You can report a bug without knowing its root cause. You can also send an unfinished idea or simply tell us that a workflow felt wrong. Please label what you know, what you do not know, and whether the material has been sanitized. We can help turn a promising observation into a structured case later.
+
+When you do have enough information for a reproducible benchmark or test report, the following details make it much easier for another person to check:
 
 For a benchmark or test report, include:
 
@@ -119,7 +140,7 @@ For a benchmark or test report, include:
 
 Do not publish API keys, OAuth material, cookies, authorization headers, private prompts, session content, or personal filesystem paths. "Raw data" means enough data to recompute the result, not a ceremonial dumping of secrets.
 
-The repository's complete format for performance evidence and sanitization is in [docs/contributing-guide.md](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#performance-and-efficiency-evidence). General test ownership and entrypoints are in [tests/README.md](https://github.com/Tura-AI/tura/blob/main/tests/README.md).
+The repository's complete format for performance evidence and sanitization is in [docs/contributing-guide.md](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#performance-and-efficiency-evidence). Use it when you are making a formal performance claim or preparing a canonical artifact; do not treat it as a reason to withhold an early result. General test ownership and entrypoints are in [tests/README.md](https://github.com/Tura-AI/tura/blob/main/tests/README.md).
 
 Negative results are welcome. If a comparison shows no meaningful difference, that saves someone else from building a claim around noise. If Tura loses badly on a model or OS, that is not disloyal data. It is a map.
 
@@ -137,9 +158,11 @@ The way to make the argument stronger is not to repeat it louder. It is to test 
 
 ## Send me what you find
 
-You do not have to wait until you have a polished benchmark report. If Tura behaves strangely, performs unexpectedly well, loses badly, breaks on your operating system, or simply makes a workflow more annoying than it should be, share it on any social platform and mention `@tura-ai-agent` or use `#tura-ai-agent`.
+Formal GitHub [issues](https://github.com/Tura-AI/tura/issues) are welcome. They are the best place for a reproducible bug, a proposal that needs discussion, or a report with artifacts we should track to completion.
 
-I watch both. They give me a practical way to find feedback outside the repository and turn an isolated observation into a reproducible issue, a test, or a better benchmark case.
+But an issue is not the only door. You do not have to wait until you have a polished benchmark report or a schema-complete submission. If Tura behaves strangely, performs unexpectedly well, loses badly, breaks on your operating system, or simply makes a workflow more annoying than it should be, share it on any social platform and mention `@tura-ai-agent` or use `#tura-ai-agent`.
+
+I watch both. Write down your comment in plain language and include whatever you have: an idea, a screenshot, raw output, a command, an error message, or just the situation that felt wrong. They give me a practical way to find feedback outside the repository and turn an isolated observation into a reproducible issue, a test, or a better benchmark case.
 
 The goal is ambitious: I want to make Tura the strongest-performing open-source coding agent. We will not get there by calling it the strongest before the evidence exists. We get there by collecting honest reports, testing the architecture from angles I have missed, and improving the parts that fail in public.
 
