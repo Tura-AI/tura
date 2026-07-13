@@ -41,9 +41,7 @@ export class MockGatewayClient {
     this.directory = options.directory;
     const session = this.mockSession("mock-session-1", "Mock TUI Session");
     this.sessions = [session];
-    let messages = [
-      this.message(session.id, "assistant", t("mockStartup")),
-    ];
+    let messages = [this.message(session.id, "assistant", t("mockStartup"))];
     if (process.env.TURA_TUI_MOCK_LOCAL_LINKS === "1") {
       messages = [this.message(session.id, "assistant", this.localLinkFixtureText())];
     } else if (process.env.TURA_TUI_MOCK_STREAM_ORDER === "1") {

@@ -841,11 +841,6 @@ function personaID(persona: AppState["personas"][number]): string | undefined {
   return persona.summary?.id ?? (typeof configName === "string" ? configName : undefined);
 }
 
-function stringField(value: Record<string, unknown> | undefined, key: string): string | undefined {
-  const item = value?.[key];
-  return typeof item === "string" ? item : undefined;
-}
-
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

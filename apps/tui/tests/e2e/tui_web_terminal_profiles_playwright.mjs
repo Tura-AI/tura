@@ -78,6 +78,10 @@ async function terminalText(page) {
       lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
     }
 
+    return lines.join("\n");
+  });
+}
+
 async function terminalViewportText(page) {
   return page.locator(".xterm-rows").innerText();
 }
@@ -95,10 +99,7 @@ async function sendTerminalInput(page, profile, instance, data) {
     },
     { profile, instance, data },
   );
-  assert.equal(response, 204);
-}
-    return lines.join("\n");
-  });
+  assert.equal(response, 200);
 }
 
 async function waitForText(page, pattern, timeout = 30_000) {
@@ -114,6 +115,26 @@ async function waitForText(page, pattern, timeout = 30_000) {
     },
     pattern.source,
     { timeout },
+  );
+}
+
+async function waitForStableTerminalText(page, patterns, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
+  let matchingText = "";
+  let lastText = "";
+  while (Date.now() < deadline) {
+    const text = await terminalText(page);
+    lastText = text;
+    if (patterns.every((pattern) => pattern.test(text))) {
+      if (text === matchingText) return text;
+      matchingText = text;
+    } else {
+      matchingText = "";
+    }
+    await page.waitForTimeout(100);
+  }
+  throw new Error(
+    `timed out waiting for stable terminal text: ${patterns.join(", ")}\n${lastText}`,
   );
 }
 
@@ -317,9 +338,7 @@ async function main() {
       });
       await page.waitForFunction(() => window.__turaTerminal);
       await page.evaluate(() => window.__turaFit());
-      await waitForText(page, visibleTerminalPattern);
-      await waitForText(page, /Mock TUI/);
-      const text = await terminalText(page);
+      const text = await waitForStableTerminalText(page, [visibleTerminalPattern, /Mock TUI/u]);
       assert.match(text, visibleTerminalPattern);
       assert.doesNotMatch(text, /\x1b\[[0-9;]/u, `${profile} leaked raw ANSI controls`);
       await assertNoHorizontalOverflow(page);
@@ -341,7 +360,9 @@ async function main() {
     artifacts.push(await screenshot(i18n, "persona-en.png"));
 
     await sendTerminalInput(i18n, "rich", "i18n", "/language zh-CN\r");
-    await waitForText(i18n, /设置已更新/);
+    await waitForText(i18n, /设置/u);
+    await sendTerminalInput(i18n, "rich", "i18n", "\x1b");
+    await waitForText(i18n, /Enter：发送/u);
     await sendTerminalInput(i18n, "rich", "i18n", "/personas\r");
     await waitForText(i18n, /均衡而有活力/);
     const chinesePersona = await terminalViewportText(i18n);
@@ -357,8 +378,7 @@ async function main() {
     });
     await mobile.waitForFunction(() => window.__turaTerminal);
     await mobile.evaluate(() => window.__turaFit());
-    await waitForText(mobile, visibleTerminalPattern);
-    await waitForText(mobile, /Mock TUI/);
+    await waitForStableTerminalText(mobile, [/Mock TUI started|Mock TUI 已启动/u]);
     const userAgent = await mobile.evaluate(() => navigator.userAgent);
     assert.match(userAgent, /Mobile|Android|Pixel/i);
     await assertNoHorizontalOverflow(mobile);

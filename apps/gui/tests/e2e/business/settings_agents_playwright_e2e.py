@@ -138,6 +138,12 @@ async def main() -> None:
                 f"{GUI_URL}/?tab=settings&e2eFixture=communication-protocol",
                 ".settings-view",
             )
+            await page.locator('[data-section="application"]').click()
+            await page.locator(".settings-panel .field-row .appearance-select-button").click()
+            await page.locator(".appearance-select-menu").get_by_role(
+                "button", name="English", exact=True
+            ).click()
+            await expect(page.get_by_role("heading", name="Application settings")).to_be_visible()
             await page.locator('[data-section="models"]').click()
             await expect(page.get_by_role("heading", name="Default model config")).to_be_visible()
             await expect(page.locator(".model-config-panel .field-row")).to_have_count(2)
@@ -227,7 +233,7 @@ async def main() -> None:
                 ".appearance-select-button"
             ).click()
             await page.locator(".appearance-select-menu").get_by_role(
-                "button", name="Simplified Chinese", exact=True
+                "button", name="简体中文", exact=True
             ).click()
             await expect(page.get_by_role("heading", name="应用设置")).to_be_visible()
             await page.locator('[data-section="personalization"]').click()

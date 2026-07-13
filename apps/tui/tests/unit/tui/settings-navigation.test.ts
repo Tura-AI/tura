@@ -5,6 +5,7 @@ import { settingOptions, settingsLines } from "../../../src/tui/render/settings.
 import { renderFrame } from "../../../src/tui/render.js";
 import { richCapabilities } from "../../../src/tui/capabilities.js";
 import { setLanguage } from "../../../src/i18n.js";
+import { personaCommunicationStyle } from "../../../src/persona-display.js";
 import { setActiveCapabilities, stripAnsi } from "../../../src/tui/render-terminal.js";
 import { initialState, reducer, type AppState } from "../../../src/tui/reducer.js";
 import { hydrate } from "../../../src/tui/runtime.js";
@@ -175,6 +176,7 @@ test("built-in persona descriptions follow the selected TUI language", () => {
 
     setLanguage("en");
     assert.match(settingOptions(state)[0]?.[1] ?? "", /Quiet/u);
+    assert.match(personaCommunicationStyle(state.personas[0]!), /Keep the response/u);
   } finally {
     setLanguage(undefined);
   }
