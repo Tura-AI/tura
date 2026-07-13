@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{
@@ -161,6 +161,7 @@ impl FakeRouterEndpoint {
                         )?;
                         stream.write_all(b"\n")?;
                         stream.flush()?;
+                        stream.shutdown(Shutdown::Write)?;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(20));

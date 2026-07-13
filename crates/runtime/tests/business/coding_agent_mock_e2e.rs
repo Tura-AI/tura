@@ -357,13 +357,9 @@ fn non_planning_agent_visible_reply_with_task_status_doing_is_backfilled_on_foll
                     .is_some_and(|content| content.contains("Done."))
         ));
     assert_eq!(
-        provider
-            .requests
-            .lock()
-            .expect("mock provider requests lock")
-            .len(),
-        1,
-        "runtime must not do a second LLM turn just to recover from stale task_status doing"
+        requests.len(),
+        2,
+        "runtime should do exactly one follow-up LLM turn to recover from stale task_status doing"
     );
 }
 
