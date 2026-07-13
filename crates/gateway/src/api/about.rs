@@ -460,6 +460,12 @@ mod tests {
         events: Mutex<Vec<String>>,
     }
 
+    impl MockRuntime {
+        fn events(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
+            self.events.lock().expect("about mock events lock")
+        }
+    }
+
     #[async_trait]
     impl AboutRuntime for MockRuntime {
         fn environment_token(&self, key: &str) -> Option<String> {
@@ -471,12 +477,12 @@ mod tests {
         }
 
         async fn add_star(&self, token: &str) -> bool {
-            self.events.lock().unwrap().push(format!("star:{token}"));
+            self.events().push(format!("star:{token}"));
             self.successful_token.as_deref() == Some(token)
         }
 
         fn open_external(&self, target: &str) -> Result<(), String> {
-            self.events.lock().unwrap().push(format!("open:{target}"));
+            self.events().push(format!("open:{target}"));
             Ok(())
         }
 
@@ -485,22 +491,16 @@ mod tests {
         }
 
         fn schedule_npm_install(&self, version: &Version) -> Result<(), String> {
-            self.events
-                .lock()
-                .unwrap()
-                .push(format!("schedule:{version}"));
+            self.events().push(format!("schedule:{version}"));
             Ok(())
         }
 
         fn abort_session(&self, session_id: &str) {
-            self.events
-                .lock()
-                .unwrap()
-                .push(format!("abort:{session_id}"));
+            self.events().push(format!("abort:{session_id}"));
         }
 
         fn schedule_gateway_exit(&self) {
-            self.events.lock().unwrap().push("exit".to_string());
+            self.events().push("exit".to_string());
         }
     }
 
@@ -525,23 +525,24 @@ mod tests {
             .insert("github.token".into(), "git-token".into());
         runtime.successful_token = Some("git-token".into());
 
-        let response = star_repository_with(&runtime).await.unwrap();
+        let response = star_repository_with(&runtime)
+            .await
+            .expect("environment or git token should add a star");
 
         assert_eq!(response.outcome, AboutStarOutcome::Starred);
-        assert_eq!(
-            *runtime.events.lock().unwrap(),
-            vec!["star:env-token", "star:git-token"]
-        );
+        assert_eq!(*runtime.events(), vec!["star:env-token", "star:git-token"]);
     }
 
     #[tokio::test]
     async fn add_star_opens_repository_after_token_attempts_fail() {
         let runtime = runtime("0.1.31");
-        let response = star_repository_with(&runtime).await.unwrap();
+        let response = star_repository_with(&runtime)
+            .await
+            .expect("failed tokens should open the repository");
 
         assert_eq!(response.outcome, AboutStarOutcome::Opened);
         assert_eq!(
-            *runtime.events.lock().unwrap(),
+            *runtime.events(),
             vec![format!("open:{GITHUB_REPOSITORY_URL}")]
         );
     }
@@ -549,18 +550,16 @@ mod tests {
     #[test]
     fn open_target_accepts_only_named_about_destinations() {
         let runtime = runtime("0.1.31");
-        let response = open_target_with(&runtime, AboutOpenTarget::Contribute).unwrap();
+        let response = open_target_with(&runtime, AboutOpenTarget::Contribute)
+            .expect("contribute is a supported about target");
 
         assert!(response.opened);
-        assert_eq!(
-            *runtime.events.lock().unwrap(),
-            vec![format!("open:{CONTRIBUTE_URL}")]
-        );
+        assert_eq!(*runtime.events(), vec![format!("open:{CONTRIBUTE_URL}")]);
     }
 
     #[tokio::test]
     async fn install_schedules_before_aborting_and_exiting() {
-        let current = Version::parse(&release_version()).unwrap();
+        let current = Version::parse(&release_version()).expect("release version should be valid");
         let latest = Version::new(current.major, current.minor, current.patch + 1).to_string();
         let runtime = runtime(&latest);
         let response = install_update_with(
@@ -571,11 +570,11 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("current npm update should be scheduled");
 
         assert!(response.scheduled);
         assert_eq!(
-            *runtime.events.lock().unwrap(),
+            *runtime.events(),
             vec![
                 format!("schedule:{latest}"),
                 "abort:session-1".into(),
@@ -595,9 +594,9 @@ mod tests {
             },
         )
         .await
-        .unwrap_err();
+        .expect_err("stale npm update version should be rejected");
 
         assert!(matches!(error, AboutError::Invalid(_)));
-        assert!(runtime.events.lock().unwrap().is_empty());
+        assert!(runtime.events().is_empty());
     }
 }
