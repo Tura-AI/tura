@@ -261,10 +261,7 @@ fn command_update_cli_event(
         );
     }
     if let Some(command_line) = command_update_command_line(update) {
-        item.insert(
-            "command_line".to_string(),
-            Value::String(command_line.clone()),
-        );
+        item.insert("command_line".to_string(), Value::String(command_line));
     }
     if let Some(step) = update
         .pointer("/command/step")
