@@ -1,65 +1,68 @@
 name: Feature request
-description: Propose a measured, narrowly scoped improvement.
+description: Propose a narrowly scoped user-facing or maintainer-facing capability.
 title: "[Feature]: "
 labels:
   - enhancement
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for new behavior. Use the Performance proposal or Provider compatibility form when that is the primary goal.
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: Describe the user problem and current workaround, not only the desired implementation.
+      label: Current problem
+      description: Describe who is blocked, the current behavior, and any workaround. Do not start with the implementation.
     validations:
       required: true
   - type: textarea
     id: outcome
     attributes:
-      label: Desired outcome and acceptance criteria
-      description: State observable behavior that would make the request complete.
+      label: Observable outcome
+      description: State what a user or maintainer can observe when this is complete.
     validations:
       required: true
   - type: textarea
     id: evidence
     attributes:
-      label: Evidence
-      description: Link reproductions, usage evidence, benchmark gaps, or evaluation results that justify the change.
+      label: Evidence of need
+      description: Link usage examples, repeated failures, roadmap items, or other evidence that the requirement exists now.
     validations:
       required: true
   - type: textarea
     id: minimal
     attributes:
-      label: Smallest viable change
-      description: Explain the simplest solution and alternatives considered.
+      label: Smallest viable scope
+      description: Separate required behavior from future or speculative extensions.
     validations:
       required: true
   - type: dropdown
     id: area
     attributes:
-      label: Area
+      label: Primary area
       options:
         - Runtime or state management
         - Session DB or persistence
-        - Provider compatibility
+        - Gateway or CLI
         - TUI
         - GUI Plan, Calendar, or Session Tasks
-        - Installation, release, or CI
-        - Benchmark or evaluation
-        - Documentation
+        - Source installation, release, or CI
+        - Testing or developer tooling
         - Other
     validations:
       required: true
   - type: textarea
-    id: verification
+    id: acceptance
     attributes:
-      label: Proposed verification
-      description: List correctness tests and, for performance claims, the before/after benchmark design.
+      label: Acceptance criteria
+      description: List observable criteria and the smallest owning test layer.
     validations:
       required: true
   - type: textarea
     id: compatibility
     attributes:
-      label: Compatibility, migration, and risk
-      description: Note affected OSes, providers, stored data, APIs, and user workflows.
+      label: Compatibility or migration concerns
+      description: Complete only when stored data, APIs, commands, or existing workflows may change.
   - type: checkboxes
     id: checks
     attributes:
@@ -68,6 +71,4 @@ body:
         - label: I searched existing issues and roadmap items.
           required: true
         - label: This request does not contain credentials or private session data.
-          required: true
-        - label: I understand that performance changes require benchmark or evaluation evidence.
           required: true

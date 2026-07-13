@@ -8,15 +8,18 @@ change the order.
 
 Tura follows YAGNI (You Aren't Gonna Need It): do not add speculative code,
 state, compatibility layers, or abstractions before a demonstrated requirement
-exists. A performance or efficiency change that cannot demonstrate an
-improvement with a relevant benchmark or evaluation should not exist. Every bug
-fix must include a regression test and must run the test flow that
-previously allowed the bug to escape.
+exists. Any pull request that claims a performance or efficiency improvement
+must demonstrate that claim with a relevant benchmark or evaluation. Changes
+whose measured value is lower complexity, a bounded resource ceiling, or a
+better worst case should state that criterion directly. Bug fixes should include
+durable regression coverage at the smallest owning layer, with higher-level
+coverage when the failure crossed a system boundary.
 
 Benchmark evidence must identify the baseline and candidate revisions, hardware
 and OS, provider/model and settings, workload, warm-up policy, sample count,
-raw results, and pass/fail thresholds. Correctness and reliability must not be
-traded for a faster median.
+p50, p95, spread, failures/timeouts, raw sanitized results, correctness, and
+pass/fail thresholds. Correctness and reliability must not be traded for a
+faster median.
 
 ## 0.1.x - Stabilize the foundation
 

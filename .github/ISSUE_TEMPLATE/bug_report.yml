@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible Tura defect or regression.
+description: Report a reproducible defect or regression.
 title: "[Bug]: "
 labels:
   - bug
@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Do not report security vulnerabilities or include credentials, private session content, or provider tokens. Use SECURITY.md for private reporting.
+        Use this form for incorrect behavior. Do not report vulnerabilities or include credentials, private session content, or provider tokens; follow SECURITY.md instead.
   - type: input
     id: version
     attributes:
@@ -16,35 +16,35 @@ body:
     validations:
       required: true
   - type: dropdown
-    id: install
+    id: area
     attributes:
-      label: Installation method
+      label: Affected surface
       options:
-        - Source installer
-        - npm package
-        - Release archive
-        - Development build
+        - Runtime or state management
+        - Session DB or persistence
+        - Gateway or CLI
+        - TUI
+        - GUI or Tauri
+        - Source installation or PATH
+        - npm package or release
+        - Provider compatibility
+        - Documentation or example
         - Other
     validations:
       required: true
   - type: input
     id: environment
     attributes:
-      label: OS, architecture, and shell
-      placeholder: Ubuntu 24.04 x64, bash 5.2
+      label: Relevant environment
+      description: Include only affected OS, architecture, shell, surface, or provider/model. Leave unrelated dimensions out.
+      placeholder: Windows 11 x64, PowerShell 7; GUI; Anthropic protocol
     validations:
       required: true
-  - type: input
-    id: provider
-    attributes:
-      label: Provider and model
-      description: Leave blank when unrelated. Never include a key or token.
-      placeholder: anthropic / model-name
   - type: textarea
     id: reproduction
     attributes:
       label: Minimal reproduction
-      description: Give exact commands and the smallest deterministic sequence.
+      description: Give the smallest deterministic sequence. Redact private data.
     validations:
       required: true
   - type: textarea
@@ -59,34 +59,34 @@ body:
       label: Actual behavior
     validations:
       required: true
-  - type: textarea
-    id: logs
-    attributes:
-      label: Relevant logs or artifacts
-      description: Redact credentials, paths containing personal data, prompts, and session content.
-      render: shell
   - type: dropdown
-    id: regression
+    id: frequency
     attributes:
-      label: Regression status
+      label: Frequency
       options:
-        - Worked in an earlier version
-        - Never worked
+        - Every time
+        - Intermittent but repeatable
+        - Rare or timing-dependent
+        - Occurred once
         - Unknown
     validations:
       required: true
   - type: input
     id: last_working
     attributes:
-      label: Last known working version or commit
+      label: Last known working version
+      description: Leave blank if unknown or if it never worked.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Include the smallest useful log, trace, screenshot, or fixture. Remove credentials, headers, session IDs, private paths, prompts, and session content.
   - type: checkboxes
     id: checks
     attributes:
       label: Checks
       options:
         - label: I searched existing issues and found no duplicate.
-          required: true
-        - label: I can reproduce this on the version or commit listed above.
           required: true
         - label: I removed credentials and private session data.
           required: true

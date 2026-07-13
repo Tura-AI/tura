@@ -1,74 +1,88 @@
 # Contributing to Tura
 
-Thank you for improving Tura. The project values small changes, reproducible
-evidence, and durable tests over broad rewrites.
+Thank you for improving Tura. Small, reviewable changes are welcome. The goal is
+not to make every pull request prove everything; it is to make each pull request
+prove the behavior it owns.
+
+## Start here
+
+1. Search existing issues and pull requests.
+2. Choose the contribution type below. Use its issue and pull-request template.
+3. Set up dependencies without changing your user PATH.
+4. Make the smallest change that satisfies an observable requirement.
+5. Run the smallest test layer that owns the behavior, then any affected
+   boundary flow.
+6. Open a pull request that states what was and was not verified.
+
+Read the [contribution guide](../docs/contributing-guide.md) for the test
+ownership model, benchmark format, evidence-sanitization rules, and affected
+test matrix.
+
+## Choose the contribution type
+
+| Type | Open an issue first? | Primary evidence | Template |
+| --- | --- | --- | --- |
+| Bug fix | Recommended; required for security-sensitive or broad fixes | Reproduction, root cause, smallest owning regression test | [Bug fix](https://github.com/Tura-AI/tura/compare?expand=1&template=bug_fix.md) |
+| Feature or behavior change | Required for large features, state changes, migrations, or compatibility breaks | User problem and observable acceptance criteria | [Feature](https://github.com/Tura-AI/tura/compare?expand=1&template=feature.md) |
+| Performance or efficiency claim | Required | Before/after end-to-end benchmark and correctness comparison | [Performance](https://github.com/Tura-AI/tura/compare?expand=1&template=performance.md) |
+| Provider compatibility | Required for a new provider or protocol family | Protocol fixtures; scoped live evidence when needed | [Provider](https://github.com/Tura-AI/tura/compare?expand=1&template=provider.md) |
+| Documentation only | Not normally | Source accuracy, links, and rendered/readable output | [Documentation](https://github.com/Tura-AI/tura/compare?expand=1&template=documentation.md) |
+
+Use the repository's **New issue** chooser for matching issue forms. Report
+security vulnerabilities privately through [SECURITY.md](SECURITY.md).
 
 ## Open harness principle
 
-We believe the best agent harness should be open source. Prompts, tool
-contracts, runner behavior, benchmark methodology, evaluation criteria, and
-failure evidence should be inspectable and reproducible. Contributions must not
-introduce hidden benchmark-only behavior, opaque scoring paths, or private logic
-required to reproduce a public claim.
+We believe the best agent harness should be open source. Logic controlled by
+this project that is necessary to reproduce a public claim must be inspectable:
+prompts, tool contracts, runner behavior, benchmark methodology, scoring rules,
+and failure classification. Do not add hidden benchmark branches, private
+scoring logic, or prompt-specific production behavior.
 
-## Before starting
+Reproducibility does not mean every dependency must be open source or runnable
+offline. For commercial providers, judge models, licensed datasets, and other
+external systems, record the interface, provider/model or dataset version,
+settings, date, known limitations, and access requirements. When material cannot
+be published for privacy, security, license, or provider-policy reasons, provide
+a safe substitute such as a redacted fixture, content hash, generator, schema,
+or private disclosure path. Never publish an exploit payload that belongs in a
+private security report.
 
-- Search existing issues and pull requests.
-- Open an issue before a large feature, state-model change, data migration,
-  provider expansion, or user-facing compatibility break.
-- Never include API keys, OAuth tokens, session databases, provider logs, or
-  private benchmark inputs.
-- For security reports, follow [SECURITY.md](SECURITY.md) instead of opening a
-  public issue.
+## Scope and evidence
 
-## Evidence-first rule
+Apply YAGNI (You Aren't Gonna Need It): do not add speculative state,
+compatibility layers, provider abstractions, or generalized behavior without a
+demonstrated requirement. Explain why each new abstraction is needed now.
 
-Apply YAGNI (You Aren't Gonna Need It): do not implement speculative behavior,
-state, compatibility, or abstraction without a demonstrated requirement. A
-performance or efficiency change that cannot prove an improvement through a
-relevant benchmark or evaluation should not exist in the codebase.
+Only pull requests that make a performance or efficiency claim must provide the
+full benchmark evidence defined in the
+[contribution guide](../docs/contributing-guide.md#performance-and-efficiency-evidence).
+Changes whose primary value is simpler code, a lower resource ceiling, or a
+better worst case may use that as their acceptance criterion; do not relabel
+them as an average-speed improvement without evidence.
 
-Performance evidence must include:
+## Bug fixes and regression coverage
 
-- baseline and candidate commit IDs;
-- exact command, workload, provider/model/settings, OS, and hardware;
-- warm-up policy, sample count, raw results, and variance;
-- correctness results and resource trade-offs;
-- before/after p50 and tail latency where latency is claimed.
+By default, a bug fix includes a regression test that fails without the fix and
+passes with it. Add coverage in the **smallest test layer that owns the affected
+behavior**. Add a higher-level test only when the failure crossed a process,
+storage, protocol, OS, release, TUI, or GUI boundary.
 
-Do not optimize only one internal timer if end-to-end behavior is unchanged.
-Do not accept lower correctness, reliability, or recovery quality as a hidden
-performance trade.
+Some failures cannot be retained as stable automated tests, including rare
+hardware races, temporary upstream outages, confidential security inputs, and
+inputs that cannot be redistributed. In that case, explain the limitation and
+provide the strongest durable substitute: a deterministic model or fixture, a
+stress test, a sanitized trace, a fault-injection case, a manual reproduction,
+or a follow-up issue. An exception is evidence to review, not permission to omit
+verification silently.
 
-## Bug-fix contract
-
-Every bug fix must include:
-
-- a minimal reproduction or failing test;
-- a regression test that fails before the fix and passes after it;
-- coverage in the flow that previously missed the bug: unit, business, OS,
-  performance, release, live, TUI, or GUI end-to-end;
-- documentation updates when behavior, setup, architecture, or compatibility
-  changes.
-
-If a test assertion unrelated to your change appears outdated, do not rewrite it
-merely to get green CI. Explain the mismatch in the pull request.
+If an unrelated assertion appears outdated, do not rewrite it merely to get a
+green result. Describe the mismatch in the pull request.
 
 ## Development setup
 
-The default installer performs environment setup, release build, and user PATH
-registration:
-
-```powershell
-.\scripts\install.ps1
-```
-
-```bash
-./scripts/install.sh
-```
-
-For dependency setup without a release build or PATH registration, explicitly
-use environment-only mode:
+For contribution work, start with dependency-only setup. It does not build a
+release or register Tura on your user PATH:
 
 ```powershell
 .\scripts\install.ps1 -EnvironmentOnly
@@ -78,55 +92,91 @@ use environment-only mode:
 ./scripts/install.sh --environment-only
 ```
 
-See [Install](../docs/start/install.md) and
-[Testing](../tests/README.md) for targeted commands.
-
-## Choosing tests
-
-Run the smallest owning suite while developing, then the complete affected flow
-before requesting review.
+The default installer is the full end-user flow. It builds into
+`target/release` and registers that directory on the user PATH:
 
 ```powershell
-.\scripts\check-backend-quality.ps1
-.\xtask\scripts\run-backend-business-tests.ps1
-.\xtask\scripts\run-backend-os-tests.ps1
-.\xtask\scripts\run-backend-performance-tests.ps1
+.\scripts\install.ps1
 ```
 
 ```bash
-sh scripts/check-backend-quality.sh
-sh xtask/scripts/run-backend-business-tests.sh
-sh xtask/scripts/run-backend-os-tests.sh
-sh xtask/scripts/run-backend-performance-tests.sh
+./scripts/install.sh
 ```
 
-Use the app-owned commands for TUI and GUI suites. Live-provider tests are
-opt-in, may cost money, and must never run with contributor credentials in an
-untrusted pull request.
+On Windows, registration updates the user PATH. On Linux and macOS, it adds a
+marked block to applicable user shell profiles. It does not overwrite unrelated
+PATH entries, but an existing `tura` command may resolve differently after the
+new entry is added. PATH registration itself is user-scoped; dependency package
+managers may separately request elevation. Undo registration with:
 
-## Pull requests
+```powershell
+.\scripts\unregister-cli.ps1
+```
 
-- Keep the scope narrow and explain the root cause.
-- Link the issue and identify user-visible behavior.
-- List changed contracts and compatibility risks.
-- Include exact test commands and summarized results.
-- Attach raw benchmark/evaluation artifacts for performance claims.
-- State which OS and provider/model cells were and were not tested.
-- Keep generated files, local state, logs, and secrets out of the commit.
+```bash
+./scripts/unregister-cli.sh
+```
+
+See [Install](../docs/start/install.md) for exact files, effects, and cleanup.
+
+## Choosing tests
+
+Use the [test ownership table](../docs/contributing-guide.md#test-ownership) and
+the full [testing reference](../tests/README.md). Common entrypoints include:
+
+| Surface | Quality | Deterministic tests | Broader affected flow |
+| --- | --- | --- | --- |
+| Backend | `scripts/check-backend-quality.*` | owning crate or `run-backend-business-tests.*` | `run-backend-os-tests.*`, performance, release, or live runner only when affected |
+| TUI | `npm --prefix apps/tui run check` | `npm --prefix apps/tui run test:unit` | `test:e2e`, `test:business`, or the affected performance/live command |
+| GUI | `bun run --cwd apps/gui check` | `bun run --cwd apps/gui test:unit` | `test:e2e`, `test:performance`, or the affected live command |
+
+Live-provider tests are opt-in, may cost money, and must not use contributor
+credentials in an untrusted pull request.
+
+## Opening a pull request
+
+Create a focused branch and commit only related files:
+
+```bash
+git switch -c fix/short-description
+git add <related-paths>
+git commit -m "Fix short description"
+git push -u origin fix/short-description
+```
+
+Open the matching template from the contribution-type table, select the correct
+base and compare branches, and complete only that template's requirements. If
+you open a pull request without a type-specific template, the generic template
+will ask you to select a type and provide the matching evidence.
+
+- Keep one primary contribution type per pull request. Split unrelated fixes.
+- Link the issue when one is required and describe the user-visible result.
+- Explain the root cause or requirement, not only the edited files.
+- List exact commands and summarized results. Say plainly what was not run.
+- Report only affected OS, surface, provider/protocol, behavior, and state
+  dimensions; there is no requirement to enumerate an infinite Cartesian
+  product.
+- Update documentation when setup, behavior, architecture, compatibility, or
+  a public claim changes.
 - Update `ROADMAP.md` or `docs/KNOWN_ISSUES.md` only when evidence changes their
   status.
+- Keep credentials, private session data, unsafe provider logs, and generated
+  local state out of commits and pull requests.
 
-Maintainers may decline a correct change if its complexity is not justified by
-measured value or if it lacks regression coverage.
+Maintainers may decline a correct change when its complexity is not justified by
+the demonstrated requirement, when a public claim is not reproducible, or when
+the affected behavior lacks reasonable regression coverage.
 
-## Commit authorship
+## Authorship and tool assistance
 
-Use clear imperative commit subjects. If Tura AI materially contributes to a
-commit, append this trailer after a blank line:
+Human submitters are responsible for correctness, licensing, provenance, and
+the statements made in a pull request. Do not add an AI system as a
+`Co-authored-by` identity. You may disclose meaningful tool or AI assistance in
+the pull request when it helps reviewers understand provenance or verification;
+disclosure does not transfer responsibility away from the human contributors.
 
-```text
-Co-authored-by: Tura AI <info@turaai.net>
-```
+Use clear imperative commit subjects and follow the repository's existing
+history for commit structure.
 
 ## Contact
 

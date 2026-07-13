@@ -3,6 +3,7 @@
 - [Tura documentation](README.md)
 - [Roadmap](../ROADMAP.md)
 - [Known issues](KNOWN_ISSUES.md)
+- [Contribution guide](contributing-guide.md)
 
 ## Start
 

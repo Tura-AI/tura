@@ -39,6 +39,29 @@ surfaces to fail instead of warn.
 
 Clone the repository and run the platform installer from the checkout root.
 
+### Contributor dependency setup
+
+If you are preparing a checkout for development or tests, start with
+environment-only mode. It installs or verifies dependencies without building a
+release and without modifying your user PATH:
+
+```powershell
+git clone https://github.com/Tura-AI/tura.git
+cd tura
+.\scripts\install.ps1 -EnvironmentOnly
+```
+
+```bash
+git clone https://github.com/Tura-AI/tura.git
+cd tura
+./scripts/install.sh --environment-only
+```
+
+### Full source installation
+
+Use the default installer when you want a runnable release command registered
+for future terminals:
+
 ```powershell
 git clone https://github.com/Tura-AI/tura.git
 cd tura
@@ -57,6 +80,18 @@ By default, `scripts/install.*` installs source-checkout dependencies, builds th
 full release into `target/release`, and registers that directory on the user
 PATH. `scripts/build-release.*` and `scripts/register-cli.*` remain available
 for targeted development and release work.
+
+The PATH change is user-scoped. On Windows, the installer adds the checkout's
+`target\release` directory to the user PATH. On Linux, it adds a marked block to
+existing `.profile`, `.bash_profile`, `.bashrc`, `.zprofile`, or `.zshrc` files
+and ensures `.profile` exists. On macOS, it also ensures `.zprofile` and `.zshrc`
+exist. It does not overwrite unrelated entries, but the new entry can take
+precedence over another `tura` executable. PATH registration itself does not
+require administrator privileges; dependency package managers may separately
+request elevation.
+
+Use `scripts/unregister-cli.*` to remove the registered release path. The command
+does not delete the checkout, release files, provider data, or session data.
 
 ## Install with curl from GitHub
 

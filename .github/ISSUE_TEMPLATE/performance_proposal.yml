@@ -1,0 +1,68 @@
+name: Performance proposal or regression
+description: Propose or report a measurable latency, throughput, memory, CPU, I/O, token, or scale change.
+title: "[Performance]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Define one measurable claim. Use the ordinary bug form if correctness is broken and performance is incidental.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of report
+      options:
+        - Suspected performance regression
+        - Proposed performance improvement
+        - Resource ceiling or worst-case issue
+        - Benchmark or measurement gap
+    validations:
+      required: true
+  - type: textarea
+    id: claim
+    attributes:
+      label: Measurable claim or problem
+      description: Name the end-to-end metric, workload, and desired threshold. Internal timing alone is not an end-to-end claim.
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload and environment
+      description: Include command, data size, OS, hardware, and provider/model/settings only when relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Existing measurements
+      description: Provide commits, warm-up, sample count, p50, p95, IQR, failures/timeouts, correctness, and relevant resource metrics when available.
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Sanitized raw evidence
+      description: Link recomputable JSON/CSV or explain why it is unavailable. Do not include credentials, headers, session IDs, private inputs, or restricted provider content.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Proposed acceptance threshold
+      description: State the pass/fail criterion and correctness or reliability guardrail.
+    validations:
+      required: true
+  - type: textarea
+    id: affected
+    attributes:
+      label: Affected matrix only
+      description: List relevant surface, OS/package, provider protocol, behavior, or state dimensions. Do not enumerate unaffected combinations.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I did not silently remove outliers or failed samples.
+          required: true
+        - label: Public evidence is sanitized and redistributable.
+          required: true

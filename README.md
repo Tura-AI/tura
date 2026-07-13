@@ -325,6 +325,7 @@ full navigation page is [docs/start/navigation.md](docs/start/navigation.md).
 - [Roadmap](ROADMAP.md)
 - [Known issues](docs/KNOWN_ISSUES.md)
 - [Contributing](.github/CONTRIBUTING.md)
+- [Contribution guide](docs/contributing-guide.md)
 
 ## License
 
