@@ -14,17 +14,13 @@
 
 Tura is a local open-source coding agent built for developers who are tired of useless skills, extensions that claim they can save tokens, and agents that wreck repos without judgment.
 
-Tura reduces model round trips and repeated context through its runtime and macro-command architecture. In the DeepSWE comparison, Balanced used 35.8% fewer turns and 31.1% fewer tokens than Codex CLI, while Direct used 69.1% fewer turns and 77.5% fewer tokens. Both Tura configurations ran GPT-5.6 SOL at High reasoning while still using fewer aggregate tokens than Codex CLI at Medium reasoning. Balanced prioritizes thorough investigation, implementation, and verification for higher task success; Direct follows a shorter execution path to minimize turn and token cost.[^debug-figure][^debug-manifests]
+Across 20 DeepSWE v1.1 tasks run three times per agent, Tura first creates a substantial token-budget advantage by reducing repeated context and model round trips. Users can then choose how to spend that advantage: Direct converts most of it into lower cost, using 77.5% fewer aggregate tokens than Codex CLI while achieving a comparable verifier success rate of 65.0% versus 63.3%; Balanced reinvests part of the saved budget into deeper reasoning, investigation, and verification, reaching an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
 
 ### Benchmark
 
 Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to measure coding-agent performance beyond isolated prompts. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
 
-> Across 20 DeepSWE v1.1 tasks run three times per agent, Tura first creates a substantial token-budget advantage by reducing repeated context and model round trips. Users can then choose how to spend that advantage: Direct converts most of it into lower cost, using 77.5% fewer aggregate tokens than Codex CLI while achieving a comparable verifier success rate of 65.0% versus 63.3%; Balanced reinvests part of the saved budget into deeper reasoning, investigation, and verification, reaching an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
-
-The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]
-
-The public [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md) gives the full evidence ledger: acquisition and storage, cohort alignment, retained Tura timeouts and severe long tails, the High-versus-Medium rationale, prompt-generation drift, compact-context and other missing ablations, and the next controlled experiments. It also audits eight same-model, same-High-effort design runs. Across those runs, Tura Direct used 43.6% fewer tokens and 24.1% fewer turns while recording 264 tool actions versus Codex CLI's 43. In the squid decks, all 20 Tura video links are resolvable, specific YouTube pages and 18/20 have exact-dish titles; all 20 Codex links are search-result pages, and 60% of Codex recipe citations are searches or broad indexes. In the Paris task, the public HTML artifacts expose the reported Codex angle/layer problems, while Tura's contracts record real-browser WebGL checks and inspected captures at 1440, 768, and 390 pixels.[^test-set-record]
+> The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]. [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md). [^test-set-record]
 
 <details>
 <summary><strong>FULL BENCHMARK REPORT</strong></summary>
@@ -326,25 +322,9 @@ Tura is licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE).
 
 ## Benchmark notes and sources
 
-The benchmark's scope, selection rules, scoring boundaries, invalid-run policy, and reporting protocol live in the benchmark repository's [methodology](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md). The [current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md) is the claim ledger for the July 2026 artifacts. It documents the raw-to-normalized-to-published data path, same-cohort guarantees, physical continuation batches, the mid-run prompt revision, retained failures and long tails, design observations, and missing ablations.[^test-set-record]
-
-The DeepSWE headline compares named system configurations: Tura Balanced and Tura Direct GPT-5.6 SOL High against Codex CLI GPT-5.6 SOL Medium. It is not a controlled effort ablation. "Success" is the official binary verifier result over 60 published sessions per agent. The three [replicate manifests](https://github.com/Tura-AI/benchmark/tree/main/results/debug) retain the same 20 task IDs and expose each task, agent, effort, replicate, status, round count, and artifact path.[^debug-manifests]
-
-The published DeepSWE claims can be checked directly:
-
-- Codex CLI passed `38/60` (`63.3%`), using `333,538,349` tokens and `3,140` rounds.
-- Tura Balanced passed `48/60` (`80.0%`), using `229,695,477` tokens and `2,017` rounds: 10 additional passes, 31.1% fewer tokens, and 35.8% fewer rounds than Codex.
-- Tura Direct passed `39/60` (`65.0%`), using `75,108,167` tokens and `969` rounds: one additional pass, 77.5% fewer tokens, and 69.1% fewer rounds than Codex.
-- The worst Balanced observation was not trimmed: it reached `35,464,917` tokens and `242` rounds before timeout. Eight Balanced agent executions and one Codex execution have timeout/non-zero outcomes in the published source summaries.
-- A later batch introduced a recorded TDD-oriented prompt revision. The final 180 observations remain task/model/environment/verifier aligned, but they are not one immutable prompt-version cohort. This prevents attributing the aggregate result to the prompt change or to any single runtime feature.
-
-The design/front-end evidence is a smaller process and artifact audit: two tasks, two agents, and two replicates, with both agents on GPT-5.6 SOL High. Across those eight runs, Tura Direct used 43.6% fewer tokens and 24.1% fewer turns while recording 264 tool actions versus Codex CLI's 43. Tool-action counts are not a quality score; they show that lower model usage coexisted with more archived source discovery, media inspection, link probing, browser checks, and responsive verification.[^test-set-record]
-
-The design claims are also inspectable rather than decorative. In the two squid runs per agent, all 20 Tura video destinations are resolvable, specific YouTube pages and 18/20 have titles matching the exact displayed dish; the other two are neighboring method evidence. Tura likewise has 18/20 exact-dish recipe pages and two method-level sources. All 20 Codex video destinations are YouTube search-result pages, and 12/20 Codex recipe citations are search or broad-index pages. For Paris, the evidence record links all four HTML artifacts so readers can inspect the reported Codex angle and layer-order problems. Tura's published contracts additionally record Playwright screenshots at 1440, 768, and 390 pixels, three `read_media` inspections, WebGL and console checks, and interaction assertions. The screenshots remained in ignored raw storage, so the durable public evidence is the contract plus the final HTML; publishing both agents' captures is an explicit next step.[^test-set-record]
-
-No feature-level causal claim is made. There is no completed ablation for `command_run`, `compact_context`, backward-reasoning instructions, operation-manual loading, prompt generation, or reasoning effort. Compact-context continuation is asymmetric observational evidence because Tura emits explicit events while Codex comparison points are inferred from token drops. The planned controls are a frozen-prompt rerun, a crossed agent x Medium/High matrix, one-feature-at-a-time ablations, paired uncertainty analysis, deterministic design integrity checks, and blinded multi-reviewer design scoring.[^test-set-record]
-
-Rewrite success remains separately defined as `sum(passed) / sum(total)` over the canonical manifest; it is not averaged across run percentages.[^rewrite-manifest]
+- [Benchmark methodology](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md)
+- [Current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
+- [Benchmark artifacts](https://github.com/Tura-AI/benchmark/tree/main/results)
 
 [^debug-figure]: [DeepSWE and Rewrite Repo comparison figure](assets/data/benchmark-agent-comparison.svg). The figure states the task, session, verifier, turn, token, and aggregation scopes used by the README.
 
