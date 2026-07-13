@@ -14,8 +14,9 @@ the same checklist.
 | Provider | Protocol behavior, fixture coverage, external-system metadata, and any live limitations | Every model sold by the provider |
 | Documentation | Accuracy against an owning source, valid links, and readable structure | Code regression tests unless executable behavior changed |
 
-Security reports follow `.github/SECURITY.md`, not public issue or pull-request
-templates.
+Security reports follow the
+[security policy](https://github.com/Tura-AI/tura/blob/main/.github/SECURITY.md),
+not public issue or pull-request templates.
 
 ## Test ownership
 
@@ -146,7 +147,8 @@ By submitting a contribution, you agree that it may be distributed under the
 repository's license and confirm that you have the right to submit it. Do not
 include third-party code, data, prompts, fixtures, or generated material whose
 license or provenance is unclear. Review the
-[Code of Conduct](../.github/CODE_OF_CONDUCT.md), the
-[repository architecture](../ARCHITECTURE.md), and the core-code links in
-[CONTRIBUTING.md](../.github/CONTRIBUTING.md#core-code-and-architecture) before
-changing ownership or system boundaries.
+[Code of Conduct](https://github.com/Tura-AI/tura/blob/main/.github/CODE_OF_CONDUCT.md),
+the [repository architecture](https://github.com/Tura-AI/tura/blob/main/ARCHITECTURE.md),
+and the core-code links in
+[CONTRIBUTING.md](https://github.com/Tura-AI/tura/blob/main/.github/CONTRIBUTING.md#core-code-and-architecture)
+before changing ownership or system boundaries.

@@ -14,27 +14,28 @@ prove the behavior it owns.
    boundary flow.
 6. Open a pull request that states what was and was not verified.
 
-Read the [contribution guide](../docs/contributing-guide.md) for the test
+Read the [contribution guide](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md) for the test
 ownership model, benchmark format, evidence-sanitization rules, and affected
 test matrix. Participation in this project is governed by the
-[Code of Conduct](CODE_OF_CONDUCT.md).
+[Code of Conduct](https://github.com/Tura-AI/tura/blob/main/.github/CODE_OF_CONDUCT.md).
 
 ## Core code and architecture
 
-Read the [repository architecture](../ARCHITECTURE.md) before changing a system
+Read the [repository architecture](https://github.com/Tura-AI/tura/blob/main/ARCHITECTURE.md) before changing a system
 boundary. The main implementation owners are:
 
-- [runtime](../crates/runtime/src/) and its
-  [architecture](../crates/runtime/ARCHITECTURE.md);
-- [session DB](../crates/session_log/src/) and its
-  [architecture](../crates/session_log/ARCHITECTURE.md);
-- [gateway](../crates/gateway/src/) and its
-  [architecture](../crates/gateway/ARCHITECTURE.md);
-- [tools](../crates/tools/src/) and their
-  [architecture](../crates/tools/ARCHITECTURE.md);
-- [TUI](../apps/tui/src/) and its [architecture](../apps/tui/ARCHITECTURE.md);
-- [GUI](../apps/gui/app/src/) and its
-  [architecture](../apps/gui/ARCHITECTURE.md).
+- [runtime](https://github.com/Tura-AI/tura/tree/main/crates/runtime/src) and its
+  [architecture](https://github.com/Tura-AI/tura/blob/main/crates/runtime/ARCHITECTURE.md);
+- [session DB](https://github.com/Tura-AI/tura/tree/main/crates/session_log/src) and its
+  [architecture](https://github.com/Tura-AI/tura/blob/main/crates/session_log/ARCHITECTURE.md);
+- [gateway](https://github.com/Tura-AI/tura/tree/main/crates/gateway/src) and its
+  [architecture](https://github.com/Tura-AI/tura/blob/main/crates/gateway/ARCHITECTURE.md);
+- [tools](https://github.com/Tura-AI/tura/tree/main/crates/tools/src) and their
+  [architecture](https://github.com/Tura-AI/tura/blob/main/crates/tools/ARCHITECTURE.md);
+- [TUI](https://github.com/Tura-AI/tura/tree/main/apps/tui/src) and its
+  [architecture](https://github.com/Tura-AI/tura/blob/main/apps/tui/ARCHITECTURE.md);
+- [GUI](https://github.com/Tura-AI/tura/tree/main/apps/gui/app/src) and its
+  [architecture](https://github.com/Tura-AI/tura/blob/main/apps/gui/ARCHITECTURE.md).
 
 Follow existing ownership and contract boundaries rather than adding a parallel
 state model, parser, protocol, or test hierarchy.
@@ -50,7 +51,8 @@ state model, parser, protocol, or test hierarchy.
 | Documentation only | Not normally | Source accuracy, links, and rendered/readable output | [Documentation](https://github.com/Tura-AI/tura/compare?expand=1&template=documentation.md) |
 
 Use the repository's **New issue** chooser for matching issue forms. Report
-security vulnerabilities privately through [SECURITY.md](SECURITY.md).
+security vulnerabilities privately through
+[SECURITY.md](https://github.com/Tura-AI/tura/blob/main/.github/SECURITY.md).
 
 ## Open harness principle
 
@@ -77,7 +79,7 @@ demonstrated requirement. Explain why each new abstraction is needed now.
 
 Only pull requests that make a performance or efficiency claim must provide the
 full benchmark evidence defined in the
-[contribution guide](../docs/contributing-guide.md#performance-and-efficiency-evidence).
+[contribution guide](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#performance-and-efficiency-evidence).
 Changes whose primary value is simpler code, a lower resource ceiling, or a
 better worst case may use that as their acceptance criterion; do not relabel
 them as an average-speed improvement without evidence.
@@ -89,7 +91,8 @@ repository's license and confirm that you have the right to submit it. Do not
 include third-party code, data, prompts, fixtures, or generated material whose
 license or provenance is unclear.
 
-See [LICENSE](../LICENSE) for the repository license. Identify any compatible
+See [LICENSE](https://github.com/Tura-AI/tura/blob/main/LICENSE) for the
+repository license. Identify any compatible
 third-party material and its source in the pull request when it is necessary to
 review provenance or redistribution rights.
 
@@ -149,12 +152,14 @@ managers may separately request elevation. Undo registration with:
 ./scripts/unregister-cli.sh
 ```
 
-See [Install](../docs/start/install.md) for exact files, effects, and cleanup.
+See [Install](https://github.com/Tura-AI/tura/blob/main/docs/start/install.md)
+for exact files, effects, and cleanup.
 
 ## Choosing tests
 
-Use the [test ownership table](../docs/contributing-guide.md#test-ownership) and
-the full [testing reference](../tests/README.md). Common entrypoints include:
+Use the [test ownership table](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#test-ownership)
+and the full [testing reference](https://github.com/Tura-AI/tura/blob/main/tests/README.md).
+Common entrypoints include:
 
 | Surface | Quality | Deterministic tests | Broader affected flow |
 | --- | --- | --- | --- |
@@ -190,7 +195,9 @@ will ask you to select a type and provide the matching evidence.
   product.
 - Update documentation when setup, behavior, architecture, compatibility, or
   a public claim changes.
-- Update `ROADMAP.md` or `docs/KNOWN_ISSUES.md` only when evidence changes their
+- Update the [roadmap](https://github.com/Tura-AI/tura/blob/main/ROADMAP.md) or
+  [known issues](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md)
+  only when evidence changes their
   status.
 - Keep credentials, private session data, unsafe provider logs, and generated
   local state out of commits and pull requests.

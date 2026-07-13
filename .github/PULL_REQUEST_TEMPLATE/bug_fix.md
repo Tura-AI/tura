@@ -21,7 +21,8 @@ command -> result
 ```
 
 If stable automation is not possible, explain the limitation and provide the
-durable substitute evidence described in `docs/contributing-guide.md`.
+durable substitute evidence described in the
+[contribution guide](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#test-ownership).
 
 ## Affected matrix
 
