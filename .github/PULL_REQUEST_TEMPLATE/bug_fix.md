@@ -22,7 +22,7 @@ command -> result
 
 If stable automation is not possible, explain the limitation and provide the
 durable substitute evidence described in the
-[contribution guide](../../docs/contributing-guide.md#test-ownership).
+[contribution guide](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#test-ownership).
 
 ## Affected matrix
 

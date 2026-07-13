@@ -45,7 +45,7 @@ that criterion directly.
 ## Evidence safety
 
 - [ ] Artifacts were scanned and sanitized as required by the
-      [contribution guide](../../docs/contributing-guide.md#safe-and-reproducible-evidence).
+      [contribution guide](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#safe-and-reproducible-evidence).
 - [ ] No credentials, authorization headers, private prompts/sessions, restricted inputs, or unsafe provider logs are included.
 - [ ] A human is the primary submitter and accepts responsibility for the claim, correctness, licensing, provenance, verification, and the statements in this pull request.
 - [ ] I have the right to submit all included material and benchmark evidence under the repository license.

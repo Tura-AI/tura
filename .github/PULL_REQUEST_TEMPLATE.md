@@ -1,7 +1,7 @@
 ## Pull request type
 
 Select one primary type. For more focused prompts, use the matching template in
-[PULL_REQUEST_TEMPLATE/](PULL_REQUEST_TEMPLATE/):
+[PULL_REQUEST_TEMPLATE/](https://github.com/Tura-AI/tura/tree/main/.github/PULL_REQUEST_TEMPLATE):
 
 - [ ] [Bug fix](https://github.com/Tura-AI/tura/compare?expand=1&template=bug_fix.md)
 - [ ] [Feature or behavior change](https://github.com/Tura-AI/tura/compare?expand=1&template=feature.md)
@@ -38,7 +38,7 @@ Complete only what applies:
 - Bug: reproduction, root cause, and smallest owning regression layer.
 - Feature: current user problem and observable acceptance criteria.
 - Performance: claim plus the benchmark fields in the
-  [contribution guide](../docs/contributing-guide.md#performance-and-efficiency-evidence).
+  [contribution guide](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#performance-and-efficiency-evidence).
 - Provider: protocol fixture/live boundary and external dependency metadata.
 - Documentation: owning sources checked and links/rendering verified.
 
@@ -49,7 +49,7 @@ substitute evidence.
 
 - [ ] No credentials, private session data, unsafe provider logs, or generated local state are included.
 - [ ] Public evidence was sanitized according to the
-      [contribution guide](../docs/contributing-guide.md#safe-and-reproducible-evidence).
+      [contribution guide](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#safe-and-reproducible-evidence).
 - [ ] A human is the primary submitter and accepts responsibility for correctness, licensing, provenance, verification, and the statements in this pull request.
 - [ ] I have the right to submit all included code, data, prompts, fixtures, and generated material under the repository license.
 
