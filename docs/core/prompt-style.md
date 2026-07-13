@@ -1,8 +1,9 @@
 # Prompt Style and Dynamic Prompt Injection
 
-Prompt style is Tura's runtime-controlled prompt injection layer. It adds the
-right operational instructions to a turn when session state says they are needed,
-instead of forcing every agent to carry one static mega-prompt forever.
+Prompt style is how Tura gives a turn the instructions it needs without making
+every agent carry one static mega-prompt forever. The runtime adds operational
+guidance when session state calls for it, then leaves unrelated guidance out.
+Prompts also benefit from not packing for every possible weather system.
 
 This is not "prompt injection" in the security-bug sense. User text is not
 allowed to become privileged system policy just because it is persuasive. Tura's

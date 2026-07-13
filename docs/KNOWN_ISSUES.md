@@ -1,9 +1,10 @@
 # Known Issues and Evidence Gaps
 
-This document records known architectural risks and missing evidence. It does
-not mean every item is reproduced on every machine. Link a concrete GitHub issue
-when a reproducible failure is available, and remove an item only after its exit
-criteria and regression coverage are satisfied.
+This is the list of places where Tura is not yet proven enough. Some entries are
+reproduced failures; others are architectural risks or missing evidence. They do
+not occur on every machine. Link a concrete GitHub issue when a failure can be
+reproduced, and remove an entry only after its exit criteria and regression
+coverage are satisfied. Optimism is useful. It is not a test result.
 
 ## Provider benchmark coverage is narrow
 

@@ -1,10 +1,10 @@
 # Command Run
 
 `command_run` is Tura's model-visible execution surface for terminal-native
-work. The provider sees one compact tool. Tura routes every item in the batch to
-internal commands such as `shell_command`, `bash`, `zsh`, `apply_patch`,
-`web_discover`, `read_media`, `generate_media`, `task_status`, and optional
-`planning`.
+work. The provider sees one compact tool instead of negotiating every local
+action in a separate round trip. Tura routes each batch item to internal commands
+such as `shell_command`, `bash`, `zsh`, `apply_patch`, `web_discover`,
+`read_media`, `generate_media`, `task_status`, and optional `planning`.
 
 The GUI i18n text exposes the product shape directly: command blocks are shown
 with labels such as `runCommands` / `runningCommands`, and individual command

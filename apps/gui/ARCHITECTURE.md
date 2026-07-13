@@ -2,8 +2,10 @@
 
 ## Goal
 
-`apps/gui` is the graphical Tura client and the only browser/desktop-facing UI
-for the gateway. It must preserve the current Tura architecture:
+`apps/gui` is Tura's graphical client and the only browser/desktop-facing UI for
+the gateway. The useful boundary is simple: the GUI presents and edits gateway
+state; it does not quietly become another backend. It must preserve the current
+Tura architecture:
 
 - the GUI talks to `crates/gateway` only through the TypeScript gateway SDK
 - runtime execution, provider auth, PTY, file IO, command execution, session

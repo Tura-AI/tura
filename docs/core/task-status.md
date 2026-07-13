@@ -1,9 +1,9 @@
 # Task Status
 
-`task_status` is Tura's internal task-management update command. It is exposed
-as a `command_run` subcommand, but it does not edit files, call a shell, or talk
-to a provider. Its job is narrow: update the session's active work area, task
-state, runtime prompt task types, or compact-context handoff.
+`task_status` is Tura's internal task-management update command. It appears as a
+`command_run` subcommand, but it does not edit files, call a shell, or talk to a
+provider. Its job is narrower and more useful: keep the session's active work
+area, task state, runtime prompt task types, and compact-context handoff explicit.
 
 It is deliberately not a user-visible response channel. The assistant still has
 to answer the user normally before marking a task `done` or asking a `question`.

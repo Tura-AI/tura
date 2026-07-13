@@ -1,5 +1,8 @@
 # GUI Settings
 
+The GUI presents several kinds of settings, but it does not own all of them.
+This page maps each control to the place that actually persists it.
+
 ## Configuration file locations
 
 | Setting group | Configuration location | Notes |

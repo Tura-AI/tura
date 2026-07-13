@@ -13,16 +13,17 @@ Repository: <https://github.com/Tura-AI/tura>
 
 ## Include useful evidence
 
-Provide the Tura version or commit, installation method, OS/architecture, shell,
-provider/model without secrets, exact command, expected behavior, actual
-behavior, minimal reproduction, and the smallest relevant log excerpt.
+The fastest route to a useful answer is concrete evidence. Include the Tura
+version or commit, installation method, OS/architecture, shell, provider/model
+without secrets, exact command, expected behavior, actual behavior, minimal
+reproduction, and the smallest relevant log excerpt.
 
 For performance reports, include hardware, workload, warm-up, repetitions, raw
 results, and a baseline. A single timing is not enough to diagnose a regression.
 
 ## Scope
 
-Community support is best effort. Maintainers cannot guarantee response times,
+Community support is best effort. Maintainers cannot promise response times,
 debug private provider accounts, recover lost credentials, or provide emergency
 production support. Keep credentials and private session content out of issues.
 

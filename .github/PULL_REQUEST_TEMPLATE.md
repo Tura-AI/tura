@@ -1,6 +1,6 @@
 ## Pull request type
 
-Select one primary type. For more focused prompts, use the matching template in
+Choose one primary type. If the change needs more focused questions, use the matching template in
 [PULL_REQUEST_TEMPLATE/](https://github.com/Tura-AI/tura/tree/main/.github/PULL_REQUEST_TEMPLATE):
 
 - [ ] [Bug fix](https://github.com/Tura-AI/tura/compare?expand=1&template=bug_fix.md)
@@ -12,8 +12,8 @@ Select one primary type. For more focused prompts, use the matching template in
 
 ## Outcome
 
-Describe the user-visible or maintainer-visible result and link the issue when
-required. Explain why this is the smallest sufficient change.
+Start with the result a user or maintainer can observe, and link the issue when
+required. Then explain why the change is no larger than it needs to be.
 
 ## Scope and compatibility
 
@@ -23,7 +23,7 @@ required. Explain why this is the smallest sufficient change.
 
 ## Verification
 
-List exact commands and summarized results. State skipped **affected** OS,
+List the exact commands and summarized results. Name any skipped **affected** OS,
 surface, provider/protocol, behavior, or state cells and why. Do not enumerate
 unaffected combinations.
 

@@ -1,11 +1,11 @@
 # Commands
 
-Commands are Tura's local execution units. They are the concrete operations that
-`command_run` can route, schedule, lock, execute, normalize, and record. Some
-commands run ordinary CLI programs. Some are Tura-native operations. Some are
-external command packages with their own schemas. Treating all of them as
-commands gives the runtime one consistent execution model without pretending
-that every operation is just a shell line.
+Commands are Tura's local execution units: the concrete operations that
+`command_run` can route, schedule, lock, execute, normalize, and record. Some run
+ordinary CLI programs. Others are Tura-native operations or external command
+packages with their own schemas. Giving them one execution model keeps the
+runtime consistent without pretending every operation is merely a shell line in
+a nicer coat.
 
 The important boundary is:
 

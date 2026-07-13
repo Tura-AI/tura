@@ -108,6 +108,21 @@ test("draw keeps cursor hidden on pages without an input box", () => {
   assert.doesNotMatch(output, /\x1b\[\?25h/);
 });
 
+test("draw shows session loading instead of the composer while startup history loads", () => {
+  const state = reducer(initialState("C:/repo"), {
+    type: "session-loading",
+    value: { title: "Startup Chat" },
+  });
+
+  const writes = captureDrawWrites(() => {
+    draw(state, richCapabilities(), "");
+  });
+  const output = stripAnsi(writes.join(""));
+
+  assert.match(output, /Loading session Startup Chat/);
+  assert.doesNotMatch(output, /Enter: send/);
+});
+
 test("draw can enter a selected session without rendering the previous session", () => {
   const active = reducer(initialState("C:/repo"), {
     type: "hydrate",

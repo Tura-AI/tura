@@ -7,10 +7,20 @@ const params = new URLSearchParams(window.location.search);
 const workspaceDirectory = params.get("workspace") ?? undefined;
 const paths = params.getAll("path").filter(Boolean);
 const text = params.get("text") ?? paths.map((path) => `[MEDIA:${path}:MEDIA]`).join("\n");
+const normalizePunctuation = params.get("normalize-punctuation") === "true";
 const root = document.getElementById("root");
 
 if (!root) {
   throw new Error("media harness root was not found");
 }
 
-render(() => <RichText text={text} workspaceDirectory={workspaceDirectory} />, root);
+render(
+  () => (
+    <RichText
+      text={text}
+      workspaceDirectory={workspaceDirectory}
+      normalizePunctuation={normalizePunctuation}
+    />
+  ),
+  root,
+);

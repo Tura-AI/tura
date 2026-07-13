@@ -1,7 +1,9 @@
 # Overview
 
-Tura is a terminal-native developer tool for turning intent into verified code
-changes with disciplined motion, audit trails, and repo-aware control.
+Tura is a terminal-native developer tool for turning an intent into a verified
+code change. It is built for the part between those two points: reading the
+repository, choosing a narrow move, preserving an audit trail, and checking the
+result before calling the work done.
 
 Tura is framed around four ideas:
 
@@ -12,9 +14,9 @@ Tura is framed around four ideas:
 | Prompt | Runtime prompt manuals are loaded by task type instead of pasted into every turn. |
 | TDD | Debug and repair work starts with reproduction and ends with evidence. |
 
-The system is built for long-horizon repository tasks: inspect the workspace,
-make narrow changes, run checks, keep session state, and attach evidence before
-claiming success.
+The system is built for long-horizon repository tasks. It can inspect the
+workspace, make narrow changes, run checks, keep session state, and attach
+evidence before claiming success. "Done" is more useful when it has receipts.
 
 ## Main components
 

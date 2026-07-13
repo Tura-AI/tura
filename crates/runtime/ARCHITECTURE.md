@@ -1,8 +1,10 @@
 # Runtime Crate Architecture
 
-`crates/runtime` is the agent/session runtime. It owns agent/session
-orchestration, state machines, prompt assembly, provider turns, tool-call
-execution flow, context compaction, and final response behavior.
+`crates/runtime` is where an agent session becomes an execution. It owns
+agent/session orchestration, state machines, prompt assembly, provider turns,
+tool-call execution flow, context compaction, and final response behavior. It
+coordinates those owners; it should not quietly absorb their storage, provider,
+or routing responsibilities.
 
 Cargo target names:
 

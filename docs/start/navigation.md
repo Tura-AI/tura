@@ -1,8 +1,8 @@
 # Documentation navigation
 
-This is the full human-readable documentation directory. It mirrors the GitBook
-summary and points directly to the real owner documents, not thin placeholder
-pages.
+This is the human route through the full documentation set. It mirrors the
+GitBook summary and points to the documents that actually own each subject,
+rather than sending readers through a corridor of thin placeholder pages.
 
 ## Start
 

@@ -1,5 +1,8 @@
 # TUI Settings
 
+The TUI is a compact settings surface over gateway and workspace state. This
+page shows what can be changed there and where each value actually lives.
+
 ## Configuration file locations
 
 | Setting group | Configuration location | Notes |

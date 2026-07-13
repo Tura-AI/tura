@@ -1,11 +1,13 @@
 # Tura documentation
 
-Tura is a terminal-native developer tool for turning intent into verified code
-changes with disciplined motion, audit trails, and repo-aware control.
+Tura is a terminal-native developer tool that turns intent into verified code
+changes. The emphasis is on reading the repository first, keeping an audit
+trail, and proving the result before calling the work done.
 
-This `docs/` tree is the GitBook-oriented documentation entry. It organizes the
-repository documentation into a stable reading path and links to deeper
-source-owned references instead of duplicating long implementation notes.
+This `docs/` tree is the GitBook-oriented starting point. It gives readers a
+stable route through the project, then links to the source-owned references
+when the implementation details matter. Copying those details here would only
+give us two documents to keep honest.
 
 ## Main paths
 

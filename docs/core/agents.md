@@ -1,16 +1,17 @@
 # Agents
 
-Agents are Tura's configurable runtime profiles. They do not just rename the
-assistant. An agent selects the prompt resources, the command capabilities, the
-provider/model route, the operation-manual policy, and a few reporting and
-validation flags used when the runtime builds a turn.
+Agents are Tura's configurable runtime profiles. They are not display names with
+ambitions. An agent selects the prompt resources, command capabilities,
+provider/model route, operation-manual policy, and the reporting and validation
+flags used when the runtime builds a turn.
 
 That split is deliberate. In many agent frameworks, a custom agent is mostly a
 large system prompt plus a model name. The result is easy to create, but hard to
 audit: tool access, prompt behavior, model choice, and completion discipline are
 mixed into one text blob. Tura keeps those concerns in separate fields so each
 one can be inspected, surfaced in clients, restricted by runtime, and changed
-without rewriting the whole prompt.
+without rewriting the whole prompt. Convenient configuration should not require
+giving up a readable contract.
 
 The canonical implementation lives in
 [`agents/src/store.rs`](../../agents/src/store.rs). Runtime activation converts

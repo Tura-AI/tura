@@ -1,9 +1,11 @@
 # Tura Provider Crate Architecture
 
-Provider is the model access, authentication, routing, usage accounting, and
-provider-control crate for Tura. It is used by `crates/runtime` to execute one
-model call, and by gateway/config surfaces to inspect provider settings, auth
-state, usage, and health.
+Provider is where Tura turns a model request into a real provider call. It owns
+model access, authentication, routing, usage accounting, and provider control.
+`crates/runtime` uses it to execute one model call; gateway/config surfaces use
+it to inspect provider settings, auth state, usage, and health. Keeping those
+jobs together prevents every caller from inventing a slightly different idea of
+the same provider.
 
 Cargo target names:
 

@@ -1,6 +1,7 @@
 ## Provider or protocol change
 
-Link the approved provider issue.
+Link the approved provider issue and keep the claimed scope as narrow as the
+evidence.
 
 Closes #
 
@@ -10,7 +11,8 @@ Closes #
 
 ## Behavior covered
 
-Mark only affected behavior.
+Mark only the behavior this change can actually affect. A longer checklist does
+not make the adapter more compatible.
 
 - [ ] Streaming
 - [ ] Tool calls

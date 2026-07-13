@@ -1397,6 +1397,7 @@ function MessageCell(props: {
             {(part) => (
               <TextPartCell
                 part={part()}
+                role={props.message.role}
                 streaming={false}
                 workspaceDirectory={props.workspaceDirectory}
               />
@@ -1433,6 +1434,7 @@ function MessageCell(props: {
                           {(part) => (
                             <TextPartCell
                               part={part()}
+                              role={props.message.role}
                               streaming={isAgentWorking()}
                               workspaceDirectory={props.workspaceDirectory}
                             />
@@ -1477,6 +1479,7 @@ function MessageCell(props: {
                 >
                   <TextPartCell
                     part={assistantThinkingPart()}
+                    role="assistant"
                     streaming={true}
                     workspaceDirectory={props.workspaceDirectory}
                   />

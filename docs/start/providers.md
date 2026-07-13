@@ -5,7 +5,8 @@ most important providers are LLM providers such as Codex, OpenAI, Anthropic,
 Google, OpenRouter, Qwen, DeepSeek, xAI, Moonshot, Mistral, Hugging Face,
 Replicate, and Bedrock. The provider catalog also describes non-LLM service
 providers such as search, storage, messaging, productivity, cloud, payment, and
-media APIs.
+media APIs. Configuration tells Tura where a service is and how to reach it; it
+does not, by itself, prove that every path works in production.
 
 This page explains provider types, where provider configuration lives, how model
 tiers choose default models, and how agents relate to providers and models.

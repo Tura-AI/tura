@@ -1,12 +1,13 @@
 # session_log Architecture
 
-`crates/session_log` owns durable session history for Tura. It stores session
-snapshots, task-management state, todos, parent links, and replayable
-message/event records.
+`crates/session_log` is Tura's durable memory, not the model's improvised one. It
+stores session snapshots, task-management state, todos, parent links, and
+replayable message/event records.
 
 Gateway and runtime must go through `runtime::session_log_client`,
 `gateway::session_db_client`, or the session-log CLI bridge instead of writing
-workspace-local session JSON.
+workspace-local session JSON. One owner means recovery has one version of the
+truth.
 
 ## Layout
 

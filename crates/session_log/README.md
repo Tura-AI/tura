@@ -1,8 +1,9 @@
 # session_log
 
-`crates/session_log` is the durable session/task/message history store for
-Tura. Gateway and runtime use it instead of writing workspace-local
-`.tura/sessions/*.json` files.
+`crates/session_log` is the durable session/task/message history store for Tura.
+Gateway and runtime use it instead of writing workspace-local
+`.tura/sessions/*.json` files. The distinction matters after a restart, which is
+when improvised persistence usually introduces itself.
 
 ## Storage
 

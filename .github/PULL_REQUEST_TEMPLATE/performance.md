@@ -1,13 +1,14 @@
 ## Performance or efficiency claim
 
 Link the approved performance issue and state one measurable end-to-end claim.
+One honest claim is easier to test than a paragraph of faster-sounding adjectives.
 
 Closes #
 
 ## Why this change
 
-Identify the measured bottleneck or resource ceiling. Explain why the change is
-the smallest one that addresses it.
+Name the measured bottleneck or resource ceiling. Then explain why the change is
+the smallest one that addresses the evidence rather than a nearby symptom.
 
 ## Benchmark contract
 

@@ -1,9 +1,10 @@
 # Tura CLI/TUI
 
-`apps/tui` is the TypeScript terminal client for Tura. It contains both the
-non-interactive CLI and the interactive terminal UI. The package talks to the
-Rust gateway over HTTP and SSE; it does not embed runtime, provider, tool, or
-session-storage logic.
+`apps/tui` is Tura's TypeScript terminal client. It contains both the
+non-interactive CLI and the interactive terminal UI, and both talk to the Rust
+gateway over HTTP and SSE. The package does not embed runtime, provider, tool,
+or session-storage logic. A terminal is a front end, however persuasive it may
+look in monospace.
 
 The TUI never owns gateway. It probes the requested, active, and default gateway
 URLs, then fails if none is already healthy.

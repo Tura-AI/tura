@@ -1,4 +1,4 @@
-import type { MessagePart } from "@tura/gateway-sdk";
+import type { MessagePart, MessageRole } from "@tura/gateway-sdk";
 import { Show, createMemo } from "solid-js";
 import { jsonPreview } from "../state/format";
 import { partText } from "../state/global-store";
@@ -100,6 +100,7 @@ function appendUserPreviewEllipsis(
 
 export function TextPartCell(props: {
   part: MessagePart;
+  role: MessageRole;
   streaming: boolean;
   workspaceDirectory?: string;
 }) {
@@ -116,6 +117,7 @@ export function TextPartCell(props: {
             text={value()}
             active={props.streaming}
             workspaceDirectory={props.workspaceDirectory}
+            normalizePunctuation={props.role === "assistant"}
           />
         )}
       </Show>
@@ -128,12 +130,14 @@ export function TypingText(props: {
   text: string;
   active: boolean;
   workspaceDirectory?: string;
+  normalizePunctuation?: boolean;
 }) {
   return (
     <RichText
       text={props.text}
       active={props.active}
       workspaceDirectory={props.workspaceDirectory}
+      normalizePunctuation={props.normalizePunctuation}
     />
   );
 }

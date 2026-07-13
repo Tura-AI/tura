@@ -1,11 +1,12 @@
 # Tools Crate Architecture
 
-`crates/tools` owns the model-visible tool layer, command handlers, validation,
-policy, sandbox, file locks, and tool output normalization. It does not own the
-command registry or managed process lifecycle; those live in `crates/router`.
-It also does not own durable session history or provider-call logs: session and
-task history lives in `crates/session_log`, while provider diagnostics live
-under `log/provider/` or `LOG_PATH`.
+`crates/tools` owns the part of execution that can touch the machine: the
+model-visible tool layer, command handlers, validation, policy, sandbox, file
+locks, and tool output normalization. It does not own the command registry or
+managed process lifecycle; those live in `crates/router`. It also does not own
+durable session history or provider-call logs: session and task history lives in
+`crates/session_log`, while provider diagnostics live under `log/provider/` or
+`LOG_PATH`. Sharp boundaries are useful around sharp tools.
 
 The Cargo package name should stay compatible with Tura:
 

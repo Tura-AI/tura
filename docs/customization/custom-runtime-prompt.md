@@ -1,9 +1,10 @@
 # Custom runtime prompt manuals
 
 Runtime prompt manuals are task-specific operation manuals selected by
-`task_status.task_type`. They are not personas and not agent prompts. They define
+`task_status.task_type`. They are neither personas nor agent prompts. They define
 how Tura should work for a class of task: debugging, frontend, visual work,
-editorial work, refactoring, DevOps, and similar modes.
+editorial work, refactoring, DevOps, and similar modes. The distinction matters
+because temporary task discipline should not become permanent personality.
 
 Use a runtime prompt manual when the instruction should apply only while a task
 type is active. Do not paste every preference into every agent prompt. That is

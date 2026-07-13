@@ -1,9 +1,10 @@
 # Runtime Prompt
 
 Runtime prompts are Tura-owned operation manuals selected by `task_type`. They
-are not generic skills, not user preferences, and not decorative system text.
-They are the runtime's way to load task-specific discipline, completion rules,
-and command-run capability extensions only when the current task needs them.
+are not generic skills, user preferences, or decorative system text. They let
+the runtime load task-specific discipline, completion rules, and command-run
+capability extensions only while the current task needs them. The point is not
+more prompt. It is the right prompt at the right boundary.
 
 The implementation is centered in
 [`crates/runtime/src/prompt_style/runtime_prompt_manual.rs`](../../crates/runtime/src/prompt_style/runtime_prompt_manual.rs).

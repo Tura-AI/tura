@@ -1,18 +1,18 @@
 # Tura Roadmap
 
-This roadmap describes priorities and exit criteria. It is not a promise of a
-specific release date. Security, data-loss, and release-blocking regressions may
-change the order.
+This roadmap says what Tura is working on and what has to be true before each
+stage is complete. It is not a release-date promise. Security problems, data
+loss, and release-blocking regressions take priority when they appear.
 
 ## Engineering rule
 
-Tura follows YAGNI (You Aren't Gonna Need It): do not add speculative code,
-state, compatibility layers, or abstractions before a demonstrated requirement
-exists. Any pull request that claims a performance or efficiency improvement
-must demonstrate that claim with a relevant benchmark or evaluation. Changes
-whose measured value is lower complexity, a bounded resource ceiling, or a
-better worst case should state that criterion directly. Bug fixes should include
-durable regression coverage at the smallest owning layer, with higher-level
+Tura follows YAGNI (You Aren't Gonna Need It). A demonstrated requirement gets
+code; a hypothetical one can wait. That means no speculative state,
+compatibility layer, or abstraction before there is a problem for it to solve.
+Any pull request claiming better performance or efficiency must show the claim
+with a relevant benchmark or evaluation. If the real value is lower complexity,
+a bounded resource ceiling, or a better worst case, say that directly. Bug fixes
+need durable regression coverage at the smallest owning layer, plus higher-level
 coverage when the failure crossed a system boundary.
 
 Benchmark evidence must identify the baseline and candidate revisions, hardware
@@ -23,8 +23,8 @@ faster median.
 
 ## 0.1.x - Stabilize the foundation
 
-The 0.1.x line focuses on existing behavior rather than adding broad product
-surface area.
+The 0.1.x line is deliberately unglamorous: make the behavior already present
+reliable before adding a wider product surface.
 
 ### Reliability and current issues
 
@@ -108,7 +108,7 @@ surface area.
 
 ## 0.2 - Planning and task workspace
 
-The 0.2 line builds on a stable 0.1.x foundation.
+The 0.2 line starts only when the 0.1.x foundation is stable enough to trust.
 
 - Complete task-planning behavior, including durable plan state, dependency and
   status transitions, interruption, resume, and user approval boundaries.

@@ -5,9 +5,9 @@
 A session is the durable conversation and work container for one workspace. It
 keeps the user-visible thread, selected runtime settings, task-management state,
 token usage, and enough internal state for the runtime to continue or report the
-work correctly.
+work correctly. If the app closes, the work should not suddenly become folklore.
 
-A runtime is not the session. A runtime is one model/provider execution inside a
+A runtime is not the session. It is one model/provider execution inside a
 session. A single session can contain many runtime calls across one prompt, tool
 loop, retry, child delegation, or later follow-up prompt.
 

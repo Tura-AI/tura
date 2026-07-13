@@ -1,8 +1,9 @@
 # Contributing to Tura
 
-Thank you for improving Tura. Small, reviewable changes are welcome. The goal is
-not to make every pull request prove everything; it is to make each pull request
-prove the behavior it owns.
+You do not need to understand all of Tura before improving one part of it. Small,
+reviewable changes are welcome. A pull request does not have to prove the whole
+system; it does have to prove the behavior it owns. That is a much more useful
+standard than making every contributor carry the entire repository uphill.
 
 ## Start here
 

@@ -1,8 +1,10 @@
 # Personas
 
-Personas are Tura's user-facing voice and expression layer. They define how an
+Personas are Tura's user-facing voice and expression layer. They decide how an
 assistant speaks, formats messages, reacts emotionally, and presents rich
-conversation artifacts without changing the underlying agent capability model.
+conversation artifacts. They do not change what the agent is allowed to do.
+That distinction keeps a warmer voice from becoming an accidental permission
+system.
 
 The short version: an agent decides what work can be done; a persona decides how
 that work is communicated.

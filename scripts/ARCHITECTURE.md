@@ -1,6 +1,7 @@
 # Scripts
 
-Scripts only build and register the two standard Cargo output directories:
+The scripts have a deliberately small job: build and register the two standard
+Cargo output directories, and nothing more mysterious than that:
 
 - `target/debug`
 - `target/release`

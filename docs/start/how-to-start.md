@@ -1,8 +1,9 @@
 # How to Start Tura
 
-This page covers the ways to start and run Tura after the executable is already
-available on your machine. It does not cover setup, removal, provider details, or
-a full CLI parameter reference. For the full command surface, see
+This page begins where installation ends: the executable is already available,
+and you want to start Tura without guessing which front end owns what. Setup,
+removal, provider details, and the full CLI parameter reference stay in their
+own documents. For the full command surface, see
 [CLI Parameters](cli-parameters.md).
 
 Before starting Tura, make sure the operating system can resolve both the Tura

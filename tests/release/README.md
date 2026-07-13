@@ -1,12 +1,13 @@
 # Release Tests
 
-This directory contains release-binary tests for built `target/release`
-artifacts. These tests are separated from `tests/business` and `tests/live` so
-ordinary business/live runs do not start, reuse, or shut down release daemons.
+This directory tests the thing users actually receive: built `target/release`
+artifacts. It stays separate from `tests/business` and `tests/live` so ordinary
+business or live runs do not start, reuse, or shut down release daemons. A source
+test and a packaged-binary test may agree, but they are not the same evidence.
 
-The backend release runner scans files directly under `tests/release`, while
-skipping `tui_*` and `gui_*` entrypoints so UI/provider release flows remain
-explicit:
+The backend release runner scans files directly under `tests/release`. It skips
+`tui_*` and `gui_*` entrypoints so UI/provider release flows remain explicit
+rather than being discovered as a surprise side quest:
 
 ```powershell
 .\xtask\scripts\run-backend-release-tests.ps1 -List

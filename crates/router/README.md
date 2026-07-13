@@ -1,13 +1,15 @@
 # Tura Router
 
 Router owns agent registration metadata, CLI forwarding, runtime-worker
-dispatch, and worker lifecycle. It does not own `command_run` implementation
-logic or command alias canonicalization; both live in `crates/tools`
-(`commands::canonical_command`) and execute inside the runtime worker.
+dispatch, and worker lifecycle. That is the dispatch layer, not a second tools
+crate. `command_run` implementation logic and command alias canonicalization
+both live in `crates/tools` (`commands::canonical_command`) and execute inside
+the runtime worker.
 
 This version keeps `command_run` as the only coding-agent visible tool. Internal
 command ids such as `shell_command`, `bash`, `zsh`, and `apply_patch` are resolved and
-dispatched by `crates/tools/src/commands`, not by the router.
+dispatched by `crates/tools/src/commands`, not by the router. One visible tool
+does not mean one module owns everything behind it.
 
 ## Layering
 
