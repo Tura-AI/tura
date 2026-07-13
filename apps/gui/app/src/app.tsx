@@ -495,14 +495,14 @@ export function App() {
     if (e2eFixture) {
       setState((previous) => ({
         ...previous,
-        error: "Mock 页面不能打开系统目录选择器，请在真实 gateway 连接后使用。",
+        error: t("directoryPickerMockUnavailable"),
       }));
       return;
     }
     if (state().connection !== "connected") {
       setState((previous) => ({
         ...previous,
-        error: "Gateway 未连接，无法打开系统目录选择器。",
+        error: t("directoryPickerGatewayUnavailable"),
       }));
       return;
     }
@@ -742,7 +742,7 @@ export function App() {
         ...previous,
         planNotice: timeout
           ? {
-              message: "Gateway 30 秒内没有响应请求。",
+              message: t("gatewayPromptTimeout"),
               code: PROMPT_RESPONSE_TIMEOUT_CODE,
             }
           : {
@@ -783,7 +783,7 @@ export function App() {
         ...previous,
         planNotice: timeout
           ? {
-              message: "Gateway 30 秒内没有响应请求。",
+              message: t("gatewayPromptTimeout"),
               code: PROMPT_RESPONSE_TIMEOUT_CODE,
             }
           : {

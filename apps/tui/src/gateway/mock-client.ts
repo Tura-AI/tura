@@ -1,5 +1,6 @@
 import type { AgentUpsertRequest, StoredAgent } from "../types/agent.js";
 import type { SessionConfig } from "../types/config.js";
+import { t } from "../i18n.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
 import type { ListMessagesOptions } from "./client.js";
 import type { StoredPersona, TuraConfigResponse, TuraConfigUpdate } from "../types/gateway.js";
@@ -41,7 +42,7 @@ export class MockGatewayClient {
     const session = this.mockSession("mock-session-1", "Mock TUI Session");
     this.sessions = [session];
     let messages = [
-      this.message(session.id, "assistant", "Mock TUI 已启动。当前不会连接真实 gateway。"),
+      this.message(session.id, "assistant", t("mockStartup")),
     ];
     if (process.env.TURA_TUI_MOCK_LOCAL_LINKS === "1") {
       messages = [this.message(session.id, "assistant", this.localLinkFixtureText())];
@@ -175,7 +176,7 @@ export class MockGatewayClient {
       this.message(
         sessionID,
         "assistant",
-        `Mock response: ${text || "收到空消息"}\n\n这是本地 mock 回复，没有请求生产 gateway。`,
+        t("mockResponse", { text: text || t("mockEmptyMessage") }),
       ),
     );
     this.messagesBySession.set(sessionID, messages);

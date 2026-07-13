@@ -35,6 +35,7 @@
     "test:business:refresh-replay": "npm run build && node ./tests/e2e/business/tui_refresh_replay_playwright.mjs",
     "test:business:real-session-db": "npm run build && node ./tests/e2e/business/tui_real_session_db_replay_playwright.mjs",
     "test:performance:history": "npm run build && node ./tests/performance/heavy-history-session-perf.mjs",
+    "test:performance:live-growth": "npm run build && node ./tests/performance/live-session-growth-perf.mjs",
     "test:performance:full-chain": "npm run build && node ./tests/performance/full_chain_e2e_stress.mjs",
     "stress:memory": "npm run build && node --expose-gc ../../benchmark/build/tui-streaming-memory/runner.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",

@@ -2,6 +2,7 @@ import { displayMessages, type AppState } from "./reducer.js";
 import type { Message } from "../types/session.js";
 import { messageText, sessionHasQuestionStatus, sessionTitle } from "../types/session.js";
 import { t } from "../i18n.js";
+import { personaCommunicationStyle, personaDescription } from "../persona-display.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
 import {
   activeCapabilities,
@@ -711,10 +712,8 @@ function personaLines(state: AppState, cols: number, maxLines: number): string[]
   const entries = state.personas.map((persona) => {
     const id = personaID(persona) ?? t("unknown");
     const marker = id === active ? t("active") : (persona.summary?.source ?? "");
-    const description =
-      persona.summary?.description ?? stringField(persona.config, "description") ?? "";
-    const style =
-      typeof persona.communication_style === "string" ? persona.communication_style.trim() : "";
+    const description = personaDescription(persona);
+    const style = personaCommunicationStyle(persona);
     return [
       id,
       [marker, description, style ? style.replace(/\s+/g, " ") : undefined]

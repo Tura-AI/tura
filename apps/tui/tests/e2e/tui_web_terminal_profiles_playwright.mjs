@@ -77,6 +77,26 @@ async function terminalText(page) {
     for (let index = 0; index < buffer.length; index += 1) {
       lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
     }
+
+async function terminalViewportText(page) {
+  return page.locator(".xterm-rows").innerText();
+}
+
+async function sendTerminalInput(page, profile, instance, data) {
+  const response = await page.evaluate(
+    async ({ profile, instance, data }) => {
+      const query = instance ? `?instance=${encodeURIComponent(instance)}` : "";
+      const result = await fetch(`/${profile}/input${query}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ data }),
+      });
+      return result.status;
+    },
+    { profile, instance, data },
+  );
+  assert.equal(response, 204);
+}
     return lines.join("\n");
   });
 }
@@ -307,6 +327,29 @@ async function main() {
       artifacts.push(await screenshot(page, `${profile}.png`));
       await page.close();
     }
+
+    const i18n = await browser.newPage({ viewport: { width: 1100, height: 720 } });
+    await i18n.goto(`http://127.0.0.1:${port}/rich?instance=i18n`, {
+      waitUntil: "domcontentloaded",
+    });
+    await i18n.waitForFunction(() => window.__turaTerminal);
+    await i18n.evaluate(() => window.__turaFit());
+    await waitForText(i18n, /Mock TUI/);
+    await sendTerminalInput(i18n, "rich", "i18n", "/personas\r");
+    await waitForText(i18n, /Balanced and energetic/);
+    assert.match(await terminalViewportText(i18n), /Balanced and energetic/u);
+    artifacts.push(await screenshot(i18n, "persona-en.png"));
+
+    await sendTerminalInput(i18n, "rich", "i18n", "/language zh-CN\r");
+    await waitForText(i18n, /设置已更新/);
+    await sendTerminalInput(i18n, "rich", "i18n", "/personas\r");
+    await waitForText(i18n, /均衡而有活力/);
+    const chinesePersona = await terminalViewportText(i18n);
+    assert.match(chinesePersona, /人格/u);
+    assert.match(chinesePersona, /均衡而有活力/u);
+    assert.doesNotMatch(chinesePersona, /Balanced and energetic/u);
+    artifacts.push(await screenshot(i18n, "persona-zh-CN.png"));
+    await i18n.close();
 
     const mobile = await browser.newPage({ ...devices["Pixel 5"] });
     await mobile.goto(`http://127.0.0.1:${port}/rich?instance=mobile-user-agent`, {

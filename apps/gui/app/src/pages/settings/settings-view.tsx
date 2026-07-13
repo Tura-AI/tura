@@ -33,6 +33,7 @@ import {
 } from "../../state/global-store";
 
 import { providerConfigured } from "../../utils/settings";
+import { personaDescription } from "../../utils/persona-display";
 import { AppearanceSelect, CONFIGURE_PROVIDER_OPTION } from "./appearance-select";
 import { providerDomains } from "./provider-domain";
 import { ProviderConfigGroup } from "./provider-settings";
@@ -500,7 +501,7 @@ function PersonalizationSettingsPanel(props: {
           <div class="settings-list provider-config-list agent-config-list">
             <div class="provider-config-group agent-configured-group">
               <div class="provider-config-group-title">
-                <span>可配置 Persona</span>
+                <span>{t("configurablePersonas")}</span>
                 <small>{personas().length}</small>
               </div>
               <div class="workspace-picker-list agent-list-scroll">
@@ -573,16 +574,16 @@ function AgentAvatarSettings(props: {
     props.onChange(normalizeAvatarSettings({ ...props.value, ...patch }));
   }
   const displayModeOptions: Array<{ value: AvatarDisplayMode; label: string }> = [
-    { value: "hidden", label: "隐藏头像" },
-    { value: "static", label: "静态头像" },
-    { value: "dynamic", label: "动态头像" },
+    { value: "hidden", label: t("avatarModeHidden") },
+    { value: "static", label: t("avatarModeStatic") },
+    { value: "dynamic", label: t("avatarModeDynamic") },
   ];
 
   return (
     <section class="agent-avatar-settings">
       <div class="agent-avatar-controls">
         <div class="agent-avatar-control-row">
-          <span>头像显示</span>
+          <span>{t("avatarDisplay")}</span>
           <div class="segmented agent-avatar-mode-segmented">
             <For each={displayModeOptions}>
               {(option) => (
@@ -599,7 +600,7 @@ function AgentAvatarSettings(props: {
         </div>
         <AvatarRange
           id="agent-avatar-pixel"
-          label="像素画"
+          label={t("avatarPixelArt")}
           min={AVATAR_SETTING_LIMITS.pixelSize.min}
           max={AVATAR_SETTING_LIMITS.pixelSize.max}
           value={props.value.pixel_size}
@@ -607,26 +608,26 @@ function AgentAvatarSettings(props: {
         />
         <AvatarRange
           id="agent-avatar-threshold"
-          label="阈值"
+          label={t("avatarThreshold")}
           min={AVATAR_SETTING_LIMITS.threshold.min}
           max={AVATAR_SETTING_LIMITS.threshold.max}
           value={props.value.threshold}
           onInput={(threshold) => updateAvatar({ threshold })}
         />
       </div>
-      <div class="agent-avatar-preview" aria-label="头像预览">
-        <span>头像预览</span>
+      <div class="agent-avatar-preview" aria-label={t("avatarPreview")}>
+        <span>{t("avatarPreview")}</span>
         <div class="agent-avatar-preview-shell">
           <Show
             when={props.value.display_mode !== "hidden"}
-            fallback={<span class="settings-note">头像已隐藏</span>}
+            fallback={<span class="settings-note">{t("avatarHidden")}</span>}
           >
             <AgentAvatarCanvas
               media={props.media}
               settings={props.value}
               expressionId="vigilant"
               interactive={props.value.display_mode === "dynamic"}
-              label="头像预览"
+              label={t("avatarPreview")}
             />
           </Show>
         </div>
@@ -670,22 +671,17 @@ function avatarPersonaOptions(personas: StoredPersona[]) {
     .map((persona) => ({
       id: persona.summary.id,
       label: persona.summary.display_name || persona.summary.id,
-      description:
-        persona.summary.short_description ||
-        persona.config.short_description ||
-        persona.summary.description ||
-        persona.config.description ||
-        "",
+      description: personaDescription(persona),
     }));
   const fallback = ["tura", "wonderful", "pidan"].map((id) => ({
     id,
     label: id,
     description:
       id === "tura"
-        ? "Sharp supervisor"
+        ? t("personaDescriptionTura")
         : id === "wonderful"
-          ? "Loyal companion"
-          : "Sleepy strategist",
+          ? t("personaDescriptionWonderful")
+          : t("personaDescriptionPidan"),
   }));
   const seen = new Set<string>();
   return [...fromGateway, ...fallback].filter((item) => {

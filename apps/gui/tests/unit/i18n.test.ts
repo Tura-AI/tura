@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   assertDictionaryParity,
@@ -19,6 +21,9 @@ describe("i18n", () => {
   test("switches GUI language at runtime", () => {
     setLanguage("zh-CN");
     expect(t("settings")).toBe("设置");
+    expect(t("home")).toBe("首页");
+    expect(t("modelPriority")).toBe("优先");
+    expect(t("writeMessage")).toBe("输入消息...");
     expect(t("runtimeStopped")).toBe("Runtime 已停止。");
     setLanguage("en");
     expect(currentLanguage()).toBe("en");
@@ -55,5 +60,16 @@ describe("i18n", () => {
     setLanguage("zh-CN");
     setLanguage(undefined);
     expect(currentLanguage()).toBe("en");
+  });
+
+  test("keeps settings UI copy in the locale dictionaries", () => {
+    const sources = [
+      "../../app/src/pages/settings/settings-view.tsx",
+      "../../app/src/pages/settings/agent-settings-panel.tsx",
+    ].map((path) => readFileSync(resolve(import.meta.dir, path), "utf8"));
+
+    for (const source of sources) {
+      expect(source).not.toMatch(/[\u3400-\u9fff]/u);
+    }
   });
 });

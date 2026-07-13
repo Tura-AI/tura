@@ -5,6 +5,7 @@ import { printJson } from "../output/json.js";
 import type { PersonaUpsertRequest } from "../types/gateway.js";
 import { existsSync, readFileSync } from "node:fs";
 import { t } from "../i18n.js";
+import { personaDescription } from "../persona-display.js";
 
 export async function personaCommand(context: CliContext, args: string[]): Promise<void> {
   const client = new GatewayClient({
@@ -25,7 +26,7 @@ export async function personaCommand(context: CliContext, args: string[]): Promi
           value: (persona) => persona.summary?.id ?? persona.config?.persona_name ?? "",
         },
         { header: t("source"), value: (persona) => persona.summary?.source ?? "" },
-        { header: t("description"), value: (persona) => persona.summary?.description ?? "" },
+        { header: t("description"), value: personaDescription },
       ]),
     );
   }

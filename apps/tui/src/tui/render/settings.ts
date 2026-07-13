@@ -1,5 +1,6 @@
 import { t } from "../../i18n.js";
 import { agentDescription } from "../../agent-display.js";
+import { personaDescription } from "../../persona-display.js";
 import type { SettingDetail, AppState } from "../reducer.js";
 import { runtimeModelFromConfig } from "../model-config.js";
 import { activeCapabilities, truncate, wrap } from "../render-terminal.js";
@@ -274,7 +275,7 @@ export function settingOptions(state: AppState): Array<[string, string, unknown]
   if (state.settingDetail === "persona") {
     return state.personas.map((persona) => [
       personaID(persona) ?? t("unknown"),
-      [persona.summary?.description, persona.summary?.source].filter(Boolean).join("  "),
+      [personaDescription(persona), persona.summary?.source].filter(Boolean).join("  "),
       personaID(persona) ?? "",
     ]);
   }

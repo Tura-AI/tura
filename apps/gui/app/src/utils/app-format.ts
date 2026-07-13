@@ -167,13 +167,13 @@ export function relativeSessionTime(session: Session): string {
   const delta = Math.max(0, Date.now() - normalizeTimeMs(updated));
   const minutes = Math.max(1, Math.floor(delta / 60_000));
   if (minutes < 60) {
-    return `${minutes}分钟`;
+    return t("relativeMinutes", { count: minutes });
   }
   const hours = Math.floor(minutes / 60);
   if (hours < 24) {
-    return `${hours}小时`;
+    return t("relativeHours", { count: hours });
   }
-  return `${Math.floor(hours / 24)}天`;
+  return t("relativeDays", { count: Math.floor(hours / 24) });
 }
 
 export function sessionHoverTitle(session: Session): string {
