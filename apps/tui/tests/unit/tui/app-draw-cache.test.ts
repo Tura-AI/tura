@@ -31,6 +31,20 @@ test("draw clears terminal when opening the session picker over chat scrollback"
     sessions: [activeSession, otherSession],
   });
 
+  const writes = captureDrawWrites((writes) => {
+    const previous = draw(state, richCapabilities(), "");
+    writes.length = 0;
+    const picker = reducer(state, {
+      type: "sessions",
+      value: [otherSession, activeSession],
+      open: true,
+    });
+    draw(picker, richCapabilities(), previous);
+  });
+
+  assert.ok(writes.join("").includes(terminalClear));
+});
+
 test("draw coalesces frames while stdout is backpressured", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   let state = reducer(initialState("C:/repo"), {
@@ -81,20 +95,6 @@ test("draw coalesces frames while stdout is backpressured", () => {
     restoreProperty(process.stdout, "rows", rows);
     restoreProperty(process.stdout, "write", write);
   }
-});
-
-  const writes = captureDrawWrites((writes) => {
-    const previous = draw(state, richCapabilities(), "");
-    writes.length = 0;
-    const picker = reducer(state, {
-      type: "sessions",
-      value: [otherSession, activeSession],
-      open: true,
-    });
-    draw(picker, richCapabilities(), previous);
-  });
-
-  assert.ok(writes.join("").includes(terminalClear));
 });
 
 test("draw clears terminal when the active session changes", () => {

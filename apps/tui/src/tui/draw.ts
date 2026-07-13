@@ -16,6 +16,19 @@ let lastChatActiveLiveMessageCount = 0;
 let lastChatRenderCols = 0;
 let hasSavedChatScrollbackCursor = false;
 let lastRenderedChatCache: RenderedChatCache | undefined;
+let terminalWriteBlocked = false;
+let terminalDrainListening = false;
+let terminalDrainHandler: (() => void) | undefined;
+
+const onTerminalDrain = (): void => {
+  terminalWriteBlocked = false;
+  terminalDrainListening = false;
+  terminalDrainHandler?.();
+};
+
+export function setTerminalDrainHandler(handler: (() => void) | undefined): void {
+  terminalDrainHandler = handler;
+}
 
 export function resetDrawState(): void {
   lastDrawSurface = "";
@@ -31,11 +44,14 @@ export function resetDrawState(): void {
   lastChatRenderCols = 0;
   hasSavedChatScrollbackCursor = false;
   lastRenderedChatCache = undefined;
+  if (terminalDrainListening) process.stdout.off("drain", onTerminalDrain);
+  terminalWriteBlocked = false;
+  terminalDrainListening = false;
 }
 
 export function clearTerminalForSurfaceTransition(): void {
   if (!process.stdout.isTTY) return;
-  process.stdout.write(terminalSurfaceClear());
+  writeTerminal(terminalSurfaceClear());
 }
 
 export function draw(
@@ -44,7 +60,7 @@ export function draw(
   previousFrame = "",
   options: { forceReset?: boolean } = {},
 ): string {
-  if (!process.stdout.isTTY) return previousFrame;
+  if (!process.stdout.isTTY || terminalWriteBlocked) return previousFrame;
   const surface = drawSurface(state);
   const sessionID = state.session?.id ?? "";
   const previousSurface = lastDrawSurface;
@@ -72,7 +88,7 @@ export function draw(
   let output = terminalSurfaceClear();
   output += "\x1b[?25l";
   output += terminalAppendFrame(frame);
-  process.stdout.write(output);
+  writeTerminal(output);
   return frame;
 }
 
@@ -81,7 +97,7 @@ export function drawChatChromeOverlay(
   capabilities: TerminalCapabilities,
   previousFrame = "",
 ): string {
-  if (!process.stdout.isTTY) return previousFrame;
+  if (!process.stdout.isTTY || terminalWriteBlocked) return previousFrame;
   if (drawSurface(state) !== "chat" || lastDrawSurface !== "chat") return previousFrame;
   const rendered = renderChatFrameParts(state, capabilities, { cache: lastRenderedChatCache });
   const sessionID = state.session?.id ?? "";
@@ -111,7 +127,7 @@ export function drawChatChromeOverlay(
     chromeLayout.lineCount,
   );
   output += cursorOutputFromAbsoluteCursor(chromeLayout.cursor);
-  if (output) process.stdout.write(output);
+  writeTerminal(output);
   lastChatChromeFrame = rendered.chromeFrame;
   lastRenderedChatCache = rendered.cache;
   return rendered.frame;
@@ -242,7 +258,7 @@ function drawChatFrame(
     mutableLayout.lineCount,
   );
   output += cursorOutputFromAbsoluteCursor(mutableLayout.cursor);
-  if (output) process.stdout.write(output);
+  writeTerminal(output);
   lastChatCacheLineCount = target.cacheLines.length;
   lastChatSpilledLiveLineCount = target.spilledLiveLines.length;
   lastChatReservationLineCount = effectiveReservationLineCount;
@@ -278,6 +294,15 @@ function cursorOutputFromAbsoluteCursor(cursor?: { row: number; column: number }
 
 function terminalSurfaceClear(): string {
   return `\x1b[0m${terminalClear}`;
+}
+
+function writeTerminal(output: string): void {
+  if (!output || terminalWriteBlocked) return;
+  if (process.stdout.write(output) !== false) return;
+  terminalWriteBlocked = true;
+  if (terminalDrainListening) return;
+  terminalDrainListening = true;
+  process.stdout.once("drain", onTerminalDrain);
 }
 
 function terminalRows(): number {

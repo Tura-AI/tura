@@ -37,13 +37,15 @@
 }
 
 .composer-rich-editor {
+  --composer-line-box: 1.74em;
+
   min-height: calc(2lh + 16px);
   max-height: calc(50vh - 54px);
   padding: var(--space-2);
   overflow: auto;
   color: var(--ink);
   font-size: var(--font-body);
-  line-height: 1.74;
+  line-height: var(--composer-line-box);
   outline: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -68,8 +70,8 @@
 .composer-attachment-token {
   box-sizing: border-box;
   display: inline-grid;
-  grid-template-columns: minmax(0, 1fr) 1lh;
-  height: 1lh;
+  grid-template-columns: minmax(0, 1fr) var(--composer-line-box);
+  height: var(--composer-line-box);
   gap: 2px;
   align-items: center;
   max-width: min(260px, 72vw);
@@ -83,8 +85,10 @@
 }
 
 .composer-attachment-token button {
+  display: inline-grid;
+  align-items: center;
   min-width: 0;
-  height: 1lh;
+  height: 100%;
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -101,7 +105,8 @@
 }
 
 .composer-attachment-token button:last-child {
-  width: 1lh;
+  width: var(--composer-line-box);
+  place-items: center;
   padding: 0;
   color: var(--muted);
   border-radius: var(--radius-pill);

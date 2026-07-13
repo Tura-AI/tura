@@ -73,20 +73,20 @@ async def sidebar_state(page) -> dict:
           const tree = document.querySelector('.workspace-tree');
           const children = document.querySelector('.workspace-children');
           const more = children?.querySelector('.rail-more');
-          const firstSession = children?.querySelector('.session-row');
+          const sessions = children?.querySelectorAll('.session-row');
+          const lastSession = sessions?.item((sessions?.length ?? 0) - 1);
           const moreRect = more?.getBoundingClientRect();
-          const treeRect = tree?.getBoundingClientRect();
+          const lastSessionRect = lastSession?.getBoundingClientRect();
           return {
             scrollTop: tree?.scrollTop ?? null,
-            rowCount: children?.querySelectorAll('.session-row').length ?? 0,
+            rowCount: sessions?.length ?? 0,
             moreText: more?.textContent?.trim() ?? null,
-            moreBeforeFirstSession: Boolean(
-              more && firstSession &&
-              (more.compareDocumentPosition(firstSession) & Node.DOCUMENT_POSITION_FOLLOWING)
+            moreAfterLastSession: Boolean(
+              more && lastSession &&
+              (lastSession.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING)
             ),
-            moreVisibleAtTop: Boolean(
-              moreRect && treeRect &&
-              moreRect.top >= treeRect.top && moreRect.bottom <= treeRect.bottom
+            moreBelowLastSession: Boolean(
+              moreRect && lastSessionRect && moreRect.top >= lastSessionRect.bottom
             ),
             oldSessionVisible: Array.from(children?.querySelectorAll('.session-row') ?? [])
               .some((row) => row.getAttribute('title')?.includes('轮询待办工单')),
@@ -124,9 +124,9 @@ async def main() -> None:
             collapsed = await sidebar_state(page)
             checks.append(
                 {
-                    "name": "history-control-is-visible-at-session-list-top",
-                    "ok": collapsed["moreBeforeFirstSession"]
-                    and collapsed["moreVisibleAtTop"]
+                    "name": "history-control-is-after-all-visible-workspace-sessions",
+                    "ok": collapsed["moreAfterLastSession"]
+                    and collapsed["moreBelowLastSession"]
                     and collapsed["moreText"] == "Show 2 more",
                     "state": collapsed,
                 }
@@ -141,7 +141,9 @@ async def main() -> None:
                     "name": "history-control-expands-old-sessions-and-remains-as-collapse",
                     "ok": expanded["rowCount"] == collapsed["rowCount"] + 2
                     and expanded["oldSessionVisible"]
-                    and expanded["moreText"] == "Collapse",
+                    and expanded["moreText"] == "Collapse"
+                    and expanded["moreAfterLastSession"]
+                    and expanded["moreBelowLastSession"],
                     "state": expanded,
                 }
             )
