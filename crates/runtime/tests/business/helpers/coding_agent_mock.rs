@@ -13,6 +13,10 @@ pub(crate) const ROUTES: &[&str] = &[
     "thinking",
     "fast",
     "codex/gpt-5.5",
+    "codex/gpt-5.6",
+    "codex/gpt-5.6-sol",
+    "codex/gpt-5.6-terra",
+    "codex/gpt-5.6-luna",
     "embedding_high",
     "embedding_low",
 ];
@@ -1033,24 +1037,6 @@ pub(crate) fn write_llm_config(workspace: &Path, addr: SocketAddr) -> PathBuf {
     for route in ROUTES {
         routes.insert(
             (*route).to_string(),
-            json!({
-                "default_temperature": 0.0,
-                "providers": [{
-                    "provider": "openai",
-                    "model": "mock-coder",
-                    "temperature": 0.0
-                }]
-            }),
-        );
-    }
-    for route in [
-        "codex/gpt-5.6",
-        "codex/gpt-5.6-sol",
-        "codex/gpt-5.6-terra",
-        "codex/gpt-5.6-luna",
-    ] {
-        routes.insert(
-            route.to_string(),
             json!({
                 "default_temperature": 0.0,
                 "providers": [{

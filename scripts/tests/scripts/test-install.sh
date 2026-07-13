@@ -158,7 +158,9 @@ done
 
 step "Running root dependency installer"
 install_args="--environment-only"
-[ "$FULL" -eq 0 ] && install_args="$install_args --check-only"
+if [ "$FULL" -eq 0 ] && { [ "$SKIP_APPS" -eq 0 ] || [ "$OFFLINE" -eq 1 ]; }; then
+  install_args="$install_args --check-only"
+fi
 [ "$SKIP_APPS" -eq 1 ] && install_args="$install_args --skip-apps"
 [ "$OFFLINE" -eq 1 ] && install_args="$install_args --offline"
 # shellcheck disable=SC2086
