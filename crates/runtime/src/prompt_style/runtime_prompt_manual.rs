@@ -386,9 +386,8 @@ fn static_manuals() -> Vec<RuntimePromptManual> {
 mod tests {
     use super::{
         active_manual_display_names, append_missing_runtime_prompt_manuals,
-        capabilities_for_task_type_ids, normalize_task_type_ids,
-        static_manuals, RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE,
-        RUNTIME_PROMPT_MANUAL_RECORD_TYPE,
+        capabilities_for_task_type_ids, normalize_task_type_ids, static_manuals,
+        RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE, RUNTIME_PROMPT_MANUAL_RECORD_TYPE,
     };
     use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
