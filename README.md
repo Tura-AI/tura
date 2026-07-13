@@ -22,6 +22,12 @@ Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to meas
 
 > The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on the same benchmark tasks.[^debug-figure]. [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md). [^test-set-record]
 
+The published results do not establish equivalent quality or performance for
+every configured provider. Broader Anthropic/Claude, Google/Gemini,
+OpenAI-compatible, local-provider, UI-latency, runtime/session parsing, and
+cross-OS measurements remain part of the documented
+[roadmap](ROADMAP.md) and [known evidence gaps](docs/KNOWN_ISSUES.md).
+
 <details>
 <summary><strong>FULL BENCHMARK REPORT</strong></summary>
 
@@ -227,8 +233,6 @@ Windows PowerShell:
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 .\scripts\install.ps1
-.\scripts\build-release.ps1
-.\scripts\register-cli.ps1
 tura exec "Inspect this workspace"
 ```
 
@@ -238,10 +242,13 @@ macOS or Linux shell:
 git clone https://github.com/Tura-AI/tura.git
 cd tura
 ./scripts/install.sh
-./scripts/build-release.sh
-./scripts/register-cli.sh
 tura exec "Inspect this workspace"
 ```
+
+The source installer performs the complete environment setup, release build,
+and user PATH registration flow. Pass `-EnvironmentOnly` on PowerShell or
+`--environment-only` on macOS/Linux only when you intentionally want dependency
+setup without building or registering Tura.
 
 ### Common entrypoints
 
@@ -315,6 +322,9 @@ full navigation page is [docs/start/navigation.md](docs/start/navigation.md).
 - [Benchmark methodology](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md)
 - [Current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
 - [Benchmark artifacts](https://github.com/Tura-AI/benchmark/tree/main/results)
+- [Roadmap](ROADMAP.md)
+- [Known issues](docs/KNOWN_ISSUES.md)
+- [Contributing](.github/CONTRIBUTING.md)
 
 ## License
 

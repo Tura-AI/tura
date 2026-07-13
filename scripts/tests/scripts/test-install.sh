@@ -102,6 +102,25 @@ for required in \
   esac
 done
 
+step "Checking root installer complete-flow contract"
+for required in \
+  '--environment-only)' \
+  'if [ "$ENVIRONMENT_ONLY" -eq 1 ]' \
+  'sh "$SCRIPT_DIR/build-release.sh"' \
+  'sh "$SCRIPT_DIR/register-cli.sh"'; do
+  case "$install_source" in
+    *"$required"*) ;;
+    *) echo "scripts/install.sh is missing complete-flow behavior: $required" >&2; exit 1 ;;
+  esac
+done
+environment_only_line=$(grep -n 'if \[ "$ENVIRONMENT_ONLY" -eq 1 \]' "$REPO_ROOT/scripts/install.sh" | head -n 1 | cut -d: -f1)
+build_line=$(grep -n 'sh "$SCRIPT_DIR/build-release.sh"' "$REPO_ROOT/scripts/install.sh" | head -n 1 | cut -d: -f1)
+register_line=$(grep -n 'sh "$SCRIPT_DIR/register-cli.sh"' "$REPO_ROOT/scripts/install.sh" | head -n 1 | cut -d: -f1)
+if [ -z "$environment_only_line" ] || [ -z "$build_line" ] || [ -z "$register_line" ] || [ "$environment_only_line" -ge "$build_line" ] || [ "$build_line" -ge "$register_line" ]; then
+  echo "install.sh must stop only for --environment-only, then build release artifacts before registering PATH." >&2
+  exit 1
+fi
+
 step "Checking npm postinstall checks runtime dependencies only"
 npm_install_source=$(cat "$REPO_ROOT/scripts/npm/install-release.mjs")
 for required in \
@@ -138,7 +157,7 @@ for forbidden in "run-install.mjs" "ensureProjectDependencies" ".cargo" "cargo" 
 done
 
 step "Running root dependency installer"
-install_args=""
+install_args="--environment-only"
 [ "$FULL" -eq 0 ] && install_args="$install_args --check-only"
 [ "$SKIP_APPS" -eq 1 ] && install_args="$install_args --skip-apps"
 [ "$OFFLINE" -eq 1 ] && install_args="$install_args --offline"

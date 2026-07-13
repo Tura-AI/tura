@@ -12,6 +12,7 @@ const psFlagMap = new Map([
   ["--skip-apps", "-SkipApps"],
   ["--skip-uv", "-SkipUv"],
   ["--skip-bun", "-SkipBun"],
+  ["--environment-only", "-EnvironmentOnly"],
   ["--check-only", "-CheckOnly"],
   ["--offline", "-Offline"],
   ["--help", "-Help"],

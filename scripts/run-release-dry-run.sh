@@ -50,7 +50,7 @@ cd "$REPO_ROOT"
 
 if [ "$SKIP_INSTALL" -eq 0 ]; then
   printf '==> Release dry-run install\n'
-  sh scripts/install.sh
+  sh scripts/install.sh --environment-only
 fi
 
 if [ "$SKIP_CI" -eq 0 ]; then

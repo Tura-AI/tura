@@ -33,6 +33,12 @@ entrypoints explicit. The runner-label wrappers are `run-ubuntu-latest.sh`,
 `run-macos-latest.sh`, `run-windows-2022.ps1`, and `run-windows-2025.ps1`, with
 matching `run-install-release-*` wrappers.
 
+The required source installer contract is additionally covered by
+`.github/workflows/source-install.yml`: the default installer must complete
+environment setup, release build, PATH registration, and `tura --help` discovery
+from a fresh shell on Ubuntu, macOS, Windows Server 2022, and Windows Server
+2025. The wrappers above retain targeted release and lifecycle coverage.
+
 To conserve Actions quota while debugging, target the OS workflow before running
 the final matrix. Push a `codex/**` branch or commit message containing
 `os-install`, `os-backend`, `os-tui`, or `os-full`; add `windows`,

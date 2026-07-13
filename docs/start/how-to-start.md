@@ -13,13 +13,15 @@ like agent problems, which is rude but traditional.
 
 | OS | PATH should resolve | If it is missing | Register Tura on PATH |
 | --- | --- | --- | --- |
-| Windows | `powershell.exe` or `pwsh`, `git`, Git/MSYS `bash`, optional MSYS2 `zsh`, and Tura release binaries. | Install PowerShell 7 with `winget install --id Microsoft.PowerShell --source winget`; install Git with `winget install --id Git.Git --source winget`; install MSYS2 with `winget install --id MSYS2.MSYS2 --source winget`, then add `C:\msys64\usr\bin` to PATH or set `TURA_ZSH_PATH` to `zsh.exe`. If PowerShell is installed outside PATH, set `TURA_POWERSHELL_PATH`. | Run `./scripts/build-release.ps1`, then `./scripts/register-cli.ps1`, then open a new terminal. |
-| macOS | `git`, `bash`, `zsh`, package-manager paths such as `/opt/homebrew/bin` or `/usr/local/bin`, and Tura release binaries. | Install Apple command line tools with `xcode-select --install`. If Homebrew tools are needed, run `brew install git bash zsh` and make sure Homebrew's bin directory is in your shell profile. If zsh is custom-installed, set `TURA_ZSH_PATH`. | Run `./scripts/build-release.sh`, then `./scripts/register-cli.sh`, then open a new terminal. |
-| Linux | `git`, `bash`, optional `zsh`, normal system bin paths, and Tura release binaries. | Debian/Ubuntu: `sudo apt-get install git bash zsh`. Fedora: `sudo dnf install git bash zsh`. Arch: `sudo pacman -S git bash zsh`. If zsh lives outside PATH, set `TURA_ZSH_PATH`. | Run `./scripts/build-release.sh`, then `./scripts/register-cli.sh`, then open a new terminal. |
+| Windows | `powershell.exe` or `pwsh`, `git`, Git/MSYS `bash`, optional MSYS2 `zsh`, and Tura release binaries. | Install PowerShell 7 with `winget install --id Microsoft.PowerShell --source winget`; install Git with `winget install --id Git.Git --source winget`; install MSYS2 with `winget install --id MSYS2.MSYS2 --source winget`, then add `C:\msys64\usr\bin` to PATH or set `TURA_ZSH_PATH` to `zsh.exe`. If PowerShell is installed outside PATH, set `TURA_POWERSHELL_PATH`. | Run `.\scripts\install.ps1`, then open a new terminal. |
+| macOS | `git`, `bash`, `zsh`, package-manager paths such as `/opt/homebrew/bin` or `/usr/local/bin`, and Tura release binaries. | Install Apple command line tools with `xcode-select --install`. If Homebrew tools are needed, run `brew install git bash zsh` and make sure Homebrew's bin directory is in your shell profile. If zsh is custom-installed, set `TURA_ZSH_PATH`. | Run `./scripts/install.sh`, then open a new terminal. |
+| Linux | `git`, `bash`, optional `zsh`, normal system bin paths, and Tura release binaries. | Debian/Ubuntu: `sudo apt-get install git bash zsh`. Fedora: `sudo dnf install git bash zsh`. Arch: `sudo pacman -S git bash zsh`. If zsh lives outside PATH, set `TURA_ZSH_PATH`. | Run `./scripts/install.sh`, then open a new terminal. |
 
 `scripts/install.*` checks and installs source-checkout dependencies, including
 Git, Rust/Cargo, PowerShell, `shell_command`, `bash`, `zsh`, Bun, uv, and Python
-3.12, and updates PATH where the platform allows safe user-local registration.
+3.12, builds the release, and updates PATH where the platform allows safe
+user-local registration. Use the explicit environment-only option when you do
+not want the build and registration stages.
 The npm package install path is intentionally narrower: it checks runtime
 dependencies and registers the release CLI path, but it does not check or install
 Rust/Cargo, Bun, uv, or Python. Set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` when

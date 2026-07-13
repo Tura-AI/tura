@@ -13,13 +13,16 @@ Command entries:
 
 Important scripts:
 
-- `install.*`: install dependencies only. The root installer checks
+- `install.*`: run the complete source installation by default: dependency
+  setup, full release build, and user PATH registration. The root installer checks
   `shell_command`, `bash`, `zsh`, and `git` coverage on every platform, ensures
   user-local `uv`, Python 3.12 through `uv`, and `bun`, calls command-owned
   `commands/*/install.*` scripts, and runs Bun installs inside app/package
   directories. `--skip-uv`/`-SkipUv` requires command installers to be skipped,
   and `--skip-bun`/`-SkipBun` requires app installs to be skipped when Bun
-  workspaces are present. It does not build binaries or register PATH launchers.
+  workspaces are present. Use `-EnvironmentOnly` or `--environment-only` to stop
+  after dependency setup; partial dependency and check-only switches require
+  that explicit mode.
   Windows adds common Git/MSYS shell paths before checking bash/zsh. macOS
   asserts zsh and bash and reports optional PowerShell (`pwsh`) coverage.
 - `build-debug.*`: build Rust debug binaries and the TUI entry into `target/debug`.
@@ -142,6 +145,16 @@ Script tests:
   verifies command protocol health. Pass `-BackendOnly` or `--backend-only` when
   a CI job only needs Rust release artifacts.
 
+Source installation contract:
+
+- `scripts/install.ps1` and `scripts/install.sh` run environment setup, the full
+  release build, and CLI PATH registration by default.
+- `-EnvironmentOnly` and `--environment-only` are the explicit dependency-only
+  modes. Partial dependency switches and check-only mode must be paired with
+  that flag.
+- Internal release and packaging flows that build separately must invoke the
+  installer in environment-only mode to avoid duplicate release builds.
+
 GitHub Actions:
 
 - `.github/workflows/ci.yml` runs the smell gate first. After that, crate matrix
@@ -149,6 +162,9 @@ GitHub Actions:
   Cargo and npm caches. Tags starting with `release` trigger a release dry-run
   job after CI completes; the job builds release artifacts and does not publish
   a GitHub release.
+- `.github/workflows/source-install.yml` runs the default complete source
+  installer on Ubuntu, macOS, Windows Server 2022, and Windows Server 2025, then
+  verifies `tura --help` through user PATH in a fresh shell and uploads logs.
 - `.github/workflows/os-worker-tests.yml` runs the four current OS runners
   (`ubuntu-latest`, `macos-latest`, `windows-2022`, and `windows-2025`) through
   install-script checks, backend release-script checks, and serial backend OS

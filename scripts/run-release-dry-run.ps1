@@ -34,7 +34,7 @@ Set-Location $RepoRoot
 
 if (-not $SkipInstall) {
   Write-Host "==> Release dry-run install"
-  Invoke-Checked "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\install.ps1")
+  Invoke-Checked "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\install.ps1", "-EnvironmentOnly")
 }
 
 if (-not $SkipCi) {

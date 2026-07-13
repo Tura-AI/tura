@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: mailto:info@turaai.net
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Support and usage questions
+    url: mailto:info@turaai.net
+    about: Ask setup and usage questions without exposing credentials or private session data.

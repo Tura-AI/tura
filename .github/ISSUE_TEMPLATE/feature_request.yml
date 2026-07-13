@@ -1,0 +1,73 @@
+name: Feature request
+description: Propose a measured, narrowly scoped improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user problem and current workaround, not only the desired implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome and acceptance criteria
+      description: State observable behavior that would make the request complete.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link reproductions, usage evidence, benchmark gaps, or evaluation results that justify the change.
+    validations:
+      required: true
+  - type: textarea
+    id: minimal
+    attributes:
+      label: Smallest viable change
+      description: Explain the simplest solution and alternatives considered.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Runtime or state management
+        - Session DB or persistence
+        - Provider compatibility
+        - TUI
+        - GUI Plan, Calendar, or Session Tasks
+        - Installation, release, or CI
+        - Benchmark or evaluation
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Proposed verification
+      description: List correctness tests and, for performance claims, the before/after benchmark design.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility, migration, and risk
+      description: Note affected OSes, providers, stored data, APIs, and user workflows.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and roadmap items.
+          required: true
+        - label: This request does not contain credentials or private session data.
+          required: true
+        - label: I understand that performance changes require benchmark or evaluation evidence.
+          required: true

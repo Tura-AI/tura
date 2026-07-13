@@ -1,6 +1,8 @@
 # Summary
 
 - [Tura documentation](README.md)
+- [Roadmap](../ROADMAP.md)
+- [Known issues](KNOWN_ISSUES.md)
 
 ## Start
 
