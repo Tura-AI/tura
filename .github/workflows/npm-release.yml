@@ -208,20 +208,28 @@ jobs:
           scope: "@tura-ai"
       - name: Install npm
         run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
-      - name: Verify and publish GitHub package
+      - name: Verify npmjs main package exists
+        run: |
+          version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
+          npm view "tura-ai@${version}" version --registry https://registry.npmjs.org >/dev/null
+      - name: Pack GitHub package
+        env:
+          TURA_NPM_PACKAGE_NAME: "@tura-ai/tura"
+        run: |
+          node scripts/npm/prepack.mjs
+          mkdir -p release/npm-github
+          pack_json="$(npm pack --json --pack-destination release/npm-github)"
+          PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); if (info?.name !== process.env.TURA_NPM_PACKAGE_NAME) throw new Error('GitHub package name mismatch')"
+      - name: Publish GitHub package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TURA_NPM_PACKAGE_NAME: "@tura-ai/tura"
         run: |
-          node scripts/npm/prepack.mjs
           version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
-          npm view "tura-ai@${version}" version --registry https://registry.npmjs.org >/dev/null
           if npm view "${TURA_NPM_PACKAGE_NAME}@${version}" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
             echo "${TURA_NPM_PACKAGE_NAME}@${version} already exists in GitHub Packages; skipping publish."
             exit 0
           fi
-          mkdir -p release/npm-github
-          pack_json="$(npm pack --json --pack-destination release/npm-github)"
-          PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); if (info?.name !== process.env.TURA_NPM_PACKAGE_NAME) throw new Error('GitHub package name mismatch')"
-          package_file="$(PACK_JSON="$pack_json" node -e "const info = JSON.parse(process.env.PACK_JSON); console.log('release/npm-github/' + info[0].filename)")"
+          package_file="$(find release/npm-github -maxdepth 1 -name '*.tgz' -print -quit)"
+          test -n "$package_file"
           npm publish "$package_file" --registry https://npm.pkg.github.com --access public --provenance=false
