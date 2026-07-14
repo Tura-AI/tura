@@ -4,15 +4,13 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
-  bundleCandidates,
   executableName,
   executableNames,
   firstExistingPath,
   guiDistCandidates,
   missingPackageFiles,
-  missingReleaseFiles,
+  missingNpmPlatformFiles,
   missingReleaseRuntimeFiles,
-  mismatchedDesktopBundleAssets,
   platformPackageName,
   releaseArchiveName,
   releaseConfigFiles,
@@ -43,10 +41,6 @@ const npmPlatformRuntimeExcludedFiles = new Set([
 function fail(message) {
   console.error(`[tura package-platform] ${message}`);
   process.exit(1);
-}
-
-if (args.includes("--no-desktop")) {
-  fail("--no-desktop was removed because every npm platform release must contain the Tauri GUI.");
 }
 
 function run(command, commandArgs, cwd = packageDir) {
@@ -116,18 +110,6 @@ for (const name of executableNames) {
   cpSync(source, path.join(stageRelease, fileName));
 }
 
-const desktopGuiName = executableName("tura_gui");
-const desktopGui = path.join(sourceRelease, desktopGuiName);
-if (!existsSync(desktopGui)) {
-  fail(`missing desktop GUI binary: ${path.relative(repoRoot, desktopGui)}`);
-}
-cpSync(desktopGui, path.join(stageRelease, desktopGuiName));
-copyDirectory(firstExistingPath(bundleCandidates(repoRoot)), path.join(stageRelease, "bundle"), "Tauri bundle");
-const mismatchedBundles = mismatchedDesktopBundleAssets(packageDir, rootPackage.version);
-if (mismatchedBundles.length > 0) {
-  fail(`Tauri bundle version does not match ${rootPackage.version}: ${mismatchedBundles.map((file) => path.basename(file)).join(", ")}`);
-}
-
 copyDirectory(firstExistingPath(guiDistCandidates(repoRoot)), path.join(stageRelease, "tura_gui_dist"), "GUI dist");
 
 for (const [sourceRelative, releaseRelative] of releaseConfigFiles) {
@@ -145,11 +127,6 @@ if (!binaryOnly) {
     if (npmPlatformRuntimeExcludedFiles.has(releaseRelative)) {
       continue;
     }
-
-const missingRelease = missingReleaseFiles(packageDir);
-if (missingRelease.length > 0) {
-  fail(`platform package is missing required release files: ${missingRelease.map((file) => path.relative(packageDir, file)).join(", ")}`);
-}
     copyRuntimePath(
       path.join(sourceRelease, releaseRelative),
       path.join(stageRelease, releaseRelative),
@@ -160,6 +137,11 @@ if (missingRelease.length > 0) {
   if (missingRuntime.length > 0) {
     fail(`platform package is missing runtime config files: ${missingRuntime.map((file) => path.relative(packageDir, file)).join(", ")}`);
   }
+}
+
+const missingRelease = missingNpmPlatformFiles(packageDir);
+if (missingRelease.length > 0) {
+  fail(`platform package is missing required release files: ${missingRelease.map((file) => path.relative(packageDir, file)).join(", ")}`);
 }
 
 writeFileSync(

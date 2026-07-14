@@ -6,7 +6,6 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { isCliPathRegistered, unregisterCliPath } from "./cli-path.mjs";
-import { desktopBundleAssets } from "./release-artifacts.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const releaseDir = path.join(repoRoot, "release");
@@ -187,7 +186,6 @@ const binName = process.platform === "win32" ? "tura.cmd" : "tura";
 const requiredPaths = [
   path.join(installedReleaseDir, `tura${executableExtension}`),
   path.join(installedReleaseDir, `tura_exec${executableExtension}`),
-  path.join(installedReleaseDir, `tura_gui${executableExtension}`),
   path.join(installedReleaseDir, "config", "provider_config.json"),
   path.join(installedReleaseDir, "agents", "src", "balanced", "agent_config.json"),
   path.join(installedReleaseDir, "agents", "src", "balanced", "prompt.md"),
@@ -206,11 +204,6 @@ const missing = requiredPaths.filter((requiredPath) => !existsSync(requiredPath)
 if (missing.length > 0) {
   fail(`installed package is missing required release files:\n${missing.join("\n")}`);
 }
-const desktopAssets = desktopBundleAssets(mainPackageDir);
-if (desktopAssets.length === 0) {
-  fail(`installed package does not contain an installable Tauri bundle under ${path.join(installedReleaseDir, "bundle")}`);
-}
-
 function verifyCliRegistration() {
   if (!isCliPathRegistered({ packageRoot: mainPackageDir, releaseDir: installedReleaseDir })) {
     fail(`CLI registration did not add release directory to the user CLI path: ${installedReleaseDir}`);

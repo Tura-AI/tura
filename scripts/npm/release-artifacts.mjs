@@ -201,12 +201,15 @@ export function firstExistingPath(candidates) {
 }
 
 export function requiredReleaseFiles(root, platform = process.platform) {
+  return [...requiredNpmPlatformFiles(root, platform), ...requiredDesktopReleaseFiles(root, platform)];
+}
+
+export function requiredNpmPlatformFiles(root, platform = process.platform) {
   const releaseDir = releaseRoot(root);
   const files = executableNames.map((name) => path.join(releaseDir, executableName(name, platform)));
   files.push(path.join(releaseDir, "config", "provider_config.json"));
   const guiDist = firstExistingPath(guiDistCandidates(root));
   files.push(guiDist ? path.join(guiDist, "index.html") : path.join(releaseDir, "tura_gui_dist", "index.html"));
-  files.push(...requiredDesktopReleaseFiles(root, platform));
   return files;
 }
 
@@ -225,6 +228,10 @@ export function missingReleaseFiles(root, platform = process.platform) {
     missing.push(path.join(bundleRoot, `installer${desktopBundleAssetExtensions(platform).join("|")}`));
   }
   return missing;
+}
+
+export function missingNpmPlatformFiles(root, platform = process.platform) {
+  return requiredNpmPlatformFiles(root, platform).filter((file) => !existsSync(file));
 }
 
 export function requiredReleaseRuntimeConfigFiles(root) {
