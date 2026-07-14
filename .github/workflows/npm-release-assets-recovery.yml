@@ -1,0 +1,171 @@
+name: NPM Release Asset Recovery
+
+on:
+  push:
+    branches:
+      - "release-assets/**"
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: npm-release-assets-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  recover-assets:
+    name: Recover verified GitHub Release assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate tag, source run, jobs, and artifacts
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release-logs
+          exec > >(tee .release-logs/asset-recovery-validation.log) 2>&1
+
+          recovery="${GITHUB_REF_NAME#release-assets/}"
+          tag="${recovery%/*}"
+          run_id="${recovery##*/}"
+          if [ "$tag" = "$recovery" ] || [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "::error title=Invalid asset recovery branch::Expected release-assets/<tag>/<source-run-id>."
+            exit 1
+          fi
+
+          tag_sha="$(git rev-list -n 1 "$tag" 2>/dev/null || true)"
+          if [ -z "$tag_sha" ]; then
+            echo "::error title=Recovery tag missing::Tag $tag was not found."
+            exit 1
+          fi
+          git show "$tag:package.json" > "$RUNNER_TEMP/recovery-package.json"
+          version="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version" "$RUNNER_TEMP/recovery-package.json")"
+          case "$tag" in
+            "v$version"|"release$version"|"release-$version"|"release-v$version") ;;
+            *)
+              echo "::error title=Recovery tag mismatch::Tag $tag does not match package version $version."
+              exit 1
+              ;;
+          esac
+
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")"
+          if ! jq -e \
+            --arg tag "$tag" \
+            --arg sha "$tag_sha" \
+            '.status == "completed" and .path == ".github/workflows/npm-release.yml" and .event == "push" and .head_branch == $tag and .head_sha == $sha' \
+            <<<"$run_json" >/dev/null; then
+            echo "::error title=Invalid recovery source::Run $run_id is not a completed release run for $tag at $tag_sha."
+            exit 1
+          fi
+
+          jobs_json="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" --slurp)"
+          artifacts_json="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" --slurp)"
+          packages=(tura-linux-x64 tura-darwin-x64 tura-darwin-arm64 tura-win32-x64)
+          for package in "${packages[@]}"; do
+            jq -e \
+              --arg name "Build $package" \
+              '[.[].jobs[] | select(.name == $name and .conclusion == "success")] | length == 1' \
+              <<<"$jobs_json" >/dev/null || {
+                echo "::error title=Unverified platform build::Run $run_id does not contain one successful Build $package job."
+                exit 1
+              }
+            jq -e \
+              --arg name "npm-$package" \
+              --arg sha "$tag_sha" \
+              '[.[].artifacts[] | select(.name == $name and .expired == false and .size_in_bytes > 0 and .workflow_run.head_sha == $sha)] | length == 1' \
+              <<<"$artifacts_json" >/dev/null || {
+                echo "::error title=Unverified platform artifact::Run $run_id does not contain one live npm-$package artifact for $tag_sha."
+                exit 1
+              }
+          done
+
+          {
+            echo "tag=$tag"
+            echo "run_id=$run_id"
+            echo "tag_sha=$tag_sha"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "Validated release assets from run $run_id for $tag at $tag_sha."
+      - name: Download verified source-run artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: npm-tura-*
+          path: release-assets
+          merge-multiple: true
+          run-id: ${{ steps.source.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify assets and write checksum manifest
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          TAG_SHA: ${{ steps.source.outputs.tag_sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = @(Get-ChildItem -LiteralPath release-assets -File)
+          $requiredNames = @(
+            "tura-linux-x64-$env:RELEASE_VERSION.tgz",
+            "tura-darwin-x64-$env:RELEASE_VERSION.tgz",
+            "tura-darwin-arm64-$env:RELEASE_VERSION.tgz",
+            "tura-win32-x64-$env:RELEASE_VERSION.tgz",
+            "tura-$env:RELEASE_TAG-linux-x64.tar.gz",
+            "tura-$env:RELEASE_TAG-macos-x64.tar.gz",
+            "tura-$env:RELEASE_TAG-macos-arm64.tar.gz",
+            "tura-$env:RELEASE_TAG-windows-x64.zip"
+          )
+          $missing = @($requiredNames | Where-Object { $_ -notin $files.Name })
+          if ($missing.Count -gt 0) {
+            throw "Downloaded release assets are missing: $($missing -join ', ')."
+          }
+          foreach ($platform in @("linux-x64", "macos-x64", "macos-arm64", "windows-x64")) {
+            $prefix = "tura-gui-$env:RELEASE_TAG-$platform"
+            if (-not ($files.Name | Where-Object { $_.StartsWith($prefix, [System.StringComparison]::Ordinal) })) {
+              throw "Downloaded release assets do not contain a Tauri installer for $platform."
+            }
+          }
+
+          $manifest = @(
+            "# Tura $env:RELEASE_TAG release asset SHA-256 checksums"
+            "# source-run: $env:SOURCE_RUN_ID"
+            "# tag-sha: $env:TAG_SHA"
+          )
+          $manifest += $files | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant(), $_.Name
+          }
+          Set-Content -LiteralPath release-assets/SHA256SUMS.txt -Value $manifest -Encoding utf8NoBOM
+      - name: Upload GitHub Release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
+        run: |
+          set -euo pipefail
+          log=.release-logs/asset-recovery-upload.log
+          exec > >(tee "$log") 2>&1
+          trap 'status=$?; if [ "$status" -ne 0 ]; then tail_output="$(tail -n 40 "$log")"; tail_output="${tail_output//'%'/'%25'}"; tail_output="${tail_output//$'\r'/'%0D'}"; tail_output="${tail_output//$'\n'/'%0A'}"; echo "::error title=Release asset recovery failed::$tail_output"; fi; exit "$status"' EXIT
+
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --generate-notes
+          fi
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -print | sort)
+          test "${#assets[@]}" -gt 0
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          remote_names="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          for asset in "${assets[@]}"; do
+            grep -Fxq "$(basename "$asset")" <<<"$remote_names"
+          done
+      - name: Upload asset recovery failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-asset-recovery-failure-${{ github.run_id }}
+          path: .release-logs/*.log
+          if-no-files-found: ignore

@@ -1,0 +1,118 @@
+name: NPM GitHub Package Recovery
+
+on:
+  push:
+    branches:
+      - "github-package-release/**"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: npm-github-package-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NPM_CLI_VERSION: "10.9.2"
+
+jobs:
+  publish-github-package:
+    name: Recover GitHub npm package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate tag and completed npmjs release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release-logs
+          exec > >(tee .release-logs/github-package-validation.log) 2>&1
+
+          tag="${GITHUB_REF_NAME#github-package-release/}"
+          if [ -z "$tag" ] || [ "$tag" = "$GITHUB_REF_NAME" ]; then
+            echo "::error title=Invalid GitHub Package recovery branch::Expected github-package-release/<tag>."
+            exit 1
+          fi
+          tag_sha="$(git rev-list -n 1 "$tag" 2>/dev/null || true)"
+          if [ -z "$tag_sha" ]; then
+            echo "::error title=Recovery tag missing::Tag $tag was not found."
+            exit 1
+          fi
+          git show "$tag:package.json" > "$RUNNER_TEMP/recovery-package.json"
+          version="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version" "$RUNNER_TEMP/recovery-package.json")"
+          case "$tag" in
+            "v$version"|"release$version"|"release-$version"|"release-v$version") ;;
+            *)
+              echo "::error title=Recovery tag mismatch::Tag $tag does not match package version $version."
+              exit 1
+              ;;
+          esac
+
+          packages=(tura-ai tura-linux-x64 tura-darwin-x64 tura-darwin-arm64 tura-win32-x64)
+          for package in "${packages[@]}"; do
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/$package/$version")"
+            if [ "$status" != 200 ]; then
+              echo "::error title=Incomplete npmjs release::$package@$version returned HTTP $status."
+              exit 1
+            fi
+          done
+          gh release view "$tag" >/dev/null
+          {
+            echo "tag=$tag"
+            echo "tag_sha=$tag_sha"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@tura-ai"
+      - name: Install pinned npm
+        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+      - name: Pack and publish GitHub npm package
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TURA_NPM_PACKAGE_NAME: "@tura-ai/tura"
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          TAG_SHA: ${{ steps.release.outputs.tag_sha }}
+        run: |
+          set -euo pipefail
+          log=.release-logs/github-package-publish.log
+          exec > >(tee "$log") 2>&1
+          trap 'status=$?; node scripts/npm/restore-main-package.mjs || true; if [ "$status" -ne 0 ]; then tail_output="$(tail -n 40 "$log")"; tail_output="${tail_output//'%'/'%25'}"; tail_output="${tail_output//$'\r'/'%0D'}"; tail_output="${tail_output//$'\n'/'%0A'}"; echo "::error title=GitHub Package recovery failed::$tail_output"; fi; exit "$status"' EXIT
+
+          test "$(git rev-parse HEAD)" = "$TAG_SHA"
+          node scripts/npm/prepack.mjs
+          node scripts/npm/stage-main-package.mjs
+          mkdir -p release/npm-github
+          pack_json="$(npm pack --ignore-scripts --json --pack-destination release/npm-github)"
+          PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); if (info?.name !== process.env.TURA_NPM_PACKAGE_NAME) throw new Error('GitHub package name mismatch')"
+          package_file="$(PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); console.log('release/npm-github/' + info.filename)")"
+          if npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION already exists in GitHub Packages; skipping publish."
+          else
+            npm publish "$package_file" --registry https://npm.pkg.github.com --access public --provenance=false
+          fi
+          npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" version --registry https://npm.pkg.github.com >/dev/null
+          local_integrity="$(node -e "const fs=require('fs'),crypto=require('crypto'); const data=fs.readFileSync(process.argv[1]); console.log('sha512-'+crypto.createHash('sha512').update(data).digest('base64'))" "$package_file")"
+          registry_integrity="$(npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" dist.integrity --registry https://npm.pkg.github.com/)"
+          test "$local_integrity" = "$registry_integrity"
+      - name: Upload GitHub Package recovery failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-github-package-recovery-failure-${{ github.run_id }}
+          path: .release-logs/*.log
+          if-no-files-found: ignore

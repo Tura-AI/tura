@@ -202,6 +202,15 @@ GitHub Actions:
   path: it verifies the tag and completed source run, reuses that run's four
   platform artifacts, and resumes platform, main, GitHub Release, and GitHub
   Package publishing without rebuilding them.
+- `.github/workflows/npm-release-assets-recovery.yml` supports a local-token
+  recovery through `release-assets/<tag>/<run-id>`. It verifies and downloads
+  the original four workflow artifacts, uploads their contents to the GitHub
+  Release, and adds `SHA256SUMS.txt` so local npm publishing can verify every
+  downloaded tarball without rebuilding it.
+- `.github/workflows/npm-github-package-recovery.yml` handles the final
+  `github-package-release/<tag>` step after all five npmjs packages and the
+  GitHub Release exist. It checks out the immutable tag and publishes
+  `@tura-ai/tura` with the workflow's `GITHUB_TOKEN`.
 
 Local source builds still resolve directly from `target/release`. Published npm
 installs resolve through the main `tura-ai` package plus the matching platform
