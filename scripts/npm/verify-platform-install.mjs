@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { isCliPathRegistered, unregisterCliPath } from "./cli-path.mjs";
+import { desktopBundleAssets } from "./release-artifacts.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const releaseDir = path.join(repoRoot, "release");
@@ -49,12 +50,14 @@ function safeTempDir(name) {
   return target;
 }
 
-function firstTarball(root) {
+function platformTarball(root, version) {
   if (!existsSync(root)) return null;
-  const tarballs = readdirSync(root)
-    .filter((entry) => entry.endsWith(".tgz"))
-    .sort();
-  return tarballs.length > 0 ? path.join(root, tarballs[tarballs.length - 1]) : null;
+  const expectedSuffix = `-${version}.tgz`;
+  const matches = readdirSync(root).filter((entry) => entry.endsWith(expectedSuffix));
+  if (matches.length > 1) {
+    fail(`multiple platform package tarballs match version ${version}: ${matches.join(", ")}`);
+  }
+  return matches.length === 1 ? path.join(root, matches[0]) : null;
 }
 
 function firstPlatformPackageDir(root) {
@@ -137,7 +140,7 @@ function verifyPackedMainPackage(tarball, packInfo) {
 }
 
 const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const platformPackage = firstTarball(platformOutDir);
+const platformPackage = platformTarball(platformOutDir, packageJson.version);
 if (!platformPackage) {
   fail("platform package tarball was not produced.");
 }
@@ -184,6 +187,7 @@ const binName = process.platform === "win32" ? "tura.cmd" : "tura";
 const requiredPaths = [
   path.join(installedReleaseDir, `tura${executableExtension}`),
   path.join(installedReleaseDir, `tura_exec${executableExtension}`),
+  path.join(installedReleaseDir, `tura_gui${executableExtension}`),
   path.join(installedReleaseDir, "config", "provider_config.json"),
   path.join(installedReleaseDir, "agents", "src", "balanced", "agent_config.json"),
   path.join(installedReleaseDir, "agents", "src", "balanced", "prompt.md"),
@@ -201,6 +205,10 @@ const requiredPaths = [
 const missing = requiredPaths.filter((requiredPath) => !existsSync(requiredPath));
 if (missing.length > 0) {
   fail(`installed package is missing required release files:\n${missing.join("\n")}`);
+}
+const desktopAssets = desktopBundleAssets(mainPackageDir);
+if (desktopAssets.length === 0) {
+  fail(`installed package does not contain an installable Tauri bundle under ${path.join(installedReleaseDir, "bundle")}`);
 }
 
 function verifyCliRegistration() {

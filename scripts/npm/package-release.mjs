@@ -12,7 +12,9 @@ import {
   firstExistingPath,
   guiDistCandidates,
   missingPackageFiles,
+  missingReleaseFiles,
   missingReleaseRuntimeFiles,
+  mismatchedDesktopBundleAssets,
   releaseArchiveName,
   releaseConfigFiles,
   releaseRuntimeExcludedDirs,
@@ -27,13 +29,16 @@ const args = process.argv.slice(2);
 const outIndex = args.indexOf("--out-dir");
 const outDir = outIndex >= 0 ? path.resolve(args[outIndex + 1] ?? "") : releaseOutputRoot(repoRoot);
 const binaryOnly = args.includes("--binary");
-const includeDesktop = !args.includes("--no-desktop");
 const archiveName = releaseArchiveName(packageJson.version);
 const archivePath = path.join(outDir, archiveName);
 
 function fail(message) {
   console.error(`[tura package-release] ${message}`);
   process.exit(1);
+}
+
+if (args.includes("--no-desktop")) {
+  fail("--no-desktop was removed because every GitHub Release archive must contain the Tauri GUI.");
 }
 
 function run(command, commandArgs, cwd = repoRoot) {
@@ -97,14 +102,16 @@ try {
     cpSync(source, path.join(stageRelease, fileName));
   }
 
-  if (includeDesktop) {
-    const desktopGuiName = executableName("tura_gui");
-    const desktopGui = path.join(sourceRelease, desktopGuiName);
-    if (!existsSync(desktopGui)) {
-      fail(`missing desktop GUI binary: ${path.relative(repoRoot, desktopGui)}`);
-    }
-    cpSync(desktopGui, path.join(stageRelease, desktopGuiName));
-    copyDirectory(firstExistingPath(bundleCandidates(repoRoot)), path.join(stageRelease, "bundle"), "Tauri bundle");
+  const desktopGuiName = executableName("tura_gui");
+  const desktopGui = path.join(sourceRelease, desktopGuiName);
+  if (!existsSync(desktopGui)) {
+    fail(`missing desktop GUI binary: ${path.relative(repoRoot, desktopGui)}`);
+  }
+  cpSync(desktopGui, path.join(stageRelease, desktopGuiName));
+  copyDirectory(firstExistingPath(bundleCandidates(repoRoot)), path.join(stageRelease, "bundle"), "Tauri bundle");
+  const mismatchedBundles = mismatchedDesktopBundleAssets(stageRoot, packageJson.version);
+  if (mismatchedBundles.length > 0) {
+    fail(`Tauri bundle version does not match ${packageJson.version}: ${mismatchedBundles.map((file) => path.basename(file)).join(", ")}`);
   }
 
   copyDirectory(firstExistingPath(guiDistCandidates(repoRoot)), path.join(stageRelease, "tura_gui"), "GUI dist");
@@ -127,6 +134,11 @@ try {
         releaseRelative
       );
     }
+
+  const missingRelease = missingReleaseFiles(stageRoot);
+  if (missingRelease.length > 0) {
+    fail(`release archive is missing required release files: ${missingRelease.map((file) => path.relative(stageRoot, file)).join(", ")}`);
+  }
     const missingRuntime = missingReleaseRuntimeFiles(stageRoot);
     if (missingRuntime.length > 0) {
       fail(`release archive is missing runtime config files: ${missingRuntime.map((file) => path.relative(stageRoot, file)).join(", ")}`);

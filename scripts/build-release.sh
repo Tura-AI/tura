@@ -244,6 +244,7 @@ fi
 if [ "$BUILD_TAURI" -eq 1 ]; then
   install_js_if_missing "$REPO_ROOT/apps/gui" "app/node_modules/vite/package.json"
   install_js_if_missing "$REPO_ROOT/apps/tauri" "node_modules/@tauri-apps/cli/package.json"
+  rm -rf "$TARGET_DIR/bundle" "$TARGET_DIR/release/bundle"
   (cd "$REPO_ROOT/apps/tauri" && TURA_BUILD_KIND=release bun run build)
 fi
 

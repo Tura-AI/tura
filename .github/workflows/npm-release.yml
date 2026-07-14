@@ -19,11 +19,34 @@ env:
   NPM_CLI_VERSION: "11.18.0"
 
 jobs:
+  validate-release:
+    name: Validate release tag
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release tag matches package version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $true
+          }
+          $version = node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version"
+          $allowedTags = @("v$version", "release$version", "release-$version", "release-v$version")
+          if ($env:GITHUB_REF_NAME -notin $allowedTags) {
+            throw "Release tag $env:GITHUB_REF_NAME must match package version $version`: $($allowedTags -join ', ')."
+          }
+
   build-platform:
     name: Build ${{ matrix.package }}
+    needs: validate-release
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    env:
+      TURA_NPM_RELEASE_TAG: ${{ github.ref_name }}
     strategy:
       fail-fast: false
       matrix:
@@ -31,19 +54,19 @@ jobs:
           - runner: ubuntu-latest
             package: tura-linux-x64
             install: sh scripts/install.sh --environment-only
-            build: sh scripts/build-release.sh --skip-tauri
+            build: sh scripts/build-release.sh
           - runner: macos-15-intel
             package: tura-darwin-x64
             install: sh scripts/install.sh --environment-only
-            build: sh scripts/build-release.sh --skip-tauri
+            build: sh scripts/build-release.sh
           - runner: macos-15
             package: tura-darwin-arm64
             install: sh scripts/install.sh --environment-only
-            build: sh scripts/build-release.sh --skip-tauri
+            build: sh scripts/build-release.sh
           - runner: windows-2022
             package: tura-win32-x64
             install: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -EnvironmentOnly
-            build: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -SkipTauri
+            build: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1
 
     steps:
       - uses: actions/checkout@v4
@@ -84,6 +107,8 @@ jobs:
             libssl-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
+            patchelf \
+            rpm \
             pkg-config
 
       - name: Install dependencies
@@ -96,9 +121,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $true
+          }
           node scripts/npm/prepack.mjs
-          node scripts/npm/package-platform.mjs --pack --no-desktop
-          node scripts/npm/package-release.mjs --no-desktop
+          node scripts/npm/package-platform.mjs --pack
+          node scripts/npm/package-release.mjs
+          node scripts/npm/stage-desktop-release-assets.mjs
           $platformPackage = Get-ChildItem -LiteralPath release/npm-platform -Filter *.tgz -File | Select-Object -First 1
           if (-not $platformPackage) {
             $packageDir = Get-ChildItem -LiteralPath release/npm-platform -Directory | Select-Object -First 1
@@ -107,6 +136,25 @@ jobs:
           }
           $platformPackage = Get-ChildItem -LiteralPath release/npm-platform -Filter *.tgz -File | Select-Object -First 1
           if (-not $platformPackage) { throw "Platform package tarball was not produced." }
+          $version = node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version"
+          $expectedPlatformPackage = Join-Path "release/npm-platform" "${{ matrix.package }}-$version.tgz"
+          if (-not (Test-Path -LiteralPath $expectedPlatformPackage -PathType Leaf)) {
+            throw "Expected platform package was not produced: $expectedPlatformPackage"
+          }
+          $releaseArchives = @(Get-ChildItem -LiteralPath release -Filter "tura-$env:GITHUB_REF_NAME-*" -File)
+          if ($releaseArchives.Count -ne 1) {
+            throw "Expected one platform release archive; found $($releaseArchives.Count)."
+          }
+          $desktopAssets = @(Get-ChildItem -LiteralPath release/desktop -File)
+          if ($desktopAssets.Count -lt 1) {
+            throw "No installable Tauri GUI asset was produced."
+          }
+          $publishDir = "release/publish"
+          Remove-Item -LiteralPath $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+          Copy-Item -LiteralPath $expectedPlatformPackage -Destination $publishDir
+          Copy-Item -LiteralPath $releaseArchives[0].FullName -Destination $publishDir
+          $desktopAssets | Copy-Item -Destination $publishDir
 
       - name: Verify npm install uses local platform package
         run: node scripts/npm/verify-platform-install.mjs
@@ -115,19 +163,106 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: npm-${{ matrix.package }}
-          path: |
-            release/npm-platform/*.tgz
-            release/tura-*
+          path: release/publish/*
           if-no-files-found: error
 
+  publish-platform:
+    name: Publish platform npm packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build-platform
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Install npm with trusted publishing support
+        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+      - name: Download verified platform packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: npm-tura-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish platform npm packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
+          $version = node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version"
+          $packageNames = @("tura-linux-x64", "tura-darwin-x64", "tura-darwin-arm64", "tura-win32-x64")
+          foreach ($packageName in $packageNames) {
+            $tarball = Join-Path "release-assets" "$packageName-$version.tgz"
+            if (-not (Test-Path -LiteralPath $tarball -PathType Leaf)) {
+              throw "Verified platform package was not downloaded: $tarball"
+            }
+          }
+          foreach ($packageName in $packageNames) {
+            $tarball = Join-Path "release-assets" "$packageName-$version.tgz"
+            npm view "$packageName@$version" version *> $null
+            $viewExitCode = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+            if ($viewExitCode -eq 0) {
+              Write-Host "$packageName@$version already exists on npm; skipping publish."
+              continue
+            }
+            npm publish $tarball --access public
+            if ($LASTEXITCODE -ne 0) {
+              throw "Publishing $packageName@$version failed with exit $LASTEXITCODE."
+            }
+          }
+
+  publish-github-release:
+    name: Publish GitHub Release assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: publish-main
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: npm-tura-*
+          path: release-assets
+          merge-multiple: true
       - name: Upload GitHub Release assets
-        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
           $tag = $env:GITHUB_REF_NAME
+          $files = @(Get-ChildItem -LiteralPath release-assets -File)
+          $version = $tag -replace '^release-v', '' -replace '^release-', '' -replace '^release', '' -replace '^v', ''
+          $requiredNames = @(
+            "tura-linux-x64-$version.tgz",
+            "tura-darwin-x64-$version.tgz",
+            "tura-darwin-arm64-$version.tgz",
+            "tura-win32-x64-$version.tgz",
+            "tura-$tag-linux-x64.tar.gz",
+            "tura-$tag-macos-x64.tar.gz",
+            "tura-$tag-macos-arm64.tar.gz",
+            "tura-$tag-windows-x64.zip"
+          )
+          $missing = @($requiredNames | Where-Object { $_ -notin $files.Name })
+          if ($missing.Count -gt 0) {
+            throw "Verified release assets are missing: $($missing -join ', ')."
+          }
+          foreach ($platform in @("linux-x64", "macos-x64", "macos-arm64", "windows-x64")) {
+            $prefix = "tura-gui-$tag-$platform"
+            if (-not ($files.Name | Where-Object { $_.StartsWith($prefix, [System.StringComparison]::Ordinal) })) {
+              throw "Verified release assets do not contain a Tauri installer for $platform."
+            }
+          }
+          $assets = @($files | ForEach-Object { $_.FullName })
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --title $tag --generate-notes
@@ -136,36 +271,12 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "GitHub Release $tag does not exist and could not be created." }
             }
           }
-          $assets = @(
-            Get-ChildItem -LiteralPath release/npm-platform -Filter *.tgz | ForEach-Object { $_.FullName }
-            Get-ChildItem -LiteralPath release -File | ForEach-Object { $_.FullName }
-          )
           gh release upload $tag @assets --clobber
-
-      - name: Publish platform npm package
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-            $PSNativeCommandUseErrorActionPreference = $false
-          }
-          $packageDir = Get-ChildItem -LiteralPath release/npm-platform -Directory | Select-Object -First 1
-          if (-not $packageDir) { throw "Platform package directory was not produced." }
-          $packageJson = Get-Content -LiteralPath (Join-Path $packageDir.FullName "package.json") -Raw | ConvertFrom-Json
-          npm view "$($packageJson.name)@$($packageJson.version)" version *> $null
-          $viewExitCode = $LASTEXITCODE
-          $global:LASTEXITCODE = 0
-          if ($viewExitCode -eq 0) {
-            Write-Host "$($packageJson.name)@$($packageJson.version) already exists on npm; skipping publish."
-            exit 0
-          }
-          npm publish $packageDir.FullName --access public
 
   publish-main:
     name: Publish main npm package
     runs-on: ubuntu-latest
-    needs: build-platform
+    needs: publish-platform
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
