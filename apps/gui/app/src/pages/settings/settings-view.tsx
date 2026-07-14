@@ -422,6 +422,7 @@ export function SettingsView(props: {
                 activePersonaId={activePersonaFromState(props.state)}
                 savedAvatar={personalizationAvatarFromState(props.state)}
                 saving={props.state.settingsSaving}
+                gatewayUrl={props.state.gatewayUrl}
                 onSave={props.onSavePersonalization}
               />
             </Match>
@@ -452,6 +453,7 @@ function PersonalizationSettingsPanel(props: {
   activePersonaId: string;
   savedAvatar: AvatarRenderSettings;
   saving: boolean;
+  gatewayUrl: string;
   onSave: (avatar: AvatarRenderSettings, personaId: string) => void;
 }) {
   const personas = createMemo(() => avatarPersonaOptions(props.personas));
@@ -531,7 +533,12 @@ function PersonalizationSettingsPanel(props: {
           </div>
         </div>
         <div class="settings-fields agent-editor">
-          <AgentAvatarSettings media={selectedMedia()} value={avatar()} onChange={setAvatar} />
+          <AgentAvatarSettings
+            media={selectedMedia()}
+            value={avatar()}
+            gatewayUrl={props.gatewayUrl}
+            onChange={setAvatar}
+          />
           <div class="settings-actions-row agent-actions-row">
             <button
               type="button"
@@ -572,6 +579,7 @@ function activePersonaFromState(state: AppState): string {
 function AgentAvatarSettings(props: {
   media: PersonaMediaConfig;
   value: AvatarRenderSettings;
+  gatewayUrl: string;
   onChange: (value: AvatarRenderSettings) => void;
 }) {
   function updateAvatar(patch: Partial<AgentAvatarConfig>) {
@@ -629,6 +637,7 @@ function AgentAvatarSettings(props: {
             <AgentAvatarCanvas
               media={props.media}
               settings={props.value}
+              gatewayUrl={props.gatewayUrl}
               expressionId="vigilant"
               interactive={props.value.display_mode === "dynamic"}
               label={t("avatarPreview")}

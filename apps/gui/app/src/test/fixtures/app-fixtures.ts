@@ -224,8 +224,8 @@ function fixturePersonaMedia(role: string) {
   ];
   return {
     name: role,
-    root_directory: `/assets/persona/${role}/media`,
-    expression_directory: `/assets/persona/${role}/media/expressions`,
+    root_directory: `personas/src/${role}/media`,
+    expression_directory: `personas/src/${role}/media/expressions`,
     direction_order: directions,
     default_expression: "vigilant",
     default_direction: "right",
@@ -233,12 +233,12 @@ function fixturePersonaMedia(role: string) {
       id: id as string,
       name: id as string,
       emoji_aliases: aliases as string[],
-      source_directory: `/assets/persona/${role}/media/expressions/${id}`,
-      grid_path: `/assets/persona/${role}/media/expressions/${id}/grid/sheet.png`,
+      source_directory: `personas/src/${role}/media/expressions/${id}`,
+      grid_path: `personas/src/${role}/media/expressions/${id}/grid/sheet.jpg`,
       frames: Object.fromEntries(
         directions.map((direction) => [
           direction,
-          `/assets/persona/${role}/media/expressions/${id}/frames/${direction}.png`,
+          `personas/src/${role}/media/expressions/${id}/frames/${direction}.jpg`,
         ]),
       ),
     })),

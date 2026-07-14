@@ -32,17 +32,17 @@ personas/
         expressions/
           <expression_id>/
             frames/
-              center.png
-              up.png
-              down.png
-              left.png
-              right.png
-              up-left.png
-              up-right.png
-              down-left.png
-              down-right.png
+              center.jpg
+              up.jpg
+              down.jpg
+              left.jpg
+              right.jpg
+              up-left.jpg
+              up-right.jpg
+              down-left.jpg
+              down-right.jpg
             grid/
-              sheet.png
+              sheet.jpg
 ```
 
 User-created dynamic personas live under project-root `personas/<persona_id>/`
@@ -82,6 +82,10 @@ Dynamic personas are expected to use `default_config: false`.
 
 The front-end should not infer media paths from naming conventions. It should
 consume the media mapping returned by persona or agent APIs.
+Built-in expression images are 200 by 200 pixel JPEG files stored only under
+the owning persona directory. The gateway serves them through the read-only
+persona media endpoint with `Cache-Control: no-store`; GUI builds must not copy
+persona media into their public asset directory.
 
 ## Manual Persona Configuration
 
