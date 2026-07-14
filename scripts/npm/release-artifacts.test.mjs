@@ -9,6 +9,7 @@ import {
   executableName,
   executableNames,
   guiDistCandidates,
+  missingNpmPlatformFiles,
   missingReleaseFiles,
   mismatchedDesktopBundleAssets
 } from "./release-artifacts.mjs";
@@ -36,6 +37,23 @@ test("desktop bundle discovery accepts installable assets for every release plat
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+test("npm platform validation does not require Tauri desktop artifacts", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "tura-npm-platform-required-"));
+  try {
+    const releaseDir = path.join(root, "target", "release");
+    for (const name of executableNames) {
+      writeFixtureFile(releaseDir, executableName(name, "linux"));
+    }
+    writeFixtureFile(releaseDir, "config/provider_config.json");
+    writeFixtureFile(releaseDir, "tura_gui_dist/index.html");
+
+    assert.deepEqual(missingNpmPlatformFiles(root, "linux"), []);
+    assert.notDeepEqual(missingReleaseFiles(root, "linux"), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

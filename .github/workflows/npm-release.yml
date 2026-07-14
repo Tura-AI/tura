@@ -175,6 +175,14 @@ jobs:
           if (-not (Test-Path -LiteralPath $expectedPlatformPackage -PathType Leaf)) {
             throw "Expected platform package was not produced: $expectedPlatformPackage"
           }
+          $packageEntries = @(tar -tf $expectedPlatformPackage)
+          if ($LASTEXITCODE -ne 0) { throw "Could not inspect $expectedPlatformPackage." }
+          $tauriEntries = @($packageEntries | Where-Object {
+            $_ -match '^package/target/release/(bundle/|tura_gui([.]exe)?$)'
+          })
+          if ($tauriEntries.Count -gt 0) {
+            throw "npm platform package contains Tauri desktop artifacts: $($tauriEntries -join ', ')"
+          }
           $releaseArchives = @(Get-ChildItem -LiteralPath release -Filter "tura-$env:GITHUB_REF_NAME-*" -File)
           if ($releaseArchives.Count -ne 1) {
             throw "Expected one platform release archive; found $($releaseArchives.Count)."

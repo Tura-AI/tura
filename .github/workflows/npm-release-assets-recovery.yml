@@ -101,6 +101,43 @@ jobs:
           merge-multiple: true
           run-id: ${{ steps.source.outputs.run_id }}
           github-token: ${{ github.token }}
+      - name: Repack npm tarballs without Tauri
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release-logs
+          log=.release-logs/platform-repack.log
+          exec > >(tee "$log") 2>&1
+          trap 'status=$?; if [ "$status" -ne 0 ]; then tail_output="$(tail -n 40 "$log")"; tail_output="${tail_output//'%'/'%25'}"; tail_output="${tail_output//$'\r'/'%0D'}"; tail_output="${tail_output//$'\n'/'%0A'}"; echo "::error title=Platform npm repack failed::$tail_output"; fi; exit "$status"' EXIT
+
+          packages=(tura-linux-x64 tura-darwin-x64 tura-darwin-arm64 tura-win32-x64)
+          for package_name in "${packages[@]}"; do
+            tarball="release-assets/$package_name-$RELEASE_VERSION.tgz"
+            work_dir="$RUNNER_TEMP/repack-$package_name"
+            rm -rf "$work_dir"
+            mkdir -p "$work_dir/source" "$work_dir/output"
+            tar -xzf "$tarball" -C "$work_dir/source"
+            package_dir="$work_dir/source/package"
+            identity="$(node -e "const p=require(process.argv[1]); console.log(p.name + '@' + p.version)" "$package_dir/package.json")"
+            test "$identity" = "$package_name@$RELEASE_VERSION"
+
+            rm -rf \
+              "$package_dir/target/release/bundle" \
+              "$package_dir/target/release/tura_gui" \
+              "$package_dir/target/release/tura_gui.exe"
+            pack_json="$(npm pack "$package_dir" --ignore-scripts --json --pack-destination "$work_dir/output")"
+            packed_file="$(PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); console.log(process.argv[1] + '/' + info.filename)" "$work_dir/output")"
+            packed_identity="$(node -e "const p=require(process.argv[1]); console.log(p.name + '@' + p.version)" "$package_dir/package.json")"
+            test "$packed_identity" = "$package_name@$RELEASE_VERSION"
+            mv "$packed_file" "$tarball"
+            if tar -tzf "$tarball" | grep -Eq '^package/target/release/(bundle/|tura_gui([.]exe)?$)'; then
+              echo "Tauri desktop artifacts remained in $package_name tarball."
+              exit 1
+            fi
+            echo "$package_name repacked to $(du -h "$tarball" | cut -f1)."
+          done
       - name: Verify assets and write checksum manifest
         shell: pwsh
         env:

@@ -209,10 +209,16 @@ GitHub Actions:
   downloaded tarball without rebuilding it.
 - `.github/workflows/npm-github-package-recovery.yml` handles the final
   `github-package-release/<tag>` step after all five npmjs packages and the
-  GitHub Release exist. It checks out the immutable tag and publishes
-  `@tura-ai/tura` with the workflow's `GITHUB_TOKEN`.
+  GitHub Release exist. It verifies the immutable release tag, then packages
+  the recovery branch source so npm installation contracts match the repaired
+  platform packages, and publishes `@tura-ai/tura` with the workflow's
+  `GITHUB_TOKEN`.
 
 Local source builds still resolve directly from `target/release`. Published npm
 installs resolve through the main `tura-ai` package plus the matching platform
 package. A missing platform package is an installation error; there is no
-postinstall download fallback.
+postinstall download fallback. Platform npm packages retain the Web GUI dist,
+but exclude the Tauri desktop executable and the entire Tauri bundle tree.
+Desktop installers and Tauri-inclusive platform archives are distributed only
+through the GitHub Release. Release automation rejects any npm platform tarball
+that contains `target/release/tura_gui`, `tura_gui.exe`, or `bundle/`.

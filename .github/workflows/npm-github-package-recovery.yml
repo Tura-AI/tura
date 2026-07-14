@@ -67,11 +67,9 @@ jobs:
           {
             echo "tag=$tag"
             echo "tag_sha=$tag_sha"
+            echo "source_sha=$GITHUB_SHA"
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.release.outputs.tag }}
       - name: Node setup
         uses: actions/setup-node@v4
         with:
@@ -86,14 +84,15 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TURA_NPM_PACKAGE_NAME: "@tura-ai/tura"
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
-          TAG_SHA: ${{ steps.release.outputs.tag_sha }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
         run: |
           set -euo pipefail
           log=.release-logs/github-package-publish.log
           exec > >(tee "$log") 2>&1
           trap 'status=$?; node scripts/npm/restore-main-package.mjs || true; if [ "$status" -ne 0 ]; then tail_output="$(tail -n 40 "$log")"; tail_output="${tail_output//'%'/'%25'}"; tail_output="${tail_output//$'\r'/'%0D'}"; tail_output="${tail_output//$'\n'/'%0A'}"; echo "::error title=GitHub Package recovery failed::$tail_output"; fi; exit "$status"' EXIT
 
-          test "$(git rev-parse HEAD)" = "$TAG_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")" = "$RELEASE_VERSION"
           node scripts/npm/prepack.mjs
           node scripts/npm/stage-main-package.mjs
           mkdir -p release/npm-github
