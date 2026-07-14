@@ -30,7 +30,10 @@ Important scripts:
 - `build-release.*`: build Rust release binaries, the web GUI dist, the TUI entry,
   and the Tauri desktop bundle. CLI/TUI artifacts and copied web assets land in
   `target/release`; Tauri bundle artifacts are produced by the Tauri CLI under
-  the release target bundle directory. Release builds preserve local session
+  the release target bundle directory. Tauri reads the release version from the
+  root `package.json`, keeping installer and npm versions identical. Before
+  bundling, the build scripts remove the generated bundle directory so an older
+  version cannot leak into npm or GitHub Release assets. Release builds preserve local session
   DB/cache state by default; pass `-Clean` on PowerShell or `-clean`/`--clean` on
   POSIX shells when a build must intentionally remove repository-local session
   DB/cache files first. The build scripts only stop repo-owned backend/service
@@ -64,9 +67,19 @@ Important scripts:
   automation. Current npm releases do not run uninstall lifecycle scripts, so
   the package exposes `tura unregister-cli` for PATH/profile cleanup before
   `npm uninstall tura-ai` instead of publishing fake `uninstall` scripts. The
-  npm release workflow builds CLI/backend/TUI and web GUI artifacts with Tauri
-  packaging skipped, so desktop installer failures do not block publishing the
-  platform npm packages used by `npm install tura-ai`. Its local install
+  npm release workflow builds CLI/backend/TUI, web GUI, and Tauri bundles on
+  every supported platform. Desktop bundle failures block publication, and the
+  release tag must match the root npm package version before builds run. The
+  platform npm packages used by `npm install tura-ai` include the desktop binary
+  plus the native installer bundle. All four platform jobs must pass before a
+  single publishing job uploads any platform package to npm; GitHub Release
+  assets are flattened into one collision-free set and uploaded once, after the
+  platform and main npm publications succeed. The final asset gate requires all
+  four npm tarballs, all four platform archives, and at least one native Tauri
+  installer for each supported platform without assuming a fixed bundle count.
+  Linux release runners install both AppImage patching and RPM packaging tools
+  because the Tauri configuration requests every supported bundle target.
+  Its local install
   verifier stages the freshly packed platform tarball outside the main install
   tree and points `TURA_NPM_PLATFORM_PACKAGE_DIR` at it, avoiding npm registry
   lookups for optional platform packages before those packages are published.
@@ -91,10 +104,14 @@ Important scripts:
   the slim runtime manifest.
 - `scripts/npm/package-platform.mjs`: stages the current OS release into a
   platform npm package: `tura-linux-x64`, `tura-darwin-x64`,
-  `tura-darwin-arm64`, or `tura-win32-x64`.
+  `tura-darwin-arm64`, or `tura-win32-x64`. A desktop binary and installable
+  Tauri bundle are mandatory.
 - `scripts/npm/package-release.mjs`: creates the matching GitHub Release archive
   under `release/`, for example `tura-v0.1.0-windows-x64.zip` or
-  `tura-v0.1.0-macos-arm64.tar.gz`.
+  `tura-v0.1.0-macos-arm64.tar.gz`; each archive contains the same Tauri output.
+- `scripts/npm/stage-desktop-release-assets.mjs`: copies native Tauri installers
+  to `release/desktop` with platform-qualified names for direct GitHub Release
+  upload, avoiding asset collisions between macOS architectures.
 
 ## Xtask test collection scripts
 

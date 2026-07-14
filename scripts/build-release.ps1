@@ -278,6 +278,8 @@ if ($BuildTui) {
 if ($BuildTauri) {
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\tauri") @("node_modules\@tauri-apps\cli\package.json")
+  Remove-Item -LiteralPath (Join-Path $TargetDir "bundle") -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $TargetDir "release\bundle") -Recurse -Force -ErrorAction SilentlyContinue
   $PreviousTuraBuildKind = $env:TURA_BUILD_KIND
   $env:TURA_BUILD_KIND = "release"
   try {

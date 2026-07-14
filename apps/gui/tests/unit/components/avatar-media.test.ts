@@ -10,15 +10,16 @@ import {
 } from "../../../app/src/components/avatar/agent-avatar-rendering";
 
 const repoRoot = resolve(process.cwd(), "..", "..");
-const publicAssetsRoot = join(repoRoot, "apps", "gui", "app", "public");
+const personaRoot = join(repoRoot, "personas", "src");
+const guiPersonaAssets = join(repoRoot, "apps", "gui", "app", "public", "assets", "persona");
 
-function publicPersonaAsset(path: string): string {
+function personaAsset(path: string): string {
   const normalized = path.replace(/\\/gu, "/");
   const match = normalized.match(/(?:^|\/)personas\/src\/([^/]+)\/media\/(.+)$/u);
   if (!match) {
     throw new Error(`unsupported persona asset path: ${path}`);
   }
-  return join(publicAssetsRoot, "assets", "persona", match[1]!, "media", ...match[2]!.split("/"));
+  return join(personaRoot, match[1]!, "media", ...match[2]!.split("/"));
 }
 
 async function mediaConfig(role: string): Promise<PersonaMediaConfig> {
@@ -31,13 +32,19 @@ async function mediaConfig(role: string): Promise<PersonaMediaConfig> {
 }
 
 describe("agent avatar media", () => {
-  test("keeps configured persona frame paths backed by public GUI assets", async () => {
+  test("keeps one 200px JPEG source for every configured persona image", async () => {
     const missing: string[] = [];
     for (const role of ["tura", "wonderful", "pidan"]) {
       const media = await mediaConfig(role);
       for (const expression of media.expressions ?? []) {
+        if (
+          !expression.grid_path.endsWith(".jpg") ||
+          !existsSync(personaAsset(expression.grid_path))
+        ) {
+          missing.push(expression.grid_path);
+        }
         for (const frame of Object.values(expression.frames)) {
-          if (!existsSync(publicPersonaAsset(frame))) {
+          if (!frame.endsWith(".jpg") || !existsSync(personaAsset(frame))) {
             missing.push(frame);
           }
         }
@@ -45,18 +52,19 @@ describe("agent avatar media", () => {
     }
 
     expect(missing).toEqual([]);
+    expect(existsSync(guiPersonaAssets)).toBe(false);
   });
 
   test("uses a loaded default expression frame before the global fallback", () => {
     const expressions: AvatarExpressionInfo[] = [
-      { id: "laugh", aliases: [], frames: { right: "laugh/right.png" } },
-      { id: "vigilant", aliases: [], frames: { right: "vigilant/right.png" } },
+      { id: "laugh", aliases: [], frames: { right: "laugh/right.jpg" } },
+      { id: "vigilant", aliases: [], frames: { right: "vigilant/right.jpg" } },
     ];
 
     expect(
       avatarImageKeyForLoaded(
         expressions,
-        ["vigilant:right", "fallback:tura-vigilant-right"],
+        ["vigilant:right"],
         "laugh",
         "right",
         "right",

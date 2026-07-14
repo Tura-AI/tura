@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 export const commandNames = [
@@ -159,6 +159,43 @@ export function bundleCandidates(root) {
   ];
 }
 
+export function desktopBundleAssetExtensions(platform = process.platform) {
+  const extensions = new Map([
+    ["win32", [".msi", ".exe"]],
+    ["darwin", [".dmg"]],
+    ["linux", [".AppImage", ".deb", ".rpm"]]
+  ]).get(platform);
+  if (!extensions) {
+    throw new Error(`Unsupported desktop release platform: ${platform}`);
+  }
+  return extensions;
+}
+
+export function desktopBundleAssets(root, platform = process.platform) {
+  const bundleRoot = firstExistingPath(bundleCandidates(root));
+  if (!bundleRoot) return [];
+  const extensions = new Set(desktopBundleAssetExtensions(platform).map((extension) => extension.toLowerCase()));
+  const assets = [];
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(fullPath);
+      } else if (entry.isFile() && extensions.has(path.extname(entry.name).toLowerCase())) {
+        assets.push(fullPath);
+      }
+    }
+  };
+  visit(bundleRoot);
+  return assets.sort();
+}
+
+export function mismatchedDesktopBundleAssets(root, version, platform = process.platform) {
+  const escapedVersion = version.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const versionToken = new RegExp(`(^|[^0-9])${escapedVersion}([^0-9]|$)`, "u");
+  return desktopBundleAssets(root, platform).filter((asset) => !versionToken.test(path.basename(asset)));
+}
+
 export function firstExistingPath(candidates) {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
@@ -169,6 +206,7 @@ export function requiredReleaseFiles(root, platform = process.platform) {
   files.push(path.join(releaseDir, "config", "provider_config.json"));
   const guiDist = firstExistingPath(guiDistCandidates(root));
   files.push(guiDist ? path.join(guiDist, "index.html") : path.join(releaseDir, "tura_gui", "index.html"));
+  files.push(...requiredDesktopReleaseFiles(root, platform));
   return files;
 }
 
@@ -181,7 +219,12 @@ export function requiredDesktopReleaseFiles(root, platform = process.platform) {
 }
 
 export function missingReleaseFiles(root, platform = process.platform) {
-  return requiredReleaseFiles(root, platform).filter((file) => !existsSync(file));
+  const missing = requiredReleaseFiles(root, platform).filter((file) => !existsSync(file));
+  const bundleRoot = firstExistingPath(bundleCandidates(root));
+  if (bundleRoot && desktopBundleAssets(root, platform).length === 0) {
+    missing.push(path.join(bundleRoot, `installer${desktopBundleAssetExtensions(platform).join("|")}`));
+  }
+  return missing;
 }
 
 export function requiredReleaseRuntimeConfigFiles(root) {

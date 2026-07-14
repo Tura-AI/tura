@@ -1116,6 +1116,7 @@ function Transcript(props: {
             <AgentAvatarCanvas
               media={props.avatarMedia}
               settings={props.avatarSettings}
+              gatewayUrl={props.gatewayUrl}
               expressionEmoji={avatarMode() === "dynamic" ? props.expressionEmoji : undefined}
               expressionId={avatarMode() === "static" ? "vigilant" : undefined}
               interactive={avatarMode() === "dynamic"}

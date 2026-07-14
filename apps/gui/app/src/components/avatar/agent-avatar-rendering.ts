@@ -1,5 +1,3 @@
-export const FALLBACK_AVATAR_IMAGE = "/assets/avatar-fallback/tura-vigilant-right.png";
-
 export type AvatarExpressionInfo = {
   id: string;
   aliases: string[];
@@ -8,10 +6,6 @@ export type AvatarExpressionInfo = {
 
 export function avatarImageKey(expression: string, direction: string): string {
   return `${expression}:${direction}`;
-}
-
-export function fallbackImageKey(): string {
-  return "fallback:tura-vigilant-right";
 }
 
 export function avatarImageKeyForLoaded(
@@ -48,7 +42,7 @@ export function avatarImageKeyForLoaded(
   if (expressionFrame) {
     return expressionFrame;
   }
-  return fallbackImageKey();
+  return candidates[0] ?? "";
 }
 
 export function avatarPixelAfterThreshold(

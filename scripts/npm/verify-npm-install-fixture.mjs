@@ -13,6 +13,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  desktopBundleAssetExtensions,
+  desktopBundleAssets,
   executableName,
   executableNames,
   missingReleaseFiles,
@@ -94,6 +96,8 @@ function createFixturePlatformPackage() {
   for (const name of executableNames) {
     writeFixtureExecutable(path.join(platformReleaseDir, executableName(name)));
   }
+  writeFixtureExecutable(path.join(platformReleaseDir, executableName("tura_gui")));
+  writeFixtureFile(path.join("bundle", `tura-gui-fixture${desktopBundleAssetExtensions()[0]}`));
   mkdirSync(path.join(platformReleaseDir, "config"), { recursive: true });
   writeFileSync(path.join(platformReleaseDir, "config", "provider_config.json"), "{}\n");
   mkdirSync(path.join(platformReleaseDir, "tura_gui"), { recursive: true });
@@ -173,6 +177,9 @@ function verifyInstalledPackage(platformPackageDir) {
   const missing = missingReleaseFiles(mainPackageDir);
   if (missing.length > 0) {
     fail(`installed package is missing release files:\n${missing.join("\n")}`);
+  }
+  if (desktopBundleAssets(mainPackageDir).length === 0) {
+    fail(`installed package is missing an installable Tauri bundle under ${installedReleaseDir}`);
   }
 
   const binName = process.platform === "win32" ? "tura.cmd" : "tura";

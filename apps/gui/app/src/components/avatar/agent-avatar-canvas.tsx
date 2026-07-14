@@ -3,11 +3,9 @@ import { createEffect, createMemo, createSignal, onCleanup, onMount } from "soli
 import { classNames } from "../../state/format";
 import { EMOJI_ALIASES, avatarExpressionIdsForEmoji } from "./agent-avatar-protocol";
 import {
-  FALLBACK_AVATAR_IMAGE,
   avatarImageKey,
   avatarImageKeyForLoaded,
   avatarPixelAfterThreshold,
-  fallbackImageKey,
   type AvatarExpressionInfo,
 } from "./agent-avatar-rendering";
 
@@ -72,8 +70,8 @@ const avatarImageRequestCache = new Map<string, Promise<HTMLImageElement | undef
 function fallbackMedia(role: string): PersonaMediaConfig {
   return {
     name: role,
-    root_directory: `/assets/persona/${role}/media`,
-    expression_directory: `/assets/persona/${role}/media/expressions`,
+    root_directory: `personas/src/${role}/media`,
+    expression_directory: `personas/src/${role}/media/expressions`,
     direction_order: DIRECTIONS,
     default_expression: "vigilant",
     default_direction: "right",
@@ -81,12 +79,12 @@ function fallbackMedia(role: string): PersonaMediaConfig {
       id,
       name: id,
       emoji_aliases: EMOJI_ALIASES[id] ?? [],
-      source_directory: `/assets/persona/${role}/media/expressions/${id}`,
-      grid_path: `/assets/persona/${role}/media/expressions/${id}/grid/sheet.png`,
+      source_directory: `personas/src/${role}/media/expressions/${id}`,
+      grid_path: `personas/src/${role}/media/expressions/${id}/grid/sheet.jpg`,
       frames: Object.fromEntries(
         DIRECTIONS.map((direction) => [
           direction,
-          `/assets/persona/${role}/media/expressions/${id}/frames/${direction}.png`,
+          `personas/src/${role}/media/expressions/${id}/frames/${direction}.jpg`,
         ]),
       ),
     })),
@@ -161,6 +159,7 @@ export function AgentAvatarCanvas(props: {
   expressionId?: string;
   interactive?: boolean;
   previewCycle?: boolean;
+  gatewayUrl?: string;
   class?: string;
   label?: string;
 }) {
@@ -206,8 +205,8 @@ export function AgentAvatarCanvas(props: {
     );
     setDirection("right");
     const requestId = ++loadRequestId;
-    setLoading(!allImagesCached(nextExpressions));
-    void loadImages(nextExpressions).then((loaded) => {
+    setLoading(!allImagesCached(nextExpressions, props.gatewayUrl));
+    void loadImages(nextExpressions, props.gatewayUrl).then((loaded) => {
       if (requestId !== loadRequestId) {
         return;
       }
@@ -462,24 +461,27 @@ function expressionInfos(media: PersonaMediaConfig): AvatarExpressionInfo[] {
 }
 
 function imageEntries(expressions: AvatarExpressionInfo[]): ImageEntry[] {
-  const entries: ImageEntry[] = expressions.flatMap((expression) =>
+  return expressions.flatMap((expression) =>
     Object.entries(expression.frames).map(([direction, src]) => ({
       key: avatarImageKey(expression.id, direction),
       src,
     })),
   );
-  entries.push({ key: fallbackImageKey(), src: FALLBACK_AVATAR_IMAGE });
-  return entries;
 }
 
-function allImagesCached(expressions: AvatarExpressionInfo[]): boolean {
-  return imageEntries(expressions).every((entry) => avatarImageCache.has(mediaSource(entry.src)));
+function allImagesCached(expressions: AvatarExpressionInfo[], gatewayUrl?: string): boolean {
+  return imageEntries(expressions).every((entry) =>
+    avatarImageCache.has(mediaSource(entry.src, gatewayUrl)),
+  );
 }
 
-function loadImages(expressions: AvatarExpressionInfo[]): Promise<LoadedImages> {
+function loadImages(
+  expressions: AvatarExpressionInfo[],
+  gatewayUrl?: string,
+): Promise<LoadedImages> {
   const entries = imageEntries(expressions);
   return Promise.all(
-    entries.map(async ({ key, src }) => [key, await loadCachedImage(mediaSource(src))]),
+    entries.map(async ({ key, src }) => [key, await loadCachedImage(mediaSource(src, gatewayUrl))]),
   ).then((loaded) =>
     Object.fromEntries(
       loaded.filter((item): item is [string, HTMLImageElement] => item[1] !== undefined),
@@ -498,6 +500,7 @@ function loadCachedImage(src: string): Promise<HTMLImageElement | undefined> {
   }
   const request = new Promise<HTMLImageElement | undefined>((resolve) => {
     const image = new Image();
+    image.crossOrigin = "anonymous";
     image.onload = () => {
       avatarImageCache.set(src, image);
       avatarImageRequestCache.delete(src);
@@ -513,22 +516,33 @@ function loadCachedImage(src: string): Promise<HTMLImageElement | undefined> {
   return request;
 }
 
-function mediaSource(path: string): string {
-  if (/^(https?:|data:|\/)/iu.test(path)) {
+function mediaSource(path: string, gatewayUrl?: string): string {
+  if (/^(https?:|data:)/iu.test(path)) {
     return path;
   }
   const normalized = path.replace(/\\/gu, "/");
-  const personaAsset = normalized.match(
-    /(?:^|\/)(?:crates\/persona|personas)\/src\/([^/]+)\/media\/(.+)$/u,
-  );
+  const personaAsset = normalized.match(/(?:^|\/)personas\/(?:src\/)?([^/]+)\/media\/(.+)$/u);
   if (personaAsset) {
-    return `/assets/persona/${personaAsset[1]}/media/${personaAsset[2]}`;
+    return personaMediaSource(personaAsset[1], personaAsset[2], gatewayUrl);
   }
   const publicPersonaAsset = normalized.match(/(?:^|\/)assets\/persona\/([^/]+)\/media\/(.+)$/u);
   if (publicPersonaAsset) {
-    return `/assets/persona/${publicPersonaAsset[1]}/media/${publicPersonaAsset[2]}`;
+    return personaMediaSource(publicPersonaAsset[1], publicPersonaAsset[2], gatewayUrl);
+  }
+  if (normalized.startsWith("/")) {
+    return normalized;
   }
   return `/assets/${normalized.replace(/^.*\//u, "")}`;
+}
+
+function personaMediaSource(personaId: string, path: string, gatewayUrl?: string): string {
+  const baseUrl = (gatewayUrl || "http://127.0.0.1:4126").replace(/\/+$/u, "");
+  const mediaPath = path
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `${baseUrl}/persona/${encodeURIComponent(personaId)}/media/${mediaPath}`;
 }
 
 function directionFromPointer(canvas: HTMLCanvasElement, clientX: number, clientY: number): string {

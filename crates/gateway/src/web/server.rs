@@ -183,6 +183,10 @@ pub fn build_router() -> Router {
                 .patch(api::persona::update_persona)
                 .delete(api::persona::delete_persona),
         )
+        .route(
+            "/persona/{personaID}/media/{*mediaPath}",
+            get(api::persona::get_persona_media),
+        )
         // Command
         .route("/command", get(api::command::list_commands))
         .route("/command", post(api::command::execute_command))
