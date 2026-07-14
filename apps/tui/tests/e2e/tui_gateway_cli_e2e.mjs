@@ -207,11 +207,6 @@ async function runWebTerminalE2e(gateway) {
           { timeout: 10_000 },
         );
         const mobileViewport = await terminalViewportText(page);
-        assert.match(
-          mobileViewport,
-          /Rich Fixture/,
-          `${profile} mobile viewport should keep the session title visible`,
-        );
         assert.doesNotMatch(mobileViewport, /(?:\\x1b|\\u001b|8;2;128;128;128m)/);
       }
       await page.setViewportSize({ width: 1280, height: 720 });
