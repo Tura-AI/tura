@@ -50,7 +50,27 @@ jobs:
           command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny --locked
           command -v typos >/dev/null 2>&1 || cargo install typos-cli --locked
       - name: Run quality smell gate
-        run: sh scripts/check-backend-quality.sh
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .ci-results
+          sh scripts/check-backend-quality.sh 2>&1 | tee .ci-results/quality-smell-gate.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail_output="$(tail -n 60 .ci-results/quality-smell-gate.log)"
+            tail_output="${tail_output//'%'/'%25'}"
+            tail_output="${tail_output//$'\r'/'%0D'}"
+            tail_output="${tail_output//$'\n'/'%0A'}"
+            echo "::error title=Quality smell gate failure::$tail_output"
+          fi
+          exit "$status"
+      - name: Upload quality smell gate failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-smell-gate-failure-log
+          path: .ci-results/quality-smell-gate.log
+          if-no-files-found: error
 
   crate-tests:
     name: Crate ${{ matrix.crate }}

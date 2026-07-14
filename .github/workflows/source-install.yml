@@ -148,7 +148,7 @@ jobs:
         run: |
           $log = ".ci-results/source-install-${{ matrix.label }}.log"
           if (Test-Path -LiteralPath $log -PathType Leaf) {
-            $tail = (Get-Content -LiteralPath $log -Tail 120) -join "`n"
+            $tail = (Get-Content -LiteralPath $log -Tail 30) -join "`n"
             $tail = $tail.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
             Write-Host "::error title=Source install failure::$tail"
           }
