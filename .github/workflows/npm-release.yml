@@ -217,8 +217,10 @@ jobs:
           TURA_NPM_PACKAGE_NAME: "@tura-ai/tura"
         run: |
           node scripts/npm/prepack.mjs
+          node scripts/npm/stage-main-package.mjs
+          trap 'node scripts/npm/restore-main-package.mjs' EXIT
           mkdir -p release/npm-github
-          pack_json="$(npm pack --json --pack-destination release/npm-github)"
+          pack_json="$(npm pack --ignore-scripts --json --pack-destination release/npm-github)"
           PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); if (info?.name !== process.env.TURA_NPM_PACKAGE_NAME) throw new Error('GitHub package name mismatch')"
       - name: Publish GitHub package
         env:
