@@ -146,7 +146,26 @@ jobs:
       - name: Run TUI unit tests
         run: npm --prefix apps/tui run test:unit
       - name: Run TUI e2e tests
-        run: npm --prefix apps/tui run test:e2e
+        shell: bash
+        run: |
+          set +e
+          npm --prefix apps/tui run test:e2e 2>&1 | tee tui-e2e.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail_output="$(tail -n 80 tui-e2e.log)"
+            tail_output="${tail_output//'%'/'%25'}"
+            tail_output="${tail_output//$'\r'/'%0D'}"
+            tail_output="${tail_output//$'\n'/'%0A'}"
+            echo "::error title=TUI E2E failure::$tail_output"
+          fi
+          exit "$status"
+      - name: Upload TUI e2e failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tui-e2e-failure-log
+          path: tui-e2e.log
+          if-no-files-found: error
 
   gui-tests:
     name: GUI Unit
