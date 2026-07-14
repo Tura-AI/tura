@@ -100,8 +100,8 @@ function createFixturePlatformPackage() {
   writeFixtureFile(path.join("bundle", `tura-gui-fixture${desktopBundleAssetExtensions()[0]}`));
   mkdirSync(path.join(platformReleaseDir, "config"), { recursive: true });
   writeFileSync(path.join(platformReleaseDir, "config", "provider_config.json"), "{}\n");
-  mkdirSync(path.join(platformReleaseDir, "tura_gui"), { recursive: true });
-  writeFileSync(path.join(platformReleaseDir, "tura_gui", "index.html"), "<!doctype html><title>Tura fixture</title>\n");
+  mkdirSync(path.join(platformReleaseDir, "tura_gui_dist"), { recursive: true });
+  writeFileSync(path.join(platformReleaseDir, "tura_gui_dist", "index.html"), "<!doctype html><title>Tura fixture</title>\n");
   for (const file of requiredReleaseRuntimeFiles) {
     writeFixtureFile(file);
   }

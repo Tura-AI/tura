@@ -27,7 +27,8 @@ Important scripts:
   Windows adds common Git/MSYS shell paths before checking bash/zsh. macOS
   asserts zsh and bash and reports optional PowerShell (`pwsh`) coverage.
 - `build-debug.*`: build Rust debug binaries and the TUI entry into `target/debug`.
-- `build-release.*`: build Rust release binaries, the web GUI dist, the TUI entry,
+- `build-release.*`: build Rust release binaries, the web GUI dist under
+  `target/release/tura_gui_dist`, the TUI entry,
   and the Tauri desktop bundle. CLI/TUI artifacts and copied web assets land in
   `target/release`; Tauri bundle artifacts are produced by the Tauri CLI under
   the release target bundle directory. Tauri reads the release version from the
@@ -193,7 +194,14 @@ GitHub Actions:
   `tura-win32-x64`), verifies a local `npm install` of the main `tura-ai` package
   against the platform package, verifies the slim main npm package contents,
   verifies postinstall CLI registration plus `tura unregister-cli`, uploads
-  release archives, and publishes npm packages when `NPM_TOKEN` is configured.
+  release archives, and publishes npm packages with the first configured token
+  from `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or `NPM_AUTH_TOKEN`. Token authentication
+  is checked before the four platform builds, and npmjs publishing explicitly
+  disables provenance because this path does not use trusted publishing.
+  A branch named `npm-release/<tag>/<run-id>` invokes the idempotent recovery
+  path: it verifies the tag and completed source run, reuses that run's four
+  platform artifacts, and resumes platform, main, GitHub Release, and GitHub
+  Package publishing without rebuilding them.
 
 Local source builds still resolve directly from `target/release`. Published npm
 installs resolve through the main `tura-ai` package plus the matching platform
