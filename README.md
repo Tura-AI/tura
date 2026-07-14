@@ -213,6 +213,11 @@ npm install -g tura-ai
 tura
 ```
 
+The same main package is also published to GitHub Packages as `@tura-ai/tura`.
+Configure the `@tura-ai` scope for `https://npm.pkg.github.com`, authenticate
+with a token that has `read:packages`, then install `@tura-ai/tura`. The
+unscoped `tura-ai` package on npm remains the simplest public installation.
+
 Tura does not bundle provider credentials. On first launch, configure an LLM
 provider and select one of its models before sending a prompt. See
 [Provider setup](docs/start/providers.md#first-run-configure-an-llm-provider) for
