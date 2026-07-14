@@ -8,6 +8,7 @@ import {
   desktopBundleAssets,
   executableName,
   executableNames,
+  guiDistCandidates,
   missingReleaseFiles,
   mismatchedDesktopBundleAssets
 } from "./release-artifacts.mjs";
@@ -47,7 +48,7 @@ test("release validation rejects a desktop bundle directory without an installer
     }
     writeFixtureFile(releaseDir, executableName("tura_gui", "win32"));
     writeFixtureFile(releaseDir, "config/provider_config.json");
-    writeFixtureFile(releaseDir, "tura_gui/index.html");
+    writeFixtureFile(releaseDir, "tura_gui_dist/index.html");
     mkdirSync(path.join(releaseDir, "bundle"), { recursive: true });
 
     const missingInstaller = missingReleaseFiles(root, "win32");
@@ -56,6 +57,19 @@ test("release validation rejects a desktop bundle directory without an installer
 
     writeFixtureFile(releaseDir, "bundle/msi/tura_gui.msi");
     assert.deepEqual(missingReleaseFiles(root, "win32"), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("GUI dist discovery never treats the Unix desktop executable as a directory", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "tura-gui-dist-"));
+  try {
+    const releaseDir = path.join(root, "target", "release");
+    writeFixtureFile(releaseDir, "tura_gui");
+    writeFixtureFile(releaseDir, "tura_gui_dist/index.html");
+
+    assert.deepEqual(guiDistCandidates(root), [path.join(releaseDir, "tura_gui_dist")]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

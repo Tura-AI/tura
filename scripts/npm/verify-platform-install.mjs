@@ -196,7 +196,7 @@ const requiredPaths = [
   path.join(installedReleaseDir, "personas", "src", "communication_style", "communication_style.md"),
   path.join(installedReleaseDir, "crates", "runtime", "src", "runtime_prompt", "debug", "prompt_identity.json"),
   path.join(installedReleaseDir, "crates", "runtime", "src", "runtime_prompt", "debug", "prompt.md"),
-  path.join(installedReleaseDir, "tura_gui", "index.html"),
+  path.join(installedReleaseDir, "tura_gui_dist", "index.html"),
   path.join(installedReleaseDir, "commands", "web_discover", "command.toml"),
   path.join(installedReleaseDir, "README.md"),
   path.join(installedReleaseDir, "scripts", "ARCHITECTURE.md"),

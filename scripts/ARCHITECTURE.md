@@ -27,7 +27,8 @@ Important scripts:
   Windows adds common Git/MSYS shell paths before checking bash/zsh. macOS
   asserts zsh and bash and reports optional PowerShell (`pwsh`) coverage.
 - `build-debug.*`: build Rust debug binaries and the TUI entry into `target/debug`.
-- `build-release.*`: build Rust release binaries, the web GUI dist, the TUI entry,
+- `build-release.*`: build Rust release binaries, the web GUI dist under
+  `target/release/tura_gui_dist`, the TUI entry,
   and the Tauri desktop bundle. CLI/TUI artifacts and copied web assets land in
   `target/release`; Tauri bundle artifacts are produced by the Tauri CLI under
   the release target bundle directory. Tauri reads the release version from the

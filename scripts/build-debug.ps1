@@ -66,7 +66,7 @@ function Add-RustFlag {
 
 function Copy-GuiDist {
   $Source = Join-Path $RepoRoot "apps\gui\app\dist"
-  $Destination = Join-Path $TargetDir "tura_gui"
+  $Destination = Join-Path $TargetDir "tura_gui_dist"
   if (-not (Test-Path (Join-Path $Source "index.html"))) {
     throw "GUI dist not found at $Source. Run the GUI build before copying debug artifacts."
   }

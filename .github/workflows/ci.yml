@@ -43,11 +43,11 @@ jobs:
             ~/.cargo/bin/cargo-audit
             ~/.cargo/bin/cargo-deny
             ~/.cargo/bin/typos
-          key: ${{ runner.os }}-quality-bins-cargo-audit-deny-typos
+          key: ${{ runner.os }}-quality-bins-cargo-audit-deny-0.19.8-typos
       - name: Install quality binaries
         run: |
           command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
-          command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny --locked
+          cargo-deny --version 2>/dev/null | grep -q ' 0\.19\.8$' || cargo install cargo-deny --version 0.19.8 --locked --force
           command -v typos >/dev/null 2>&1 || cargo install typos-cli --locked
       - name: Run quality smell gate
         shell: bash
