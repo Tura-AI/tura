@@ -1,14 +1,21 @@
-use crate::runtime::tool::{ToolCall, ToolContext, ToolPayload, ToolRouter};
+use crate::runtime::tool::{CommandRouter, ToolCall, ToolContext, ToolPayload};
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+#[path = "handler_parse.rs"]
+mod handler_parse;
+use handler_parse::{
+    command_values, parse_arguments_value, parse_command_item, string_field, u64_field,
+};
 
 const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 15_000;
 const APPLY_PATCH_FAILURE_CANCEL_REASON: &str =
     "apply_patch failed; command_run stopped before later commands";
+const COMMAND_RUN_SANDBOX_ENV: &str = "TURA_COMMAND_RUN_SANDBOX";
 
 #[derive(Clone, Debug)]
 struct CommandRunArgs {
@@ -16,6 +23,7 @@ struct CommandRunArgs {
     workdir: Option<String>,
     timeout_ms: Option<u64>,
     allowed_commands: Option<BTreeSet<String>>,
+    sandbox: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -87,17 +95,53 @@ pub async fn execute_async_value(arguments: Value, session_dir: std::path::PathB
     execute_async_value_with_allowed(arguments, session_dir, None).await
 }
 
+pub async fn execute_async_value_with_lock_scope(
+    arguments: Value,
+    session_dir: std::path::PathBuf,
+    lock_scope: Option<String>,
+) -> Value {
+    execute_async_value_with_allowed_and_lock_scope(arguments, session_dir, None, lock_scope).await
+}
+
 pub async fn execute_async_value_with_allowed(
     arguments: Value,
     session_dir: std::path::PathBuf,
     allowed_commands: Option<BTreeSet<String>>,
+) -> Value {
+    execute_async_value_with_allowed_and_lock_scope(arguments, session_dir, allowed_commands, None)
+        .await
+}
+
+pub async fn execute_async_value_with_allowed_and_lock_scope(
+    arguments: Value,
+    session_dir: std::path::PathBuf,
+    allowed_commands: Option<BTreeSet<String>>,
+    lock_scope: Option<String>,
+) -> Value {
+    execute_async_value_with_allowed_lock_scope_and_sandbox(
+        arguments,
+        session_dir,
+        allowed_commands,
+        lock_scope,
+        command_run_sandbox_enabled(),
+    )
+    .await
+}
+
+pub async fn execute_async_value_with_allowed_lock_scope_and_sandbox(
+    arguments: Value,
+    session_dir: std::path::PathBuf,
+    allowed_commands: Option<BTreeSet<String>>,
+    lock_scope: Option<String>,
+    sandbox: bool,
 ) -> Value {
     let mut args = match parse_args(&arguments) {
         Ok(args) => args,
         Err(message) => return error_payload(message),
     };
     args.allowed_commands = allowed_commands;
-    execute_async_args(args, session_dir).await
+    args.sandbox = sandbox;
+    execute_async_args_with_lock_scope(args, session_dir, lock_scope).await
 }
 
 pub async fn execute_streamed_command_value(
@@ -112,11 +156,39 @@ pub async fn execute_streamed_command_value(
     execute_async_args(args, session_dir).await
 }
 
+pub fn normalize_command_value_for_execution(
+    command: Value,
+    index: usize,
+) -> Result<Value, String> {
+    let item = parse_single_streamed_command(command.clone(), index).map_err(|(_, error)| error)?;
+    let Some(command_type) = command_type_for_execution(&item) else {
+        return Ok(command);
+    };
+    let mut object = command.as_object().cloned().unwrap_or_default();
+    object.insert("step".to_string(), json!(item.effective_step()));
+    object.insert("command_type".to_string(), Value::String(command_type));
+    if !item.command_line.trim().is_empty() {
+        object.insert(
+            "command_line".to_string(),
+            Value::String(item.command_line.clone()),
+        );
+    }
+    if let Some(workdir) = item.workdir {
+        object.insert("workdir".to_string(), Value::String(workdir));
+    }
+    if let Some(timeout_ms) = item.timeout_ms {
+        object.insert("timeout_ms".to_string(), json!(timeout_ms));
+    }
+    Ok(Value::Object(object))
+}
+
 pub struct StreamingCommandRunExecutor {
-    router: Arc<ToolRouter>,
+    router: Arc<CommandRouter>,
     ctx: ToolContext,
     allowed_commands: Option<BTreeSet<String>>,
+    sandbox: bool,
     active_step: Option<u64>,
+    active_step_repaired: bool,
     next_index: usize,
     macro_command_batch: FuturesUnordered<tokio::task::JoinHandle<CommandRunItemResult>>,
     results: Vec<CommandRunItemResult>,
@@ -133,11 +205,21 @@ impl StreamingCommandRunExecutor {
         session_dir: std::path::PathBuf,
         allowed_commands: Option<BTreeSet<String>>,
     ) -> Self {
+        Self::new_with_allowed_and_lock_scope(session_dir, allowed_commands, None)
+    }
+
+    pub fn new_with_allowed_and_lock_scope(
+        session_dir: std::path::PathBuf,
+        allowed_commands: Option<BTreeSet<String>>,
+        lock_scope: Option<String>,
+    ) -> Self {
         Self {
-            router: Arc::new(ToolRouter::new()),
-            ctx: ToolContext::new(session_dir),
+            router: Arc::new(CommandRouter::new()),
+            ctx: ToolContext::new_with_lock_scope(session_dir, lock_scope),
             allowed_commands,
+            sandbox: command_run_sandbox_enabled(),
             active_step: None,
+            active_step_repaired: false,
             next_index: 0,
             macro_command_batch: FuturesUnordered::new(),
             results: Vec::new(),
@@ -166,7 +248,9 @@ impl StreamingCommandRunExecutor {
         command.index = self.next_index;
         self.next_index += 1;
 
-        let step = command.effective_step();
+        let requested_step = command.effective_step();
+        let step = self.normalize_next_step(requested_step);
+        command.step = Some(step);
         if self.active_step.is_some_and(|current| step != current) {
             self.flush_macro_command_batch().await;
         }
@@ -179,9 +263,19 @@ impl StreamingCommandRunExecutor {
             let router = Arc::clone(&self.router);
             let ctx = self.ctx.child();
             let allowed_commands = self.allowed_commands.clone();
+            let sandbox = self.sandbox;
             self.macro_command_batch.push(tokio::spawn(async move {
-                run_command_run_item(&router, command, ctx, false, allowed_commands.as_ref()).await
+                run_command_run_item(
+                    &router,
+                    command,
+                    ctx,
+                    false,
+                    allowed_commands.as_ref(),
+                    sandbox,
+                )
+                .await
             }));
+            self.flush_macro_command_batch().await;
             return self.drain_finished_results();
         }
 
@@ -192,6 +286,7 @@ impl StreamingCommandRunExecutor {
             self.ctx.child(),
             true,
             self.allowed_commands.as_ref(),
+            self.sandbox,
         )
         .await;
         let should_halt = is_failed_apply_patch_result(&result);
@@ -220,6 +315,18 @@ impl StreamingCommandRunExecutor {
 
     pub fn halt_reason(&self) -> Option<&str> {
         self.halt_reason.as_deref()
+    }
+
+    fn normalize_next_step(&mut self, requested_step: u64) -> u64 {
+        let step = match self.active_step {
+            Some(previous) if requested_step < previous => previous + 1,
+            Some(previous) if requested_step == previous && self.active_step_repaired => {
+                previous + 1
+            }
+            _ => requested_step,
+        };
+        self.active_step_repaired = step != requested_step;
+        step
     }
 
     async fn flush_macro_command_batch(&mut self) {
@@ -273,8 +380,24 @@ fn parse_single_streamed_command(
     Ok(item)
 }
 
+fn command_type_for_execution(command: &CommandItem) -> Option<String> {
+    let canonical = crate::commands::canonical_command(&command.command);
+    if canonical == "task_status" || canonical == "planning" {
+        return Some(canonical);
+    }
+    CommandRouter::new().resolve_command_tool_name(&command.command)
+}
+
 async fn execute_async_args(args: CommandRunArgs, session_dir: std::path::PathBuf) -> Value {
-    let ctx = ToolContext::new(session_dir);
+    execute_async_args_with_lock_scope(args, session_dir, None).await
+}
+
+async fn execute_async_args_with_lock_scope(
+    args: CommandRunArgs,
+    session_dir: std::path::PathBuf,
+    lock_scope: Option<String>,
+) -> Value {
+    let ctx = ToolContext::new_with_lock_scope(session_dir, lock_scope);
     let output = execute_async(args, ctx).await;
     serde_json::to_value(output).unwrap_or_else(|err| error_payload(err.to_string()))
 }
@@ -284,6 +407,7 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
     let CommandRunArgs {
         mut commands,
         allowed_commands,
+        sandbox,
         ..
     } = args;
     normalize_command_steps(&mut commands);
@@ -294,13 +418,19 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
             .push(command);
     }
 
-    let router = ToolRouter::new();
+    let router = CommandRouter::new();
     let mut results = Vec::new();
     let mut cancelled = false;
     let mut cancel_reason = None;
     for commands in by_step.into_values() {
-        let step_output =
-            run_command_run_step(&router, commands, ctx.child(), allowed_commands.as_ref()).await;
+        let step_output = run_command_run_step(
+            &router,
+            commands,
+            ctx.child(),
+            allowed_commands.as_ref(),
+            sandbox,
+        )
+        .await;
         results.extend(step_output.results);
         if step_output.cancelled {
             cancelled = true;
@@ -319,22 +449,26 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
 
 fn normalize_command_steps(commands: &mut [CommandItem]) {
     let mut previous_step: Option<u64> = None;
+    let mut previous_repaired = false;
     for command in commands {
         let requested_step = command.effective_step();
         let step = match previous_step {
-            Some(previous) if requested_step <= previous => previous + 1,
+            Some(previous) if requested_step < previous => previous + 1,
+            Some(previous) if requested_step == previous && previous_repaired => previous + 1,
             _ => requested_step,
         };
         command.step = Some(step);
         previous_step = Some(step);
+        previous_repaired = step != requested_step;
     }
 }
 
 async fn run_command_run_step(
-    router: &ToolRouter,
+    router: &CommandRouter,
     commands: Vec<CommandItem>,
     ctx: ToolContext,
     allowed_commands: Option<&BTreeSet<String>>,
+    sandbox: bool,
 ) -> CommandRunStepOutput {
     let mut results = Vec::new();
     let mut macro_command_batch = Vec::new();
@@ -352,11 +486,19 @@ async fn run_command_run_step(
                 std::mem::take(&mut macro_command_batch),
                 ctx.child(),
                 allowed_commands,
+                sandbox,
             )
             .await,
         );
-        let result =
-            run_command_run_item(router, command, ctx.child(), true, allowed_commands).await;
+        let result = run_command_run_item(
+            router,
+            command,
+            ctx.child(),
+            true,
+            allowed_commands,
+            sandbox,
+        )
+        .await;
         let should_stop = is_failed_apply_patch_result(&result);
         results.push(result);
         if should_stop {
@@ -369,8 +511,9 @@ async fn run_command_run_step(
         }
     }
 
-    results
-        .extend(run_macro_command_batch(router, macro_command_batch, ctx, allowed_commands).await);
+    results.extend(
+        run_macro_command_batch(router, macro_command_batch, ctx, allowed_commands, sandbox).await,
+    );
     CommandRunStepOutput {
         results,
         cancelled: false,
@@ -383,10 +526,11 @@ fn is_failed_apply_patch_result(result: &CommandRunItemResult) -> bool {
 }
 
 async fn run_macro_command_batch(
-    router: &ToolRouter,
+    router: &CommandRouter,
     commands: Vec<CommandItem>,
     ctx: ToolContext,
     allowed_commands: Option<&BTreeSet<String>>,
+    sandbox: bool,
 ) -> Vec<CommandRunItemResult> {
     if commands.is_empty() {
         return Vec::new();
@@ -400,6 +544,7 @@ async fn run_macro_command_batch(
             ctx.child(),
             false,
             allowed_commands,
+            sandbox,
         ));
     }
     let mut results = Vec::new();
@@ -411,11 +556,12 @@ async fn run_macro_command_batch(
 }
 
 async fn run_command_run_item(
-    router: &ToolRouter,
+    router: &CommandRouter,
     command: CommandItem,
     ctx: ToolContext,
     force_exclusive: bool,
     allowed_commands: Option<&BTreeSet<String>>,
+    sandbox: bool,
 ) -> CommandRunItemResult {
     if !command_allowed(&command.command, allowed_commands) {
         return CommandRunItemResult::failed(
@@ -464,16 +610,23 @@ async fn run_command_run_item(
             );
         }
     };
+    if sandbox {
+        if let Err(message) = validate_command_sandbox(&command_name, &call, &ctx.session_dir) {
+            return CommandRunItemResult::blocked(
+                command.index,
+                command.effective_step(),
+                command_name,
+                message,
+            );
+        }
+    }
     match router.dispatch(call, ctx, force_exclusive).await {
         Ok(result) => CommandRunItemResult {
             index: command.index,
             step: command.effective_step(),
             command_type: command_name.clone(),
             success: result.result.success_for_logging(),
-            output: Some(command_run_model_output(
-                &command_name,
-                result.result.code_mode_result(),
-            )),
+            output: Some(result.result.code_mode_result()),
             error: None,
         },
         Err(err) => CommandRunItemResult::failed(
@@ -490,6 +643,112 @@ fn command_allowed(command: &str, allowed_commands: Option<&BTreeSet<String>>) -
         return true;
     };
     allowed_commands.contains(&crate::commands::canonical_command(command))
+}
+
+fn command_run_sandbox_enabled() -> bool {
+    std::env::var(COMMAND_RUN_SANDBOX_ENV)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on" | "enabled"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn validate_command_sandbox(
+    command_name: &str,
+    call: &ToolCall,
+    session_dir: &Path,
+) -> Result<(), String> {
+    match command_name {
+        "apply_patch" => match &call.payload {
+            ToolPayload::Freeform { input } => {
+                crate::commands::apply_patch::validate_paths_within_session_dir(input, session_dir)
+            }
+            ToolPayload::Function { .. } => Ok(()),
+        },
+        "shell_command" | "bash" | "zsh" => {
+            if let Some(workdir) = shell_workdir_from_payload(&call.payload) {
+                validate_workdir_within_session_dir(session_dir, &workdir)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn shell_workdir_from_payload(payload: &ToolPayload) -> Option<String> {
+    let ToolPayload::Function { arguments } = payload else {
+        return None;
+    };
+    arguments
+        .get("workdir")
+        .or_else(|| arguments.get("cwd"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn validate_workdir_within_session_dir(session_dir: &Path, raw: &str) -> Result<(), String> {
+    let root = session_dir.canonicalize().map_err(|err| {
+        format!(
+            "failed to resolve command_run sandbox workspace {}: {err}",
+            session_dir.display()
+        )
+    })?;
+    let raw_path = PathBuf::from(raw.trim());
+    let path = if raw_path.is_absolute() {
+        raw_path
+    } else {
+        root.join(raw_path)
+    };
+    let path = normalize_path_lexically(&path.canonicalize().unwrap_or(path));
+    if path_is_within_root(&path, &root) {
+        return Ok(());
+    }
+    Err(format!(
+        "command_run sandbox blocked workdir outside workspace: {}",
+        PathBuf::from(raw.trim()).display()
+    ))
+}
+
+fn path_is_within_root(path: &Path, root: &Path) -> bool {
+    if path.strip_prefix(root).is_ok() {
+        return true;
+    }
+    let path = comparable_path_string(path);
+    let root = comparable_path_string(root);
+    path == root || path.starts_with(&(root + "/"))
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            std::path::Component::RootDir => normalized.push(component.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
+fn comparable_path_string(path: &Path) -> String {
+    let mut text = path.to_string_lossy().replace('\\', "/");
+    if let Some(stripped) = text.strip_prefix("//?/") {
+        text = stripped.to_string();
+    }
+    #[cfg(windows)]
+    {
+        text = text.to_ascii_lowercase();
+    }
+    text.trim_end_matches('/').to_string()
 }
 
 fn command_run_task_status_result(command: CommandItem) -> CommandRunItemResult {
@@ -514,26 +773,15 @@ fn command_run_task_status_result(command: CommandItem) -> CommandRunItemResult 
     }
 }
 
-fn command_run_model_output(command_name: &str, value: Value) -> Value {
-    if !matches!(command_name, "shell_command" | "bash") {
-        return value;
-    }
-    value
-        .as_object()
-        .and_then(|object| object.get("transcript"))
-        .and_then(Value::as_str)
-        .map(|text| Value::String(text.to_string()))
-        .unwrap_or(value)
-}
-
 fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall, String> {
+    let router = CommandRouter::new();
     let payload = match command_name {
         "apply_patch" => ToolPayload::Freeform {
             input: extract_apply_patch_body(&command.command_line)
                 .unwrap_or_else(|| command.command_line.clone()),
         },
-        "compact_context" => ToolPayload::Function {
-            arguments: normalize_compact_context_arguments(command)?,
+        "generate_media" => ToolPayload::Function {
+            arguments: normalize_json_or_cli_command_arguments(command, "generate_media")?,
         },
         "planning" => ToolPayload::Function {
             arguments: normalize_planning_arguments(command)?,
@@ -544,6 +792,13 @@ fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall
         "web_discover" => ToolPayload::Function {
             arguments: normalize_json_or_cli_command_arguments(command, "web_discover")?,
         },
+        _ if router.handler(command_name).is_none()
+            && router.resolve_command_tool_name(command_name).as_deref() == Some(command_name) =>
+        {
+            ToolPayload::Function {
+                arguments: normalize_json_or_cli_command_arguments(command, command_name)?,
+            }
+        }
         _ => ToolPayload::Function {
             arguments: normalize_shell_command_arguments(command)?,
         },
@@ -601,6 +856,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
         workdir: top_workdir,
         timeout_ms: top_timeout_ms,
         allowed_commands: None,
+        sandbox: command_run_sandbox_enabled(),
     };
     for value in command_values {
         args.commands.push(parse_command_item(&value)?);
@@ -633,31 +889,42 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
             continue;
         }
         let canonical_command = crate::commands::canonical_command(&command.command);
+        if canonical_command == "compact_context" {
+            return Err(
+                "standalone compact_context command has been removed; use task_status compact_context"
+                    .to_string(),
+            );
+        }
         if !matches!(
             canonical_command.as_str(),
-            "shell_command"
-                | "bash"
-                | "apply_patch"
-                | "planning"
-                | "read_media"
-                | "web_discover"
-                | "task_status"
-                | "compact_context"
+            "shell_command" | "bash" | "zsh" | "apply_patch" | "planning" | "task_status"
         ) {
+            if CommandRouter::new()
+                .resolve_command_tool_name(&canonical_command)
+                .is_some()
+            {
+                command.command = canonical_command;
+                continue;
+            }
             if looks_like_removed_structured_tool_call(&command.command, &command.command_line) {
                 continue;
             }
-            if command.command_line.is_empty() {
+            if command.command_line.is_empty()
+                && (looks_like_shell_command_text(&command.command)
+                    || looks_like_shell_request_payload(&command.command))
+            {
                 command.command_line = command.command.clone();
+                command.command = crate::commands::active_shell_command_name().to_string();
+            } else if !command.command_line.is_empty() {
+                command.command = crate::commands::active_shell_command_name().to_string();
             }
-            command.command = crate::commands::active_shell_command_name().to_string();
         } else if command.command_line.is_empty() && looks_like_shell_command_text(&command.command)
         {
             command.command_line = command.command.clone();
             command.command = crate::commands::active_shell_command_name().to_string();
         }
     }
-    validate_compact_context_position(&args.commands)?;
+    validate_task_status_compact_context_position(&args.commands)?;
     Ok(args)
 }
 
@@ -666,27 +933,52 @@ fn normalize_json_or_cli_command_arguments(
     command_name: &str,
 ) -> Result<Value, String> {
     let trimmed = command.command_line.trim();
-    if trimmed.is_empty() {
+    let arguments = if trimmed.is_empty() {
         if let Some(arguments) = &command.inline_arguments {
-            return Ok(arguments.clone());
+            Ok(arguments.clone())
+        } else {
+            Ok(json!({ "cli": command.command_line }))
         }
-    }
-    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+    } else if trimmed.starts_with('{') || trimmed.starts_with('[') {
         normalize_json_command_arguments(command, command_name)
     } else {
         Ok(json!({ "cli": command.command_line }))
-    }
+    }?;
+    Ok(with_command_timeout(arguments, command))
 }
 
-fn validate_compact_context_position(commands: &[CommandItem]) -> Result<(), String> {
+fn with_command_timeout(mut arguments: Value, command: &CommandItem) -> Value {
+    if let Some(object) = arguments.as_object_mut() {
+        let has_timeout = object.contains_key("timeout_ms")
+            || object.contains_key("timeoutMs")
+            || object.contains_key("timeout_secs")
+            || object.contains_key("timeoutSecs");
+        if !has_timeout {
+            object.insert(
+                "timeout_ms".to_string(),
+                json!(command.effective_timeout_ms()),
+            );
+        }
+    }
+    arguments
+}
+
+fn validate_task_status_compact_context_position(commands: &[CommandItem]) -> Result<(), String> {
     let Some((compact_index, compact)) = commands.iter().enumerate().find(|(_, command)| {
-        crate::commands::canonical_command(&command.command) == "compact_context"
+        crate::commands::canonical_command(&command.command) == "task_status"
+            && command_has_compact_context(command)
     }) else {
         return Ok(());
     };
+    if commands[compact_index + 1..]
+        .iter()
+        .any(command_has_compact_context)
+    {
+        return Err("only one task_status compact_context command is allowed".to_string());
+    }
     if commands.get(compact_index + 1).is_some() {
         return Err(
-            "compact_context must be the final command in the highest step of command_run"
+            "task_status compact_context must be the final command in the highest step of command_run"
                 .to_string(),
         );
     }
@@ -697,11 +989,38 @@ fn validate_compact_context_position(commands: &[CommandItem]) -> Result<(), Str
         .unwrap_or(1);
     if compact.effective_step() != max_step {
         return Err(
-            "compact_context must be the final command in the highest step of command_run"
+            "task_status compact_context must be the final command in the highest step of command_run"
                 .to_string(),
         );
     }
     Ok(())
+}
+
+fn command_has_compact_context(command: &CommandItem) -> bool {
+    command
+        .inline_arguments
+        .as_ref()
+        .is_some_and(value_has_compact_context)
+        || command_line_has_compact_context(&command.command_line)
+}
+
+fn value_has_compact_context(value: &Value) -> bool {
+    value
+        .get("compact_context")
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.trim().is_empty())
+}
+
+fn command_line_has_compact_context(command_line: &str) -> bool {
+    let trimmed = command_line.trim();
+    if trimmed.is_empty() || !trimmed.starts_with('{') {
+        return false;
+    }
+    serde_json::from_str::<Value>(trimmed)
+        .ok()
+        .is_some_and(|value| value_has_compact_context(&value))
+        || extract_jsonish_string_field(trimmed, "compact_context")
+            .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn normalize_planning_arguments(command: &CommandItem) -> Result<Value, String> {
@@ -714,17 +1033,87 @@ fn normalize_planning_arguments(command: &CommandItem) -> Result<Value, String> 
     Ok(value)
 }
 
-fn normalize_compact_context_arguments(command: &CommandItem) -> Result<Value, String> {
-    let trimmed = command.command_line.trim();
-    if trimmed.is_empty() {
-        return Err("compact_context command_line must include checkpoint text".to_string());
+fn escape_control_chars_in_json_strings(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in input.chars() {
+        if in_string {
+            if escaped {
+                output.push(ch);
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => {
+                    output.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    output.push(ch);
+                    in_string = false;
+                }
+                '\n' => output.push_str("\\n"),
+                '\r' => output.push_str("\\r"),
+                '\t' => output.push_str("\\t"),
+                ch if ch.is_control() => {
+                    output.push_str(&format!("\\u{:04x}", ch as u32));
+                }
+                _ => output.push(ch),
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        }
+        output.push(ch);
     }
-    if trimmed.starts_with('{') {
-        let value: Value = serde_json::from_str(trimmed)
-            .map_err(|err| format!("invalid compact_context command_line JSON: {err}"))?;
-        return Ok(value);
+    output
+}
+
+fn extract_jsonish_string_field(input: &str, field: &str) -> Option<String> {
+    let key = format!("\"{field}\"");
+    let key_start = input.find(&key)?;
+    let after_key = &input[key_start + key.len()..];
+    let colon_index = after_key.find(':')?;
+    let after_colon = after_key[colon_index + 1..].trim_start();
+    let value_start = after_colon.strip_prefix('"')?;
+    let close = find_jsonish_string_close(value_start)?;
+    let raw = &value_start[..close];
+    decode_jsonish_string(raw)
+}
+
+fn find_jsonish_string_close(input: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (index, ch) in input.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' if looks_like_field_close(&input[index + ch.len_utf8()..]) => return Some(index),
+            _ => {}
+        }
     }
-    Ok(json!({ "summary": trimmed }))
+    None
+}
+
+fn looks_like_field_close(suffix: &str) -> bool {
+    let suffix = suffix.trim_start();
+    suffix.starts_with('}') || suffix.starts_with(',')
+}
+
+fn decode_jsonish_string(raw: &str) -> Option<String> {
+    let escaped = escape_control_chars_in_json_strings(&format!("\"{raw}\""));
+    serde_json::from_str::<String>(&escaped).ok().or_else(|| {
+        Some(
+            raw.replace("\\\"", "\"")
+                .replace("\\n", "\n")
+                .replace("\\r", "\r")
+                .replace("\\t", "\t"),
+        )
+    })
 }
 
 fn normalize_json_command_arguments(
@@ -737,197 +1126,6 @@ fn normalize_json_command_arguments(
     }
     serde_json::from_str(trimmed)
         .map_err(|err| format!("invalid {command_name} command_line JSON: {err}"))
-}
-
-fn parse_arguments_value(arguments: &Value) -> Result<Value, String> {
-    let value = match arguments {
-        Value::String(text) => parse_jsonish_value(text)
-            .map_err(|err| format!("failed to parse command_run arguments: {err}"))?,
-        other => other.clone(),
-    };
-    Ok(value.get("requests").cloned().unwrap_or(value))
-}
-
-fn command_values(value: &Value) -> Vec<Value> {
-    match value {
-        Value::Array(items) => items.clone(),
-        Value::Object(_) | Value::String(_) => vec![value.clone()],
-        _ => Vec::new(),
-    }
-}
-
-fn parse_command_item(value: &Value) -> Result<CommandItem, String> {
-    if let Some(text) = value.as_str() {
-        return Ok(CommandItem {
-            index: 0,
-            command: text.to_string(),
-            command_line: String::new(),
-            inline_arguments: None,
-            workdir: None,
-            step: None,
-            timeout_ms: None,
-        });
-    }
-    let Some(object) = value.as_object() else {
-        return Err("failed to parse command_run command: expected object".to_string());
-    };
-    let command = string_field(
-        object,
-        &[
-            "command_type",
-            "commandType",
-            "command",
-            "cmd",
-            "tool",
-            "name",
-            "tool_name",
-            "toolName",
-            "tool_package_name",
-            "toolPackageName",
-        ],
-    )
-    .or_else(|| {
-        string_field(
-            object,
-            &[
-                "command_line",
-                "commandLine",
-                "command_code",
-                "commandCode",
-                "input",
-                "args",
-                "code",
-                "script",
-                "payload",
-            ],
-        )
-        .map(|_| crate::commands::active_shell_command_name().to_string())
-    })
-    .ok_or_else(|| {
-        "failed to parse command_run command: missing field `command_type`".to_string()
-    })?;
-    let command_line = string_field(
-        object,
-        &[
-            "command_line",
-            "commandLine",
-            "command_code",
-            "commandCode",
-            "input",
-            "args",
-            "code",
-            "script",
-            "payload",
-        ],
-    )
-    .or_else(|| {
-        // Some models name the command in `command_type` and put the argument
-        // payload in `command` (e.g. task_status carrying a `{status,...}` JSON
-        // blob). Recover that payload as the command_line so it is not dropped.
-        if object.contains_key("command_type") || object.contains_key("commandType") {
-            string_field(object, &["command", "cmd"])
-                .filter(|payload| payload.trim() != command.trim())
-        } else {
-            None
-        }
-    })
-    .unwrap_or_default();
-    let inline_arguments = inline_command_arguments(object);
-    Ok(CommandItem {
-        index: 0,
-        command,
-        command_line,
-        inline_arguments,
-        workdir: string_field(object, &["workdir", "cwd"]),
-        step: u64_field(object, &["step"]),
-        timeout_ms: u64_field(object, &["timeout_ms", "timeoutMs"]),
-    })
-}
-
-fn inline_command_arguments(object: &serde_json::Map<String, Value>) -> Option<Value> {
-    for name in [
-        "arguments",
-        "argument",
-        "parameters",
-        "parameter",
-        "params",
-        "options",
-        "input_json",
-        "inputJson",
-    ] {
-        if let Some(value) = object.get(name) {
-            return Some(value.clone());
-        }
-    }
-
-    let mut arguments = object.clone();
-    for name in [
-        "command_type",
-        "commandType",
-        "command",
-        "cmd",
-        "tool",
-        "name",
-        "tool_name",
-        "toolName",
-        "tool_package_name",
-        "toolPackageName",
-        "command_line",
-        "commandLine",
-        "command_code",
-        "commandCode",
-        "input",
-        "args",
-        "code",
-        "script",
-        "payload",
-        "workdir",
-        "cwd",
-        "step",
-        "timeout_ms",
-        "timeoutMs",
-    ] {
-        arguments.remove(name);
-    }
-    (!arguments.is_empty()).then_some(Value::Object(arguments))
-}
-
-fn string_field(object: &serde_json::Map<String, Value>, names: &[&str]) -> Option<String> {
-    names.iter().find_map(|name| {
-        object.get(*name).and_then(|value| match value {
-            Value::String(text) if !text.trim().is_empty() => Some(text.to_string()),
-            Value::Object(_) | Value::Array(_) => Some(value.to_string()),
-            _ => None,
-        })
-    })
-}
-
-fn parse_jsonish_value(text: &str) -> Result<Value, serde_json::Error> {
-    let trimmed = text.trim();
-    if let Some(unfenced) = strip_json_code_fence(trimmed) {
-        if let Ok(value) = serde_json::from_str(unfenced.trim()) {
-            return Ok(value);
-        }
-    }
-    serde_json::from_str(trimmed)
-}
-
-fn strip_json_code_fence(text: &str) -> Option<&str> {
-    let stripped = text.strip_prefix("```")?;
-    let newline = stripped.find('\n')?;
-    let body = &stripped[newline + 1..];
-    let end = body.rfind("```")?;
-    Some(&body[..end])
-}
-
-fn u64_field(object: &serde_json::Map<String, Value>, names: &[&str]) -> Option<u64> {
-    names.iter().find_map(|name| {
-        object.get(*name).and_then(|value| {
-            value
-                .as_u64()
-                .or_else(|| value.as_str().and_then(|text| text.parse::<u64>().ok()))
-        })
-    })
 }
 
 fn extract_apply_patch_body(text: &str) -> Option<String> {
@@ -981,30 +1179,55 @@ impl CommandItem {
     }
 
     fn effective_timeout_ms(&self) -> u64 {
-        self.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS).max(1)
+        self.timeout_ms
+            .unwrap_or_else(|| default_timeout_ms_for_command(&self.command))
+            .max(1)
     }
 
-    async fn is_macro_command_safe(&self, router: &ToolRouter, ctx: &ToolContext) -> bool {
+    async fn is_macro_command_safe(&self, router: &CommandRouter, ctx: &ToolContext) -> bool {
         let Some(tool_name) = router.resolve_command_tool_name(&self.command) else {
             return false;
         };
         if tool_name == "apply_patch" {
             return false;
         }
-        let Ok(call) = build_tool_call(tool_name, self) else {
+        let Ok(call) = build_tool_call(&tool_name, self) else {
             return false;
         };
         if !router.tool_supports_macro_command(&call) {
             return false;
         }
-        let Some(handler) = router.handler(tool_name) else {
-            return false;
-        };
-        !handler.is_mutating(&call, ctx).await
+        !router.command_is_mutating(&call, ctx).await
     }
 }
 
+fn default_timeout_ms_for_command(command: &str) -> u64 {
+    CommandRouter::new()
+        .default_timeout_ms_for_command(command)
+        .unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS)
+}
+
 impl CommandRunItemResult {
+    fn blocked(index: usize, step: u64, command: String, error: String) -> Self {
+        Self {
+            index,
+            step,
+            command_type: command,
+            success: false,
+            output: Some(crate::shell_executor::json_like_output(
+                126,
+                String::new(),
+                error.clone(),
+                json!({
+                    "error_type": "SandboxViolation",
+                    "message": error,
+                }),
+                Vec::new(),
+            )),
+            error: None,
+        }
+    }
+
     fn failed(index: usize, step: u64, command: String, error: String) -> Self {
         Self {
             index,
@@ -1018,13 +1241,84 @@ impl CommandRunItemResult {
 }
 
 fn looks_like_shell_command_text(command: &str) -> bool {
-    let text = command.trim_start().to_ascii_lowercase();
+    let trimmed = command.trim_start();
+    let text = trimmed.to_ascii_lowercase();
+    let first = text
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(['"', '\'']);
+    const KNOWN_SHELL_COMMANDS: &[&str] = &[
+        "cat",
+        "cargo",
+        "cd",
+        "cmd",
+        "cmd.exe",
+        "copy",
+        "cp",
+        "del",
+        "dir",
+        "echo",
+        "get-childitem",
+        "get-content",
+        "git",
+        "ls",
+        "measure-object",
+        "mkdir",
+        "mv",
+        "node",
+        "npm",
+        "npx",
+        "pnpm",
+        "powershell",
+        "powershell.exe",
+        "pwsh",
+        "pwsh.exe",
+        "py",
+        "python",
+        "rg",
+        "rm",
+        "robocopy",
+        "select-object",
+        "set-content",
+        "tsc",
+        "tsx",
+        "type",
+        "where-object",
+        "write-output",
+        "xcopy",
+        "yarn",
+    ];
     text.starts_with("powershell ")
         || text.starts_with("powershell.exe ")
         || text.starts_with("pwsh ")
         || text.starts_with("pwsh.exe ")
         || text.starts_with('"')
             && (text.contains("powershell.exe\"") || text.contains("pwsh.exe\""))
+        || trimmed.starts_with('$')
+        || trimmed.starts_with("./")
+        || trimmed.starts_with(".\\")
+        || KNOWN_SHELL_COMMANDS.contains(&first)
+}
+
+fn looks_like_shell_request_payload(command: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(command.trim()) else {
+        return false;
+    };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    [
+        "command",
+        "command_line",
+        "commandLine",
+        "command_code",
+        "commandCode",
+        "script",
+        "code",
+    ]
+    .iter()
+    .any(|name| object.get(*name).and_then(Value::as_str).is_some())
 }
 
 fn looks_like_removed_structured_tool_call(command: &str, command_line: &str) -> bool {
@@ -1064,241 +1358,5 @@ fn error_payload(message: String) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{normalize_command_steps, normalize_shell_command_arguments, parse_args};
-    use serde_json::json;
-    use serde_json::Value;
-
-    #[test]
-    fn parse_missing_steps_default_to_original_order_steps() {
-        let args = parse_args(&json!({
-            "commands": [
-                { "command": "shell_command", "command_line": "pwd" },
-                { "command": "shell_command", "command_line": "pwd" }
-            ]
-        }))
-        .expect("parse args");
-
-        assert_eq!(args.commands[0].effective_step(), 1);
-        assert_eq!(args.commands[1].effective_step(), 2);
-    }
-
-    #[test]
-    fn normalize_duplicate_steps_extends_in_input_order() {
-        let mut args = parse_args(&json!({
-            "commands": [
-                { "command": "shell_command", "command_line": "echo a", "step": 1 },
-                { "command": "shell_command", "command_line": "echo b", "step": 2 },
-                { "command": "shell_command", "command_line": "echo c", "step": 2 },
-                { "command": "shell_command", "command_line": "echo d", "step": 3 }
-            ]
-        }))
-        .expect("parse args");
-
-        normalize_command_steps(&mut args.commands);
-
-        let steps = args
-            .commands
-            .iter()
-            .map(|command| command.effective_step())
-            .collect::<Vec<_>>();
-        assert_eq!(steps, vec![1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn parse_empty_command_run_is_error() {
-        let error = parse_args(&json!({ "commands": [] })).expect_err("empty command run");
-
-        assert_eq!(error, "command_run commands must not be empty");
-    }
-
-    #[test]
-    fn parse_compact_context_must_be_final_highest_step() {
-        let error = parse_args(&json!({
-            "commands": [
-                {
-                    "step": 2,
-                    "command_type": "compact_context",
-                    "command_line": "summary"
-                },
-                {
-                    "step": 3,
-                    "command_type": "shell_command",
-                    "command_line": "echo after"
-                }
-            ]
-        }))
-        .expect_err("compact_context position");
-
-        assert_eq!(
-            error,
-            "compact_context must be the final command in the highest step of command_run"
-        );
-    }
-
-    #[test]
-    fn parse_command_only_shell_text_is_mapped_to_active_shell_command() {
-        let args = parse_args(&json!({
-            "commands": [
-                { "command": "echo ok", "step": 1 }
-            ]
-        }))
-        .expect("parse args");
-
-        assert_eq!(
-            args.commands[0].command,
-            crate::commands::active_shell_command_name()
-        );
-        assert_eq!(args.commands[0].command_line, "echo ok");
-    }
-
-    #[test]
-    fn normalize_shell_commands_default_to_15_second_timeout() {
-        let args = parse_args(&json!({
-            "commands": [
-                {
-                    "command": "shell_command",
-                    "command_line": "echo timeout-default-ok",
-                    "step": 1
-                }
-            ]
-        }))
-        .expect("parse command_run args");
-
-        let arguments = normalize_shell_command_arguments(&args.commands[0])
-            .expect("normalize shell arguments");
-
-        assert_eq!(arguments["timeout_ms"], json!(15_000));
-    }
-
-    #[test]
-    fn parse_command_line_without_command_type_accepts_workdir_and_timeout() {
-        let args = parse_args(&json!({
-            "commands": [
-                {
-                    "command_line": "pwd",
-                    "workdir": "subdir",
-                    "timeout_ms": 5000,
-                    "step": 1
-                }
-            ]
-        }))
-        .expect("parse args");
-
-        assert_eq!(
-            args.commands[0].command,
-            crate::commands::active_shell_command_name()
-        );
-        assert_eq!(args.commands[0].command_line, "pwd");
-        assert_eq!(args.commands[0].workdir.as_deref(), Some("subdir"));
-        assert_eq!(args.commands[0].timeout_ms, Some(5000));
-    }
-
-    #[test]
-    fn parse_legacy_steps_shape_is_accepted() {
-        let args = parse_args(&json!({
-            "steps": [
-                {
-                    "tool_name": "shell_command",
-                    "command_code": "echo legacy-steps-ok",
-                    "step": 1
-                }
-            ]
-        }))
-        .expect("parse args");
-
-        assert_eq!(args.commands[0].command, "shell_command");
-        assert_eq!(args.commands[0].command_line, "echo legacy-steps-ok");
-    }
-
-    #[test]
-    fn parse_command_run_arguments_accept_requests_wrapper_and_json_fence() {
-        let args = parse_args(&Value::String(
-            "```json\n{\"requests\":{\"commands\":[{\"command\":\"shell_command\",\"command_line\":\"echo fenced-ok\",\"step\":1}]}}\n```"
-                .to_string(),
-        ))
-        .expect("parse args");
-
-        assert_eq!(args.commands[0].command, "shell_command");
-        assert_eq!(args.commands[0].command_line, "echo fenced-ok");
-    }
-
-    #[test]
-    fn parse_command_line_wrapped_apply_patch_routes_to_apply_patch() {
-        let args = parse_args(&json!({
-            "commands": [
-                {
-                    "command": "shell_command",
-                    "command_line": "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\nPATCH",
-                    "step": 1
-                }
-            ]
-        }))
-        .expect("parse args");
-
-        assert_eq!(args.commands[0].command, "apply_patch");
-        assert!(args.commands[0].command_line.starts_with("*** Begin Patch"));
-    }
-
-    #[test]
-    fn parse_apply_patch_missing_begin_marker_is_repaired() {
-        let args = parse_args(&json!({
-            "commands": [
-                {
-                    "command_type": "apply_patch",
-                    "command_line": "apply_patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch",
-                    "step": 1
-                }
-            ]
-        }))
-        .expect("parse args");
-
-        assert_eq!(args.commands[0].command, "apply_patch");
-        assert_eq!(
-            args.commands[0].command_line,
-            "*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch"
-        );
-    }
-
-    #[test]
-    fn parse_aliases_cmd_and_command_line_are_accepted() {
-        let args = parse_args(&json!({
-            "commands": [
-                { "cmd": "shell_command", "commandLine": "echo ok", "step": 1 }
-            ]
-        }))
-        .expect("parse args");
-
-        assert_eq!(args.commands[0].command, "shell_command");
-        assert_eq!(args.commands[0].command_line, "echo ok");
-    }
-
-    #[test]
-    fn parse_single_shell_object_without_commands_is_wrapped() {
-        let args = parse_args(&json!({
-            "command": "echo ok",
-            "timeoutMs": 120000
-        }))
-        .expect("parse args");
-
-        assert_eq!(args.commands.len(), 1);
-        assert_eq!(args.commands[0].command_line, "echo ok");
-        assert_eq!(args.commands[0].timeout_ms, Some(120000));
-    }
-
-    #[test]
-    fn parse_command_only_here_string_patch_is_routed_to_apply_patch() {
-        let args = parse_args(&json!({
-            "commands": [
-                {
-                    "command": "@'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n'@",
-                    "step": 1
-                }
-            ]
-        }))
-        .expect("parse args");
-
-        assert_eq!(args.commands[0].command, "apply_patch");
-        assert!(args.commands[0].command_line.starts_with("*** Begin Patch"));
-    }
-}
+#[path = "tests.rs"]
+mod tests;

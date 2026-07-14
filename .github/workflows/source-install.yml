@@ -1,0 +1,146 @@
+name: Source Install
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/source-install.yml"
+      - "scripts/install.ps1"
+      - "scripts/install.sh"
+      - "scripts/build-release.ps1"
+      - "scripts/build-release.sh"
+      - "scripts/register-cli.ps1"
+      - "scripts/register-cli.sh"
+      - "scripts/tests/scripts/test-install.ps1"
+      - "scripts/tests/scripts/test-install.sh"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/source-install.yml"
+      - "scripts/install.ps1"
+      - "scripts/install.sh"
+      - "scripts/build-release.ps1"
+      - "scripts/build-release.sh"
+      - "scripts/register-cli.ps1"
+      - "scripts/register-cli.sh"
+      - "scripts/tests/scripts/test-install.ps1"
+      - "scripts/tests/scripts/test-install.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-install:
+    name: Source install ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ubuntu-latest
+            runner: ubuntu-latest
+          - label: macos-latest
+            runner: macos-latest
+          - label: windows-2022
+            runner: windows-2022
+          - label: windows-2025
+            runner: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: source-install-${{ matrix.label }}
+          cache-on-failure: true
+
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Bun setup
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            pkg-config
+
+      - name: Run complete source installer (Windows)
+        if: runner.os == 'Windows'
+        id: install_windows
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Continue"
+          New-Item -ItemType Directory -Path .ci-results -Force | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 *>&1 |
+            Tee-Object -FilePath ".ci-results/source-install-${{ matrix.label }}.log"
+          $exitCode = $LASTEXITCODE
+          "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($exitCode -ne 0) { exit $exitCode }
+
+      - name: Run complete source installer (Linux/macOS)
+        if: runner.os != 'Windows'
+        id: install_posix
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p .ci-results
+          sh scripts/install.sh 2>&1 | tee ".ci-results/source-install-${{ matrix.label }}.log"
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=${exit_code}" >> "$GITHUB_OUTPUT"
+          exit "$exit_code"
+
+      - name: Verify registered PATH in a fresh PowerShell (Windows)
+        if: runner.os == 'Windows' && steps.install_windows.outcome == 'success'
+        shell: pwsh
+        run: |
+          $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+          $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          $env:TURA_FRESH_PATH = "$machinePath$([IO.Path]::PathSeparator)$userPath"
+          powershell -NoProfile -ExecutionPolicy Bypass -Command `
+            '$env:Path = $env:TURA_FRESH_PATH; (Get-Command tura -ErrorAction Stop).Source; tura --help' *>&1 |
+            Tee-Object -FilePath ".ci-results/source-install-${{ matrix.label }}.log" -Append
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) { exit $exitCode }
+
+      - name: Verify registered PATH in a fresh shell (Linux/macOS)
+        if: runner.os != 'Windows' && steps.install_posix.outcome == 'success'
+        shell: bash
+        run: |
+          set -o pipefail
+          sh -lc 'command -v tura && tura --help' 2>&1 |
+            tee -a ".ci-results/source-install-${{ matrix.label }}.log"
+
+      - name: Upload source-install logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-install-${{ matrix.label }}-logs
+          path: .ci-results/source-install-${{ matrix.label }}.log
+          if-no-files-found: warn
+
+      - name: Fail if source installation failed
+        if: steps.install_windows.outcome == 'failure' || steps.install_posix.outcome == 'failure'
+        shell: pwsh
+        run: exit 1

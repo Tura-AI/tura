@@ -1,0 +1,7 @@
+{
+  "id": "data_research",
+  "display_name": "Data Research Operation Manual",
+  "description": "Use for charts, dashboards, exploratory visual analysis, data storytelling, chart redesigns, and interactive or static data visualization deliverables.",
+  "father_ids": ["visual", "new_build"],
+  "capabilities": []
+}

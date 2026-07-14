@@ -86,12 +86,12 @@ addCheck("schema hides ids and deliverable", () => {
 
 addCheck("prompt describes ordered replacement tasks without plan mutation or parallel steps", () => {
   const prompt = read("crates/tools/src/commands/planning/prompt.md")
-  assert.match(prompt, /already inspected the authoritative sources/)
-  assert.match(prompt, /identified the concrete problem surface/)
+  assert.match(prompt, /identify the authoritative sources/)
+  assert.match(prompt, /required behavior, acceptance tests, fixtures, expected inputs\/outputs/)
   assert.match(prompt, /Only dispatch tasks after that discovery is done/)
   assert.match(prompt, /first planned step must be executable work/)
   assert.match(prompt, /not exploration/)
-  assert.match(prompt, /Intermediate notes, summaries, markdown files, or generated checklists are working memory only/)
+  assert.match(prompt, /Intermediate notes, summaries, markdown files, or generated checklists are working notes only/)
   assert.match(prompt, /not the source of truth/)
   assert.match(prompt, /authoritative sources/)
   assert.match(prompt, /final acceptance criteria/)
@@ -104,13 +104,12 @@ addCheck("prompt describes ordered replacement tasks without plan mutation or pa
   assert.doesNotMatch(prompt, /share the same `step`/)
   assert.doesNotMatch(prompt, /handoff/i)
   assert.doesNotMatch(prompt, /Write complete spec/)
-  assert.doesNotMatch(prompt, /deliverable/)
   assert.match(prompt, /put it in the final position of that batch/)
   assert.match(prompt, /applies the new plan only after every command in the current batch has finished/)
   assert.match(prompt, /Each step needs a unique order number/)
-  assert.match(prompt, /Refactor backend agent services/)
-  assert.match(prompt, /Update frontend task views/)
-  assert.match(prompt, /Run acceptance checks/)
+  assert.match(prompt, /Map APIs, flags, fixtures, and source-backed behavior/)
+  assert.match(prompt, /Implement the shared parser, IO, and core behavior model/)
+  assert.match(prompt, /Run focused equivalence checks and finalize deliverable artifacts/)
   assert.doesNotMatch(prompt, /zip-password-finder/)
   assert.doesNotMatch(prompt, /official source, release binary, bundled fixtures/)
   assert.doesNotMatch(prompt, /unsupported scope/)
@@ -121,7 +120,7 @@ addCheck("prompt describes ordered replacement tasks without plan mutation or pa
 
 addCheck("command_run routes planning through the shared command consumer path", () => {
   const handler = read("crates/tools/src/command_run/handler.rs")
-  const commandRunTests = read("crates/tools/tests/command_run_current_flow.rs")
+  const commandRunTests = read("crates/tools/tests/business/command_run_current_flow.rs")
   const commandRunSchema = JSON.parse(read("crates/tools/src/command_run/schema.json"))
   assert.equal(commandRunSchema.input_schema.properties.commands.minItems, 5)
   assert.match(handler, /"planning"\s*=>\s*ToolPayload::Function/)
@@ -132,11 +131,11 @@ addCheck("command_run routes planning through the shared command consumer path",
   assert.match(handler, /run_macro_command_batch/)
   assert.match(handler, /run_command_run_step/)
   assert.match(commandRunTests, /pass_planning_command_routes_through_command_run/)
-  assert.match(commandRunTests, /pass_same_step_commands_are_extended_to_unique_order/)
+  assert.match(commandRunTests, /pass_same_step_commands_keep_dependency_group/)
 })
 
 addCheck("runtime plan mapping replaces active task and renumbers ordered steps", () => {
-  const runtime = read("crates/runtime/src/manas/tool_execution.rs")
+  const runtime = read("crates/runtime/src/tool_flow/task_status.rs")
   assert.match(runtime, /object\.get\("deliverable"\)/)
   assert.match(runtime, /fn random_task_id\(\) -> String/)
   assert.match(runtime, /planning_plan_uses_unique_sequential_steps/)
@@ -149,21 +148,23 @@ addCheck("runtime plan mapping replaces active task and renumbers ordered steps"
 })
 
 addCheck("gateway accepts task fields and derives child session context", () => {
-  const store = read("crates/gateway/src/session/store.rs")
-  assert.match(store, /"task_id"/)
-  assert.match(store, /"deliverable"/)
-  assert.match(store, /string_field\(object, &\["deliverable"\]\)/)
-  assert.match(store, /multi_task_patch_matches_task_id_and_creates_defaulted_tasks/)
-  assert.match(store, /child_session_derives_workspace_and_task_instruction_context/)
+  const taskStore = read("crates/gateway/src/session/store_task_management.rs")
+  const storeTests = read("crates/gateway/src/session/store_tests.rs")
+  assert.match(taskStore, /"task_id"/)
+  assert.match(taskStore, /"deliverable"/)
+  assert.match(taskStore, /string_field\(object, &\["deliverable"\]\)/)
+  assert.match(storeTests, /multi_task_patch_matches_task_id_and_creates_defaulted_tasks/)
+  assert.match(storeTests, /child_session_derives_workspace_and_task_instruction_context/)
 })
 
 addCheck("planning reuses command_run execution gate and file locks", () => {
   const router = read("crates/tools/src/runtime/tool.rs")
+  const dispatch = read("crates/tools/src/runtime/dispatch.rs")
   const locks = read("crates/tools/src/runtime/file_locks/mod.rs")
   const handler = read("crates/tools/src/command_run/handler.rs")
   assert.match(router, /execution_gate/)
-  assert.match(router, /file_locks::acquire\(&access\)/)
-  assert.match(router, /force_exclusive/)
+  assert.match(dispatch, /file_locks::acquire\(&access\)/)
+  assert.match(dispatch, /force_exclusive/)
   assert.match(handler, /is_failed_apply_patch_result/)
   assert.match(handler, /ctx\.cancellation\.cancel\(\)/)
   assert.match(handler, /halt_after_apply_patch_failure/)
@@ -172,8 +173,8 @@ addCheck("planning reuses command_run execution gate and file locks", () => {
 
 const cargoTests = [
   {
-    name: "code-tools planning command and schema coverage",
-    args: ["test", "-p", "code-tools", "planning"],
+    name: "tools planning command and schema coverage",
+    args: ["test", "-p", "tools", "planning"],
   },
   {
     name: "runtime planning replacement keeps queued task order",
@@ -186,15 +187,15 @@ const cargoTests = [
   },
   {
     name: "command_run file lock workspace write barrier",
-    args: ["test", "-p", "code-tools", "workspace_write_blocks_path_locks_until_released"],
+    args: ["test", "-p", "tools", "workspace_write_blocks_path_locks_until_released"],
   },
   {
     name: "command_run stops queued commands after apply_patch failure",
-    args: ["test", "-p", "code-tools", "later_batch_commands_stop_after_apply_patch_failure"],
+    args: ["test", "-p", "tools", "later_batch_commands_stop_after_apply_patch_failure"],
   },
   {
     name: "streaming command_run ignores commands after failed patch",
-    args: ["test", "-p", "code-tools", "streaming_executor_ignores_commands_after_failed_apply_patch"],
+    args: ["test", "-p", "tools", "streaming_executor_ignores_commands_after_failed_apply_patch"],
   },
   {
     name: "gateway multi-task patch deliverable fields",

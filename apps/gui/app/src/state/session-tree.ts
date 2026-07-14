@@ -64,10 +64,7 @@ export function visibleSessionTreeRows(
     : roots
         .slice(0, rootLimit)
         .concat(
-          expandedRootId &&
-            !roots
-              .slice(0, rootLimit)
-              .some((root) => root.id === expandedRootId)
+          expandedRootId && !roots.slice(0, rootLimit).some((root) => root.id === expandedRootId)
             ? roots.filter((root) => root.id === expandedRootId)
             : [],
         );
@@ -87,16 +84,11 @@ export function hiddenRootSessionCount(
   const roots = rootSessions(sessions);
   return Math.max(
     0,
-    roots.filter(
-      (root, index) => index >= rootLimit && root.id !== expandedRootId,
-    ).length,
+    roots.filter((root, index) => index >= rootLimit && root.id !== expandedRootId).length,
   );
 }
 
-function expandedSessionRows(
-  sessions: Session[],
-  rootId: string,
-): SessionTreeRow[] {
+function expandedSessionRows(sessions: Session[], rootId: string): SessionTreeRow[] {
   const childrenByParent = new Map<string, Session[]>();
   for (const session of sessions) {
     const parentId = sessionParentId(session);
@@ -134,7 +126,6 @@ function expandedSessionRows(
 function sortSessions(sessions: Session[]): Session[] {
   return [...sessions].sort(
     (left, right) =>
-      normalizeTimeMs(sessionUpdatedAt(right) ?? 0) -
-      normalizeTimeMs(sessionUpdatedAt(left) ?? 0),
+      normalizeTimeMs(sessionUpdatedAt(right) ?? 0) - normalizeTimeMs(sessionUpdatedAt(left) ?? 0),
   );
 }

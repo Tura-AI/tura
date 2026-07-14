@@ -36,9 +36,7 @@ export function FileBrowserView(props: {
       <header class="page-head page-layer-inner">
         <div class="page-title">
           <span>{t("fileBrowser")}</span>
-          <h1>
-            {shortPathLabel(props.path) ?? shortWorkspaceLabel(props.directory)}
-          </h1>
+          <h1>{shortPathLabel(props.path) ?? shortWorkspaceLabel(props.directory)}</h1>
         </div>
         <div class="page-actions">
           <button
@@ -112,10 +110,7 @@ export function FileListView(props: {
           <small>{parentPath(props.path) || "/"}</small>
         </button>
       </Show>
-      <For
-        each={props.files}
-        fallback={<div class="surface-list-empty">{t("empty")}</div>}
-      >
+      <For each={props.files} fallback={<div class="surface-list-empty">{t("empty")}</div>}>
         {(file) => (
           <button
             class={classNames(
@@ -125,9 +120,7 @@ export function FileListView(props: {
             onClick={() => props.onFile(file)}
             title={file.path}
           >
-            <span>
-              {file.type === "directory" ? `${file.name}/` : file.name}
-            </span>
+            <span>{file.type === "directory" ? `${file.name}/` : file.name}</span>
             <small>{fileGitRemark(file)}</small>
             <small>{formatFileSize(file)}</small>
             <small>{formatModifiedTime(file.modified_at)}</small>
@@ -155,17 +148,12 @@ export function FilePreview(props: {
   );
   return (
     <section class="surface-preview-panel">
-      <Show
-        when={props.file}
-        fallback={<div class="empty-type">{t("selectStep")}</div>}
-      >
+      <Show when={props.file} fallback={<div class="empty-type">{t("selectStep")}</div>}>
         {(file) => (
           <>
             <header>
               <span>{shortPathLabel(file().path)}</span>
-              <small>
-                {props.content?.mimeType ?? props.content?.type ?? file().type}
-              </small>
+              <small>{props.content?.mimeType ?? props.content?.type ?? file().type}</small>
             </header>
             <Switch fallback={<div class="binary-note">{t("empty")}</div>}>
               <Match when={props.loading}>
@@ -180,8 +168,7 @@ export function FilePreview(props: {
               </Match>
               <Match
                 when={
-                  props.content?.type === "media" &&
-                  props.content?.mimeType?.startsWith("image/")
+                  props.content?.type === "media" && props.content?.mimeType?.startsWith("image/")
                 }
               >
                 <div class="media-preview">
@@ -190,8 +177,7 @@ export function FilePreview(props: {
               </Match>
               <Match
                 when={
-                  props.content?.type === "media" &&
-                  props.content?.mimeType?.startsWith("video/")
+                  props.content?.type === "media" && props.content?.mimeType?.startsWith("video/")
                 }
               >
                 <div class="media-preview">
@@ -200,20 +186,14 @@ export function FilePreview(props: {
               </Match>
               <Match
                 when={
-                  props.content?.type === "media" &&
-                  props.content?.mimeType === "application/pdf"
+                  props.content?.type === "media" && props.content?.mimeType === "application/pdf"
                 }
               >
-                <iframe
-                  class="pdf-preview"
-                  src={mediaSource()}
-                  title={file().name}
-                />
+                <iframe class="pdf-preview" src={mediaSource()} title={file().name} />
               </Match>
               <Match
                 when={
-                  props.content?.type === "media" &&
-                  props.content?.mimeType?.startsWith("audio/")
+                  props.content?.type === "media" && props.content?.mimeType?.startsWith("audio/")
                 }
               >
                 <div class="media-preview">

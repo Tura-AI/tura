@@ -2,6 +2,8 @@ import { CliUsageError } from "../types/common.js";
 import type { SessionConfig } from "../types/config.js";
 import { t } from "../i18n.js";
 
+export type CommandRunShell = "bash" | "zsh" | "shell_command";
+
 export interface RuntimeConfigOverrides {
   model?: string;
   agent?: string;
@@ -10,6 +12,7 @@ export interface RuntimeConfigOverrides {
   modelAccelerationEnabled?: boolean;
   killProcessesOnStart?: boolean;
   validatorEnabled?: boolean;
+  commandRunShell?: CommandRunShell;
 }
 
 export function parseConfigAssignment(entry: string): [string, unknown] {
@@ -46,14 +49,23 @@ export function runtimeOverridesFromAssignment(entry: string): RuntimeConfigOver
   return overrides;
 }
 
-export function mergeRuntimeOverrides(left: RuntimeConfigOverrides, right: RuntimeConfigOverrides): RuntimeConfigOverrides {
+export function mergeRuntimeOverrides(
+  left: RuntimeConfigOverrides,
+  right: RuntimeConfigOverrides,
+): RuntimeConfigOverrides {
   return { ...left, ...right };
 }
 
-function assignSessionConfigValue(patch: Partial<SessionConfig>, key: string, value: unknown): void {
+function assignSessionConfigValue(
+  patch: Partial<SessionConfig>,
+  key: string,
+  value: unknown,
+): void {
   const canonical = canonicalKey(key);
   if (canonical === "agent") {
     patch.active_agent = stringValue(value);
+  } else if (canonical === "persona") {
+    patch.active_persona = stringValue(value);
   } else if (canonical === "model_variant") {
     patch.model_variant = stringValue(value);
   } else if (canonical === "model_acceleration_enabled") {
@@ -70,8 +82,10 @@ function assignSessionConfigValue(patch: Partial<SessionConfig>, key: string, va
     patch.kill_processes_on_start = booleanValue(value, key);
   } else if (canonical === "validator_enabled") {
     patch.validator_enabled = booleanValue(value, key);
+  } else if (canonical === "show_command_instructions") {
+    patch.show_command_instructions = booleanValue(value, key);
   } else if (canonical === "model") {
-    patch.model = stringValue(value);
+    assignModelConfigValue(patch, stringValue(value));
   } else if (canonical === "active_model") {
     patch.active_model = stringValue(value);
   } else if (canonical === "active_provider") {
@@ -87,23 +101,60 @@ function assignSessionConfigValue(patch: Partial<SessionConfig>, key: string, va
   }
 }
 
-function assignRuntimeConfigValue(overrides: RuntimeConfigOverrides, key: string, value: unknown): void {
+function assignModelConfigValue(patch: Partial<SessionConfig>, model: string): void {
+  patch.model = model;
+  const separator = model.indexOf("/");
+  if (separator <= 0 || separator === model.length - 1) return;
+  const provider = model.slice(0, separator).trim();
+  const modelID = model.slice(separator + 1).trim();
+  if (!provider || !modelID) return;
+  patch.active_provider = provider;
+  patch.active_model = modelID.startsWith(`${provider}/`)
+    ? modelID.slice(provider.length + 1)
+    : modelID;
+}
+
+function assignRuntimeConfigValue(
+  overrides: RuntimeConfigOverrides,
+  key: string,
+  value: unknown,
+): void {
   const canonical = canonicalKey(key);
   if (canonical === "model") overrides.model = stringValue(value);
   else if (canonical === "agent") overrides.agent = stringValue(value);
   else if (canonical === "session_type") overrides.sessionType = stringValue(value);
   else if (canonical === "model_variant") overrides.modelVariant = stringValue(value);
-  else if (canonical === "model_acceleration_enabled") overrides.modelAccelerationEnabled = booleanValue(value, key);
-  else if (canonical === "service_tier") overrides.modelAccelerationEnabled = serviceTierAcceleration(value);
-  else if (canonical === "kill_processes_on_start") overrides.killProcessesOnStart = booleanValue(value, key);
+  else if (canonical === "model_acceleration_enabled")
+    overrides.modelAccelerationEnabled = booleanValue(value, key);
+  else if (canonical === "service_tier")
+    overrides.modelAccelerationEnabled = serviceTierAcceleration(value);
+  else if (canonical === "kill_processes_on_start")
+    overrides.killProcessesOnStart = booleanValue(value, key);
   else if (canonical === "validator_enabled") overrides.validatorEnabled = booleanValue(value, key);
+  else if (canonical === "command_run_shell") overrides.commandRunShell = shellValue(value, key);
 }
 
 function canonicalKey(key: string): string {
   const normalized = key.trim().replace(/-/g, "_");
   if (normalized === "agent" || normalized === "active_agent") return "agent";
-  if (normalized === "reasoning_effort" || normalized === "model_reasoning_effort" || normalized === "variant") return "model_variant";
-  if (normalized === "acceleration" || normalized === "accelerated" || normalized === "model_acceleration") {
+  if (normalized === "persona" || normalized === "active_persona") return "persona";
+  if (
+    normalized === "reasoning_effort" ||
+    normalized === "model_reasoning_effort" ||
+    normalized === "variant"
+  )
+    return "model_variant";
+  if (
+    normalized === "show_commands" ||
+    normalized === "show_command" ||
+    normalized === "display_commands"
+  )
+    return "show_command_instructions";
+  if (
+    normalized === "acceleration" ||
+    normalized === "accelerated" ||
+    normalized === "model_acceleration"
+  ) {
     return "model_acceleration_enabled";
   }
   return normalized;
@@ -124,10 +175,19 @@ function booleanValue(value: unknown, key: string): boolean {
   if (typeof value === "number") return value !== 0;
   const normalized = String(value).trim().toLowerCase();
   if (["true", "1", "yes", "on", "enabled", "priority"].includes(normalized)) return true;
-  if (["false", "0", "no", "off", "disabled", "auto", "default", "standard"].includes(normalized)) return false;
+  if (["false", "0", "no", "off", "disabled", "auto", "default", "standard"].includes(normalized))
+    return false;
   throw new CliUsageError(t("valueRequiresBoolean", { key }));
 }
 
 function serviceTierAcceleration(value: unknown): boolean {
   return booleanValue(value, "service_tier");
+}
+
+export function shellValue(value: unknown, key = "command_run_shell"): CommandRunShell {
+  const normalized = String(value).trim();
+  if (normalized === "bash") return "bash";
+  if (normalized === "zsh") return "zsh";
+  if (normalized === "shel") return "shell_command";
+  throw new CliUsageError(t("unsupportedCommandRunShell", { key, value: normalized }));
 }

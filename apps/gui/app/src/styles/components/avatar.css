@@ -50,7 +50,7 @@
   width: 56px;
   height: 56px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-large);
   background: var(--paper);
   box-shadow: var(--shadow-control);
 }
@@ -69,11 +69,6 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity 180ms ease;
-}
-
-.agent-avatar-stage.thinking .agent-avatar-loading {
-  opacity: 0.1;
-  animation: agent-avatar-sheen 5s ease-in-out infinite;
 }
 
 .agent-avatar-stage.loading .agent-avatar-loading {
@@ -149,7 +144,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-avatar-stage.thinking .agent-avatar-loading,
   .agent-avatar-stage.loading .agent-avatar-loading {
     animation: none;
   }

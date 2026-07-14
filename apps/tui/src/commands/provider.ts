@@ -3,12 +3,17 @@ import { CliUsageError, type CliContext } from "../types/common.js";
 import { HumanOutput } from "../output/human.js";
 import { printJson } from "../output/json.js";
 import type { ProviderAuthUpsert } from "../types/provider.js";
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { t } from "../i18n.js";
+import { userFacingError } from "../gateway/errors.js";
+import { openExternalUrl } from "../utils/external-url.js";
 
 export async function providerCommand(context: CliContext, args: string[]): Promise<void> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   const subcommand = args.shift() ?? "list";
   if (subcommand === "list") {
     const data = await client.listProviders();
@@ -28,7 +33,13 @@ export async function providerCommand(context: CliContext, args: string[]): Prom
     const provider = args.shift();
     if (!provider) {
       const list = await client.listProviders();
-      const statuses = await Promise.all(list.all.map((item) => client.providerAuthStatus(item.id).catch((error) => ({ provider_id: item.id, error: String(error) }))));
+      const statuses = await Promise.all(
+        list.all.map((item) =>
+          client
+            .providerAuthStatus(item.id)
+            .catch((error) => ({ provider_id: item.id, error: userFacingError(error) })),
+        ),
+      );
       printJson(statuses);
       return;
     }
@@ -45,10 +56,22 @@ export async function providerCommand(context: CliContext, args: string[]): Prom
     const provider = args.shift();
     if (!provider) throw new CliUsageError(t("providerSetAuthRequiresProvider"));
     const payload = parseProviderAuthArgs(args);
-    if (args.length > 0) throw new CliUsageError(t("unknownProviderSetAuthArguments", { args: args.join(" ") }));
-    const saved = await client.setProviderAuth(provider, payload);
-    if (context.json) printJson({ saved });
-    else new HumanOutput(context.color).out(saved ? t("saved") : t("notSaved"));
+    if (args.length > 0)
+      throw new CliUsageError(t("unknownProviderSetAuthArguments", { args: args.join(" ") }));
+    const token = payload.key ?? payload.access ?? undefined;
+    const validation = await client.providerAuthValidate(provider, {
+      type: payload.type,
+      kind: payload.type,
+      login: payload.type === "oauth" ? "oauth" : "api",
+      key: token,
+      access: token,
+    });
+    const saved = validation.ok ? await client.setProviderAuth(provider, payload) : false;
+    if (context.json) printJson({ saved, validation });
+    else
+      new HumanOutput(context.color).out(
+        saved ? validation.message || t("saved") : validation.message || t("notSaved"),
+      );
     return;
   }
   if (subcommand === "login" || subcommand === "oauth") {
@@ -56,7 +79,8 @@ export async function providerCommand(context: CliContext, args: string[]): Prom
     if (!provider) throw new CliUsageError(t("providerLoginRequiresProvider"));
     const method = Number(takeOption(args, "--method") ?? "0");
     const noOpen = takeFlag(args, "--no-open");
-    if (args.length > 0) throw new CliUsageError(t("unknownProviderLoginArguments", { args: args.join(" ") }));
+    if (args.length > 0)
+      throw new CliUsageError(t("unknownProviderLoginArguments", { args: args.join(" ") }));
     const response = await client.providerOauthAuthorize(provider, method);
     if (context.json) {
       printJson(response);
@@ -66,7 +90,10 @@ export async function providerCommand(context: CliContext, args: string[]): Prom
     human.out(response.instructions);
     if (response.url) {
       human.out(response.url);
-      if (!noOpen) openBrowser(response.url);
+      if (!noOpen) {
+        const opened = await openExternalUrl(response.url);
+        if (!opened.ok && opened.reason) human.err(opened.reason);
+      }
     }
     if (response.method === "auto") {
       human.out(t("waitingOauthCallback"));
@@ -90,7 +117,8 @@ function parseProviderAuthArgs(args: string[]): ProviderAuthUpsert {
   const metadataInput = takeOption(args, "--metadata");
   if (!key && !access) throw new CliUsageError(t("providerAuthRequiresCredential"));
   const expires = expiresValue === undefined ? undefined : Number(expiresValue);
-  if (expires !== undefined && !Number.isFinite(expires)) throw new CliUsageError(t("expiresRequiresUnixTimestamp"));
+  if (expires !== undefined && !Number.isFinite(expires))
+    throw new CliUsageError(t("expiresRequiresUnixTimestamp"));
   return {
     type,
     ...(key ? { key } : {}),
@@ -98,7 +126,9 @@ function parseProviderAuthArgs(args: string[]): ProviderAuthUpsert {
     ...(refresh ? { refresh } : {}),
     ...(expires !== undefined ? { expires } : {}),
     ...(accountId ? { accountId } : {}),
-    ...(metadataInput ? { metadata: readJsonValue<Record<string, unknown>>(metadataInput, "--metadata") } : {}),
+    ...(metadataInput
+      ? { metadata: readJsonValue<Record<string, unknown>>(metadataInput, "--metadata") }
+      : {}),
   };
 }
 
@@ -106,21 +136,20 @@ async function waitForProviderAuth(client: GatewayClient, provider: string): Pro
   const deadline = Date.now() + 5 * 60_000;
   let lastStatus: unknown;
   while (Date.now() < deadline) {
-    lastStatus = await client.providerAuthStatus(provider).catch((error) => ({ error: String(error) }));
-    if (lastStatus && typeof lastStatus === "object" && "authenticated" in lastStatus && (lastStatus as { authenticated?: unknown }).authenticated) {
+    lastStatus = await client
+      .providerAuthStatus(provider)
+      .catch((error) => ({ error: userFacingError(error) }));
+    if (
+      lastStatus &&
+      typeof lastStatus === "object" &&
+      "authenticated" in lastStatus &&
+      (lastStatus as { authenticated?: unknown }).authenticated
+    ) {
       return lastStatus;
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   return lastStatus ?? { authenticated: false };
-}
-
-function openBrowser(url: string): void {
-  const command =
-    process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
-  const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
-  child.unref();
 }
 
 function takeOption(args: string[], name: string): string | undefined {
@@ -140,15 +169,21 @@ function takeFlag(args: string[], name: string): boolean {
 }
 
 function readJsonValue<T>(value: string, option: string): T {
-  const source = value.trim().startsWith("{") || value.trim().startsWith("[")
-    ? value
-    : existsSync(value)
-      ? readTextFile(value, option)
-      : value;
+  const source =
+    value.trim().startsWith("{") || value.trim().startsWith("[")
+      ? value
+      : existsSync(value)
+        ? readTextFile(value, option)
+        : value;
   try {
     return JSON.parse(source) as T;
   } catch (error) {
-    throw new CliUsageError(t("jsonOrFileRequired", { option, error: error instanceof Error ? error.message : String(error) }));
+    throw new CliUsageError(
+      t("jsonOrFileRequired", {
+        option,
+        error: userFacingError(error),
+      }),
+    );
   }
 }
 
@@ -156,6 +191,11 @@ function readTextFile(path: string, option: string): string {
   try {
     return readFileSync(path, "utf8");
   } catch (error) {
-    throw new CliUsageError(t("jsonFileReadFailed", { option, error: error instanceof Error ? error.message : String(error) }));
+    throw new CliUsageError(
+      t("jsonFileReadFailed", {
+        option,
+        error: userFacingError(error),
+      }),
+    );
   }
 }

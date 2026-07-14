@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::constants::{BATCH_INPUT_TOOLS, COMMAND_RUN_TOOL};
+use super::constants::COMMAND_RUN_TOOL;
 
 pub(super) fn normalize_tool_arguments(arguments: serde_json::Value) -> serde_json::Value {
     let mut arguments = arguments.get("requests").cloned().unwrap_or(arguments);
@@ -16,7 +16,7 @@ pub(super) fn normalize_tool_arguments(arguments: serde_json::Value) -> serde_js
     arguments
 }
 
-pub(super) fn normalize_tool_arguments_for_tool(
+pub(crate) fn normalize_tool_arguments_for_tool(
     tool_name: &str,
     arguments: serde_json::Value,
     session_directory: &Path,
@@ -25,15 +25,7 @@ pub(super) fn normalize_tool_arguments_for_tool(
         normalize_command_run_arguments(arguments, session_directory)
     } else {
         let arguments = normalize_tool_arguments(arguments);
-        let arguments = if tool_name != "apply_patch"
-            && BATCH_INPUT_TOOLS.contains(&tool_name)
-            && arguments.is_object()
-        {
-            serde_json::Value::Array(vec![arguments])
-        } else {
-            arguments
-        };
-        normalize_workspace_paths(tool_name, arguments, session_directory)
+        normalize_workspace_paths(arguments, session_directory)
     }
 }
 
@@ -42,12 +34,6 @@ fn normalize_command_run_arguments(
     session_directory: &Path,
 ) -> serde_json::Value {
     if let Some(object) = arguments.as_object_mut() {
-        if !object.contains_key("commands") {
-            if let Some(steps) = object.remove("steps") {
-                object.insert("commands".to_string(), command_run_steps_to_commands(steps));
-            }
-        }
-
         if let Some(commands) = object
             .get_mut("commands")
             .and_then(|value| value.as_array_mut())
@@ -58,55 +44,6 @@ fn normalize_command_run_arguments(
         }
     }
     arguments
-}
-
-fn command_run_steps_to_commands(steps: serde_json::Value) -> serde_json::Value {
-    let Some(steps) = steps.as_array() else {
-        return serde_json::Value::Array(Vec::new());
-    };
-    serde_json::Value::Array(
-        steps
-            .iter()
-            .filter_map(|step| {
-                let object = step.as_object()?;
-                let command = object
-                    .get("command_type")
-                    .or_else(|| object.get("command"))
-                    .or_else(|| object.get("commandType"))
-                    .or_else(|| object.get("tool_package_name"))
-                    .or_else(|| object.get("tool_name"))
-                    .and_then(|value| value.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())?;
-                let command_line = object
-                    .get("command_line")
-                    .or_else(|| object.get("command_code"))
-                    .and_then(|value| value.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())?;
-                let mut command_object = serde_json::Map::new();
-                command_object.insert(
-                    "command_type".to_string(),
-                    serde_json::Value::String(command.to_string()),
-                );
-                command_object.insert(
-                    "command_line".to_string(),
-                    serde_json::Value::String(command_line.to_string()),
-                );
-                command_object.insert(
-                    "step".to_string(),
-                    object
-                        .get("step")
-                        .cloned()
-                        .unwrap_or_else(|| serde_json::Value::Number(1_u64.into())),
-                );
-                if let Some(timeout_secs) = object.get("timeout_secs").cloned() {
-                    command_object.insert("timeout_secs".to_string(), timeout_secs);
-                }
-                Some(serde_json::Value::Object(command_object))
-            })
-            .collect(),
-    )
 }
 
 fn normalize_command_run_command(command: &mut serde_json::Value, session_directory: &Path) {
@@ -135,7 +72,7 @@ fn normalize_command_run_command(command: &mut serde_json::Value, session_direct
     )) else {
         return;
     };
-    value = normalize_workspace_paths(&tool_name, value, session_directory);
+    value = normalize_workspace_paths(value, session_directory);
     if let Ok(text) = serde_json::to_string(&value) {
         *command_line = serde_json::Value::String(text);
     }
@@ -150,24 +87,13 @@ fn normalize_command_run_tool_name(command: &str) -> String {
         .trim_start_matches("source:")
         .replace(':', "_");
     match normalized.as_str() {
-        "rg" | "ripgrep" | "grep" => "rg".to_string(),
-        "find" => "glob".to_string(),
-        "cat" | "type" | "get_content" => "read_line".to_string(),
-        "sed" => "read_block".to_string(),
-        "tee" | "set_content" | "out_file" => "write_file".to_string(),
-        "rm" | "del" | "erase" | "remove_item" => "delete_file".to_string(),
-        "apply_patch" | "applypatch" | "patch" | "apply_diff" | "applydiff" => {
-            "apply_patch".to_string()
-        }
-        "outline" | "symbols" => "get_file_outline".to_string(),
-        "definition" => "find_definition".to_string(),
-        "references" => "find_references".to_string(),
+        "apply_patch" | "applypatch" | "patch" => "apply_patch".to_string(),
         _ => normalized,
     }
 }
 
 fn is_command_run_structured_tool(tool_name: &str) -> bool {
-    BATCH_INPUT_TOOLS.contains(&tool_name)
+    tool_name == "apply_patch"
 }
 
 fn strip_command_run_tool_prefix<'a>(tool_name: &str, command_line: &'a str) -> &'a str {
@@ -183,7 +109,6 @@ fn strip_command_run_tool_prefix<'a>(tool_name: &str, command_line: &'a str) -> 
 }
 
 pub(super) fn normalize_workspace_paths(
-    tool_name: &str,
     mut arguments: serde_json::Value,
     session_directory: &Path,
 ) -> serde_json::Value {
@@ -191,12 +116,12 @@ pub(super) fn normalize_workspace_paths(
         serde_json::Value::Array(ref mut items) => {
             for item in items {
                 if let Some(object) = item.as_object_mut() {
-                    normalize_workspace_path_fields(tool_name, object, session_directory);
+                    normalize_workspace_path_fields(object, session_directory);
                 }
             }
         }
         serde_json::Value::Object(ref mut object) => {
-            normalize_workspace_path_fields(tool_name, object, session_directory);
+            normalize_workspace_path_fields(object, session_directory);
         }
         _ => {}
     }
@@ -204,18 +129,13 @@ pub(super) fn normalize_workspace_paths(
 }
 
 pub(super) fn normalize_workspace_path_fields(
-    tool_name: &str,
     object: &mut serde_json::Map<String, serde_json::Value>,
     session_directory: &Path,
 ) {
     for field in ["path", "directory"] {
         if let Some(value) = object.get_mut(field) {
             if let Some(path) = value.as_str() {
-                *value = serde_json::Value::String(resolve_tool_path(
-                    tool_name,
-                    session_directory,
-                    path,
-                ));
+                *value = serde_json::Value::String(resolve_workspace_path(session_directory, path));
             }
         }
     }
@@ -230,11 +150,6 @@ pub(super) fn resolve_workspace_path(session_directory: &Path, raw_path: &str) -
         return path.to_string_lossy().to_string();
     }
     session_directory.join(path).to_string_lossy().to_string()
-}
-
-fn resolve_tool_path(tool_name: &str, session_directory: &Path, raw_path: &str) -> String {
-    let _ = tool_name;
-    resolve_workspace_path(session_directory, raw_path)
 }
 
 fn path_is_inside(path: &Path, workspace: &Path) -> bool {
@@ -264,4 +179,59 @@ fn rebase_absolute_path_to_workspace(session_directory: &Path, raw_path: &str) -
     }
 
     session_directory.to_string_lossy().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_tool_arguments, normalize_tool_arguments_for_tool};
+    use serde_json::json;
+    const COMMAND_RUN_TOOL: &str = "command_run";
+    #[test]
+    fn tool_argument_normalization_removes_runtime_reporting_fields() {
+        let normalized = normalize_tool_arguments(json!({
+            "reply_message": "done",
+            "new_learning": "state changed",
+            "step_summary": "summarize"
+        }));
+
+        assert_eq!(normalized["reply_message"], "done");
+        assert_eq!(normalized["new_learning"], "state changed");
+        assert!(normalized.get("step_summary").is_none());
+        assert!(normalized.get("last_tool_call_status").is_none());
+        assert!(normalized.get("last_tool_call_summary").is_none());
+    }
+
+    #[test]
+    fn tool_argument_normalization_unwraps_batch_requests() {
+        let normalized = normalize_tool_arguments(json!({
+            "requests": [
+                { "pattern": "*.rs", "directory": "." }
+            ],
+            "step_summary": "list files"
+        }));
+
+        assert_eq!(normalized, json!([{ "pattern": "*.rs", "directory": "." }]));
+    }
+
+    #[test]
+    fn command_run_tool_keeps_runtime_reporting_fields() {
+        let arguments = json!({
+            "commands": [
+                { "command": "shell_command", "command_line": "pwd" },
+                { "command": "shell_command", "command_line": "Write-Output 2" },
+                { "command": "shell_command", "command_line": "Write-Output 3" },
+                { "command": "shell_command", "command_line": "Write-Output 4" },
+                { "command": "shell_command", "command_line": "Write-Output 5" }
+            ],
+            "step_summary": "Run pwd."
+        });
+
+        let normalized = normalize_tool_arguments_for_tool(
+            COMMAND_RUN_TOOL,
+            arguments.clone(),
+            std::path::Path::new("C:/workspace"),
+        );
+
+        assert_eq!(normalized, arguments);
+    }
 }

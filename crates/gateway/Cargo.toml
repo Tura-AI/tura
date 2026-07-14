@@ -1,42 +1,157 @@
 [package]
 name = "gateway"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+default-run = "tura_gateway"
 
 [dependencies]
-anyhow = "1"
-async-trait = "0.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "fs", "io-util", "process", "time"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-parking_lot = "0.12"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-futures = "0.3"
-lazy_static = "1.4"
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+fs2.workspace = true
+tracing-subscriber.workspace = true
+futures.workspace = true
+lazy_static.workspace = true
 reqwest = { workspace = true }
-sysinfo = "0.30"
-base64 = "0.22"
-sha2 = "0.10"
+sysinfo.workspace = true
+base64.workspace = true
+sha2.workspace = true
+image.workspace = true
+tao.workspace = true
+tray-icon.workspace = true
+url.workspace = true
 
 # Web framework
-axum = { version = "0.8", features = ["ws"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
 
 # Internal
-runtime = { path = "../runtime" }
-tura-llm-rust = { workspace = true }
-tura-agents = { path = "../../agents" }
-tura-persona = { path = "../../personas" }
-tura-router = { workspace = true }
+runtime = { workspace = true }
+provider = { workspace = true }
+tura_path = { workspace = true }
+agents = { workspace = true }
+personas = { workspace = true }
+router = { workspace = true }
+session_log = { workspace = true }
 
 [[bin]]
-name = "tura"
-path = "src/bin/tura.rs"
+name = "tura_exec"
+path = "src/bin/tura_exec.rs"
 
 [[bin]]
-name = "gateway"
+name = "tura_gateway"
 path = "src/bin/gateway.rs"
+
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+business-tests = []
+live-tests = []
+performance-tests = []
+os-tests = []
+
+[[test]]
+name = "provider_oauth_local_flow"
+path = "tests/live/provider_oauth_local_flow.rs"
+required-features = ["live-tests"]
+
+[[test]]
+name = "session_db_local_flow"
+path = "tests/os_testing/session_db_local_flow.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "session_log_api_flow"
+path = "tests/business/session_log_api_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_prompt_busy_flow"
+path = "tests/business/session_prompt_busy_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_prompt_router_flow"
+path = "tests/os_testing/session_prompt_router_flow.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "session_shell_path_flow"
+path = "tests/business/session_shell_path_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_messages_flow"
+path = "tests/business/session_messages_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "file_api_local_flow"
+path = "tests/business/file_api_local_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "process_snapshot_flow"
+path = "tests/os_testing/process_snapshot_flow.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "process_router_cleanup_flow"
+path = "tests/os_testing/process_router_cleanup_flow.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "service_status_flow"
+path = "tests/os_testing/service_status_flow.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "task_scheduler_flow"
+path = "tests/os_testing/task_scheduler_flow.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "workspace_config_api_flow"
+path = "tests/business/workspace_config_api_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "default_session_agent_test"
+path = "tests/business/default_session_agent_test.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "process_lifecycle_e2e"
+path = "tests/os_testing/process_lifecycle_e2e.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "gateway_session_concurrency_stress"
+path = "tests/performance/gateway_session_concurrency_stress.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "full_chain_e2e_stress"
+path = "tests/performance/full_chain_e2e_stress.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "provider_auth_churn_test"
+path = "tests/performance/provider_auth_churn_test.rs"
+required-features = ["performance-tests"]
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

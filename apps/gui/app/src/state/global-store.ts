@@ -31,6 +31,7 @@ import type {
   VcsInfo,
   Workspace,
 } from "@tura/gateway-sdk";
+import { t } from "../i18n";
 import { draftStateDefaults } from "./drafts";
 
 export type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -41,9 +42,11 @@ export type SettingsSection =
   | "providers"
   | "models"
   | "agents"
-  | "personalization";
+  | "personalization"
+  | "about";
 export type ThemeMode = "light" | "dark" | "caral" | "uruk" | "liangzhu";
-export type PlanMode = "todo" | "gantt" | "calendar";
+export type CornerRadiusMode = "0px" | "2px" | "8px" | "9.6px";
+export type PlanMode = "todo" | "gantt";
 export type ProviderAuthPanel = {
   providerId: string;
   reason?: string;
@@ -60,7 +63,9 @@ export type ComposerImage = {
 export type AppState = {
   gatewayUrl: string;
   connection: ConnectionState;
+  gatewayStartupNotice?: string;
   loading: boolean;
+  sessionsLoading: boolean;
   bootstrapped: boolean;
   productConfig?: ProductConfig;
   me?: ProductUser;
@@ -83,6 +88,7 @@ export type AppState = {
   previousMainTab: Exclude<MainTab, "settings">;
   settingsSection: SettingsSection;
   themeMode: ThemeMode;
+  cornerRadius: CornerRadiusMode;
   mainFont: string;
   codeFont: string;
   mainFontSize: number;
@@ -101,6 +107,9 @@ export type AppState = {
   projects: Project[];
   sessions: Session[];
   messagesBySession: Record<string, Message[]>;
+  messagePagingBySession: Record<string, { hasEarlier: boolean; loadingEarlier: boolean }>;
+  transcriptScrollBySession: Record<string, number>;
+  transcriptScrollToBottomRequest?: { sessionId: string; token: number };
   todosBySession: Record<string, TodoItem[]>;
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
@@ -136,12 +145,14 @@ export type AppState = {
   lastEvent?: string;
 };
 
-export function initialAppState(gatewayUrl: string): AppState {
+export function initialAppState(gatewayUrl = "http://127.0.0.1:4126"): AppState {
   const drafts = draftStateDefaults();
   return {
     gatewayUrl,
     connection: "connecting",
+    gatewayStartupNotice: undefined,
     loading: true,
+    sessionsLoading: true,
     bootstrapped: false,
     sessions: [],
     workspaces: [],
@@ -159,11 +170,15 @@ export function initialAppState(gatewayUrl: string): AppState {
     settingsSection: drafts.settingsSection,
     lastSessionOpenedId: undefined,
     themeMode: systemThemeMode(),
+    cornerRadius: "8px",
     mainFont: "",
     codeFont: "",
     mainFontSize: 12,
-    codeFontSize: 11,
+    codeFontSize: 12,
     messagesBySession: {},
+    messagePagingBySession: {},
+    transcriptScrollBySession: {},
+    transcriptScrollToBottomRequest: undefined,
     todosBySession: {},
     permissions: [],
     questions: [],
@@ -185,8 +200,8 @@ export function initialAppState(gatewayUrl: string): AppState {
     selectedProviderId: undefined,
     providerSearch: drafts.providerSearch,
     providerAuthPanel: undefined,
-    modelVariant: "low",
-    accelerationEnabled: true,
+    modelVariant: "medium",
+    accelerationEnabled: false,
     authDrafts: drafts.authDrafts,
     authCodeDrafts: drafts.authCodeDrafts,
     settingsSaving: false,
@@ -195,58 +210,13 @@ export function initialAppState(gatewayUrl: string): AppState {
 }
 
 export function systemThemeMode(): Extract<ThemeMode, "light" | "dark"> {
-  return typeof window !== "undefined" &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches
+  return typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
 }
 
-export const SESSION_FALLBACK_NAME_MAX_LENGTH = 48;
-
-export function sessionFallbackNameFromInput(
-  input: string,
-  maxLength = SESSION_FALLBACK_NAME_MAX_LENGTH,
-): string {
-  const normalized = input.replace(/\s+/gu, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-  return Array.from(normalized).slice(0, maxLength).join("");
-}
-
-export function sessionHasDisplayName(session: Session): boolean {
-  return Boolean(
-    session.session_display_name?.trim() ||
-    session.plan_summary?.trim() ||
-    session.name?.trim(),
-  );
-}
-
-export function withSessionFallbackName(
-  session: Session,
-  input: string,
-): Session {
-  if (sessionHasDisplayName(session)) {
-    return session;
-  }
-  const fallbackName = sessionFallbackNameFromInput(input);
-  if (!fallbackName) {
-    return session;
-  }
-  return {
-    ...session,
-    name: fallbackName,
-    session_display_name: fallbackName,
-  };
-}
-
 export function sessionTitle(session: Session): string {
-  return (
-    session.session_display_name ||
-    session.plan_summary ||
-    session.name ||
-    "New Session"
-  );
+  return session.session_display_name || session.name || "New Session";
 }
 
 export function sessionUpdatedAt(session: Session): number {
@@ -258,7 +228,7 @@ export function sessionDirectory(session: Session): string {
 }
 
 export function messageSessionId(message: Message): string {
-  return message.sessionID || message.session_id || "";
+  return message.sessionID;
 }
 
 export function messageCreatedAt(message: Message): number {
@@ -268,12 +238,25 @@ export function messageCreatedAt(message: Message): number {
 export function partText(part: {
   text?: string | null;
   content?: string | null;
+  metadata?: unknown;
 }): string {
+  if (isRuntimeStoppedPart(part)) {
+    return t("runtimeStopped");
+  }
   return part.text || part.content || "";
 }
 
+function isRuntimeStoppedPart(part: { metadata?: unknown }): boolean {
+  const metadata = recordValue(part.metadata);
+  return metadata.code === "runtime_stopped";
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 export function activeSession(state: AppState): Session | undefined {
-  return state.sessions.find(
-    (session) => session.id === state.selectedSessionId,
-  );
+  return state.sessions.find((session) => session.id === state.selectedSessionId);
 }

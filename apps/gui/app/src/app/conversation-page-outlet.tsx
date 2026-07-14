@@ -1,39 +1,23 @@
-import type {
-  Command,
-  Message,
-  Session,
-  TaskManagement,
-} from "@tura/gateway-sdk";
+import type { Command, Message, Session, TaskManagement } from "@tura/gateway-sdk";
 import type { Accessor, Setter } from "solid-js";
 import { Show, createMemo } from "solid-js";
 import { AgentComposerMenu } from "../conversation/agent-composer-menu";
 import { ConversationView } from "../conversation/conversation-view";
-import {
-  defaultLocalStartAt,
-  defaultPollInterval,
-  hasVisibleSessionTasks,
-  localDateTimeToUtcIso,
-  taskNonceId,
-  taskPollInterval,
-  taskStartCondition,
-  timedTaskPatch,
-  utcIsoToLocalDateTime,
-} from "../features/plan/tasks";
+import { taskNonceId, taskStartCondition } from "../features/plan/tasks";
 import { ConversationEmptyView } from "../pages/new-session";
-import {
-  PlanComposerControls,
-  PlanComposerTaskList,
-  PlanConversationFeedbackNotice,
-} from "../pages/plan/plan-composer";
+import { PlanComposerControls, PlanConversationFeedbackNotice } from "../pages/plan/plan-composer";
 import type { AppState } from "../state/global-store";
 import type { SettingsSection } from "../state/global-store";
 import type { AppShellViewModel } from "./app-shell-view-model";
+import { ConversationLoadingPlaceholder } from "./loading-placeholders";
 
 export function ConversationPageOutlet(props: {
   state: Accessor<AppState>;
   setState: Setter<AppState>;
   selectedSession: Accessor<Session | undefined>;
   selectedMessages: Accessor<Message[]>;
+  selectedSessionMessagesLoading: Accessor<boolean>;
+  loadEarlierMessages: (sessionId: string) => Promise<boolean>;
   slashCommands: Accessor<Command[]>;
   selectedEditingTask: () => TaskManagement | undefined;
   leftRailOpen: boolean;
@@ -41,29 +25,17 @@ export function ConversationPageOutlet(props: {
   view: Pick<
     AppShellViewModel,
     | "createNamedWorkspace"
-    | "createSessionFromPlanTask"
-    | "deletePlanTask"
     | "pickExistingWorkspaceDirectory"
-    | "reorderPlanTasks"
     | "abortSession"
     | "updatePlanTicketTask"
     | "useWorkspaceDirectory"
   >;
   onSubmit: () => void;
   onQueueSubmit?: () => void;
-  onInspectorLayout: (layout: {
-    open: boolean;
-    overlay: boolean;
-    width: number;
-  }) => void;
+  onInspectorLayout: (layout: { open: boolean; overlay: boolean; width: number }) => void;
   closeInspectorSignal?: number;
   onRequestCollapseLeftRail: () => void;
   onOpenProviderSettings: (providerId?: string) => void;
-  onEditTask: (
-    sessionId: string,
-    taskNonceIdValue: string | undefined,
-    composerText: string,
-  ) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
   onRuntimeSetting: (
     updater: (previous: AppState) => AppState,
@@ -74,10 +46,7 @@ export function ConversationPageOutlet(props: {
   const selectedSession = createMemo(() => props.selectedSession());
   const {
     createNamedWorkspace,
-    createSessionFromPlanTask,
-    deletePlanTask,
     pickExistingWorkspaceDirectory,
-    reorderPlanTasks,
     abortSession,
     updatePlanTicketTask,
     useWorkspaceDirectory,
@@ -89,6 +58,35 @@ export function ConversationPageOutlet(props: {
 
   function setComposerImages(composerImages: AppState["composerImages"]) {
     props.setState((previous) => ({ ...previous, composerImages }));
+  }
+
+  function setTranscriptScroll(sessionId: string, scrollTop: number) {
+    const value = Math.max(0, Math.round(scrollTop));
+    props.setState((previous) => {
+      const current = previous.transcriptScrollBySession[sessionId] ?? 0;
+      if (Math.abs(current - value) < 4) {
+        return previous;
+      }
+      return {
+        ...previous,
+        transcriptScrollBySession: {
+          ...previous.transcriptScrollBySession,
+          [sessionId]: value,
+        },
+      };
+    });
+  }
+
+  function consumeScrollToBottomRequest(sessionId: string, token: number) {
+    props.setState((previous) => {
+      if (
+        previous.transcriptScrollToBottomRequest?.sessionId !== sessionId ||
+        previous.transcriptScrollToBottomRequest.token !== token
+      ) {
+        return previous;
+      }
+      return { ...previous, transcriptScrollToBottomRequest: undefined };
+    });
   }
 
   function setActiveAgent(selectedAgent: string) {
@@ -108,6 +106,7 @@ export function ConversationPageOutlet(props: {
         agents={props.state().agents}
         modelConfig={props.state().modelConfig}
         selectedAgent={props.state().selectedAgent}
+        selectedModel={props.state().selectedModel}
         onAgent={setActiveAgent}
         onSettings={props.onOpenSettings}
       />
@@ -117,7 +116,6 @@ export function ConversationPageOutlet(props: {
   return (
     <Show
       when={selectedSession()}
-      keyed
       fallback={
         <ConversationEmptyView
           state={props.state()}
@@ -133,15 +131,6 @@ export function ConversationPageOutlet(props: {
               planDraftStartCondition,
             }))
           }
-          onDraftStartAt={(planDraftStartAt) =>
-            props.setState((previous) => ({ ...previous, planDraftStartAt }))
-          }
-          onDraftPollInterval={(planDraftPollInterval) =>
-            props.setState((previous) => ({
-              ...previous,
-              planDraftPollInterval,
-            }))
-          }
           agentMenu={agentMenu()}
           onSubmit={props.onSubmit}
           onQueueSubmit={props.onQueueSubmit}
@@ -149,148 +138,92 @@ export function ConversationPageOutlet(props: {
       }
     >
       {(session) => (
-        <ConversationView
-          state={props.state()}
-          session={session}
-          messages={props.selectedMessages()}
-          slashCommands={props.slashCommands()}
-          onComposerText={setComposerText}
-          onComposerImages={setComposerImages}
-          onSubmit={props.onSubmit}
-          onStop={() => abortSession(session.id)}
-          onQueueSubmit={props.onQueueSubmit}
-          running={session.status !== "idle"}
-          leftRailOpen={props.leftRailOpen}
-          leftRailWidth={props.leftRailWidth}
-          onRequestCollapseLeftRail={props.onRequestCollapseLeftRail}
-          onInspectorLayout={props.onInspectorLayout}
-          closeInspectorSignal={props.closeInspectorSignal}
-          conversationNotice={
-            props.state().planNotice ? (
-              <PlanConversationFeedbackNotice
-                message={props.state().planNotice?.message}
-                code={props.state().planNotice?.code}
-                providerId={props.state().planNotice?.providerId}
-                onOpenProviderSettings={props.onOpenProviderSettings}
-              />
-            ) : undefined
-          }
-          composerToolbar={
-            selectedSession() && props.selectedEditingTask() ? (
-              <>
-                <PlanComposerControls
-                  startCondition={taskStartCondition(
-                    props.selectedEditingTask()!,
-                  )}
-                  startAt={utcIsoToLocalDateTime(
-                    props.selectedEditingTask()!.start_at,
-                  )}
-                  pollInterval={
-                    props.selectedEditingTask()!.poll_interval ??
-                    defaultPollInterval()
-                  }
-                  onStartCondition={(start_condition) => {
-                    const task = props.selectedEditingTask()!;
-                    if (start_condition === "user_action") {
-                      props.onRunTask(selectedSession()!, task);
-                      return;
-                    }
-                    const startAt =
-                      localDateTimeToUtcIso(
-                        utcIsoToLocalDateTime(task.start_at) ||
-                          defaultLocalStartAt(),
-                      ) ?? localDateTimeToUtcIso(defaultLocalStartAt());
-                    void updatePlanTicketTask(selectedSession()!, {
-                      task_id: taskNonceId(task),
-                      status: "todo",
-                      ...timedTaskPatch(
-                        start_condition,
-                        startAt,
-                        taskPollInterval(task),
-                      ),
-                    });
-                  }}
-                  onStartAt={(value) => {
-                    const start_at = localDateTimeToUtcIso(value);
-                    if (start_at) {
+        <Show
+          when={!props.selectedSessionMessagesLoading()}
+          fallback={<ConversationLoadingPlaceholder />}
+        >
+          <ConversationView
+            state={props.state()}
+            session={session()}
+            messages={props.selectedMessages()}
+            initialScrollTop={props.state().transcriptScrollBySession[session().id]}
+            scrollToBottomToken={
+              props.state().transcriptScrollToBottomRequest?.sessionId === session().id
+                ? props.state().transcriptScrollToBottomRequest?.token
+                : undefined
+            }
+            onScrollToBottomRequestConsumed={(token) =>
+              consumeScrollToBottomRequest(session().id, token)
+            }
+            onTranscriptScroll={(scrollTop) => setTranscriptScroll(session().id, scrollTop)}
+            onLoadEarlierMessages={() => props.loadEarlierMessages(session().id)}
+            hasEarlierMessages={
+              props.state().messagePagingBySession[session().id]?.hasEarlier ?? false
+            }
+            loadingEarlierMessages={
+              props.state().messagePagingBySession[session().id]?.loadingEarlier ?? false
+            }
+            slashCommands={props.slashCommands()}
+            onComposerText={setComposerText}
+            onComposerImages={setComposerImages}
+            onSubmit={props.onSubmit}
+            onStop={() => abortSession(session().id)}
+            onQueueSubmit={props.onQueueSubmit}
+            running={session().status === "busy"}
+            leftRailOpen={props.leftRailOpen}
+            leftRailWidth={props.leftRailWidth}
+            onRequestCollapseLeftRail={props.onRequestCollapseLeftRail}
+            onInspectorLayout={props.onInspectorLayout}
+            closeInspectorSignal={props.closeInspectorSignal}
+            conversationNotice={
+              props.state().planNotice ? (
+                <PlanConversationFeedbackNotice
+                  message={props.state().planNotice?.message}
+                  code={props.state().planNotice?.code}
+                  providerId={props.state().planNotice?.providerId}
+                  onOpenProviderSettings={props.onOpenProviderSettings}
+                />
+              ) : undefined
+            }
+            composerToolbar={
+              selectedSession() && props.selectedEditingTask() ? (
+                <>
+                  <PlanComposerControls
+                    startCondition={taskStartCondition(props.selectedEditingTask()!)}
+                    onStartCondition={(startCondition) => {
+                      const task = props.selectedEditingTask()!;
+                      if (startCondition === "user_action") {
+                        props.onRunTask(selectedSession()!, task);
+                        return;
+                      }
                       void updatePlanTicketTask(selectedSession()!, {
-                        task_id: taskNonceId(props.selectedEditingTask()!),
-                        start_at,
+                        task_id: taskNonceId(task),
+                        status: "todo",
+                        start_condition: "session_idle",
+                        start_at: undefined,
+                        poll_interval: undefined,
                       });
+                    }}
+                  />
+                  {agentMenu()}
+                </>
+              ) : selectedSession() ? (
+                <>
+                  <PlanComposerControls
+                    startCondition={props.state().planDraftStartCondition}
+                    onStartCondition={(planDraftStartCondition) =>
+                      props.setState((previous) => ({
+                        ...previous,
+                        planDraftStartCondition,
+                      }))
                     }
-                  }}
-                  onPollInterval={(poll_interval) =>
-                    updatePlanTicketTask(selectedSession()!, {
-                      task_id: taskNonceId(props.selectedEditingTask()!),
-                      poll_interval,
-                    })
-                  }
-                />
-                {agentMenu()}
-              </>
-            ) : selectedSession() ? (
-              <>
-                <PlanComposerControls
-                  startCondition={props.state().planDraftStartCondition}
-                  startAt={props.state().planDraftStartAt}
-                  pollInterval={props.state().planDraftPollInterval}
-                  onStartCondition={(planDraftStartCondition) =>
-                    props.setState((previous) => ({
-                      ...previous,
-                      planDraftStartCondition,
-                    }))
-                  }
-                  onStartAt={(planDraftStartAt) =>
-                    props.setState((previous) => ({
-                      ...previous,
-                      planDraftStartAt,
-                    }))
-                  }
-                  onPollInterval={(planDraftPollInterval) =>
-                    props.setState((previous) => ({
-                      ...previous,
-                      planDraftPollInterval,
-                    }))
-                  }
-                />
-                {agentMenu()}
-              </>
-            ) : undefined
-          }
-          composerTaskList={
-            selectedSession() && hasVisibleSessionTasks(selectedSession()!) ? (
-              <PlanComposerTaskList
-                session={selectedSession()!}
-                selected_task_id={props.state().editingTask?.task_id}
-                pulseNonceId={
-                  props.state().taskPulse?.sessionId === selectedSession()!.id
-                    ? props.state().taskPulse?.task_id
-                    : undefined
-                }
-                pulseToken={
-                  props.state().taskPulse?.sessionId === selectedSession()!.id
-                    ? props.state().taskPulse?.token
-                    : undefined
-                }
-                onEdit={(task, composerText) =>
-                  props.onEditTask(
-                    selectedSession()!.id,
-                    taskNonceId(task),
-                    composerText,
-                  )
-                }
-                onDelete={(task) => deletePlanTask(selectedSession()!, task)}
-                onRun={(task) => props.onRunTask(selectedSession()!, task)}
-                onCreateSession={(task) =>
-                  createSessionFromPlanTask(selectedSession()!, task)
-                }
-                onReorder={(tasks) =>
-                  reorderPlanTasks(selectedSession()!, tasks)
-                }
-              />
-            ) : undefined
-          }
-        />
+                  />
+                  {agentMenu()}
+                </>
+              ) : undefined
+            }
+          />
+        </Show>
       )}
     </Show>
   );

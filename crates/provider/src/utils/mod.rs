@@ -1,4 +1,4 @@
-use serde_json::{Map, Value};
+use serde_json::Value;
 mod command_run_arguments;
 mod command_run_stream_events;
 mod json_prefix;
@@ -140,19 +140,12 @@ pub fn deep_merge_json(dst: &mut Value, src: Value) {
     }
 }
 
-pub fn as_object_mut(value: &mut Value) -> &mut Map<String, Value> {
-    if !value.is_object() {
-        *value = Value::Object(Map::new());
-    }
-    value.as_object_mut().expect("object just initialized")
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        as_object_mut, deep_merge_json, force_strict_schema, strip_json_fence, to_anthropic_tools,
+        deep_merge_json, force_strict_schema, strip_json_fence, to_anthropic_tools,
         to_bedrock_tools,
     };
 
@@ -251,12 +244,5 @@ mod tests {
         deep_merge_json(&mut value, json!({"a": {"c": 2}, "x": 3}));
 
         assert_eq!(value, json!({"a": {"b": 1, "c": 2}, "x": 3}));
-    }
-
-    #[test]
-    fn as_object_mut_initializes_null_to_object() {
-        let mut value = json!(null);
-        as_object_mut(&mut value).insert("ok".to_string(), json!(true));
-        assert_eq!(value, json!({"ok": true}));
     }
 }

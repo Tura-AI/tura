@@ -1,15 +1,29 @@
 # Runtime Crate Architecture
 
-`crates/runtime` is the renamed Mano/MANAS runtime. It owns agent/session
-orchestration, state machines, prompt assembly, provider turns, tool-call
-execution flow, context compaction, and final response behavior.
+`crates/runtime` is where an agent session becomes an execution. It owns
+agent/session orchestration, state machines, prompt assembly, provider turns,
+tool-call execution flow, context compaction, and final response behavior. It
+coordinates those owners; it should not quietly absorb their storage, provider,
+or routing responsibilities.
 
-The Cargo package name should stay compatible with Tura:
+Cargo target names:
 
 ```text
 package = runtime
 library = runtime
+binary  = tura_runtime   (src/bin/tura_runtime.rs -> runtime::worker::run)
 ```
+
+## Runtime worker binary (`tura_runtime`)
+
+The runtime is run as a per-session worker by the **standalone `tura_runtime`
+binary** (no longer the gateway binary re-invoked by role). `runtime::worker`
+hosts the line-protocol loop the router drives: read `{ "kind", "payload" }`,
+write one JSON reply per line. `health_check` carries `tura_path::instance_version()`
+so the router performs a **version handshake** before dispatching. The worker
+activates the agent spec, runs one prompt via `mano::process_from_gateway_session_in_directory`,
+and exits (complete-and-die). It reaches the database only through the single
+`tura_session_db` owner's socket — never `open_default()`.
 
 ## Layout
 
@@ -18,15 +32,17 @@ crates/runtime/
   src/
     lib.rs
     mod.rs
-    agent_router.rs
-    prompt_style.rs
-    session.rs
 
     mano/
       mod.rs
       process.rs
-      session_bootstrap.rs
-      gateway_session.rs
+
+    session_bootstrap/
+      mod.rs
+      load.rs
+      prepare_turn.rs
+      persisted.rs
+      initial_messages.rs
 
     manas/
       mod.rs
@@ -38,16 +54,55 @@ crates/runtime/
       runtime_turn.rs
       tool_catalog.rs
       tool_arguments.rs
-      tool_execution.rs
-      gateway_events.rs
       final_response.rs
-      change_tracker.rs
-      permission_gate.rs
-      validator_feedback.rs    # validator reliability feedback for the registry layer
+
+    turn_loop/
+      mod.rs
+      provider_step.rs
+      tool_step.rs
+      retry_policy.rs
+      no_tool_policy.rs
+      task_progress.rs
+      finalization.rs
+
+    checkpoint/
+      mod.rs
+      client.rs
+      event.rs
+      command_run.rs
+      session_snapshot.rs
+
+    provider_flow/
+      mod.rs
+      call.rs
+      provider_response.rs
+      request_options.rs
+      streamed_command_run.rs
+      usage.rs
+      errors.rs
+
+    tool_flow/
+      mod.rs
+      execute.rs
+      command_run_result.rs
+      permission.rs
+      task_status.rs
+
+    gateway_events/
+      mod.rs
+      agent_message.rs
+      cli_live.rs
+      progress.rs
+      tool_message.rs
 
     session/
+      mod.rs
       activate_session.rs
       create_session.rs
+
+    session_state/
+      mod.rs
+      task_plan.rs
 
     state_machine/
       session_management.rs
@@ -56,26 +111,27 @@ crates/runtime/
 
     agent_router/
       mod.rs
-      activate_agent.rs
 
     runtime/
       create_runtime.rs
-      call_runtime.rs
+      call_runtime.rs            # re-export for provider_flow/call.rs
       runtime_receive.rs
 
     context/
-      context_management.rs    
+      build.rs
       command_run_streams.rs   
-      text_truncate.rs        
-      docker_snapshot.rs
-      process_snapshot.rs
-      workspace_snapshot.rs
+      compaction.rs
+      media.rs
+      text_truncate.rs
+      token_budget.rs
+      tool_results.rs
+      workspace.rs
 
     prompt_style/
+      mod.rs
       agent_identity.rs
       compact_context.rs
       runtime_fallback.rs
-      task_continuity.rs
       task_status.rs
       tool_progress.rs
       user_new_command.rs
@@ -85,7 +141,11 @@ crates/runtime/
       send_calldata.rs
 
   tests/
-    coding_agent_live_test.rs
+    business/
+      claude_code_mock_e2e.rs
+      coding_agent_mock_e2e.rs
+    live/
+      claude_code_live_e2e.rs
     override_manas_direct_test.rs
     override_mano_and_manas_test.rs
     process_from_user_default_test.rs
@@ -123,66 +183,78 @@ loops, prompt assembly, tool filtering, or JSON parsing there.
 
 ## MANO Layer
 
-`mano/process.rs` owns high-level user-turn orchestration:
+`mano/process.rs` is the bootstrap facade for high-level user-turn
+orchestration:
 
-1. Create or resume session.
+1. Ask `session_bootstrap` to create or resume the session and prepare a user turn.
 2. Activate selected agents.
-3. Initialize session and agent state.
-4. Build initial workspace/user messages.
-5. Call MANAS.
-6. Return runtime result to gateway.
+3. Derive session feature flags from the active agent: `planning_enabled` tracks
+   planning tool availability, while `reflection_enabled` tracks whether the
+   active agent requests reflective task-status/objective prompt style.
+4. Initialize session and agent state.
+5. Ask `session_bootstrap::initial_messages` for initial workspace/user messages.
+6. Call MANAS.
+7. Return runtime result to gateway.
 
-Session bootstrap and gateway session loading stay in focused modules.
+Session bootstrap and gateway session loading stay in focused modules:
+`session_bootstrap/load.rs`, `session_bootstrap/prepare_turn.rs`,
+`session_bootstrap/persisted.rs`, and `session_bootstrap/initial_messages.rs`.
 
 Runtime gateway-session persistence goes through `crates/session_log`, not
-workspace-local JSON files. `mano/gateway_session.rs` uses
-`SessionLogClient::get_session` to resume an existing gateway session and
-`SessionLogClient::upsert_session` to persist the initial runtime session
-snapshot. Resumed sessions must match the requested workspace to avoid
-cross-workspace reuse of a repeated session id.
+workspace-local JSON files. Each session workspace is also initialized as a
+local Git repository when it is prepared, and terminal runtime exits create a
+workspace commit whose message includes the session id and task group.
+`checkpoint/session_snapshot.rs` uses
+`SessionLogClient::upsert_session` to persist runtime session snapshots.
+`session_bootstrap/persisted.rs` uses `SessionLogClient::get_session` to resume
+an existing gateway session. Resumed sessions must match the requested workspace
+to avoid cross-workspace reuse of a repeated session id.
 
 Useful session-log queries while debugging runtime resume behavior:
 
 ```powershell
-'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_gateway.exe session-log
 ```
 
 ## MANAS Layer
 
-`manas/process.rs` owns the runtime loop:
+`manas/process.rs` owns the MANAS runtime loop while focused modules own the
+state-machine phases:
 
 1. Transition session to running.
-2. Build one runtime turn.
-3. Call provider.
-4. Extract text and tool calls.
-5. Execute returned tool calls through `crates/tools`.
-6. Store compact tool results.
-7. Rebuild context.
-8. Repeat if more work is required.
-9. Force final response when needed.
-10. Mark agent/session completed.
+2. Delegate provider output accumulation to `turn_loop/provider_step.rs`.
+3. Execute returned tool calls through `tool_flow/execute.rs` and focused
+   `tool_flow` helpers.
+4. Delegate command-run compaction cleanup to `turn_loop/tool_step.rs`.
+5. Rebuild context through `context/build.rs`.
+6. Delegate retry/no-tool decisions to `turn_loop/retry_policy.rs` and
+   `turn_loop/no_tool_policy.rs`.
+7. Persist session snapshots through `checkpoint/session_snapshot.rs`.
+8. Delegate completion runtime construction to `turn_loop/finalization.rs`.
 
-Helper modules own loading, filtering, normalization, publishing, and final
-response details.
+Helper modules own loading, filtering, normalization, checkpoint helpers, and
+final response details. Gateway-visible publishing lives in `gateway_events/`.
 
 ## State Machines
 
 ### Session
 
-Owned by `state_machine/session_management.rs`.
+The data model is defined in `state_machine/session_management.rs`.
+The lifecycle enum and transition rules are shared from
+`session_log::SessionState` so runtime and the SQLite owner use one
+vocabulary. Task-management JSON projection lives in
+`session_state/task_plan.rs`.
 
 States:
 
 - `created`
-- `initializing`
-- `ready`
 - `running`
-- `waiting_for_permission`
-- `waiting_for_command`
-- `cancelling`
+- `paused`
 - `completed`
 - `failed`
+- `cancelled`
+- `interrupted`
 
 ### Agent
 
@@ -224,11 +296,12 @@ initialization or test setup paths.
 
 ### Task Management
 
-Session task-management state is stored inside
-`state_machine/session_management.rs` as `SessionManagement.task_plan`.
-Runtime task-management structs are product state and must not contain
-benchmark-specific fields or evaluator names. Benchmark contracts should live in
-e2e fixtures and hidden evaluators.
+Session task-management state is stored in
+`state_machine/session_management.rs` as `SessionManagement.task_plan`; its JSON
+projection belongs to `session_state/task_plan.rs`. Runtime task-management
+structs are product state and must not contain benchmark-specific fields or
+evaluator names. Benchmark contracts should live in e2e fixtures and hidden
+evaluators.
 
 The model-facing compact state is produced by:
 
@@ -255,7 +328,7 @@ Multi-task mode serializes `task_management.tasks[]`.
 
 `task_status` is not a standalone top-level model tool. It is an internal
 `command_run` command. Its model-visible JSON has only optional
-`task_summary` and optional `status`; `status` accepts `question` or `done`.
+`task_summary` and optional `status`; `status` accepts `doing`, `question`, or `done`.
 The runtime may create the first single task from this state update. After a
 task summary already exists, rename attempts are rejected and reported back in
 the tool result unless the user clearly changed the task.
@@ -266,14 +339,32 @@ multi-task mode is enabled. Its schema is an array of tasks with required
 state machine already exists, runtime replaces the active task with the ordered
 incoming tasks and preserves queued tasks omitted from the update.
 
-Compact context writes the current `task_management_json()` into the compaction
-log and rebuilds the next turn with a `TASK_MANAGEMENT_STATE` user-context
-tail. Keep this behavior in runtime; gateway should not assemble runtime
-prompts.
+Compact context is written by `context/compaction.rs` and rebuilds the next turn
+from the compaction summary, workspace snapshot, environment context, and active
+planning objective. Runtime owns this prompt state; gateway should not assemble
+runtime prompts.
 
-The old standalone delivery-status tool surface is removed. Legacy wording such as
-"delivered" may still appear in existing multi-task completion logs while new
-task-status guidance should prefer `done` or `completed`.
+After a compact checkpoint, `SessionManagement.session_log_retention` records the
+absolute compact boundary and the number of omitted `session_log` entries.
+Runtime trims the in-memory `session_log` before the retained boundary so the
+persisted `management_json` used for resume contains only entries still needed to
+rebuild provider context. The retained slice starts at the immediately preceding
+tail of `tool_result` entries, if any, because compact rebuild still replays that
+tool context.
+
+The active compact threshold is capped at 260,000 tokens. Runtime still asks the
+agent to provide a `task_status.compact_context` handoff when provider-reported
+input reaches the active threshold, but it also applies an automatic checkpoint
+after a turn if `provider_input_tokens + newly_persisted_context_bytes / 3`
+would exceed that threshold. Automatic checkpoints include the current turn's
+persisted tool results in the rebuild timeline so completed work is not lost.
+When rebuilt compact text itself exceeds roughly 12,000 estimated tokens using
+the same bytes/3 estimate, older timeline entries are omitted before writing the
+checkpoint.
+
+Task-status guidance should use `doing` only when more `command_run` calls are
+required, `done` for finished work, and `question` when
+the active task is blocked on user input.
 
 ## Agent Loading
 
@@ -307,13 +398,14 @@ patch, file lock, or package environment behavior.
 selected agent prompt directory:
 
 1. `persona.md`
-2. `communication_style.md`
+2. shared `personas/src/communication_style/communication_style.md`
 3. `prompt.md`
 
-Legacy `prompt` and `fallback_agent.md` remain compatibility fallbacks for the
-main prompt resource. Agent prompt loading must stay separate from command/tool
-prompt loading so agent identity and communication behavior do not depend on the
-active tool set.
+Legacy per-persona `communication_style.md` files are accepted only as a
+fallback. `prompt` and `fallback_agent.md` are accepted main-prompt resource
+names. Agent prompt loading must stay separate from command/tool prompt loading
+so agent identity and communication behavior do not depend on the active tool
+set.
 
 ## Prompt Assembly
 
@@ -361,6 +453,10 @@ dispatch, context compaction, final response). It emits and consumes the
 canonical OpenAI Responses-API content shape (`input_image`, `input_audio`,
 `input_file`, `tool_calls`); the provider crate translates that shape into and
 out of each provider's wire format.
+
+Provider call orchestration lives in `provider_flow/call.rs`; provider request
+options and message normalization live in `provider_flow/request_options.rs`.
+`runtime/call_runtime.rs` re-exports the provider call entrypoint.
 
 ## Child Sub-Session Dispatch
 

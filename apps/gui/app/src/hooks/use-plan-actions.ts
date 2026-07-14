@@ -4,7 +4,6 @@ import {
   GatewayError,
   type Message,
   type PlanStatus,
-  type PollInterval,
   type Session,
   type TaskManagement,
 } from "@tura/gateway-sdk";
@@ -14,7 +13,6 @@ import {
   applyTaskPatchToSession,
   defaultPollInterval,
   firstRunnableTask,
-  localDateTimeToUtcIso,
   planSessionStatus,
   reorderTasksInSession,
   sessionAttentionKey,
@@ -22,24 +20,18 @@ import {
   taskDisplayText,
   taskNonceId,
   taskSummaryText,
-  timedTaskPatch,
 } from "../features/plan/tasks";
 import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
-import { sessionTitle, withSessionFallbackName } from "../state/global-store";
-import {
-  providerIdFromAuthError,
-  providerIdFromModel,
-} from "../utils/settings";
+import { sessionTitle } from "../state/global-store";
+import { providerIdFromAuthError, providerIdFromModel } from "../utils/settings";
+import { agentRuntimeRequest } from "../../../../tui/src/agent-runtime-config";
 
 const PLAN_RUN_TIMEOUT_MS = 30_000;
 const PLAN_RUN_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
 const PLAN_INPUT_REQUIRED_CODE = "PLAN_INPUT_REQUIRED";
 
-function providerIssueIdFromError(
-  error: unknown,
-  state: AppState,
-): string | undefined {
+function providerIssueIdFromError(error: unknown, state: AppState): string | undefined {
   const authProvider = providerIdFromAuthError(error, state);
   if (authProvider) {
     return authProvider;
@@ -77,8 +69,21 @@ export function usePlanActions(options: PlanActionsOptions) {
     createSessionPayload,
     refreshSessions,
   } = options;
-  const [acknowledgedAttentionSessions, setAcknowledgedAttentionSessions] =
-    createSignal(new Set<string>());
+  const [acknowledgedAttentionSessions, setAcknowledgedAttentionSessions] = createSignal(
+    new Set<string>(),
+  );
+
+  function activeAgentRuntimeRequest() {
+    return agentRuntimeRequest(
+      state().agents.find((agent) => agent.name === state().selectedAgent),
+      {
+        model: state().selectedModel,
+        modelConfig: state().modelConfig,
+        reasoningLevel: state().modelVariant,
+        priorityEnabled: state().accelerationEnabled,
+      },
+    );
+  }
 
   async function openPlanSession(session: Session) {
     acknowledgeSessionAttention(session.id);
@@ -127,9 +132,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     return key ? acknowledgedAttentionSessions().has(key) : false;
   }
 
-  function taskForSessionStatusPatch(
-    session: Session,
-  ): TaskManagement | undefined {
+  function taskForSessionStatusPatch(session: Session): TaskManagement | undefined {
     return (
       sessionTasks(session).find((task) => task.status === "doing") ??
       firstRunnableTask(session) ??
@@ -150,7 +153,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       ...previous,
       composerText: feedbackComposerText(session),
       planNotice: {
-        message: "这个工单没有可执行任务，请先输入命令或者反馈。",
+        message: t("planInputRequired"),
         code: PLAN_INPUT_REQUIRED_CODE,
       },
       error: undefined,
@@ -197,8 +200,7 @@ export function usePlanActions(options: PlanActionsOptions) {
   ) {
     setState((previous) => ({
       ...previous,
-      submitting:
-        previous.selectedSessionId === session.id ? false : previous.submitting,
+      submitting: previous.selectedSessionId === session.id ? false : previous.submitting,
       sessions: previous.sessions.map((item) =>
         item.id === session.id ? { ...item, status: "idle" } : item,
       ),
@@ -220,10 +222,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       }));
       return;
     }
-    await updatePlanTicketTask(
-      { ...session, status: "idle" },
-      { task_id: taskId, status },
-    );
+    await updatePlanTicketTask({ ...session, status: "idle" }, { task_id: taskId, status });
   }
 
   async function startPlanTicketDoing(session: Session) {
@@ -244,11 +243,16 @@ export function usePlanActions(options: PlanActionsOptions) {
     if (e2eFixture) {
       return;
     }
+    const messageId = `plan-ticket:${session.id}:${taskId}:${Date.now()}`;
+    const runtime = activeAgentRuntimeRequest();
     try {
       await directoryClient().promptAsync(session.id, {
-        parts: [{ type: "text", text: taskDisplayText(task) }],
-        model: state().selectedModel,
+        messageID: messageId,
+        parts: [{ id: `${messageId}:text`, type: "text", text: taskDisplayText(task) }],
+        model: runtime.model,
         agent: state().selectedAgent,
+        variant: runtime.variant,
+        model_acceleration_enabled: runtime.model_acceleration_enabled,
       });
     } catch (error) {
       setState((previous) => ({ ...previous, error: errorMessage(error) }));
@@ -270,7 +274,6 @@ export function usePlanActions(options: PlanActionsOptions) {
     const optimisticMessage: Message = {
       id: messageId,
       sessionID: session.id,
-      session_id: session.id,
       role: "user",
       created_at: now,
       updated_at: now,
@@ -278,6 +281,8 @@ export function usePlanActions(options: PlanActionsOptions) {
       parts: [
         {
           id: `${messageId}:text`,
+          sessionID: session.id,
+          messageID: messageId,
           type: "text",
           text,
           metadata: {
@@ -323,8 +328,7 @@ export function usePlanActions(options: PlanActionsOptions) {
                     parts: message.parts.map((part) => ({
                       ...part,
                       metadata: {
-                        ...(typeof part.metadata === "object" &&
-                        part.metadata !== null
+                        ...(typeof part.metadata === "object" && part.metadata !== null
                           ? part.metadata
                           : {}),
                         planRunPending: false,
@@ -336,7 +340,6 @@ export function usePlanActions(options: PlanActionsOptions) {
             {
               id: `${messageId}:gateway-response`,
               sessionID: session.id,
-              session_id: session.id,
               role: "assistant",
               providerID: "mock",
               modelID: "gateway",
@@ -346,8 +349,10 @@ export function usePlanActions(options: PlanActionsOptions) {
               parts: [
                 {
                   id: `${messageId}:gateway-response:text`,
+                  sessionID: session.id,
+                  messageID: `${messageId}:gateway-response`,
                   type: "text",
-                  text: `Gateway 已接收立即执行任务：${taskSummaryText(task)}`,
+                  text: t("planTaskAccepted", { task: taskSummaryText(task) }),
                 },
               ],
             },
@@ -357,32 +362,32 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     try {
+      const runtime = activeAgentRuntimeRequest();
       await updatePlanTicketTask(session, {
         task_id: nonce,
         status: "doing",
       });
       await Promise.race([
         directoryClient().promptAsync(session.id, {
-          parts: [{ type: "text", text }],
-          model: state().selectedModel,
+          messageID: messageId,
+          parts: [{ id: `${messageId}:text`, type: "text", text }],
+          model: runtime.model,
           agent: state().selectedAgent,
+          variant: runtime.variant,
+          model_acceleration_enabled: runtime.model_acceleration_enabled,
         }),
         new Promise<never>((_, reject) =>
-          window.setTimeout(
-            () => reject(new Error(PLAN_RUN_TIMEOUT_CODE)),
-            PLAN_RUN_TIMEOUT_MS,
-          ),
+          window.setTimeout(() => reject(new Error(PLAN_RUN_TIMEOUT_CODE)), PLAN_RUN_TIMEOUT_MS),
         ),
       ]);
     } catch (error) {
-      const timeout =
-        error instanceof Error && error.message === PLAN_RUN_TIMEOUT_CODE;
+      const timeout = error instanceof Error && error.message === PLAN_RUN_TIMEOUT_CODE;
       const responseTime = Date.now();
       setState((previous) => ({
         ...previous,
         planNotice: timeout
           ? {
-              message: "Gateway 30 秒内没有响应立即执行请求。",
+              message: t("planRunTimeout"),
               code: PLAN_RUN_TIMEOUT_CODE,
             }
           : {
@@ -392,26 +397,24 @@ export function usePlanActions(options: PlanActionsOptions) {
             },
         messagesBySession: {
           ...previous.messagesBySession,
-          [session.id]: (previous.messagesBySession[session.id] ?? []).map(
-            (message) =>
-              message.id === messageId
-                ? {
-                    ...message,
-                    updated_at: responseTime,
-                    time: { ...message.time, updated: responseTime },
-                    parts: message.parts.map((part) => ({
-                      ...part,
-                      metadata: {
-                        ...(typeof part.metadata === "object" &&
-                        part.metadata !== null
-                          ? part.metadata
-                          : {}),
-                        planRunPending: false,
-                        planRunError: true,
-                      },
-                    })),
-                  }
-                : message,
+          [session.id]: (previous.messagesBySession[session.id] ?? []).map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  updated_at: responseTime,
+                  time: { ...message.time, updated: responseTime },
+                  parts: message.parts.map((part) => ({
+                    ...part,
+                    metadata: {
+                      ...(typeof part.metadata === "object" && part.metadata !== null
+                        ? part.metadata
+                        : {}),
+                      planRunPending: false,
+                      planRunError: true,
+                    },
+                  })),
+                }
+              : message,
           ),
         },
         error: undefined,
@@ -424,21 +427,12 @@ export function usePlanActions(options: PlanActionsOptions) {
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ) {
     if (
       patch.status &&
-      ![
-        "todo",
-        "waiting_user",
-        "doing",
-        "question",
-        "done",
-        "archived",
-      ].includes(patch.status)
+      !["todo", "waiting_user", "doing", "question", "done", "archived"].includes(patch.status)
     ) {
       setState((previous) => ({
         ...previous,
@@ -465,16 +459,11 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     try {
-      const updated = await directoryClient().updateSessionTaskManagement(
-        session.id,
-        patch,
-      );
+      const updated = await directoryClient().updateSessionTaskManagement(session.id, patch);
       setState((previous) => ({
         ...previous,
         sessions: previous.sessions.map((item) =>
-          item.id === session.id
-            ? mergeTaskUpdateResponse(item, updated, patch)
-            : item,
+          item.id === session.id ? mergeTaskUpdateResponse(item, updated, patch) : item,
         ),
       }));
     } catch (error) {
@@ -483,10 +472,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     }
   }
 
-  async function reorderPlanTasks(
-    session: Session,
-    orderedTasks: TaskManagement[],
-  ) {
+  async function reorderPlanTasks(session: Session, orderedTasks: TaskManagement[]) {
     const tasks = orderedTasks.map((task, index) => ({
       ...task,
       step: index + 1,
@@ -502,15 +488,16 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     try {
-      const updated = await directoryClient().updateSessionTaskManagement(
-        session.id,
-        { tasks },
-      );
+      const updated = await directoryClient().updateSessionTaskManagement(session.id, { tasks });
       setState((previous) => ({
         ...previous,
-        sessions: previous.sessions.map((item) =>
-          item.id === session.id ? { ...item, ...updated } : item,
-        ),
+        sessions: previous.sessions.map((item) => {
+          if (item.id !== session.id) {
+            return item;
+          }
+          const merged = reorderTasksInSession(item, tasks);
+          return { ...item, ...updated, task_management: merged.task_management };
+        }),
       }));
     } catch (error) {
       setState((previous) => ({ ...previous, error: errorMessage(error) }));
@@ -524,8 +511,6 @@ export function usePlanActions(options: PlanActionsOptions) {
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ): Session {
@@ -534,14 +519,15 @@ export function usePlanActions(options: PlanActionsOptions) {
       return { ...current, ...updated };
     }
     const patchKeys = new Set(Object.keys(patch));
-    const currentTask = sessionTasks(current).find(
-      (task) => taskNonceId(task) === nonce,
-    );
-    const updatedTask = sessionTasks(updated).find(
-      (task) => taskNonceId(task) === nonce,
-    );
+    const currentTask = sessionTasks(current).find((task) => taskNonceId(task) === nonce);
+    const updatedTask = sessionTasks(updated).find((task) => taskNonceId(task) === nonce);
     if (!currentTask || !updatedTask) {
-      return applyTaskPatchToSession(current, patch);
+      const merged = applyTaskPatchToSession(current, patch);
+      return {
+        ...merged,
+        ...updated,
+        task_management: merged.task_management,
+      };
     }
     const mergedTask: TaskManagement = { ...updatedTask };
     for (const [key, value] of Object.entries(currentTask)) {
@@ -549,23 +535,22 @@ export function usePlanActions(options: PlanActionsOptions) {
         (mergedTask as Record<string, unknown>)[key] = value;
       }
     }
-    return applyTaskPatchToSession(current, mergedTask);
+    const merged = applyTaskPatchToSession(current, mergedTask);
+    return {
+      ...merged,
+      ...updated,
+      task_management: merged.task_management,
+    };
   }
 
   function isTaskTimingPatch(
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ): boolean {
-    return (
-      "start_condition" in patch ||
-      "start_at" in patch ||
-      "poll_interval" in patch
-    );
+    return "start_condition" in patch || "start_at" in patch || "poll_interval" in patch;
   }
 
   async function deletePlanTask(session: Session, task: TaskManagement) {
@@ -575,10 +560,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     });
   }
 
-  async function createSessionFromPlanTask(
-    session: Session,
-    task: TaskManagement,
-  ) {
+  async function createSessionFromPlanTask(session: Session, task: TaskManagement) {
     const summary = taskSummaryText(task).trim();
     if (state().activeTab === "plan") {
       setState((previous) => ({
@@ -597,8 +579,6 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     const composerText = taskDisplayText(task);
-    const title =
-      summary || composerText.split("\n")[0]?.trim() || t("newTask");
     const patch = {
       ...task,
       task_id: `${session.id}:${Date.now()}`,
@@ -608,9 +588,6 @@ export function usePlanActions(options: PlanActionsOptions) {
       const next: Session = {
         ...session,
         id: `plan-task-session-${Date.now()}`,
-        name: title,
-        plan_summary: title,
-        session_display_name: title,
         task_management: patch,
       };
       setState((previous) => ({
@@ -620,22 +597,17 @@ export function usePlanActions(options: PlanActionsOptions) {
         planPreviewSessionId: next.id,
         activeTab: "conversation",
         previousMainTab:
-          previous.activeTab === "settings"
-            ? previous.previousMainTab
-            : previous.activeTab,
+          previous.activeTab === "settings" ? previous.previousMainTab : previous.activeTab,
         composerText,
         editingTask: undefined,
         error: undefined,
       }));
       return;
     }
-    const created = withSessionFallbackName(
-      await directoryClient().createSession({
-        ...createSessionPayload(),
-        task_management: patch,
-      }),
-      title,
-    );
+    const created = await directoryClient().createSession({
+      ...createSessionPayload(),
+      task_management: patch,
+    });
     setState((previous) => ({
       ...previous,
       sessions: [created, ...previous.sessions],
@@ -643,9 +615,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       planPreviewSessionId: created.id,
       activeTab: "conversation",
       previousMainTab:
-        previous.activeTab === "settings"
-          ? previous.previousMainTab
-          : previous.activeTab,
+        previous.activeTab === "settings" ? previous.previousMainTab : previous.activeTab,
       composerText,
       editingTask: undefined,
       error: undefined,
@@ -657,9 +627,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     if (!editing) {
       return false;
     }
-    const session = state().sessions.find(
-      (item) => item.id === editing.sessionId,
-    );
+    const session = state().sessions.find((item) => item.id === editing.sessionId);
     if (!session) {
       return false;
     }
@@ -712,12 +680,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     const existingSession = draftSessionId
       ? state().sessions.find((session) => session.id === draftSessionId)
       : undefined;
-    const startAt = localDateTimeToUtcIso(state().planDraftStartAt);
-    const timingPatch = timedTaskPatch(
-      state().planDraftStartCondition,
-      startAt,
-      state().planDraftPollInterval,
-    );
+    const timingPatch = { start_condition: "session_idle" as const };
     const nonceId = existingSession
       ? `${existingSession.id}:${Date.now()}`
       : `plan-task:${Date.now()}`;
@@ -738,21 +701,16 @@ export function usePlanActions(options: PlanActionsOptions) {
           }
         : {
             id: `plan-local-${Date.now()}`,
-            name: title,
+            name: "",
             directory: state().directory,
             status: "idle",
             created_at: Date.now(),
             updated_at: Date.now(),
-            plan_summary: title,
-            session_display_name: title,
             task_management: taskState,
           };
       setState((previous) => ({
         ...previous,
-        sessions: [
-          session,
-          ...previous.sessions.filter((item) => item.id !== session.id),
-        ],
+        sessions: [session, ...previous.sessions.filter((item) => item.id !== session.id)],
         selectedSessionId: session.id,
         planPreviewSessionId: session.id,
         composerText: "",
@@ -768,26 +726,19 @@ export function usePlanActions(options: PlanActionsOptions) {
     try {
       let session: Session | undefined;
       if (existingSession) {
-        session = await directoryClient().updateSessionTaskManagement(
-          existingSession.id,
-          { tasks: [taskState] },
-        );
+        session = await directoryClient().updateSessionTaskManagement(existingSession.id, {
+          tasks: [taskState],
+        });
       } else {
-        session = withSessionFallbackName(
-          await directoryClient().createSession({
-            ...createSessionPayload(),
-            task_management: taskState,
-          }),
-          title,
-        );
+        session = await directoryClient().createSession({
+          ...createSessionPayload(),
+          task_management: taskState,
+        });
       }
       setState((previous) => ({
         ...previous,
         sessions: session
-          ? [
-              session,
-              ...previous.sessions.filter((item) => item.id !== session!.id),
-            ]
+          ? [session, ...previous.sessions.filter((item) => item.id !== session!.id)]
           : previous.sessions,
         selectedSessionId: session?.id ?? previous.selectedSessionId,
         planPreviewSessionId: session?.id ?? previous.planPreviewSessionId,

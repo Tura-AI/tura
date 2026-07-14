@@ -47,8 +47,7 @@ impl CommandRegistry {
         let output = match command.and_then(|command| command.template) {
             Some(template) => render_command_template(&template, payload.args.as_deref().unwrap_or_default()),
             None => format!(
-                "Command `{}` is not configured. Add a markdown or JSON command under .tura/commands, .opencode/command, .opencode/commands, command, or commands.",
-                command_name
+                "Command `{command_name}` is not configured. Add a markdown or JSON command under .tura/commands, .opencode/command, .opencode/commands, command, or commands."
             ),
         };
         ExecuteCommandResponse { output }

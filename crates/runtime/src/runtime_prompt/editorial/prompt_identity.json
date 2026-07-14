@@ -1,0 +1,7 @@
+{
+  "id": "editorial",
+  "display_name": "Editorial Operation Manual",
+  "description": "Use for slide decks, presentations, visual PDFs, print documents, editorial layouts, static document exports, and presentation-scale typography.",
+  "father_ids": ["visual"],
+  "capabilities": ["read_media"]
+}

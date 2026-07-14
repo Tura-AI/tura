@@ -3,11 +3,12 @@ pub const PROMPT: &str = include_str!("prompt.md");
 pub const POLICY: &str = include_str!("policy.toml");
 pub const SCHEMA: &str = include_str!("schema.json");
 
-use super::{shell_command, CommandResponse};
+use super::CommandResponse;
 use crate::runtime::file_locks::Access;
 use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
 };
+use crate::shell_executor;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -31,7 +32,7 @@ pub struct ApplyPatchHandler;
 
 #[async_trait::async_trait]
 impl ToolHandler for ApplyPatchHandler {
-    fn tool_name(&self) -> &'static str {
+    fn tool_name(&self) -> &str {
         "apply_patch"
     }
 
@@ -53,7 +54,7 @@ impl ToolHandler for ApplyPatchHandler {
         let response = execute(&patch_text, &ctx.session_dir);
         let success = response.success;
         Ok(FunctionToolOutput::from_value(
-            shell_command::json_like_output(
+            shell_executor::json_like_output(
                 response.exit_code,
                 response.stdout,
                 response.stderr,
@@ -193,15 +194,12 @@ pub fn execute(patch_text: &str, session_dir: &Path) -> CommandResponse {
                 }
             }
             if !failed_changes.is_empty() {
-                let partial = !applied_changes.is_empty();
-                let first_failure = failed_changes.first().cloned().unwrap_or_else(
-                    || json!({ "error_type": "PatchFailed", "message": "apply_patch failed" }),
-                );
-                let first_kind = first_failure["error_type"]
-                    .as_str()
+                let first_failure = failed_changes.first();
+                let first_kind = first_failure
+                    .and_then(|failure| failure["error_type"].as_str())
                     .unwrap_or("PatchFailed");
-                let first_message = first_failure["message"]
-                    .as_str()
+                let first_message = first_failure
+                    .and_then(|failure| failure["message"].as_str())
                     .unwrap_or("apply_patch failed");
                 let message = if failed_changes.len() == 1 {
                     first_message.to_string()
@@ -213,27 +211,19 @@ pub fn execute(patch_text: &str, session_dir: &Path) -> CommandResponse {
                         first_message
                     )
                 };
-                let mut output = json!({
+                let output = json!({
                     "error_type": if failed_changes.len() == 1 {
                         first_kind
                     } else {
                         "MultiplePatchFailures"
                     },
-                    "message": message,
-                    "guidance": apply_patch_failure_guidance(first_kind, partial),
                     "failed_changes": failed_changes,
                 });
-                if let Some(failed_change) = first_failure.get("failed_change") {
-                    output["failed_change"] = failed_change.clone();
-                }
-                if partial {
-                    output["partial_changes"] = Value::Array(applied_changes.clone());
-                }
                 return CommandResponse {
                     success: false,
                     exit_code: 1,
                     stdout: String::new(),
-                    stderr: output["message"].as_str().unwrap_or_default().to_string(),
+                    stderr: message,
                     output,
                     changes: applied_changes,
                 };
@@ -286,6 +276,62 @@ pub fn access(patch_text: &str, session_dir: &Path) -> Access {
             ..Access::default()
         },
     }
+}
+
+pub(crate) fn validate_paths_within_session_dir(
+    patch_text: &str,
+    session_dir: &Path,
+) -> Result<(), String> {
+    let changes = parse_patch(patch_text)?;
+    for change in changes {
+        validate_patch_path_within_session_dir(session_dir, &change.path)?;
+        if let Some(move_path) = change.move_path {
+            validate_patch_path_within_session_dir(session_dir, &move_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_patch_path_within_session_dir(session_dir: &Path, raw: &str) -> Result<(), String> {
+    let root = session_dir.canonicalize().map_err(|err| {
+        format!(
+            "failed to resolve patch workspace {}: {err}",
+            session_dir.display()
+        )
+    })?;
+    let path = normalize_path_lexically(&safe_path(session_dir, raw)?);
+    if path_is_within_root(&path, &root) {
+        return Ok(());
+    }
+    Err(format!(
+        "apply_patch path is outside workspace: {}",
+        patch_path(raw).display()
+    ))
+}
+
+fn path_is_within_root(path: &Path, root: &Path) -> bool {
+    if path.strip_prefix(root).is_ok() {
+        return true;
+    }
+    let path = comparable_path_string(path);
+    let root = comparable_path_string(root);
+    path == root || path.starts_with(&(root + "/"))
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            std::path::Component::RootDir => normalized.push(component.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
 }
 
 fn parse_patch(patch_text: &str) -> Result<Vec<PatchChange>, String> {
@@ -352,11 +398,10 @@ fn parse_patch(patch_text: &str) -> Result<Vec<PatchChange>, String> {
                 return Err("hunk is only valid for update file changes".to_string());
             }
             if let Some(hunk_lines) = hunk.take() {
-                current
-                    .as_mut()
-                    .expect("change exists")
-                    .hunks
-                    .push(hunk_lines);
+                let Some(change) = current.as_mut() else {
+                    return Err("hunk without file".to_string());
+                };
+                change.hunks.push(hunk_lines);
             }
             hunk = Some(Vec::new());
         } else if line.starts_with("*** End Patch") {
@@ -577,32 +622,29 @@ fn replacement_lines_for_hunk(hunk: &[String], actual_old_lines: &[String]) -> V
 }
 
 fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, String> {
-    let root = root.canonicalize().map_err(|err| err.to_string())?;
+    let root = root
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve patch root {}: {err}", root.display()))?;
     let raw_path = patch_path(raw);
     let path = if raw_path.is_absolute() {
         raw_path
     } else {
         root.join(raw_path)
     };
-    let path = path.canonicalize().unwrap_or(path);
-    if !path_is_inside(&path, &root) {
-        return Err(format!("path outside session directory: {raw}"));
-    }
-    Ok(path)
+    Ok(path.canonicalize().unwrap_or(path))
 }
 
 fn lock_key(root: &Path, raw: &str) -> Option<String> {
     let path = safe_path(root, raw).ok()?;
     let root = root.canonicalize().ok()?;
-    path.strip_prefix(&root)
-        .ok()
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .or_else(|| {
-            let path = comparable_path_string(&path);
-            let root = comparable_path_string(&root);
-            path.strip_prefix(&root)
-                .map(|suffix| suffix.trim_start_matches('/').to_string())
-        })
+    if let Ok(relative) = path.strip_prefix(&root) {
+        return Some(relative.to_string_lossy().replace('\\', "/"));
+    }
+    let path = comparable_path_string(&path);
+    let root = comparable_path_string(&root);
+    path.strip_prefix(&(root + "/"))
+        .map(|suffix| suffix.to_string())
+        .or_else(|| Some(format!("absolute:{path}")))
 }
 
 fn patch_path(raw: &str) -> PathBuf {
@@ -621,14 +663,6 @@ fn patch_path(raw: &str) -> PathBuf {
         }
     }
     PathBuf::from(trimmed)
-}
-
-fn path_is_inside(path: &Path, root: &Path) -> bool {
-    path == root || path.starts_with(root) || {
-        let path = comparable_path_string(path);
-        let root = comparable_path_string(root);
-        path == root || path.starts_with(&(root + "/"))
-    }
 }
 
 fn comparable_path_string(path: &Path) -> String {
@@ -694,13 +728,8 @@ impl PatchError {
     }
 
     fn path(message: String) -> Self {
-        let kind = if message.contains("outside session directory") {
-            "PermissionDenied"
-        } else {
-            "IoError"
-        };
         Self {
-            kind,
+            kind: "IoError",
             message,
             failed_change: None,
         }
@@ -715,9 +744,7 @@ fn apply_patch_failure_guidance(kind: &str, partial: bool) -> &'static str {
         ("ContextMismatch", false) => {
             "apply_patch failed because expected context was not found; read the current file and retry with a smaller hunk."
         }
-        (_, true) => {
-            "apply_patch failed after earlier changes were applied; inspect partial_changes before retrying."
-        }
+        (_, true) => "apply_patch failed after earlier changes were applied; inspect changes before retrying.",
         _ => "apply_patch failed; inspect error_type and message before retrying.",
     }
 }

@@ -5,17 +5,24 @@ import { printJson } from "../output/json.js";
 import { t } from "../i18n.js";
 
 export async function commandRegistryCommand(context: CliContext, args: string[]): Promise<void> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   const subcommand = args.shift() ?? "list";
   const json = context.json || takeFlag(args, "--json");
   if (subcommand === "list") {
     const commands = await client.listCommands();
     if (json) return printJson(commands);
-    return write(context, formatTable(commands, [
-      { header: t("name"), value: (command) => command.name },
-      { header: t("source"), value: (command) => command.source },
-      { header: t("description"), value: (command) => command.description },
-    ]));
+    return write(
+      context,
+      formatTable(commands, [
+        { header: t("name"), value: (command) => command.name },
+        { header: t("source"), value: (command) => command.source },
+        { header: t("description"), value: (command) => command.description },
+      ]),
+    );
   }
   if (subcommand === "run") {
     const command = args.shift();

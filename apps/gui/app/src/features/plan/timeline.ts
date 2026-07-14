@@ -5,6 +5,7 @@ import {
   sessionTasks,
   taskStartAt,
   taskStartCondition,
+  timedTaskDisplayDate,
 } from "./tasks";
 export const HOUR_MS = 3_600_000;
 export const DAY_MS = 86_400_000;
@@ -14,22 +15,20 @@ export function startOfDay(date: Date): Date {
 }
 
 export function planSessionDate(session: Session): Date | undefined {
-  const raw = sessionTaskState(session).start_at;
+  const rootTask = sessionTaskState(session);
+  const raw = timedTaskDisplayDate(rootTask);
   const fallback = sessionTasks(session)
     .filter((task) => isTimedStartCondition(taskStartCondition(task)))
-    .map((task) => taskStartAt(task))
+    .map((task) => timedTaskDisplayDate(task) ?? taskStartAt(task))
     .find(Boolean);
-  const date = raw ? new Date(raw) : fallback ? new Date(fallback) : undefined;
+  const date = raw ?? (fallback ? new Date(fallback) : undefined);
   return date && !Number.isNaN(date.getTime()) ? date : undefined;
 }
 
 export function planTimelineDays(sessions: Session[], count: number): Date[] {
   const first = sessions.map(planSessionDate).find(Boolean) ?? new Date();
   const start = startOfDay(new Date(first.getTime() - 2 * DAY_MS));
-  return Array.from(
-    { length: count },
-    (_, index) => new Date(start.getTime() + index * DAY_MS),
-  );
+  return Array.from({ length: count }, (_, index) => new Date(start.getTime() + index * DAY_MS));
 }
 
 export function planTimelineStart(sessions: Session[]): Date {
@@ -38,26 +37,16 @@ export function planTimelineStart(sessions: Session[]): Date {
 
 export function planTimelineWindow(anchor: Date, count: number): Date[] {
   const start = new Date(anchor);
-  return Array.from(
-    { length: count },
-    (_, index) => new Date(start.getTime() + index * DAY_MS),
-  );
+  return Array.from({ length: count }, (_, index) => new Date(start.getTime() + index * DAY_MS));
 }
 
 export type PlanGanttMode = "week" | "day";
 
-export function planTimelineMarks(
-  anchor: Date,
-  mode: PlanGanttMode,
-  dayHourCount = 6,
-): Date[] {
+export function planTimelineMarks(anchor: Date, mode: PlanGanttMode, dayHourCount = 6): Date[] {
   const start = new Date(new Date(anchor).setSeconds(0, 0));
   const count = mode === "day" ? dayHourCount : 7;
   const step = mode === "day" ? HOUR_MS : DAY_MS;
-  return Array.from(
-    { length: count },
-    (_, index) => new Date(start.getTime() + index * step),
-  );
+  return Array.from({ length: count }, (_, index) => new Date(start.getTime() + index * step));
 }
 
 export function formatGanttDayTitle(days: Date[]): string {
@@ -130,30 +119,16 @@ export function planTimelineWeeks(days: Date[]): Array<{
 
 export function calendarGridDays(monthStart: Date): Date[] {
   const start = startOfDay(
-    new Date(
-      monthStart.getFullYear(),
-      monthStart.getMonth(),
-      1 - monthStart.getDay(),
-    ),
+    new Date(monthStart.getFullYear(), monthStart.getMonth(), 1 - monthStart.getDay()),
   );
-  return Array.from(
-    { length: 42 },
-    (_, index) => new Date(start.getTime() + index * DAY_MS),
-  );
+  return Array.from({ length: 42 }, (_, index) => new Date(start.getTime() + index * DAY_MS));
 }
 
 export function calendarWeekDays(anchor: Date): Date[] {
   const start = startOfDay(
-    new Date(
-      anchor.getFullYear(),
-      anchor.getMonth(),
-      anchor.getDate() - anchor.getDay(),
-    ),
+    new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - anchor.getDay()),
   );
-  return Array.from(
-    { length: 7 },
-    (_, index) => new Date(start.getTime() + index * DAY_MS),
-  );
+  return Array.from({ length: 7 }, (_, index) => new Date(start.getTime() + index * DAY_MS));
 }
 
 export function hourStartIso(day: Date, hour: number): string {

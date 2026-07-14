@@ -1,0 +1,7 @@
+{
+  "id": "website",
+  "display_name": "Website Operation Manual",
+  "description": "Use for webpage and website design: landing pages, marketing pages, portfolios, brand sites, public content pages, and static HTML website references. This is for websites, not webapps, dashboards, product task flows, or interaction-system design.",
+  "father_ids": ["visual"],
+  "capabilities": ["web_discover", "generate_media", "read_media"]
+}

@@ -41,8 +41,6 @@ export function jsonPreview(value: unknown): string {
   }
 }
 
-export function classNames(
-  ...values: Array<string | false | undefined>
-): string {
+export function classNames(...values: Array<string | false | undefined>): string {
   return values.filter(Boolean).join(" ");
 }

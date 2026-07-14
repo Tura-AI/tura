@@ -4,7 +4,6 @@ import type {
   AgentUpsertRequest,
   Message,
   PlanStatus,
-  PollInterval,
   ProductIssue,
   Project,
   ProviderAuthMethod,
@@ -25,52 +24,45 @@ export type AppShellViewModel = {
   toggleRailGroup: (id: string) => void;
   selectedSession: Accessor<Session | undefined>;
   selectedMessages: Accessor<Message[]>;
+  selectedSessionMessagesLoading: Accessor<boolean>;
+  loadEarlierMessages: (sessionId: string) => Promise<boolean>;
   slashCommands: Accessor<Command[]>;
-  openBlankSession: () => void;
+  openBlankSession: (workspace?: Project) => void;
   openSession: (sessionId: string) => Promise<void>;
-  useWorkspaceDirectory: (directory: string) => void;
+  useWorkspaceDirectory: (directory: string) => void | Promise<void>;
   createNamedWorkspace: (name: string) => Promise<void>;
   pickExistingWorkspaceDirectory: () => Promise<void>;
-  submitPrompt: (options?: { queued?: boolean }) => Promise<void>;
+  submitPrompt: () => Promise<void>;
   abortSession: (sessionId: string) => Promise<void>;
-  updatePlanTicketStatus: (
-    session: Session,
-    status: PlanStatus,
-  ) => Promise<void>;
+  updatePlanTicketStatus: (session: Session, status: PlanStatus) => Promise<void>;
   sessionAttentionAcknowledged: (session: Session) => boolean;
   deletePlanTask: (session: Session, task: TaskManagement) => Promise<void>;
   openPlanSession: (session: Session) => Promise<void>;
   selectDraftSession: (sessionId: string | undefined) => Promise<void>;
   createPlanTicket: (sessionIdOverride?: string) => Promise<void>;
-  createSessionFromPlanTask: (
-    session: Session,
-    task: TaskManagement,
-  ) => Promise<void>;
+  createSessionFromPlanTask: (session: Session, task: TaskManagement) => Promise<void>;
   runPlanTaskNow: (session: Session, task: TaskManagement) => Promise<void>;
   updatePlanTicketTask: (
     session: Session,
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ) => Promise<void>;
-  reorderPlanTasks: (
-    session: Session,
-    tasks: TaskManagement[],
-  ) => Promise<void>;
+  reorderPlanTasks: (session: Session, tasks: TaskManagement[]) => Promise<void>;
   updateEditingTaskFromComposer: () => Promise<boolean>;
   fileTree: Accessor<Record<string, FileInfo[]>>;
   fileLoadingPath: Accessor<string | undefined>;
   fileContentLoadingPath: Accessor<string | undefined>;
   expandedFileTreePaths: Accessor<Set<string>>;
-  expandedWorkspace: Accessor<string | undefined>;
+  expandedWorkspaces: Accessor<Set<string>>;
   loadFiles: (path?: string) => Promise<void>;
   openFile: (file: FileInfo) => Promise<void>;
   toggleFileTreeDirectory: (file: FileInfo) => Promise<void>;
-  renameSession: (sessionId: string, title: string) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<void>;
+  deleteWorkspace: (project: Project) => void;
+  queuePrompt: () => Promise<void>;
   openSettings: (section?: SettingsSection) => void;
   openIssueConversation: (issue: ProductIssue) => Promise<void>;
   toggleWorkspace: (project: Project) => Promise<void>;
@@ -80,24 +72,10 @@ export type AppShellViewModel = {
   updateModelTier: (tier: string, option: TuraConfigModelPair) => Promise<void>;
   refreshAgents: () => Promise<void>;
   getAgent: (agentId: string) => Promise<StoredAgent | undefined>;
-  saveAgent: (
-    agentId: string | undefined,
-    payload: AgentUpsertRequest,
-  ) => Promise<void>;
+  saveAgent: (agentId: string | undefined, payload: AgentUpsertRequest) => Promise<void>;
   deleteAgent: (agentId: string) => Promise<void>;
-  saveProviderKey: (
-    providerId: string,
-    method: ProviderAuthMethod,
-  ) => Promise<void>;
-  validateProvider: (providerId: string) => Promise<void>;
-  startProviderLogin: (
-    providerId: string,
-    methodIndex: number,
-  ) => Promise<void>;
-  completeProviderLogin: (
-    providerId: string,
-    code?: string,
-    methodIndex?: number,
-  ) => Promise<void>;
+  saveProviderKey: (providerId: string, method: ProviderAuthMethod) => Promise<void>;
+  startProviderLogin: (providerId: string, methodIndex: number) => Promise<void>;
+  completeProviderLogin: (providerId: string, code?: string, methodIndex?: number) => Promise<void>;
   logoutProvider: (providerId: string) => Promise<void>;
 };

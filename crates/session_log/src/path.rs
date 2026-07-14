@@ -1,44 +1,99 @@
+//! Path helpers for the session store.
+//!
+//! All instance/home/db-path resolution lives in the `tura_path` crate so there
+//! is a single source of truth for session_log call sites.
+
 use std::path::{Path, PathBuf};
 
-pub const DB_DIR_NAME: &str = "session_log";
-pub fn repo_root_from(start: impl AsRef<Path>) -> Option<PathBuf> {
-    start.as_ref().ancestors().find_map(|candidate| {
-        (candidate.join("Cargo.toml").exists()
-            && candidate.join("crates").join("session_log").exists())
-        .then(|| candidate.to_path_buf())
-    })
-}
+pub use tura_path::DB_DIR_NAME;
 
+/// The instance's private database directory (see [`tura_path::home_db_dir`]).
 pub fn default_db_dir() -> PathBuf {
-    for key in ["SESSION_LOG_DB_ROOT", "TURA_DB_ROOT"] {
-        if let Ok(value) = std::env::var(key) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return PathBuf::from(trimmed).join(DB_DIR_NAME);
-            }
-        }
-    }
-    let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    repo_root_from(start)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("db")
-        .join(DB_DIR_NAME)
+    tura_path::home_db_dir()
 }
 
+/// Find the workspace root by ascending from `start`.
+pub fn repo_root_from(start: impl AsRef<Path>) -> Option<PathBuf> {
+    tura_path::repo_root_from(start)
+}
+
+/// Normalize a workspace directory used as a session key.
 pub fn normalize_workspace(directory: &str) -> String {
-    let value = directory.trim().replace('\\', "/");
-    if value.is_empty() {
-        return String::new();
+    tura_path::normalize_workspace(directory)
+}
+
+/// Directory that stores the durable session log for a workspace.
+///
+/// The session log follows the workspace, so dev and release builds use the
+/// same `<workspace>/.tura` location for a given project.
+pub fn workspace_session_log_dir(directory: &str) -> PathBuf {
+    let workspace = normalize_workspace(directory);
+    if workspace.is_empty() {
+        return default_db_dir()
+            .join("workspaces")
+            .join("_unknown")
+            .join(".tura");
     }
-    if value.len() == 3
-        && value.as_bytes()[1] == b':'
-        && value.ends_with('/')
-        && value.as_bytes()[0].is_ascii_alphabetic()
-    {
-        return value;
+    PathBuf::from(workspace).join(".tura")
+}
+
+/// SQLite database that stores the full session log for a workspace.
+pub fn workspace_session_log_db(directory: &str) -> PathBuf {
+    workspace_session_log_dir(directory).join("session_log.sqlite3")
+}
+
+/// SQLite database that stores the global session state/index.
+pub fn index_db_path() -> PathBuf {
+    default_db_dir().join("index.sqlite3")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_workspace, workspace_session_log_db, workspace_session_log_dir};
+
+    #[test]
+    fn workspace_session_log_lives_under_workspace_tura_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = dir.path().join("project");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let workspace_text = workspace.display().to_string();
+
+        assert_eq!(
+            workspace_session_log_dir(&workspace_text),
+            workspace.join(".tura")
+        );
+        assert_eq!(
+            workspace_session_log_db(&workspace_text),
+            workspace.join(".tura").join("session_log.sqlite3")
+        );
     }
-    if value.chars().all(|ch| ch == '/') {
-        return "/".to_string();
+
+    #[test]
+    fn empty_workspace_uses_unknown_workspace_bucket_in_instance_db() {
+        let dir = workspace_session_log_dir("");
+
+        assert!(dir.ends_with(
+            std::path::Path::new("workspaces")
+                .join("_unknown")
+                .join(".tura")
+        ));
+        assert!(workspace_session_log_db("").ends_with(
+            std::path::Path::new("workspaces")
+                .join("_unknown")
+                .join(".tura")
+                .join("session_log.sqlite3")
+        ));
     }
-    value.trim_end_matches('/').to_string()
+
+    #[test]
+    fn normalize_workspace_trims_and_normalizes_separators() {
+        let normalized = normalize_workspace("  C:\\Users\\liuliu\\Documents\\tura  ");
+
+        assert!(!normalized.starts_with(' '));
+        assert!(!normalized.ends_with(' '));
+        assert!(
+            normalized.contains('/'),
+            "normalized workspace should use stable slash separators: {normalized}"
+        );
+    }
 }

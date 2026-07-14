@@ -1,13 +1,15 @@
 # Tura Router
 
 Router owns agent registration metadata, CLI forwarding, runtime-worker
-dispatch, and worker lifecycle. It does not own `command_run` implementation
-logic or command alias canonicalization; both live in `crates/tools`
-(`commands::canonical_command`) and execute inside the runtime worker.
+dispatch, and worker lifecycle. That is the dispatch layer, not a second tools
+crate. `command_run` implementation logic and command alias canonicalization
+both live in `crates/tools` (`commands::canonical_command`) and execute inside
+the runtime worker.
 
 This version keeps `command_run` as the only coding-agent visible tool. Internal
-command ids such as `shell_command`, `bash`, and `apply_patch` are resolved and
-dispatched by `crates/tools/src/commands`, not by the router.
+command ids such as `shell_command`, `bash`, `zsh`, and `apply_patch` are resolved and
+dispatched by `crates/tools/src/commands`, not by the router. One visible tool
+does not mean one module owns everything behind it.
 
 ## Layering
 
@@ -16,8 +18,9 @@ dispatched by `crates/tools/src/commands`, not by the router.
   agent loop and holds no in-process runtime.
 - **Router** owns the agent registry, CLI forwarding, and the lifecycle of
   runtime workers. `POST /run_agent` resolves an agent spec, builds the worker
-  environment contract, and dispatches a runtime worker subprocess (the gateway
-  binary re-invoked with `TURA_ROLE=runtime_worker`). Command alias resolution
+  environment contract, and dispatches a runtime worker subprocess (the
+  standalone `tura_runtime` binary, `TURA_ROLE=runtime_worker`). Command alias
+  resolution
   and handler dispatch are owned by `crates/tools`, not the router.
 - **Runtime** (`crates/runtime`, package `runtime`) activates
   `AgentManagement`, assembles agent prompts/tools, and runs the MANAS loop. It
@@ -43,20 +46,12 @@ for the external gateway boundary.
 
 Both modes share the same `dispatch_run_agent` core.
 
-## Session Log Bridge
+## Session DB Data Path
 
-Router also exposes the `session-log` CLI bridge used by runtime and gateway
-helpers. It forwards JSON commands to `crates/session_log`; it does not own the
-database schema.
+Router owns `session_db` service lifecycle through `session-db-service`, but it
+does not expose a session-log data bridge. Gateway and runtime helpers call the
+session DB service directly through `session-db-call`; router IPC is limited to
+execution supervision and service lifecycle.
 
-Examples:
-
-```powershell
-'{"command":"list_workspaces"}' | target\debug\tura_router.exe session-log
-'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\tura_router.exe session-log
-'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_router.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_router.exe session-log
-```
-
-Gateway exposes the same bridge as `target\debug\gateway.exe session-log` and
-adds HTTP routes under `/session-log/*`.
+`target\debug\tura_gateway.exe session-log` also uses the direct session DB client
+instead of routing reads through the router.

@@ -212,5 +212,5 @@
   justify-self: end;
   width: 42px;
   height: 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }

@@ -18,7 +18,6 @@ export interface AgentConfig {
   parent_agent_id?: string | null;
   report_to_user?: boolean;
   provider?: AgentProviderConfig | unknown;
-  agent_persona?: unknown[];
   agent_prompt?: unknown[];
   agent_capabilities?: unknown[];
   validator?: unknown;
@@ -27,6 +26,8 @@ export interface AgentConfig {
 
 export interface AgentProviderConfig {
   tura_llm_name?: string;
+  default_model_tier?: string;
+  current_model?: string;
   model_reasoning_effort?: string;
   model_acceleration_enabled?: boolean;
   service_tier?: string;

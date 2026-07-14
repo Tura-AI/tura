@@ -21,7 +21,7 @@ fs.writeFileSync(providerConfigPath, JSON.stringify({ provider_auth: {} }, null,
 
 const oauthServer = await startOAuthMockServer();
 const port = await freePort();
-const gateway = spawn("cargo", ["run", "-p", "gateway", "--bin", "gateway"], {
+const gateway = spawn("cargo", ["run", "-p", "gateway", "--bin", "tura_gateway"], {
   cwd: repoRoot,
   stdio: ["ignore", "pipe", "pipe"],
   env: {

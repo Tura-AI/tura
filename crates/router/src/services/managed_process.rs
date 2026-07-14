@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-/// 仓库根目录解析：`crates/router` 的祖父目录。
+/// Resolve the repository root from the `crates/router` crate location.
 pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

@@ -53,7 +53,7 @@
 
 .provider-auth-dialog {
   width: min(520px, calc(100vw - 32px));
-  border-radius: 18px;
+  border-radius: var(--radius-xl);
 }
 
 .login-method-controls.oauth-controls .secondary {
@@ -124,7 +124,7 @@
   flex: 0 0 auto;
   width: 9px;
   height: 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: #ef9a9a;
   box-shadow: 0 0 0 3px rgba(239, 154, 154, 0.2);
 }
@@ -142,11 +142,6 @@
 .provider-auth-state-dot.warn {
   background: #f2d46b;
   box-shadow: 0 0 0 3px rgba(242, 212, 107, 0.24);
-}
-
-.provider-auth-validate {
-  min-height: 30px;
-  padding-inline: var(--space-3);
 }
 
 .provider-auth-receipt {

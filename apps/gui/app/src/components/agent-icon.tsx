@@ -1,11 +1,7 @@
 import type { Agent } from "@tura/gateway-sdk";
 import { classNames } from "../state/format";
 
-export function AgentIcon(props: {
-  agent?: Agent;
-  agentId?: string;
-  class?: string;
-}) {
+export function AgentIcon(props: { agent?: Agent; agentId?: string; class?: string }) {
   return (
     <span class={classNames("agent-icon", props.class)} aria-hidden="true">
       {agentIconEmoji(props.agent, props.agentId)}
@@ -19,13 +15,13 @@ export function agentIconEmoji(agent?: Agent, agentId?: string): string {
     return configured;
   }
   const id = agent?.name ?? agentId;
-  if (id === "thinking") {
+  if (id === "balanced" || id === "thinking") {
     return "🧠";
   }
-  if (id === "thinking-planning") {
+  if (id === "thoughtful" || id === "thinking-planning") {
     return "🧭";
   }
-  if (id === "fast") {
+  if (id === "direct" || id === "fast") {
     return "🚀";
   }
   return "⚡";

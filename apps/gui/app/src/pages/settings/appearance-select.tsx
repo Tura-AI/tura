@@ -1,14 +1,6 @@
 import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  onCleanup,
-  onMount,
-  Show,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { t } from "../../i18n";
 import { classNames } from "../../state/format";
@@ -46,9 +38,7 @@ export function AppearanceSelect(props: {
   let root: HTMLElement | undefined;
   let menu: HTMLDivElement | undefined;
   const selected = createMemo(
-    () =>
-      props.options.find((option) => option.value === props.value) ??
-      props.options[0],
+    () => props.options.find((option) => option.value === props.value) ?? props.options[0],
   );
   const visibleOptions = createMemo(() =>
     props.options.length > 0
@@ -64,9 +54,7 @@ export function AppearanceSelect(props: {
           ]
         : [],
   );
-  const buttonLabel = createMemo(
-    () => selected()?.label ?? props.placeholder ?? t("selectStep"),
-  );
+  const buttonLabel = createMemo(() => selected()?.label ?? props.placeholder ?? t("selectStep"));
 
   function updateMenuPosition() {
     if (!root) {
@@ -76,10 +64,7 @@ export function AppearanceSelect(props: {
     const gap = 6;
     const viewportPadding = 16;
     const preferredWidth = Math.max(260, rect.width);
-    const width = Math.min(
-      preferredWidth,
-      window.innerWidth - viewportPadding * 2,
-    );
+    const width = Math.min(preferredWidth, window.innerWidth - viewportPadding * 2);
     const left = Math.min(
       Math.max(viewportPadding, rect.left),
       Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
@@ -144,9 +129,7 @@ export function AppearanceSelect(props: {
       >
         <span class="appearance-select-value">
           <span>{buttonLabel()}</span>
-          <Show when={selected()?.detail}>
-            {(detail) => <small>{detail()}</small>}
-          </Show>
+          <Show when={selected()?.detail}>{(detail) => <small>{detail()}</small>}</Show>
         </span>
         <ChevronDown size={13} strokeWidth={1.8} />
       </button>
@@ -183,9 +166,7 @@ export function AppearanceSelect(props: {
                 >
                   <span class="appearance-select-value">
                     <span>{option.label}</span>
-                    <Show when={option.detail}>
-                      {(detail) => <small>{detail()}</small>}
-                    </Show>
+                    <Show when={option.detail}>{(detail) => <small>{detail()}</small>}</Show>
                   </span>
                   <Show when={props.value === option.value}>
                     <Check size={14} strokeWidth={1.8} />

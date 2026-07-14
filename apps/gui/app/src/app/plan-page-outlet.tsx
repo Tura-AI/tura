@@ -1,9 +1,4 @@
-import type {
-  Command,
-  Message,
-  Session,
-  TaskManagement,
-} from "@tura/gateway-sdk";
+import type { Command, Message, Session, TaskManagement } from "@tura/gateway-sdk";
 import type { Setter } from "solid-js";
 import { PlanView } from "../pages/plan/plan-view";
 import type { AppState } from "../state/global-store";
@@ -19,8 +14,6 @@ export function PlanPageOutlet(props: {
   view: Pick<
     AppShellViewModel,
     | "createPlanTicket"
-    | "createSessionFromPlanTask"
-    | "deletePlanTask"
     | "openPlanSession"
     | "abortSession"
     | "selectDraftSession"
@@ -29,22 +22,15 @@ export function PlanPageOutlet(props: {
     | "updatePlanTicketTask"
     | "reorderPlanTasks"
   >;
-  onEditTask: (
-    session: Session,
-    task: TaskManagement,
-    composerText: string,
-  ) => void;
+  onEditTask: (session: Session, task: TaskManagement, composerText: string) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
   onSubmit: () => void;
+  onQueueSubmit?: () => void;
   onOpenProviderSettings: (providerId?: string) => void;
   leftRailOpen: boolean;
   leftRailWidth: number;
   onRequestCollapseLeftRail: () => void;
-  onPanelLayout: (layout: {
-    open: boolean;
-    overlay: boolean;
-    width: number;
-  }) => void;
+  onPanelLayout: (layout: { open: boolean; overlay: boolean; width: number }) => void;
   onRuntimeSetting: (
     updater: (previous: AppState) => AppState,
     options?: { debounce?: boolean },
@@ -53,8 +39,6 @@ export function PlanPageOutlet(props: {
 }) {
   const {
     createPlanTicket,
-    createSessionFromPlanTask,
-    deletePlanTask,
     openPlanSession,
     abortSession,
     selectDraftSession,
@@ -64,15 +48,38 @@ export function PlanPageOutlet(props: {
     reorderPlanTasks,
   } = props.view;
 
+  function setTranscriptScroll(sessionId: string, scrollTop: number) {
+    const value = Math.max(0, Math.round(scrollTop));
+    props.setState((previous) => {
+      const current = previous.transcriptScrollBySession[sessionId] ?? 0;
+      if (Math.abs(current - value) < 4) {
+        return previous;
+      }
+      return {
+        ...previous,
+        transcriptScrollBySession: {
+          ...previous.transcriptScrollBySession,
+          [sessionId]: value,
+        },
+      };
+    });
+  }
+
   return (
     <PlanView
       state={props.state}
       previewSession={props.previewSession}
       previewMessages={props.previewMessages}
-      slashCommands={props.slashCommands}
-      onPlanMode={(planMode) =>
-        props.setState((previous) => ({ ...previous, planMode }))
+      previewInitialScrollTop={
+        props.previewSession
+          ? props.state.transcriptScrollBySession[props.previewSession.id]
+          : undefined
       }
+      onPreviewTranscriptScroll={(scrollTop) =>
+        props.previewSession && setTranscriptScroll(props.previewSession.id, scrollTop)
+      }
+      slashCommands={props.slashCommands}
+      onPlanMode={(planMode) => props.setState((previous) => ({ ...previous, planMode }))}
       onClosePanel={() =>
         props.setState((previous) => ({
           ...previous,
@@ -82,9 +89,7 @@ export function PlanPageOutlet(props: {
           editingTask: undefined,
         }))
       }
-      onSearch={(issueSearch) =>
-        props.setState((previous) => ({ ...previous, issueSearch }))
-      }
+      onSearch={(issueSearch) => props.setState((previous) => ({ ...previous, issueSearch }))}
       onDraftLane={(planDraftLane) =>
         props.setState((previous) => ({
           ...previous,
@@ -100,27 +105,14 @@ export function PlanPageOutlet(props: {
           planDraftStartCondition,
         }))
       }
-      onDraftStartAt={(planDraftStartAt) =>
-        props.setState((previous) => ({ ...previous, planDraftStartAt }))
-      }
-      onDraftPollInterval={(planDraftPollInterval) =>
-        props.setState((previous) => ({
-          ...previous,
-          planDraftPollInterval,
-        }))
-      }
-      onDraftSession={(planDraftSessionId) =>
-        void selectDraftSession(planDraftSessionId)
-      }
+      onDraftSession={(planDraftSessionId) => void selectDraftSession(planDraftSessionId)}
       onCreateTicket={createPlanTicket}
       onStatus={updatePlanTicketStatus}
       attentionAcknowledged={sessionAttentionAcknowledged}
       onTask={updatePlanTicketTask}
       onReorderTasks={reorderPlanTasks}
       onEditTask={props.onEditTask}
-      onDeleteTask={deletePlanTask}
       onRunTask={props.onRunTask}
-      onCreateSessionFromTask={createSessionFromPlanTask}
       onOpenSession={openPlanSession}
       onComposerText={(composerText) =>
         props.setState((previous) => ({ ...previous, composerText }))
@@ -129,6 +121,7 @@ export function PlanPageOutlet(props: {
         props.setState((previous) => ({ ...previous, composerImages }))
       }
       onSubmit={props.onSubmit}
+      onQueueSubmit={props.onQueueSubmit}
       onStop={(session) => void abortSession(session.id)}
       onAgent={(selectedAgent) =>
         props.onRuntimeSetting((previous) => ({

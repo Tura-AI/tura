@@ -16,13 +16,8 @@ export function FilesPageOutlet(props: {
     | "openSelectedFile"
   >;
 }) {
-  const {
-    fileContentLoadingPath,
-    loadFiles,
-    openCurrentDirectory,
-    openFile,
-    openSelectedFile,
-  } = props.view;
+  const { fileContentLoadingPath, loadFiles, openCurrentDirectory, openFile, openSelectedFile } =
+    props.view;
 
   return (
     <FileBrowserView

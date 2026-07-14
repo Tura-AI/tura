@@ -1,0 +1,78 @@
+name: Provider compatibility
+description: Propose a provider/protocol integration or report a protocol-specific gap.
+title: "[Provider]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the protocol boundary, not every model in a provider catalog. Never include provider credentials or full authorization/request logs.
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and protocol family
+      placeholder: Example provider / OpenAI-compatible protocol
+    validations:
+      required: true
+  - type: input
+    id: models
+    attributes:
+      label: Models or endpoint versions observed
+      description: List only the scope actually observed. A full provider catalog is not required.
+  - type: dropdown
+    id: request
+    attributes:
+      label: Request type
+      options:
+        - New provider or protocol family
+        - Compatibility bug
+        - Missing protocol behavior
+        - Authentication or configuration gap
+        - Fixture or live-coverage gap
+    validations:
+      required: true
+  - type: checkboxes
+    id: behaviors
+    attributes:
+      label: Affected behavior
+      options:
+        - label: Streaming
+        - label: Tool calls or parallel tool calls
+        - label: Authentication
+        - label: Usage, reasoning metadata, or caching
+        - label: Retry, rate limit, timeout, or cancellation
+        - label: Fallback routing or error normalization
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed and expected protocol behavior
+      description: Include status/event/schema details that can be shared safely.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproducible fixture or safe procedure
+      description: Prefer a deterministic fixture or local mock. Explain what requires a live service.
+    validations:
+      required: true
+  - type: textarea
+    id: external
+    attributes:
+      label: External dependency metadata and limits
+      description: Record API/model version, settings, date, access requirements, redistribution limits, and known service variability.
+  - type: textarea
+    id: restricted
+    attributes:
+      label: Substitute for restricted material
+      description: Provide a redacted fixture, hash, schema, generator, or private disclosure path when the original input cannot be published.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed keys, tokens, cookies, authorization headers, private sessions, and account identifiers.
+          required: true
+        - label: This report does not request benchmark-specific production behavior.
+          required: true

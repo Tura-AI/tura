@@ -1,0 +1,49 @@
+name: Documentation issue
+description: Report inaccurate, missing, conflicting, or unclear documentation.
+title: "[Docs]: "
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Documentation problem
+      options:
+        - Incorrect instruction or command
+        - Missing documentation
+        - Broken link or navigation
+        - Conflicting documents
+        - Unclear explanation
+        - Typo or formatting
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: Document and section
+      placeholder: docs/start/install.md - Installer options
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Owning source or expected information
+      description: Link the code, script, workflow, release, or public source that should govern the documentation, when known.
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested correction
+      description: Optional. Do not include unsupported claims or restricted content.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched for an existing documentation issue.
+          required: true
+        - label: This report contains no credentials or private session data.
+          required: true

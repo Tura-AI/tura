@@ -23,7 +23,7 @@ pub struct PlanningHandler;
 
 #[async_trait::async_trait]
 impl ToolHandler for PlanningHandler {
-    fn tool_name(&self) -> &'static str {
+    fn tool_name(&self) -> &str {
         COMMAND_NAME
     }
 
@@ -264,7 +264,11 @@ mod tests {
             .as_array()
             .expect("steps should be array")
             .iter()
-            .map(|step| step["step"].as_u64().unwrap())
+            .map(|step| {
+                step["step"]
+                    .as_u64()
+                    .expect("step number should be present")
+            })
             .collect::<Vec<_>>();
         assert_eq!(steps, vec![1, 2, 3, 4]);
     }

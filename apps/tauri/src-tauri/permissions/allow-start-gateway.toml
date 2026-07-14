@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-start-gateway"
+description = "Allow the tura_gui shell to connect to an already running local tura_gateway process."
+
+[permission.commands]
+allow = ["start_gateway"]
+deny = []

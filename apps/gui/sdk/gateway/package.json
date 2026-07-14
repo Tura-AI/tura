@@ -8,9 +8,14 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "format:check": "prettier --check \"src/**/*.ts\""
+    "lint": "eslint ../../sdk/gateway/src",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "unused:check": "knip --no-progress"
   },
   "devDependencies": {
+    "knip": "^6.14.2",
+    "prettier": "^3.8.3",
     "typescript": "^5.8.2"
   }
 }

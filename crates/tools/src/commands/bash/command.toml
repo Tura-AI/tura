@@ -1,0 +1,27 @@
+id = "bash"
+name = "Bash"
+description = "Run a bash session command."
+core = true
+category = "shell"
+execution = "in_process"
+state_machine = "default_command"
+supports_macro_command = true
+mutating = true
+network = false
+
+[runtime]
+binary = ""
+entry = "crate::commands::bash"
+language = "rust"
+
+[limits]
+default_timeout_ms = 15000
+max_timeout_ms = 300000
+
+[paths]
+prompt = "prompt.md"
+schema = "schema.json"
+policy = "policy.toml"
+
+[builder_config]
+raw = {}

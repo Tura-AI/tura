@@ -31,6 +31,7 @@ fn env_lock() -> MutexGuard<'static, ()> {
 
 fn reset_mock_env() {
     std::env::set_var("TURA_ROUTER_BIN", mock_router_bin());
+    std::env::set_var("TURA_ALLOW_CHILD_ROUTER_CLI_FOR_TEST", "1");
     std::env::remove_var("MOCK_RECURSE_TO_DEPTH");
     std::env::remove_var("MOCK_AGENT_SUMMARY");
     std::env::remove_var("MOCK_FAIL");

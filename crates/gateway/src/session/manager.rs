@@ -8,14 +8,15 @@ use runtime::state_machine::session_management::{
     SessionId, SessionInput, SessionManagement, SessionState, UserGoal,
 };
 use std::path::PathBuf;
+use uuid::Uuid;
 
 use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
 
 const DEFAULT_SESSION_DIRECTORY: &str = "sessions";
-pub const CODING_AGENT_NAME: &str = "thinking-planning";
-pub const THINKING_AGENT_NAME: &str = "thinking";
-pub const CODING_AGENT_FAST_NAME: &str = "fast";
-pub const CODING_AGENT_INSTANT_NAME: &str = "fast-text-only";
+pub const CODING_AGENT_NAME: &str = "direct";
+pub const THINKING_AGENT_NAME: &str = "thoughtful";
+pub const CODING_AGENT_FAST_NAME: &str = "direct";
+pub const CODING_AGENT_FAST_TEXT_ONLY_NAME: &str = "direct-text-only";
 
 pub fn coding_agent_provider() -> String {
     runtime::agent_router::coding_agent_provider_name()
@@ -38,6 +39,13 @@ impl SessionManager {
                 .unwrap_or_default()
                 .join(DEFAULT_SESSION_DIRECTORY)
         });
+        if let Err(error) = runtime::workspace_git::ensure_workspace_git_repo(&session_directory) {
+            tracing::warn!(
+                directory = %session_directory.display(),
+                error = %error,
+                "failed to ensure workspace git repository"
+            );
+        }
         let session_id = Self::generate_session_id(&session_directory, now);
         let session_name = format!("Session-{}", now.format("%Y%m%d%H%M%S"));
 
@@ -56,14 +64,12 @@ impl SessionManager {
             planning_mode_override: None,
         };
 
-        let session_topic = session_topic_for_session_type(&session_type);
-
         let mut management = SessionManagement::new(
             session_id.clone(),
-            session_name.clone(),
+            session_name,
             session_directory,
             false,
-            session_topic,
+            Vec::<String>::new(),
             input,
             user_goal,
             now,
@@ -74,6 +80,7 @@ impl SessionManager {
             id: session_id,
             created_at: now.timestamp_millis(),
             updated_at: now.timestamp_millis(),
+            last_user_message_at: Some(now.timestamp_millis()),
             directory: dir_clone,
             model,
             agent,
@@ -82,7 +89,7 @@ impl SessionManager {
             validator_enabled: false,
             force_planning: false,
             model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
-            model_acceleration_enabled: true,
+            model_acceleration_enabled: false,
             disable_permission_restrictions: false,
             use_last_tool_call_response,
             status: SessionStatus::from_state(management.state),
@@ -120,7 +127,7 @@ impl SessionManager {
             .chars()
             .take(8)
             .collect::<String>();
-        format!("{prefix}-{}", now.timestamp_millis())
+        format!("{prefix}-{}-{}", now.timestamp_millis(), Uuid::new_v4())
     }
 }
 
@@ -129,6 +136,8 @@ pub struct SessionInfo {
     pub id: SessionId,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_user_message_at: Option<i64>,
     pub directory: Option<String>,
     pub model: Option<String>,
     pub agent: Option<String>,
@@ -160,6 +169,7 @@ impl SessionInfo {
             id: management.session_id.clone(),
             created_at: management.session_created_at.timestamp_millis(),
             updated_at: management.session_last_update_at.timestamp_millis(),
+            last_user_message_at: Some(management.session_last_user_message_at.timestamp_millis()),
             directory: Some(management.session_directory.to_string_lossy().to_string()),
             model: Some(coding_agent_provider()),
             agent: Some(CODING_AGENT_NAME.to_string()),
@@ -168,7 +178,7 @@ impl SessionInfo {
             validator_enabled: false,
             force_planning: false,
             model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
-            model_acceleration_enabled: true,
+            model_acceleration_enabled: false,
             disable_permission_restrictions: management.disable_permission_restrictions,
             use_last_tool_call_response: management.use_last_tool_call_response,
             status: SessionStatus::from_state(management.state),
@@ -187,10 +197,13 @@ pub fn normalize_session_type(session_type: Option<String>, agent: Option<&str>)
     match session_type.as_deref().or(agent) {
         Some("coding")
         | Some(CODING_AGENT_NAME)
+        | Some("fast")
         | Some(THINKING_AGENT_NAME)
-        | Some(CODING_AGENT_FAST_NAME)
+        | Some("thinking-planning")
+        | Some("thinking")
         | None => "coding".to_string(),
-        Some(CODING_AGENT_INSTANT_NAME) => "coding".to_string(),
+        Some(CODING_AGENT_FAST_TEXT_ONLY_NAME) => "coding".to_string(),
+        Some("fast-text-only") => "coding".to_string(),
         Some("coding_agent") | Some("coding_agent_planning") | Some("coding_agent_thinking") => {
             "coding".to_string()
         }
@@ -209,11 +222,15 @@ pub fn agent_for_session_type(session_type: &str) -> Option<String> {
 
 pub fn runtime_provider_for_session(session_type: &str, agent: Option<&str>) -> Option<String> {
     match (session_type, agent) {
-        (_, Some(CODING_AGENT_INSTANT_NAME)) => Some("fast".to_string()),
+        (_, Some(CODING_AGENT_NAME))
+        | (_, Some(CODING_AGENT_FAST_TEXT_ONLY_NAME))
+        | (_, Some("fast"))
+        | (_, Some("fast-text-only"))
+        | (_, Some("coding_agent_fast")) => Some("fast".to_string()),
         ("coding", _)
-        | (_, Some(CODING_AGENT_NAME))
         | (_, Some(THINKING_AGENT_NAME))
-        | (_, Some(CODING_AGENT_FAST_NAME))
+        | (_, Some("thinking-planning"))
+        | (_, Some("thinking"))
         | (_, Some("coding_agent"))
         | (_, Some("coding_agent_planning"))
         | (_, Some("coding_agent_thinking")) => Some(coding_agent_provider()),
@@ -230,20 +247,17 @@ pub fn default_use_last_tool_call_response_for_session(
         (session_type, agent),
         ("coding", _)
             | (_, Some(CODING_AGENT_NAME))
+            | (_, Some("fast"))
             | (_, Some(THINKING_AGENT_NAME))
-            | (_, Some(CODING_AGENT_FAST_NAME))
-            | (_, Some(CODING_AGENT_INSTANT_NAME))
+            | (_, Some("thinking-planning"))
+            | (_, Some("thinking"))
+            | (_, Some(CODING_AGENT_FAST_TEXT_ONLY_NAME))
+            | (_, Some("fast-text-only"))
             | (_, Some("coding_agent"))
             | (_, Some("coding_agent_planning"))
+            | (_, Some("coding_agent_fast"))
             | (_, Some("coding_agent_thinking"))
     )
-}
-
-fn session_topic_for_session_type(session_type: &str) -> String {
-    match session_type {
-        "coding" | "programming" | "development" | "testing" => "coding".to_string(),
-        other => other.to_string(),
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -259,7 +273,9 @@ impl SessionStatus {
         match state {
             SessionState::Created | SessionState::Completed => SessionStatus::Idle,
             SessionState::Running | SessionState::Paused => SessionStatus::Busy,
-            SessionState::Failed | SessionState::Cancelled => SessionStatus::Error,
+            SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {
+                SessionStatus::Error
+            }
         }
     }
 }
@@ -273,18 +289,32 @@ mod tests {
         let info = SessionManager::create_session(
             None,
             None,
-            Some("thinking-planning".to_string()),
+            Some(CODING_AGENT_NAME.to_string()),
             Some("coding".to_string()),
         );
 
         assert_eq!(info.agent.as_deref(), Some(CODING_AGENT_NAME));
-        assert_eq!(info.model, Some(coding_agent_provider()));
+        assert_eq!(info.model.as_deref(), Some("fast"));
         assert_eq!(info.session_type.as_deref(), Some("coding"));
-        assert_eq!(info.management.session_topic, "coding");
+        assert!(info.management.task_type.is_empty());
         assert!(!info.use_last_tool_call_response);
         assert!(!info.management.use_last_tool_call_response);
         assert!(info.management.auto_session_name);
         assert!(info.id.starts_with("sessions-"));
+    }
+
+    #[test]
+    fn generated_session_ids_are_unique_within_the_same_millisecond() {
+        let now = Utc::now();
+        let session_directory = PathBuf::from("concurrent-session-a");
+
+        let first = SessionManager::generate_session_id(&session_directory, now);
+        let second = SessionManager::generate_session_id(&session_directory, now);
+
+        assert_ne!(first, second);
+        let expected_prefix = format!("concurre-{}-", now.timestamp_millis());
+        assert!(first.starts_with(&expected_prefix));
+        assert!(second.starts_with(&expected_prefix));
     }
 
     #[test]
@@ -299,7 +329,7 @@ mod tests {
         assert_eq!(info.agent.as_deref(), Some("general_agent"));
         assert_eq!(info.model.as_deref(), Some("openai/gpt-5"));
         assert_eq!(info.session_type.as_deref(), Some("general"));
-        assert_eq!(info.management.session_topic, "general");
+        assert!(info.management.task_type.is_empty());
         assert!(info.use_last_tool_call_response);
         assert!(info.management.use_last_tool_call_response);
     }

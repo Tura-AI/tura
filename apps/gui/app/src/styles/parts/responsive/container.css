@@ -71,7 +71,7 @@
   .settings-view {
     --page-shell-padding-inline: var(--space-4);
     --page-shell-padding-bottom: var(--space-4);
-    height: 100vh;
+    height: 100%;
   }
 
   .settings-canvas,
@@ -158,7 +158,7 @@
   .agent-avatar {
     width: 56px;
     height: 56px;
-    border-radius: 14px;
+    border-radius: var(--radius-large);
   }
 
   .tool-inspector {
@@ -213,12 +213,5 @@
   .agent-list {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-  }
-}
-
-@container (max-width: 560px) {
-  .plan-schedule-datetime,
-  .plan-schedule-presets {
-    grid-template-columns: 1fr;
   }
 }

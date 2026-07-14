@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn normalizes_deepseek_dsml_command_run_content() {
         let content = text_tool_calls_value(
-            "<｜DSML｜parameter name=\"commands\" string=\"false\">[{\"command_type\":\"task_status\",\"status\":\"done\",\"task_summary\":\"finished\"}]",
+            "<｜DSML｜parameter name=\"commands\" string=\"false\">[{\"command_type\":\"task_status\",\"status\":\"done\",\"task_group\":\"商城前端\"}]",
         );
 
         assert_eq!(content[0]["function"]["name"], "command_run");
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn text_xml_invoke_becomes_tool_call() {
         let calls = extract_xml_tool_calls(
-            "<invoke name=\"command_run\"><parameter name=\"commands\">[{\"command_type\":\"task_status\",\"status\":\"done\",\"task_summary\":\"ok\"}]</parameter></invoke>",
+            "<invoke name=\"command_run\"><parameter name=\"commands\">[{\"command_type\":\"task_status\",\"status\":\"done\",\"task_group\":\"商城前端\"}]</parameter></invoke>",
         );
 
         assert_eq!(

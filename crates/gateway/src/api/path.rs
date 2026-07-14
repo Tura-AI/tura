@@ -1,14 +1,12 @@
-use crate::api::types::PathResponse;
+use crate::contracts::{PathParams, PathResponse};
 use axum::{extract::Query, http::HeaderMap, Json};
 
 pub async fn get_paths(headers: HeaderMap, Query(params): Query<PathParams>) -> Json<PathResponse> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| "C:\\Users\\default".to_string());
-    let appdata =
-        std::env::var("APPDATA").unwrap_or_else(|_| format!("{}\\AppData\\Roaming", home));
-    let state =
-        std::env::var("LOCALAPPDATA").unwrap_or_else(|_| format!("{}\\AppData\\Local", home));
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| format!("{home}\\AppData\\Roaming"));
+    let state = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| format!("{home}\\AppData\\Local"));
     let cwd = std::env::current_dir()
         .unwrap_or_default()
         .to_string_lossy()
@@ -24,11 +22,6 @@ pub async fn get_paths(headers: HeaderMap, Query(params): Query<PathParams>) -> 
         worktree: worktree.clone(),
         directory: worktree,
     })
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct PathParams {
-    pub directory: Option<String>,
 }
 
 fn encoded_header(headers: &HeaderMap, name: &str) -> Option<String> {

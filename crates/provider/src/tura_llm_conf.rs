@@ -12,22 +12,8 @@ fn config_path() -> PathBuf {
             return PathBuf::from(trimmed);
         }
     }
-    if let Ok(env_path) = env::var("TURALLM_CONFIG") {
-        let trimmed = env_path.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
-    }
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config_dir_path = manifest_dir.join("config").join("provider_config.json");
-    if config_dir_path.exists() {
-        return config_dir_path;
-    }
-    let legacy_config_dir_path = manifest_dir.join("config").join("tura_llm_config.json");
-    if legacy_config_dir_path.exists() {
-        return legacy_config_dir_path;
-    }
-    manifest_dir.join("src").join("provider_config.json")
+    manifest_dir.join("config").join("provider_config.json")
 }
 
 pub async fn load_settings() -> Result<Settings, TuraError> {
@@ -57,34 +43,19 @@ pub async fn load_settings() -> Result<Settings, TuraError> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
-
     use super::config_path;
 
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock")
-    }
-
     #[test]
-    fn config_path_prefers_explicit_turallm_config() {
-        let _guard = env_lock();
+    fn config_path_prefers_explicit_provider_config() {
+        let _guard = crate::test_support::env_lock();
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
-        let previous = std::env::var_os("TURALLM_CONFIG");
-        std::env::remove_var("TURA_PROVIDER_CONFIG");
-        std::env::set_var("TURALLM_CONFIG", "C:/tmp/tura-test-config.json");
+        std::env::set_var("TURA_PROVIDER_CONFIG", "C:/tmp/tura-test-config.json");
 
         assert_eq!(
             config_path(),
             std::path::PathBuf::from("C:/tmp/tura-test-config.json")
         );
 
-        match previous {
-            Some(value) => std::env::set_var("TURALLM_CONFIG", value),
-            None => std::env::remove_var("TURALLM_CONFIG"),
-        }
         match previous_provider {
             Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
             None => std::env::remove_var("TURA_PROVIDER_CONFIG"),
@@ -92,40 +63,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bundled_config_exposes_six_model_tiers() {
-        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-        let _guard = LOCK
-            .get_or_init(|| tokio::sync::Mutex::new(()))
-            .lock()
-            .await;
+    async fn bundled_config_exposes_four_model_tiers() {
+        let _guard = crate::test_support::env_lock_async().await;
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
-        let previous = std::env::var_os("TURALLM_CONFIG");
         std::env::remove_var("TURA_PROVIDER_CONFIG");
-        std::env::remove_var("TURALLM_CONFIG");
 
         let settings = super::load_settings().await.expect("load bundled config");
-        for route in [
-            "flagship_thinking",
-            "thinking",
-            "fast",
-            "instant",
-            "embedding_high",
-            "embedding_low",
-        ] {
+        for route in ["thinking", "fast", "embedding_high", "embedding_low"] {
             assert!(
                 settings.route_by_name(route).is_some(),
                 "missing route {route}"
             );
         }
-        assert_eq!(settings.routes.len(), 6);
+        assert_eq!(settings.routes.len(), 4);
         assert!(settings
             .configured_model_catalog()
             .contains_key("openrouter"));
 
-        match previous {
-            Some(value) => std::env::set_var("TURALLM_CONFIG", value),
-            None => std::env::remove_var("TURALLM_CONFIG"),
-        }
         match previous_provider {
             Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
             None => std::env::remove_var("TURA_PROVIDER_CONFIG"),

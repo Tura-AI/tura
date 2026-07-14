@@ -2,9 +2,10 @@
 
 ## Goal
 
-`apps/tui` provides the terminal-facing Tura client. Both the non-interactive
-CLI and the interactive TUI are TypeScript/Node applications in the same package.
-They should follow the repository's own gateway/session/runtime boundaries and
+`apps/tui` is Tura's terminal-facing client. The non-interactive CLI and the
+interactive TUI are TypeScript/Node applications in the same package because
+they share the same gateway path, not because the terminal should grow its own
+backend. Both follow the repository's gateway/session/runtime boundaries and
 reuse terminal interaction patterns only when they fit the current code.
 
 The TypeScript CLI/TUI must not embed the agent runtime, provider calls, command
@@ -25,7 +26,7 @@ stream, output formatting, and API types after the command path is stable.
 - Do not read or write `.tura/config.conf`, `.env`, or provider config files
   directly.
 - Do not create a separate local session/message database for the CLI/TUI app.
-- Do not make `/tui/*` compatibility routes the main implementation path.
+- Do not make `/tui/*` shortcut routes the main implementation path.
 
 ## Terminal Interaction Goals
 
@@ -36,7 +37,7 @@ through gateway HTTP and SSE calls.
 
 ## Session Log And Provider Diagnostics
 
-The CLI/TUI queries historical sessions through gateway APIs or the gateway
+The CLI/TUI queries past sessions through gateway APIs or the gateway
 CLI bridge. It must not read `.tura/sessions`, `db/session_log`, provider logs,
 or backend config files directly.
 
@@ -51,8 +52,8 @@ GET /session-log/{sessionID}/records?page=0&page_size=100
 Raw CLI bridge for scripts:
 
 ```powershell
-'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_gateway.exe session-log
 ```
 
 Provider call logs are backend diagnostics under
@@ -106,8 +107,18 @@ apps/tui/
   tsconfig.json
   scripts/
     web-terminal.mjs
-  e2e/
-    tui_gateway_cli_e2e.mjs
+  tests/
+    unit/
+    e2e/
+      business/
+      live/
+      tui_gateway_cli_e2e.mjs
+      tui_real_gateway_snake_playwright.mjs
+      tui_zip_password_playwright.mjs
+    live/
+  test-results/
+    unit-dist/
+    <suite>/<run-id>/
   src/
     index.ts
     cli.ts
@@ -167,7 +178,8 @@ Default gateway URL resolution:
 
 1. `--gateway-url`
 2. `TURA_GATEWAY_URL`
-3. `http://127.0.0.1:4096`
+3. `.tura/gateway-active.env`
+4. Build default: `http://127.0.0.1:4125` in dev, `http://127.0.0.1:4126` in release.
 
 Every request that is workspace-scoped must send the current directory through
 both compatible mechanisms until the API is fully documented:
@@ -177,8 +189,8 @@ query:  ?directory=<workspace path>
 header: x-opencode-directory: <percent-encoded workspace path>
 ```
 
-The CLI/TUI app may start or health-check the gateway only through an approved
-launcher path. It must not replace the gateway with direct crate calls.
+The CLI/TUI app may only health-check and connect to gateway. Gateway is owned
+by the gateway process tree, not by TUI launchers or direct crate calls.
 
 Core endpoint map:
 
@@ -219,9 +231,13 @@ skills/plugins                 GET    /skill, GET /plugin
 paths                          GET    /path
 ```
 
-The existing `/tui/*` routes in gateway are compatibility shortcuts. The new
-TypeScript CLI/TUI should prefer the richer session/message/config endpoints,
-and only use `/tui/*` for compatibility shims or very early smoke tests.
+The `/tui/*` routes in gateway are shortcuts. The TypeScript CLI/TUI should
+prefer the richer session/message/config endpoints, and only use `/tui/*` for
+very small smoke tests.
+
+`scripts/web-terminal.mjs` is a browser debugging wrapper around the built TUI.
+Its pty shell can be forced with `TURA_WEB_TERMINAL_SHELL`; otherwise it uses
+the user's shell, macOS `/bin/zsh`, then bash/sh fallbacks.
 
 ## Session Plan Commands
 
@@ -320,8 +336,8 @@ settings. Persistent changes belong to `tura config set`.
 ## Run Flow
 
 Use `/prompt_async` as the default execution endpoint because it returns
-immediately and lets the CLI stream `/event`. Keep `/message` only as a
-compatibility fallback because it currently runs synchronously.
+immediately and lets the CLI stream `/event`. Use `/message` only for simple
+synchronous calls.
 
 ```text
 parse args
@@ -368,7 +384,7 @@ The CLI should send a frontend-compatible prompt payload to `/prompt_async`:
     }
   ],
   "model": "openai/gpt-5.5",
-  "agent": "thinking-planning",
+  "agent": "thoughtful",
   "source": "cli"
 }
 ```
@@ -382,7 +398,9 @@ Gateway already extracts:
   `model_acceleration_enabled`
 
 The same prompt shape should be reused by the later interactive TUI so terminal
-clients behave consistently.
+clients behave consistently. Both CLI `run` and the interactive TUI default
+`model_acceleration_enabled` to `false`; explicit saved config or run flags may
+still set it to `false`.
 
 ## Completion Detection
 
@@ -470,6 +488,66 @@ UI surfaces to port from the Codex TUI idea:
 The TUI should not invent hidden state. Every durable choice should be reflected
 through gateway config APIs.
 
+## Long-Conversation Rendering (Bounded Transcript Scroll)
+
+Requirement: the transcript must stay responsive and fully navigable for
+sessions with thousands of messages. A long history must never make the TUI
+unresponsive or force the user to switch/abandon the session to recover.
+
+The Codex-inspired repair plan for streaming smoothness, scroll stability, and
+delta-only live rendering is documented in
+[`docs/tui-streaming-render-plan.md`](../../docs/tui-streaming-render-plan.md).
+
+Existing scroll system — preserve exactly, do not regress:
+
+- `tui/render.ts:transcriptLines()` builds lines only from a tail of the message
+  array, then `viewportLines()` / `smartViewportLines()` window the rows by
+  `state.scrollOffset`.
+- Scroll input: the reducer `scroll` action (`tui/reducer.ts`) clamps
+  `scrollOffset >= 0`; Up/Down = ±1 line, PageUp/PageDown = ±10.
+- `draw()` (`tui/app.ts`) repaints absolute per-line
+  (`\x1b[{row};1H\x1b[2K{line}`) and emits **no newlines**, so the screen can
+  never push lines into terminal scrollback.
+
+These three properties — tail-bounded render, `scrollOffset` row windowing, and
+newline-free absolute repaint — are the scroll contract. Do not switch to
+newline-emitting frames, alternate-screen scroll regions, or unbounded line
+building.
+
+Gap to close: the render tail is a fixed `state.messages.slice(-100)`. It bounds
+cost but makes older history unreachable — the user cannot scroll above the last
+100 messages and `scrollOffset` saturates at the top of that window even though
+the history exists in `state.messages` and in the gateway. For long sessions
+that is the failure this requirement targets.
+
+Required design:
+
+- Replace the fixed `slice(-100)` tail with a **sliding message window** anchored
+  on scroll position. The window keeps a fixed render budget (enough messages to
+  fill a few screens), but its start index moves earlier as `scrollOffset`
+  reaches the top of the rendered set and later as the user scrolls back toward
+  the bottom.
+- Per-frame line building stays bounded: never wrap/lay out more than the
+  windowed message set, regardless of `state.messages.length`. Frame cost must be
+  O(window), not O(history).
+- When the window reaches messages not yet held locally, fetch older messages
+  from gateway (`GET /session/{sessionID}/message`, paged) and splice them into
+  `state.messages` **without moving the visible anchor** (no scroll jump). Until
+  paged message retrieval exists, cap the in-memory window and document the cap,
+  but never block the render loop on history size.
+- Keep "stick to bottom on new activity" exactly: `scrollOffset === 0` keeps
+  meaning "follow the latest", and streaming `message.updated` while at the
+  bottom must keep the newest content visible with no jump.
+
+Acceptance criteria:
+
+- A session with 5,000+ messages keeps keystroke-to-repaint latency flat and
+  equal to a short session.
+- The user can scroll continuously from the latest message back to the first
+  with no hard stop at 100 and no freeze.
+- No regression in `npm run test:e2e` / `npm run test:stream` or the
+  absolute-repaint no-scrollback guarantee.
+
 ## Config And Settings
 
 Use the current Tura architecture:
@@ -530,19 +608,85 @@ Non-interactive CLI:
 
 ## Testing Strategy
 
-Initial tests:
+The test suite should be layered. Keep fast invariant tests in
+`apps/tui/tests/unit/**/*.test.ts` and use Playwright only where a
+browser/xterm/user-agent boundary is required. Do not use live provider calls
+for ordinary regressions; mock gateway scripts own the terminal surface, and
+root live tests own release acceptance.
+
+Fast unit and edge tests:
 
 - unit tests for CLI parsing and output formatting
 - gateway client tests against a mock HTTP server
 - SSE envelope parser tests
 - NDJSON golden tests for non-interactive `run`
 - timeout and gateway-unavailable tests
+- terminal capability tests for CI/non-TTY, dumb/unknown terminals, ANSI
+  terminals, and rich user-agent signals (`TERM_PROGRAM`, WezTerm, Kitty,
+  Ghostty, Windows Terminal, VS Code, xterm-256color)
+- keyboard input tests for printable Unicode, control characters, escape
+  sequences, and malformed key payloads
+- terminal rendering edge tests for ANSI preservation, truncation, CJK width,
+  emoji width, combining marks, narrow columns, and plain/rich fallbacks
+- reducer tests for idempotent event replay, cross-workspace filtering,
+  out-of-order streaming deltas, session picker stability, setting selection,
+  error/notice state, and stale-session transcript clearing
+- lightweight performance smoke tests for large wrapped/streamed terminal output
+  so rendering regressions are caught before they become “why is my terminal a
+  toaster” incidents
 
-Later interactive tests:
+Interactive and browser tests:
 
 - reducer tests for gateway event ingestion
 - terminal UI snapshot tests for transcript/status/permission panes
 - resize tests for compact and wide terminal widths
+- Playwright web-terminal profile smoke for `/plain`, `/ansi`, `/rich`
+- Playwright mobile user-agent smoke for small viewport wrapping and horizontal
+  overflow checks
+- Playwright regression tests for transcript history, composer wrapping, colors,
+  xterm rendering, and raw ANSI/control leak prevention
+- mock-gateway business tests for streaming, multi-session, refresh/replay, and
+  local task workflows
+
+Current app-owned commands:
+
+```text
+npm test                         # build + all tests/unit suites
+npm run test:e2e                 # mock gateway CLI and web-terminal e2e
+npm run test:e2e:profiles        # Playwright profile + mobile user-agent smoke
+npm run test:stream              # mock gateway stream flow
+npm run test:business            # local business suite
+npm run test:live:*              # real gateway/provider acceptance, opt-in only
+```
+
+Coverage expectations by boundary:
+
+```text
+CLI parser/output        unit tests + mock gateway e2e
+Gateway HTTP client      mock HTTP unit tests: success, HTTP error, timeout, concurrency
+SSE parsing              parser/normalizer unit tests + stream e2e
+Reducer/event state      unit tests for replay, filters, panels, sessions, settings
+Renderer                 unit tests for width/wrap/truncate + render snapshots
+Keyboard/composer        unit tests + Playwright xterm smoke
+Terminal capabilities    unit tests for env/user-agent signals + profile e2e
+Web terminal wrapper     Playwright profile/mobile/regression tests
+Live release surface     root live tests only
+```
+
+App-local TUI tests live under `apps/tui/tests`: `unit/` for Node test suites,
+`e2e/business/` for local business harnesses, `e2e/live/` for provider-backed
+flows, and `live/` for app-owned live checks. App-local test outputs must go
+under `apps/tui/test-results/<suite>/<run-id>/`. TUI release-entry scripts live
+under root `tests/release/tui_release_*.mjs`, but their logs, summaries,
+screenshots, and workspaces default to
+`apps/tui/test-results/release/<profile>/tui/<case>/<run-id>/`. TUI benchmarks
+should also archive outputs under `apps/tui/test-results/benchmark/...`; only
+the compiled debug/release binaries are read from `target/<profile>`.
+
+Release-entry acceptance tests that validate the registered release
+command surface belong in root `tests/release/tui_release_*.mjs` for the TUI
+surface. Root `tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
+`benchmark/` owns comparison and scoring benchmarks.
 
 ## Implementation Phases
 

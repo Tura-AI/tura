@@ -47,7 +47,7 @@
   max-height: 50vh;
   align-self: end;
   overflow: visible;
-  padding: var(--space-3);
+  padding: var(--space-2);
   border-top: 1px solid var(--line);
   background: var(--paper);
   box-shadow: var(--shadow-control);
@@ -109,15 +109,50 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
   padding: 0;
   scrollbar-gutter: stable both-edges;
 }
 
 .transcript-inner {
+  position: relative;
   display: grid;
   align-content: start;
   min-height: 100%;
   padding: var(--space-4) 0 var(--space-2);
+}
+
+.transcript-virtual-space {
+  position: relative;
+  width: 100%;
+  min-height: 1px;
+}
+
+.transcript-virtual-space.transcript-render-preparing {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.transcript-history-control {
+  display: flex;
+  justify-content: center;
+  padding: 0 0 var(--space-3);
+}
+
+.transcript-history-button {
+  min-height: 30px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-small);
+}
+
+.transcript-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  contain: layout paint;
+  will-change: transform;
 }
 
 .conversation-bottom {
@@ -128,7 +163,6 @@
   overflow: visible;
 }
 
-.conversation-bottom > .composer-task-dock,
 .conversation-bottom > .bottom-composer {
   width: min(var(--page-max), calc(100% - var(--page-edge-space) * 2));
 }
@@ -143,7 +177,7 @@
   height: 38px;
   place-items: center;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: var(--surface);
   color: var(--ink);
   box-shadow: var(--shadow-control);

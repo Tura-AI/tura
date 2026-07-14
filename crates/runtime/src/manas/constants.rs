@@ -1,12 +1,20 @@
-pub(super) const PLANNING_TOOL: &str = "planning";
-pub(super) const COMMAND_RUN_TOOL: &str = "command_run";
-pub(super) const TASK_STATUS_COMMAND: &str = "task_status";
-pub(super) const APPLY_DIFF_TOOL: &str = "apply_patch";
-pub(super) const DELETE_FILE_TOOL: &str = "rm";
-pub(super) const WRITE_FILE_TOOL: &str = "tee";
-pub(super) const BATCH_INPUT_TOOLS: &[&str] = &["apply_patch", "apply_diff"];
+pub(crate) const PLANNING_TOOL: &str = "planning";
+pub(crate) const COMMAND_RUN_TOOL: &str = "command_run";
+pub(crate) const TASK_STATUS_COMMAND: &str = "task_status";
 pub(super) const DISABLE_PLANNING_TOOL_ENV: &str = "TURA_DISABLE_PLANNING_TOOL";
 pub(super) const DISABLE_EXECUTE_TOOLS_TOOL_ENV: &str = "TURA_DISABLE_EXECUTE_TOOLS_TOOL";
 pub(super) const PROJECT_ROOT_ENV: &str = "TURA_PROJECT_ROOT";
-pub(super) const APPROVAL_POLICY_ENV: &str = "TURA_APPROVAL_POLICY";
-pub(super) const DISABLE_GATEWAY_CALLBACKS_ENV: &str = "TURA_DISABLE_GATEWAY_CALLBACKS";
+pub(crate) const APPROVAL_POLICY_ENV: &str = "TURA_APPROVAL_POLICY";
+pub(crate) const GATEWAY_CALLBACKS_ENV: &str = "TURA_GATEWAY_CALLBACKS";
+
+pub(crate) fn gateway_callbacks_disabled() -> bool {
+    std::env::var(GATEWAY_CALLBACKS_ENV)
+        .ok()
+        .as_deref()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off" | "disabled"
+            )
+        })
+}

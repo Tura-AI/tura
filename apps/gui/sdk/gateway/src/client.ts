@@ -1,21 +1,30 @@
 import { GatewayError } from "./errors";
 import type {
   Agent,
+  AboutInfo,
+  AboutOpenResponse,
+  AboutOpenTarget,
+  AboutStarResponse,
+  AboutUpdateCheckResponse,
+  AboutUpdateInstallResponse,
   AgentUpsertRequest,
   StoredPersona,
   Command,
   CreateSessionRequest,
   CurrentProjectResponse,
   FileContentResponse,
+  FileInputSaveRequest,
+  FileInputSaveResponse,
   FileOpenResponse,
   GatewayConfig,
   HealthResponse,
   FileInfo,
   Message,
-  MessageListItem,
+  MessageListInput,
   PathResponse,
   ProviderAuthActionResponse,
   ProviderAuthInput,
+  ProviderAuthValidationInput,
   ProviderAuthMethod,
   ProviderAuthStatusResponse,
   ProductConfig,
@@ -63,7 +72,7 @@ export class GatewayClient {
     this.baseUrl = normalizeBaseUrl(options.baseUrl ?? defaultGatewayUrl());
     this.directory = options.directory;
     this.fetchImpl = options.fetch ?? resolveFetch();
-    this.timeoutMs = options.timeoutMs ?? 5_000;
+    this.timeoutMs = options.timeoutMs ?? 20_000;
   }
 
   withDirectory(directory?: string): GatewayClient {
@@ -77,6 +86,29 @@ export class GatewayClient {
 
   health(): Promise<HealthResponse> {
     return this.get("/global/health");
+  }
+
+  aboutInfo(): Promise<AboutInfo> {
+    return this.get("/about");
+  }
+
+  starTuraRepository(): Promise<AboutStarResponse> {
+    return this.request("/about/star", {
+      method: "POST",
+      body: "{}",
+    });
+  }
+
+  openAboutTarget(target: AboutOpenTarget): Promise<AboutOpenResponse> {
+    return this.post("/about/open", { target });
+  }
+
+  checkTuraUpdate(): Promise<AboutUpdateCheckResponse> {
+    return this.get("/about/update/check");
+  }
+
+  installTuraUpdate(version: string, sessionId?: string): Promise<AboutUpdateInstallResponse> {
+    return this.post("/about/update/install", { version, session_id: sessionId });
   }
 
   config(): Promise<GatewayConfig> {
@@ -110,9 +142,7 @@ export class GatewayClient {
     return this.get("/api/workspaces");
   }
 
-  productIssues(
-    input: { workspaceId?: string; search?: string } = {},
-  ): Promise<ProductIssue[]> {
+  productIssues(input: { workspaceId?: string; search?: string } = {}): Promise<ProductIssue[]> {
     return this.get("/api/issues", {
       workspace_id: input.workspaceId,
       search: input.search,
@@ -123,10 +153,7 @@ export class GatewayClient {
     return this.post("/api/issues/quick-create", payload);
   }
 
-  updateProductIssue(
-    issueId: string,
-    payload: ProductIssueInput,
-  ): Promise<ProductIssue | null> {
+  updateProductIssue(issueId: string, payload: ProductIssueInput): Promise<ProductIssue | null> {
     return this.patch(`/api/issues/${encodeURIComponent(issueId)}`, payload);
   }
 
@@ -142,9 +169,7 @@ export class GatewayClient {
     return this.post("/project/workspace/default", {});
   }
 
-  selectLocalWorkspace(
-    input: { title?: string } = {},
-  ): Promise<Project | null> {
+  selectLocalWorkspace(input: { title?: string } = {}): Promise<Project | null> {
     return this.post("/project/workspace/select-local", input);
   }
 
@@ -164,17 +189,28 @@ export class GatewayClient {
     return this.get("/project");
   }
 
-  sessions(
-    input: { limit?: number; search?: string } = {},
-  ): Promise<Session[]> {
+  sessions(input: { limit?: number; search?: string } = {}): Promise<Session[]> {
     if (!input.search) {
       return this.sessionLogSessions({
         page: 0,
         page_size: input.limit ?? 100,
       })
-        .then((response) => response.sessions.map(sessionFromLogSnapshot))
+        .then((response) => {
+          const sessions = response.sessions.map(sessionFromLogSnapshot);
+          if (sessions.length > 0) {
+            return sessions;
+          }
+          return this.get<Session[]>(
+            "/session",
+            {
+              limit: input.limit,
+              includeChildren: true,
+            },
+            true,
+          );
+        })
         .catch(() =>
-          this.get(
+          this.get<Session[]>(
             "/session",
             {
               limit: input.limit,
@@ -235,44 +271,38 @@ export class GatewayClient {
     );
   }
 
-  updateSession(
-    sessionId: string,
-    payload: Partial<Session>,
-  ): Promise<Session> {
+  updateSession(sessionId: string, payload: Partial<Session>): Promise<Session> {
     return this.patch(`/session/${encodeURIComponent(sessionId)}`, payload);
+  }
+
+  deleteSession(sessionId: string): Promise<boolean> {
+    return this.delete(`/session/${encodeURIComponent(sessionId)}`);
   }
 
   updateSessionTaskManagement(
     sessionId: string,
     task_management: TaskManagement | TaskManagement[],
   ): Promise<Session> {
-    return this.patch(
-      `/session/${encodeURIComponent(sessionId)}/task-management`,
-      { task_management },
-    );
+    return this.patch(`/session/${encodeURIComponent(sessionId)}/task-management`, {
+      task_management,
+    });
   }
 
-  async messages(sessionId: string): Promise<Message[]> {
-    const items = await this.get<MessageListItem[]>(
-      `/session/${encodeURIComponent(sessionId)}/message`,
-    );
-    return items
-      .map(normalizeMessageListItem)
-      .filter((message): message is Message => !!message?.id);
+  async messages(sessionId: string, input: MessageListInput = {}): Promise<Message[]> {
+    const response = await this.get<unknown>(`/session/${encodeURIComponent(sessionId)}/message`, {
+      limit: input.limit,
+      before: input.before,
+      after: input.after,
+    });
+    return normalizeMessagesResponse(response);
   }
 
-  async promptAsync(
-    sessionId: string,
-    payload: PromptAsyncRequest,
-  ): Promise<void> {
-    await this.request(
-      `/session/${encodeURIComponent(sessionId)}/prompt_async`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-        timeoutMs: 120_000,
-      },
-    );
+  async promptAsync(sessionId: string, payload: PromptAsyncRequest): Promise<void> {
+    await this.request(`/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      timeoutMs: 120_000,
+    });
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -291,10 +321,7 @@ export class GatewayClient {
     return this.get(`/provider/${encodeURIComponent(providerId)}/auth/status`);
   }
 
-  setProviderAuth(
-    providerId: string,
-    payload: ProviderAuthInput,
-  ): Promise<boolean> {
+  setProviderAuth(providerId: string, payload: ProviderAuthInput): Promise<boolean> {
     return this.request<boolean>(`/auth/${encodeURIComponent(providerId)}`, {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -302,39 +329,28 @@ export class GatewayClient {
   }
 
   providerAuthLogout(providerId: string): Promise<ProviderAuthActionResponse> {
-    return this.post(
-      `/provider/${encodeURIComponent(providerId)}/auth/logout`,
-      {},
-    );
+    return this.post(`/provider/${encodeURIComponent(providerId)}/auth/logout`, {});
   }
 
   providerAuthValidate(
     providerId: string,
+    payload: ProviderAuthValidationInput = {},
   ): Promise<ProviderAuthActionResponse> {
-    return this.post(
-      `/provider/${encodeURIComponent(providerId)}/auth/validate`,
-      {},
-    );
+    return this.post(`/provider/${encodeURIComponent(providerId)}/auth/validate`, payload);
   }
 
   providerOauthAuthorize(
     providerId: string,
     payload: { method: number; inputs?: Record<string, string> },
   ): Promise<OAuthAuthorizeResponse> {
-    return this.post(
-      `/provider/${encodeURIComponent(providerId)}/oauth/authorize`,
-      payload,
-    );
+    return this.post(`/provider/${encodeURIComponent(providerId)}/oauth/authorize`, payload);
   }
 
   providerOauthCallback(
     providerId: string,
     payload: OAuthCallbackInput,
   ): Promise<ProviderAuthActionResponse> {
-    return this.post(
-      `/provider/${encodeURIComponent(providerId)}/oauth/callback`,
-      payload,
-    );
+    return this.post(`/provider/${encodeURIComponent(providerId)}/oauth/callback`, payload);
   }
 
   agents(): Promise<Agent[]> {
@@ -349,10 +365,7 @@ export class GatewayClient {
     return this.post("/agent", payload);
   }
 
-  updateAgent(
-    agentId: string,
-    payload: AgentUpsertRequest,
-  ): Promise<StoredAgent> {
+  updateAgent(agentId: string, payload: AgentUpsertRequest): Promise<StoredAgent> {
     return this.patch(`/agent/${encodeURIComponent(agentId)}`, payload);
   }
 
@@ -368,10 +381,7 @@ export class GatewayClient {
     return this.get("/command");
   }
 
-  executeCommand(
-    command: string,
-    args: string[] = [],
-  ): Promise<{ output: string }> {
+  executeCommand(command: string, args: string[] = []): Promise<{ output: string }> {
     return this.post("/command", { command, args });
   }
 
@@ -381,6 +391,10 @@ export class GatewayClient {
 
   fileContent(path: string): Promise<FileContentResponse> {
     return this.get("/file/content", { path }, true);
+  }
+
+  saveInputFile(payload: FileInputSaveRequest): Promise<FileInputSaveResponse> {
+    return this.post("/file/input", payload, undefined, true);
   }
 
   openFile(path: string): Promise<FileOpenResponse> {
@@ -399,17 +413,11 @@ export class GatewayClient {
     return this.get("/session/config", undefined, true);
   }
 
-  patchWorkspaceConfig(
-    payload: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
+  patchWorkspaceConfig(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.patch("/session/config", payload, undefined, true);
   }
 
-  private get<T>(
-    path: string,
-    query?: Record<string, unknown>,
-    scoped = false,
-  ): Promise<T> {
+  private get<T>(path: string, query?: Record<string, unknown>, scoped = false): Promise<T> {
     return this.request<T>(path, { method: "GET" }, query, scoped);
   }
 
@@ -419,12 +427,7 @@ export class GatewayClient {
     query?: Record<string, unknown>,
     scoped = false,
   ): Promise<T> {
-    return this.request<T>(
-      path,
-      { method: "POST", body: JSON.stringify(payload) },
-      query,
-      scoped,
-    );
+    return this.request<T>(path, { method: "POST", body: JSON.stringify(payload) }, query, scoped);
   }
 
   private patch<T>(
@@ -433,19 +436,10 @@ export class GatewayClient {
     query?: Record<string, unknown>,
     scoped = false,
   ): Promise<T> {
-    return this.request<T>(
-      path,
-      { method: "PATCH", body: JSON.stringify(payload) },
-      query,
-      scoped,
-    );
+    return this.request<T>(path, { method: "PATCH", body: JSON.stringify(payload) }, query, scoped);
   }
 
-  private delete<T>(
-    path: string,
-    query?: Record<string, unknown>,
-    scoped = false,
-  ): Promise<T> {
+  private delete<T>(path: string, query?: Record<string, unknown>, scoped = false): Promise<T> {
     return this.request<T>(path, { method: "DELETE" }, query, scoped);
   }
 
@@ -471,20 +465,12 @@ export class GatewayClient {
     }
 
     const { timeoutMs, ...fetchInit } = init;
-    const { signal, dispose } = timeoutSignal(
-      init.signal,
-      timeoutMs ?? this.timeoutMs,
-    );
-    let response: Response;
-    try {
-      response = await this.fetchImpl(url, {
-        ...fetchInit,
-        headers,
-        signal,
-      });
-    } finally {
-      dispose();
-    }
+    const response = await fetchWithRetry(this.fetchImpl, url, {
+      ...fetchInit,
+      headers,
+      signal: init.signal,
+      timeoutMs: timeoutMs ?? this.timeoutMs,
+    });
 
     if (!response.ok) {
       throw new GatewayError(
@@ -522,20 +508,12 @@ export class GatewayClient {
     }
 
     const { timeoutMs, ...fetchInit } = init;
-    const { signal, dispose } = timeoutSignal(
-      init.signal,
-      timeoutMs ?? this.timeoutMs,
-    );
-    let response: Response;
-    try {
-      response = await this.fetchImpl(url, {
-        ...fetchInit,
-        headers,
-        signal,
-      });
-    } finally {
-      dispose();
-    }
+    const response = await fetchWithRetry(this.fetchImpl, url, {
+      ...fetchInit,
+      headers,
+      signal: init.signal,
+      timeoutMs: timeoutMs ?? this.timeoutMs,
+    });
 
     if (!response.ok) {
       throw new GatewayError(
@@ -561,8 +539,7 @@ export class GatewayClient {
 export function defaultGatewayUrl(): string {
   const fromQuery =
     typeof window !== "undefined"
-      ? (new URLSearchParams(window.location.search).get("gatewayUrl") ??
-        undefined)
+      ? (new URLSearchParams(window.location.search).get("gatewayUrl") ?? undefined)
       : undefined;
   const fromWindow =
     typeof window !== "undefined" && "localStorage" in window
@@ -573,10 +550,15 @@ export function defaultGatewayUrl(): string {
   };
   const fromVite = meta.env?.VITE_TURA_GATEWAY_URL;
   return (
-    [fromQuery, fromWindow, fromVite].find((value) =>
-      isValidGatewayUrl(value),
-    ) || "http://127.0.0.1:4096"
+    [fromQuery, fromWindow, fromVite].find((value) => isValidGatewayUrl(value)) ||
+    defaultLocalGatewayUrl()
   );
+}
+
+function defaultLocalGatewayUrl(): string {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
+    ? "http://127.0.0.1:4126"
+    : "http://127.0.0.1:4126";
 }
 
 function sessionFromLogSnapshot(snapshot: SessionLogSnapshot): Session {
@@ -592,6 +574,25 @@ function sessionFromLogSnapshot(snapshot: SessionLogSnapshot): Session {
     task_management: snapshot.task_management as Session["task_management"],
     plan_summary: readString(snapshot.task_management, "plan_summary"),
   };
+}
+
+function normalizeMessagesResponse(value: unknown): Message[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const info = record.info;
+    if (
+      info &&
+      typeof info === "object" &&
+      typeof (info as Record<string, unknown>).id === "string"
+    ) {
+      const message = { ...(info as Record<string, unknown>) } as Message;
+      if (Array.isArray(record.parts)) message.parts = record.parts as Message["parts"];
+      return [message];
+    }
+    return typeof record.id === "string" ? [record as Message] : [];
+  });
 }
 
 function normalizeSessionStatus(status?: string | null): Session["status"] {
@@ -614,19 +615,14 @@ function isValidGatewayUrl(value: string | undefined | null): value is string {
   if (!value?.trim()) return false;
   try {
     const url = new URL(value);
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") && !!url.host
-    );
+    return (url.protocol === "http:" || url.protocol === "https:") && !!url.host;
   } catch {
     return false;
   }
 }
 
 function resolveFetch(): typeof fetch {
-  if (
-    typeof globalThis !== "undefined" &&
-    typeof globalThis.fetch === "function"
-  ) {
+  if (typeof globalThis !== "undefined" && typeof globalThis.fetch === "function") {
     return globalThis.fetch.bind(globalThis);
   }
   if (
@@ -639,14 +635,60 @@ function resolveFetch(): typeof fetch {
   return unavailableFetch as typeof fetch;
 }
 
+async function fetchWithRetry(
+  fetchImpl: typeof fetch,
+  input: RequestInfo | URL,
+  init: RequestInit & { timeoutMs: number },
+): Promise<Response> {
+  const { timeoutMs, signal: upstreamSignal, ...fetchInit } = init;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { signal, dispose } = timeoutSignal(upstreamSignal, timeoutMs);
+    try {
+      return await fetchImpl(input, {
+        ...fetchInit,
+        signal,
+      });
+    } catch (error) {
+      lastError = error;
+      if (upstreamSignal?.aborted || !isRetryableNetworkError(error) || attempt > 0) {
+        throw error;
+      }
+      await sleep(250);
+    } finally {
+      dispose();
+    }
+  }
+  throw lastError;
+}
+
+function isRetryableNetworkError(error: unknown): boolean {
+  if (error instanceof DOMException) {
+    return error.name === "AbortError" || error.name === "NetworkError";
+  }
+  if (error instanceof TypeError || error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("network_changed") ||
+      message.includes("network changed") ||
+      message.includes("failed to fetch") ||
+      message.includes("fetch failed") ||
+      message.includes("networkerror") ||
+      message.includes("network error")
+    );
+  }
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function unavailableFetch(input: RequestInfo | URL): Promise<Response> {
   throw new Error(`No fetch implementation available for ${String(input)}`);
 }
 
-function xhrFetch(
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-): Promise<Response> {
+function xhrFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     const method = init.method ?? "GET";
@@ -666,10 +708,8 @@ function xhrFetch(
         }),
       );
     };
-    request.onerror = () =>
-      reject(new TypeError(`Network request failed: ${url}`));
-    request.ontimeout = () =>
-      reject(new DOMException(`Request timed out: ${url}`, "TimeoutError"));
+    request.onerror = () => reject(new TypeError(`Network request failed: ${url}`));
+    request.ontimeout = () => reject(new DOMException(`Request timed out: ${url}`, "TimeoutError"));
 
     if (init.signal) {
       init.signal.addEventListener(
@@ -713,26 +753,11 @@ async function readResponseBody(response: Response): Promise<unknown> {
   }
 }
 
-function normalizeMessageListItem(item: MessageListItem): Message | undefined {
-  if ("info" in item) {
-    return {
-      ...item.info,
-      parts: item.parts ?? item.info.parts ?? [],
-    };
-  }
-  return item;
-}
-
 function timeoutSignal(
   existing: AbortSignal | null | undefined,
   timeoutMs: number,
 ): { signal?: AbortSignal; dispose: () => void } {
-  if (
-    existing ||
-    !timeoutMs ||
-    timeoutMs < 1 ||
-    typeof AbortController === "undefined"
-  ) {
+  if (existing || !timeoutMs || timeoutMs < 1 || typeof AbortController === "undefined") {
     return { signal: existing ?? undefined, dispose: () => undefined };
   }
   const controller = new AbortController();
@@ -746,10 +771,7 @@ function timeoutSignal(
     return { signal: existing ?? undefined, dispose: () => undefined };
   }
   const timer = scheduler.setTimeout(
-    () =>
-      controller.abort(
-        new DOMException("Gateway request timed out.", "TimeoutError"),
-      ),
+    () => controller.abort(new DOMException("Gateway request timed out.", "TimeoutError")),
     timeoutMs,
   );
   return {

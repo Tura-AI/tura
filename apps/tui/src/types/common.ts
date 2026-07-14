@@ -2,12 +2,18 @@ export type JsonObject = Record<string, unknown>;
 
 export interface CliContext {
   gatewayUrl: string;
+  /** True when the gateway URL was explicitly chosen (flag or TURA_GATEWAY_URL),
+   * so a reachable Tura gateway there is reused without the root identity check. */
+  gatewayUrlExplicit: boolean;
   cwd: string;
   json: boolean;
   color: ColorMode;
   display: DisplayMode;
   language?: "zh-CN" | "en";
+  initialSessionId?: string;
   verbose: boolean;
+  mock: boolean;
+  dev: boolean;
 }
 
 export type ColorMode = "auto" | "always" | "never";

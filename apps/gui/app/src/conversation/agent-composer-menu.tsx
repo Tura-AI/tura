@@ -1,27 +1,24 @@
 import type { Agent, TuraConfigResponse } from "@tura/gateway-sdk";
 import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
-import {
-  For,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-} from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { AgentIcon } from "../components/agent-icon";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
 import type { SettingsSection } from "../state/global-store";
+import { agentDisplayName, visibleConfigurableAgents } from "../utils/agent-display";
 import {
-  agentDisplayName,
-  visibleConfigurableAgents,
-} from "../utils/agent-display";
+  agentRuntimeConfig,
+  formatAgentRuntimeModelText,
+  modelForRuntimeTier,
+  modelPairText,
+} from "../../../../tui/src/agent-runtime-config";
 
 export function AgentComposerMenu(props: {
   agents: Agent[];
   modelConfig?: TuraConfigResponse;
   selectedAgent?: string;
+  selectedModel?: string;
   onAgent: (agentId: string) => void;
   onSettings: (section: SettingsSection) => void;
 }) {
@@ -29,13 +26,16 @@ export function AgentComposerMenu(props: {
   let menu: HTMLDivElement | undefined;
   const [open, setOpen] = createSignal(false);
   const [menuStyle, setMenuStyle] = createSignal<Record<string, string>>({});
-  const visibleAgents = createMemo(() =>
-    visibleConfigurableAgents(props.agents),
-  );
+  const visibleAgents = createMemo(() => visibleConfigurableAgents(props.agents));
   const selectedAgent = createMemo(
-    () =>
-      visibleAgents().find((agent) => agent.name === props.selectedAgent) ??
-      visibleAgents()[0],
+    () => visibleAgents().find((agent) => agent.name === props.selectedAgent) ?? visibleAgents()[0],
+  );
+  const selectedModelText = createMemo(() =>
+    selectedAgent()
+      ? agentModelText(selectedAgent()!, props.modelConfig, props.selectedModel)
+      : props.selectedModel
+        ? runtimeModelText(props.selectedModel, props.modelConfig)
+        : "",
   );
 
   function updateMenuPosition() {
@@ -59,6 +59,7 @@ export function AgentComposerMenu(props: {
       setMenuStyle({});
       return;
     }
+    updateMenuPosition();
     const frame = window.requestAnimationFrame(updateMenuPosition);
     const closeOutside = (event: PointerEvent) => {
       if (!root?.contains(event.target as Node)) {
@@ -92,12 +93,10 @@ export function AgentComposerMenu(props: {
         type="button"
         class="plan-trigger-button agent-trigger-button"
         onClick={() => setOpen(!open())}
-        title={agentDisplayName(selectedAgent()) || t("agent")}
+        title={selectedModelText() || agentDisplayName(selectedAgent()) || t("agent")}
       >
-        <Show when={selectedAgent()}>
-          {(agent) => <AgentIcon agent={agent()} />}
-        </Show>
-        <span>{agentDisplayName(selectedAgent()) || t("agent")}</span>
+        <Show when={selectedAgent()}>{(agent) => <AgentIcon agent={agent()} />}</Show>
+        <span>{selectedModelText() || t("model")}</span>
         <ChevronDown size={13} strokeWidth={1.8} />
       </button>
       <Show when={open()}>
@@ -112,9 +111,7 @@ export function AgentComposerMenu(props: {
           <div class="agent-trigger-list">
             <For each={visibleAgents()}>
               {(agent) => {
-                const selected = createMemo(
-                  () => agent.name === selectedAgent()?.name,
-                );
+                const selected = createMemo(() => agent.name === selectedAgent()?.name);
                 return (
                   <button
                     type="button"
@@ -129,7 +126,7 @@ export function AgentComposerMenu(props: {
                     <AgentIcon agent={agent} />
                     <span>{agentDisplayName(agent)}</span>
                     <small>
-                      {agentModelText(agent, props.modelConfig) || "--"}
+                      {agentModelText(agent, props.modelConfig, props.selectedModel) || "--"}
                     </small>
                     <Show when={selected()}>
                       <Check size={14} strokeWidth={1.8} />
@@ -156,42 +153,35 @@ export function AgentComposerMenu(props: {
 function agentModelText(
   agent: Agent,
   modelConfig: TuraConfigResponse | undefined,
+  fallbackModel: string | undefined,
 ): string {
-  const directModel =
-    agent.model?.providerID && agent.model.modelID
-      ? `${agent.model.providerID}/${agent.model.modelID}`
-      : "";
-  if (directModel) {
-    return directModel;
-  }
-  const tier = agentTier(agent);
-  return modelForTier(modelConfig, tier) ?? tier;
+  const runtime = agentRuntimeConfig(agent);
+  const model =
+    modelPairText(runtime.currentModel) ??
+    modelForRuntimeTier(modelConfig, runtime.defaultModelTier) ??
+    fallbackModel;
+  const displayModel = model ? runtimeModelText(model, modelConfig) : "";
+  return displayModel ? formatAgentRuntimeModelText(displayModel, runtime, "p") : "";
 }
 
-function agentTier(agent: Agent): string {
-  return (
-    readProviderTier(agent.options.provider) ??
-    readProviderTier(agent.options) ??
-    "thinking"
-  );
+function runtimeModelText(model: string, modelConfig: TuraConfigResponse | undefined): string {
+  const [provider, ...modelParts] = model.split("/");
+  const modelId = modelParts.join("/");
+  return namedModelText(modelConfig, provider, modelId) ?? model;
 }
 
-function readProviderTier(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function namedModelText(
+  modelConfig: TuraConfigResponse | undefined,
+  provider: string | undefined,
+  model: string | undefined,
+): string | undefined {
+  if (!provider || !model) {
     return undefined;
   }
-  const tier = (value as Record<string, unknown>).tura_llm_name;
-  return typeof tier === "string" ? tier : undefined;
-}
-
-function modelForTier(
-  modelConfig: TuraConfigResponse | undefined,
-  tier: string,
-): string | undefined {
-  const current = modelConfig?.tiers.find(
-    (item) => item.tier === tier,
-  )?.current;
-  return current?.provider && current.model
-    ? `${current.provider}/${current.model}`
-    : undefined;
+  const option = (modelConfig?.tiers ?? [])
+    .flatMap((tier) => tier.options)
+    .find((item) => item.provider === provider && item.model === model);
+  const providerName = option?.provider_name || provider;
+  const modelName = option?.model_name || model;
+  return `${providerName}/${modelName}`;
 }

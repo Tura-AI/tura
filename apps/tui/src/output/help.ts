@@ -24,10 +24,18 @@ export interface HelpPage {
 export function formatHelp(page: HelpPage): string {
   const output = [page.title, "", `${t("usage")}:`, ...indent(page.usage)];
   if (page.commands?.length) {
-    output.push("", `${t("commands")}:`, ...formatRows(page.commands.map((command) => [command.name, command.summary])));
+    output.push(
+      "",
+      `${t("commands")}:`,
+      ...formatRows(page.commands.map((command) => [command.name, command.summary])),
+    );
   }
   if (page.options?.length) {
-    output.push("", `${t("options")}:`, ...formatRows(page.options.map((option) => [option.flags, option.summary])));
+    output.push(
+      "",
+      `${t("options")}:`,
+      ...formatRows(page.options.map((option) => [option.flags, option.summary])),
+    );
   }
   for (const section of page.sections ?? []) {
     output.push("", `${section.title}:`, ...indent(section.lines));

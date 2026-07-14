@@ -1,0 +1,14 @@
+{
+  "name": "@tura/playwright-node-env",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.11",
+  "scripts": {
+    "playwright": "playwright",
+    "install:chromium": "playwright install chromium",
+    "verify:chromium": "bun -e \"import { chromium } from 'playwright'; const browser = await chromium.launch({ headless: true }); await browser.close();\""
+  },
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}

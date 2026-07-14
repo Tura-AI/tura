@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-open-external-url"
+description = "Allow the tura_gui shell to open web URLs in the system default browser."
+
+[permission.commands]
+allow = ["open_external_url"]
+deny = []

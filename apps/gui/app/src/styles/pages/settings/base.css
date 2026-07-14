@@ -298,6 +298,23 @@
   gap: var(--space-2);
 }
 
+.settings-priority-field {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.settings-priority-segmented {
+  max-width: 260px;
+}
+
+.settings-priority-note {
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-weight: 430;
+  line-height: 1.45;
+}
+
 .settings-fields {
   gap: var(--space-3);
   padding: var(--space-4);
@@ -382,10 +399,26 @@
 .segmented button {
   min-height: 30px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-micro);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.segmented button.theme-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  padding: 0 var(--space-2);
+  text-align: center;
+}
+
+.theme-choice-label {
+  justify-self: center;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -412,31 +445,4 @@
   width: 48px;
   height: 8px;
   margin: 0 auto;
-}
-
-.error-strip {
-  position: absolute;
-  inset: var(--space-3) var(--space-3) auto auto;
-  z-index: 3;
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  max-width: min(520px, calc(100vw - 280px));
-  padding: 10px var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--paper);
-  color: var(--ink);
-  font-size: var(--font-ui);
-  box-shadow: var(--shadow-panel);
-}
-
-.error-strip.success {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
-}
-
-.error-strip button {
-  border: 0;
-  background: transparent;
-  color: var(--ink);
 }

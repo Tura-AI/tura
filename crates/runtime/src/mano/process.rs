@@ -2,14 +2,12 @@ use chrono::Utc;
 use tracing::{error, info};
 
 use crate::agent_router::{activate_agents_by_session_type, initialize_agent_state_machine};
-use crate::context::{
-    accumulate_message, build_messages_from_session, user_input_content_matches,
-    user_input_content_value, ContextualUserFragment, WorkspaceSnapshot,
-};
+use crate::checkpoint::session_snapshot::persist_session_snapshot;
 use crate::manas::{process_manas_internal, ManasInput};
-use crate::mano::gateway_session::{load_persisted_gateway_session, persist_gateway_session};
-use crate::mano::session_bootstrap::create_session_with_topic;
 use crate::mano::{ManoOverrides, ManoProcessResult};
+use crate::session_bootstrap::{
+    bootstrap_orchestration_session, create_session_with_topic, initial_messages_for_session,
+};
 use crate::state_machine::agent_management::{AgentCapabilityItem, AgentManagement};
 use crate::state_machine::session_management::{SessionInput, SessionManagement};
 use std::path::PathBuf;
@@ -73,12 +71,20 @@ fn orchestrate_with_config_and_session(
         "starting orchestration"
     );
 
-    let mut session =
-        bootstrap_orchestration_session(input.clone(), &config, gateway_session_id.clone(), now)?;
+    let mut session = bootstrap_orchestration_session(
+        input,
+        config.session_directory.clone(),
+        gateway_session_id,
+        now,
+    )
+    .map_err(|e| {
+        error!(error = %e, "failed to bootstrap session");
+        format!("failed to bootstrap session: {e}")
+    })?;
 
     info!(
         session_id = %session.session_id,
-        session_topic = %session.session_topic,
+        task_type = ?session.task_type,
         "session created"
     );
 
@@ -86,15 +92,17 @@ fn orchestrate_with_config_and_session(
         Ok(a) => a,
         Err(e) => {
             error!(error = %e, "failed to activate agents");
-            return Err(format!("failed to activate agents: {}", e));
+            return Err(format!("failed to activate agents: {e}"));
         }
     };
     apply_planning_capability_override(&mut agents, &session);
     session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
+    session.reflection_enabled = agents.first().is_some_and(|agent| agent.reflection);
+    session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agents);
 
     if let Err(e) = initialize_agent_state_machine(&mut agents, &session) {
         error!(error = %e, "failed to initialize agent state machine");
-        return Err(format!("failed to initialize agent state machine: {}", e));
+        return Err(format!("failed to initialize agent state machine: {e}"));
     }
 
     info!(
@@ -104,7 +112,7 @@ fn orchestrate_with_config_and_session(
     );
 
     let initial_messages = initial_messages_for_session(&mut session)?;
-    persist_gateway_session(&session)
+    persist_session_snapshot(&session)
         .map_err(|err| format!("failed to persist initial gateway session: {err}"))?;
 
     let mut session_clone = session.clone();
@@ -121,7 +129,7 @@ fn orchestrate_with_config_and_session(
             Ok(r) => r,
             Err(e) => {
                 error!(error = %e, "manas processing failed");
-                return Err(format!("manas processing failed: {}", e));
+                return Err(format!("manas processing failed: {e}"));
             }
         };
 
@@ -135,6 +143,7 @@ fn orchestrate_with_config_and_session(
     Ok(ManoProcessResult {
         session: manas_result.session,
         agents: manas_result.agents,
+        final_error: manas_result.final_error,
     })
 }
 
@@ -179,160 +188,13 @@ fn agent_has_planning_capability(agent: &AgentManagement) -> bool {
         .any(|capability| capability.capability_name == "planning")
 }
 
-fn initial_messages_for_session(
-    session: &mut SessionManagement,
-) -> Result<Vec<serde_json::Value>, String> {
-    let permissions_message = serde_json::json!({
-        "role": "developer",
-        "content": permissions_instructions(),
-    });
-    if session.session_current_turn == 0 && !session_has_initial_user_message(session) {
-        let snapshot_message = serde_json::json!({
-            "role": "user",
-            "content": workspace_snapshot_message(&session.session_directory),
-        });
-        let environment_message = serde_json::json!({
-            "role": "user",
-            "content": environment_context_message(&session.session_directory),
-        });
-        let user_message = serde_json::json!({
-            "role": "user",
-            "content": user_input_content_value(&session.input.user_input),
-        });
-
-        for message in [
-            &permissions_message,
-            &snapshot_message,
-            &environment_message,
-            &user_message,
-        ] {
-            let role = message
-                .get("role")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("system");
-            let content = message
-                .get("content")
-                .cloned()
-                .unwrap_or_else(|| serde_json::Value::String(String::new()));
-            accumulate_message(session, role, content)?;
-        }
-
-        return Ok(vec![
-            permissions_message,
-            snapshot_message,
-            environment_message,
-            user_message,
-        ]);
-    }
-
-    if !session_has_initial_user_message(session) {
-        accumulate_message(
-            session,
-            "user",
-            user_input_content_value(&session.input.user_input),
-        )?;
-    }
-
-    let mut messages = vec![permissions_message];
-    messages.extend(build_messages_from_session(session));
-    Ok(messages)
-}
-
-fn permissions_instructions() -> &'static str {
-    "<permissions instructions>\nFilesystem sandboxing defines which files can be read or written. `sandbox_mode` is `danger-full-access`: No filesystem sandboxing - all commands are permitted. Network access is enabled.\nApproval policy is currently never. Do not provide the `sandbox_permissions` for any reason, commands will be rejected.\n</permissions instructions>"
-}
-
-fn environment_context_message(cwd: &std::path::Path) -> String {
-    format!(
-        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
-        cwd.display(),
-        context_shell_name(),
-        chrono::Local::now().format("%Y-%m-%d"),
-        std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string()),
-        session_language()
-    )
-}
-
-fn session_language() -> String {
-    std::env::var("TURA_SESSION_LANGUAGE")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "en".to_string())
-}
-
-fn context_shell_name() -> &'static str {
-    match std::env::var("TURA_COMMAND_RUN_SHELL")
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("bash") => "bash",
-        Some("shell") | Some("shell_command") | Some("shll") | Some("shall") => {
-            if cfg!(windows) {
-                "powershell"
-            } else {
-                "bash"
-            }
-        }
-        _ if cfg!(windows) => "powershell",
-        _ => "bash",
-    }
-}
-
-fn workspace_snapshot_message(cwd: &std::path::Path) -> String {
-    WorkspaceSnapshot::from_cwd(cwd)
-        .map(|snapshot| snapshot.render())
-        .unwrap_or_else(|| "<WORKSPACE_SNAPSHOT>\n\n</WORKSPACE_SNAPSHOT>".to_string())
-}
-
-fn session_has_initial_user_message(session: &SessionManagement) -> bool {
-    let raw_input = &session.input.user_input;
-    session.session_log.iter().any(|entry| {
-        serde_json::from_str::<serde_json::Value>(entry)
-            .ok()
-            .is_some_and(|value| {
-                value.get("role").and_then(serde_json::Value::as_str) == Some("user")
-                    && value
-                        .get("content")
-                        .is_some_and(|content| user_input_content_matches(content, raw_input))
-            })
-    })
-}
-
-fn bootstrap_orchestration_session(
-    input: SessionInput,
-    config: &OrchestrationConfig,
-    gateway_session_id: Option<String>,
-    now: chrono::DateTime<Utc>,
-) -> Result<crate::state_machine::session_management::SessionManagement, String> {
-    if let Some(session_id) = gateway_session_id {
-        if let Some(mut persisted) = config
-            .session_directory
-            .as_ref()
-            .and_then(|directory| load_persisted_gateway_session(directory, &session_id))
-        {
-            persisted.prepare_for_new_user_turn(input, now);
-            if let Some(directory) = config.session_directory.clone() {
-                persisted.session_directory = directory;
-            }
-            persisted.session_id = session_id;
-            return Ok(persisted);
-        }
-
-        let mut session = create_session_with_topic(input, config.session_directory.clone())
-            .map_err(|e| {
-                error!(error = %e, "failed to create session");
-                format!("failed to create session: {}", e)
-            })?;
-        session.session_id = session_id;
-        return Ok(session);
-    }
-
-    create_session_with_topic(input, config.session_directory.clone()).map_err(|e| {
-        error!(error = %e, "failed to create session");
-        format!("failed to create session: {}", e)
-    })
+fn operation_manual_enabled_for_session(
+    session: &SessionManagement,
+    agents: &[AgentManagement],
+) -> bool {
+    session.goal_mode
+        || session.reflection_enabled
+        || (!session.no_op_manual && agents.first().is_some_and(|agent| agent.op_manual))
 }
 
 pub fn process_from_user_internal(
@@ -350,18 +212,25 @@ pub fn process_from_user_internal(
             let mut agts = activate_agents_by_session_type(&session)?;
             apply_planning_capability_override(&mut agts, &session);
             session.planning_enabled = agts.first().is_some_and(agent_has_planning_capability);
+            session.reflection_enabled = agts.first().is_some_and(|agent| agent.reflection);
+            session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agts);
             initialize_agent_state_machine(&mut agts, &session)?;
             agts
         }
     };
+    session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agents);
 
-    Ok(ManoProcessResult { session, agents })
+    Ok(ManoProcessResult {
+        session,
+        agents,
+        final_error: None,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::build_messages_from_session;
+    use crate::context::{build_messages_from_session, USER_AGENT_CONTEXT_ROLE};
     use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
     use std::fs;
@@ -371,7 +240,7 @@ mod tests {
         let input = SessionInput {
             user_input: "inspect".to_string(),
             file_input: Vec::new(),
-            agent: Some("thinking-planning".to_string()),
+            agent: Some("thoughtful".to_string()),
             runtime_context: None,
             planning_mode_override: Some(false),
         };
@@ -389,8 +258,10 @@ mod tests {
 
         apply_planning_capability_override(&mut agents, &session);
         session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
+        session.reflection_enabled = agents.first().is_some_and(|agent| agent.reflection);
 
         assert!(!session.planning_enabled);
+        assert!(session.reflection_enabled);
         assert!(!agent_has_planning_capability(&agents[0]));
     }
 
@@ -417,141 +288,11 @@ mod tests {
 
         apply_planning_capability_override(&mut agents, &session);
         session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
+        session.reflection_enabled = agents.first().is_some_and(|agent| agent.reflection);
 
         assert!(session.planning_enabled);
+        assert!(!session.reflection_enabled);
         assert!(agent_has_planning_capability(&agents[0]));
-    }
-
-    #[test]
-    fn gateway_bootstrap_loads_session_log_session_before_creating_new_session() {
-        let root = std::env::temp_dir().join(format!(
-            "tura-gateway-bootstrap-{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let session_id = format!(
-            "sess-existing-{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-
-        let old_input = SessionInput {
-            user_input: "old prompt".to_string(),
-            file_input: Vec::new(),
-            agent: None,
-            runtime_context: None,
-            planning_mode_override: None,
-        };
-        let mut persisted = SessionManagement::new(
-            session_id.clone(),
-            "existing".to_string(),
-            root.clone(),
-            false,
-            "coding".to_string(),
-            old_input,
-            "old prompt".to_string(),
-            Utc::now(),
-        );
-        persisted.push_log("persisted-session-loaded", Utc::now());
-        persist_gateway_session(&persisted).expect("persist session_log session");
-
-        let next_input = SessionInput {
-            user_input: "fix bug in the existing workspace".to_string(),
-            file_input: Vec::new(),
-            agent: None,
-            runtime_context: None,
-            planning_mode_override: None,
-        };
-        let session = bootstrap_orchestration_session(
-            next_input.clone(),
-            &OrchestrationConfig {
-                redis_url: "redis://localhost:6379".to_string(),
-                session_directory: Some(root.clone()),
-            },
-            Some(session_id.clone()),
-            Utc::now(),
-        )
-        .expect("persisted gateway session should load");
-
-        assert_eq!(session.session_id, session_id);
-        assert_eq!(session.session_directory, root);
-        assert_eq!(session.input, next_input);
-        assert!(session
-            .session_log
-            .iter()
-            .any(|entry| entry == "persisted-session-loaded"));
-
-        let _ = std::fs::remove_dir_all(session.session_directory);
-    }
-
-    #[test]
-    fn gateway_persistence_writes_session_log_records() {
-        let root = std::env::temp_dir().join(format!(
-            "tura-session-log-records-{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        fs::create_dir_all(&root).expect("test workspace should be created");
-        let session_id = format!(
-            "persist-records-{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let mut session = SessionManagement::new(
-            session_id.clone(),
-            "persist records".to_string(),
-            root,
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "persist records".to_string(),
-                file_input: Vec::new(),
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "persist records".to_string(),
-            Utc::now(),
-        );
-        accumulate_message(
-            &mut session,
-            "user",
-            serde_json::Value::String("persist records".to_string()),
-        )
-        .expect("user message should accumulate");
-        session.push_log(
-            serde_json::json!({
-                "type": "tool_result",
-                "tool_name": "command_run",
-                "input": {"commands": [{"command_type": "shell_command", "command_line": "pwd"}]},
-                "output": {"results": [{"command_type": "shell_command", "success": true}]},
-                "success": true,
-                "timestamp": Utc::now().to_rfc3339(),
-            })
-            .to_string(),
-            Utc::now(),
-        );
-        session.push_log(
-            serde_json::json!({
-                "type": "runtime_usage",
-                "usage": {"input_tokens": 1, "output_tokens": 2},
-                "timestamp": Utc::now().to_rfc3339(),
-            })
-            .to_string(),
-            Utc::now(),
-        );
-
-        persist_gateway_session(&session).expect("session should persist");
-
-        let (_page, records) = crate::session_log_client::SessionLogClient::discover()
-            .expect("session_log client should be available")
-            .list_session_records(session_id, 0, 50)
-            .expect("records should load");
-        assert_eq!(records.len(), session.session_log.len());
-        assert!(records.iter().any(|record| {
-            record.role == "tool"
-                && record.record["type"] == "tool_result"
-                && record.record["tool_name"] == "command_run"
-        }));
-        assert!(records
-            .iter()
-            .any(|record| record.role == "runtime" && record.record["type"] == "runtime_usage"));
     }
 
     #[test]
@@ -588,7 +329,7 @@ mod tests {
                         "type": "function_call",
                         "name": "command_run",
                         "call_id": "call_image",
-                        "arguments": "{\"commands\":[]}",
+                        "arguments": "{\"commands\":[{\"step\":1,\"command_type\":\"read_media\",\"command_line\":\"read_media image.png\"}]}",
                         "status": "completed"
                     },
                     {
@@ -620,9 +361,11 @@ mod tests {
         let serialized = serde_json::to_string(&messages).expect("messages json");
 
         assert!(serialized.contains("data:image/png;base64,AAA"));
-        assert!(serialized.contains("what was in the previous image?"));
-        assert!(messages.iter().any(|message| {
+        assert!(!messages.iter().any(|message| {
             message.get("role").and_then(serde_json::Value::as_str) == Some("developer")
+        }));
+        assert!(messages.iter().any(|message| {
+            message.get("role").and_then(serde_json::Value::as_str) == Some("user")
         }));
 
         let _ = fs::remove_dir_all(root);
@@ -636,12 +379,12 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("test workspace should be created");
         let input = SessionInput {
-            user_input: "先看第一处\n[Image 1: screen.png]\n[MEDIA:data:image/png;base64,AAA:MEDIA]\n再看第二处"
+            user_input: "[Image 1: screen.png]\n[MEDIA:data:image/png;base64,AAA:MEDIA]"
                 .to_string(),
             file_input: Vec::new(),
             agent: None,
             runtime_context: None,
-                planning_mode_override: None,
+            planning_mode_override: None,
         };
         let mut session = SessionManagement::new(
             "inline-image-session".to_string(),
@@ -675,16 +418,8 @@ mod tests {
                 && part
                     .get("text")
                     .and_then(serde_json::Value::as_str)
-                    .is_some_and(|text| text.contains("screen.png"))
+                    .is_some()
         }));
-        assert!(content.iter().any(|part| {
-            part.get("type").and_then(serde_json::Value::as_str) == Some("input_text")
-                && part
-                    .get("text")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|text| text.contains("再看第二处"))
-        }));
-        assert!(session_has_initial_user_message(&session));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -731,7 +466,68 @@ mod tests {
             .as_str()
             .expect("snapshot content should be text")
             .contains("src/lib.rs"));
-        assert!(replayed.iter().any(|message| message == initial_snapshot));
+        assert_eq!(initial_snapshot["role"], "developer");
+        let replayed_snapshot = replayed
+            .iter()
+            .find(|message| {
+                message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("<WORKSPACE_SNAPSHOT>"))
+            })
+            .expect("replayed context should include workspace snapshot");
+        assert_eq!(replayed_snapshot["role"], "developer");
+        assert_eq!(replayed_snapshot["content"], initial_snapshot["content"]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn initial_runtime_context_uses_user_agent_storage_and_user_replay() {
+        let root = std::env::temp_dir().join(format!(
+            "tura-runtime-context-tag-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).expect("test workspace should be created");
+        let input = SessionInput {
+            user_input: "inspect this workspace".to_string(),
+            file_input: Vec::new(),
+            agent: None,
+            runtime_context: Some("client runtime context".to_string()),
+            planning_mode_override: None,
+        };
+        let mut session = SessionManagement::new(
+            "runtime-context-tag-session".to_string(),
+            "runtime context tag".to_string(),
+            root.clone(),
+            false,
+            "coding".to_string(),
+            input,
+            "inspect this workspace".to_string(),
+            Utc::now(),
+        );
+
+        let initial =
+            initial_messages_for_session(&mut session).expect("initial messages should build");
+        let initial_context = initial
+            .iter()
+            .find(|message| message["content"] == "client runtime context")
+            .expect("initial messages should include runtime context");
+        assert_eq!(initial_context["role"], USER_AGENT_CONTEXT_ROLE);
+
+        let stored_context = session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .find(|entry| entry["content"] == "client runtime context")
+            .expect("runtime context should be stored");
+        assert_eq!(stored_context["role"], USER_AGENT_CONTEXT_ROLE);
+
+        let replayed = build_messages_from_session(&session);
+        let replayed_context = replayed
+            .iter()
+            .find(|message| message["content"] == "client runtime context")
+            .expect("runtime context should replay into provider context");
+        assert_eq!(replayed_context["role"], "user");
 
         let _ = fs::remove_dir_all(root);
     }

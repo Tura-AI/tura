@@ -10,10 +10,31 @@ use crate::tura_llm::{CallMetrics, TuraError};
 
 const DEFAULT_LOG_CRATE_DIR: &str = "provider";
 
+/// Whether provider LLM-call logs should be written to disk.
+///
+/// Decided by build-kind, not by the executable path: a `dev` build (the
+/// repo-local `bin/` package) always writes, while a `release` build stays
+/// silent unless `LOG_PATH` is set as an explicit opt-in (the `-dev` flag).
+pub fn logging_enabled() -> bool {
+    if std::env::var_os("LOG_PATH").is_some() {
+        return true;
+    }
+    tura_path::build_kind() == "dev"
+}
+
 fn get_log_root() -> PathBuf {
     std::env::var("LOG_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| project_root().join("log").join(DEFAULT_LOG_CRATE_DIR))
+}
+
+/// Returns the log root directory when provider logging is enabled, or `None`.
+pub fn log_root_if_enabled() -> Option<PathBuf> {
+    if logging_enabled() {
+        Some(get_log_root())
+    } else {
+        None
+    }
 }
 
 fn project_root() -> PathBuf {
@@ -126,16 +147,35 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
+    fn logging_enabled_follows_log_path_and_build_kind() {
+        let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+        // Explicit LOG_PATH always enables logging.
+        set_env("LOG_PATH", "some/dir");
+        assert!(logging_enabled());
+        remove_env("LOG_PATH");
+        // Without LOG_PATH, logging follows build-kind. `cargo test` builds with
+        // no `TURA_BUILD_KIND`, so the kind defaults to `dev` and logging is on.
+        assert_eq!(tura_path::build_kind(), "dev");
+        assert_eq!(logging_enabled(), tura_path::build_kind() == "dev");
+    }
+
+    #[test]
     fn default_log_root_is_project_level_provider_log_dir() {
         let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
-        unsafe {
-            std::env::remove_var("LOG_PATH");
-        }
+        remove_env("LOG_PATH");
 
         let root = get_log_root();
         assert!(root.ends_with(Path::new("log").join("provider")));
         assert!(root.parent().and_then(Path::parent).is_some_and(|project| {
             project.join("Cargo.toml").exists() && project.join("Cargo.lock").exists()
         }));
+    }
+
+    fn set_env(key: &str, value: &str) {
+        std::env::set_var(key, value);
+    }
+
+    fn remove_env(key: &str) {
+        std::env::remove_var(key);
     }
 }

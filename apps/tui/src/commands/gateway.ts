@@ -11,8 +11,13 @@ export async function gatewayCommand(context: CliContext, args: string[]): Promi
   const path = args.shift();
   if (!path) throw new CliUsageError(t("gatewayRequiresPath"));
   const data = takeOption(args, "--data") ?? takeOption(args, "-d");
-  if (args.length > 0) throw new CliUsageError(t("unknownGatewayArguments", { args: args.join(" ") }));
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  if (args.length > 0)
+    throw new CliUsageError(t("unknownGatewayArguments", { args: args.join(" ") }));
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   printJson(await client.raw(method, path, data ? JSON.parse(data) : undefined));
 }
 

@@ -1,20 +1,24 @@
 import {
-  GatewayClient,
+  type GatewayClient,
   errorMessage,
   type ProviderAuthMethod,
   type TuraConfigModelPair,
 } from "@tura/gateway-sdk";
 import type { Accessor, Setter } from "solid-js";
-import { t } from "../i18n";
+import { setLanguage, t } from "../i18n";
 import type { AppState } from "../state/global-store";
 import { safe } from "../utils/safe";
+import { openExternalUrl } from "../utils/external-url";
 import {
   configDraftToPatch,
   configToDraft,
   draftToRecord,
+  providerAuthDraftKey,
+  providerAuthMethodForValidation,
   providerIdFromAuthError,
   recordToDraft,
 } from "../utils/settings";
+import { workspaceModelPatch } from "../utils/runtime-model";
 
 type ProviderSettingsActionsOptions = {
   state: Accessor<AppState>;
@@ -23,9 +27,7 @@ type ProviderSettingsActionsOptions = {
   directoryClient: Accessor<GatewayClient>;
 };
 
-export function useProviderSettingsActions(
-  options: ProviderSettingsActionsOptions,
-) {
+export function useProviderSettingsActions(options: ProviderSettingsActionsOptions) {
   const { state, setState, rootClient, directoryClient } = options;
 
   async function refreshProviderSurface(providerId?: string) {
@@ -34,27 +36,18 @@ export function useProviderSettingsActions(
       safe(() => directoryClient().providers(), state().providers),
       safe(() => client.providerAuthMethods(), state().providerAuthMethods),
     ]);
-    const modelConfig = await safe(
-      () => client.modelConfig(),
-      state().modelConfig,
-    );
+    const modelConfig = await safe(() => client.modelConfig(), state().modelConfig);
     const ids = providerId
       ? [providerId]
-      : (providers?.all ?? state().providers?.all ?? []).map(
-          (provider) => provider.id,
-        );
+      : (providers?.all ?? state().providers?.all ?? []).map((provider) => provider.id);
     const statusEntries = await Promise.all(
-      ids.map(async (id) => [
-        id,
-        await safe(() => client.providerAuthStatus(id), undefined),
-      ]),
+      ids.map(async (id) => [id, await safe(() => client.providerAuthStatus(id), undefined)]),
     );
     const providerAuthStatus = {
       ...state().providerAuthStatus,
       ...Object.fromEntries(
         statusEntries.filter(
-          (entry): entry is [string, AppState["providerAuthStatus"][string]] =>
-            !!entry[1],
+          (entry): entry is [string, AppState["providerAuthStatus"][string]] => !!entry[1],
         ),
       ),
     };
@@ -95,7 +88,7 @@ export function useProviderSettingsActions(
     try {
       const payload: Record<string, unknown> = {
         ...draftToRecord(state().workspaceConfigDraft),
-        model: state().selectedModel,
+        ...workspaceModelPatch(state().selectedModel),
         active_agent: state().selectedAgent,
         model_variant: state().modelVariant,
         model_acceleration_enabled: state().accelerationEnabled,
@@ -103,11 +96,13 @@ export function useProviderSettingsActions(
       const configPayload = configDraftToPatch(
         state().configDraft,
         state().themeMode,
+        state().cornerRadius,
       );
       const [workspaceConfig, config] = await Promise.all([
         directoryClient().patchWorkspaceConfig(payload),
         rootClient().patchConfig(configPayload),
       ]);
+      setLanguage(stringField(workspaceConfig, "language"));
       setState((previous) => ({
         ...previous,
         config,
@@ -138,16 +133,22 @@ export function useProviderSettingsActions(
       error: undefined,
     }));
     try {
-      const modelConfig = await rootClient().putModelConfig({
-        tier,
-        provider: option.provider,
-        model: option.model,
-      });
+      const selectedModel = `${option.provider}/${option.model}`;
+      const [modelConfig, workspaceConfig] = await Promise.all([
+        rootClient().putModelConfig({
+          tier,
+          provider: option.provider,
+          model: option.model,
+        }),
+        directoryClient().patchWorkspaceConfig(workspaceModelPatch(selectedModel)),
+      ]);
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
         modelConfig,
-        selectedModel: `${option.provider}/${option.model}`,
+        workspaceConfig,
+        workspaceConfigDraft: recordToDraft(workspaceConfig),
+        selectedModel,
         selectedProviderId: option.provider,
         settingsNotice: modelConfig.error ?? t("saved"),
       }));
@@ -160,10 +161,7 @@ export function useProviderSettingsActions(
     }
   }
 
-  async function saveProviderKey(
-    providerId: string,
-    method: ProviderAuthMethod,
-  ) {
+  async function saveProviderKey(providerId: string, method: ProviderAuthMethod) {
     const draftKey = providerAuthDraftKey(providerId, method);
     const key = state().authDrafts[draftKey]?.trim();
     if (!key) {
@@ -205,7 +203,7 @@ export function useProviderSettingsActions(
     }
   }
 
-  async function validateProvider(providerId: string) {
+  async function validateProvider(providerId: string, method?: ProviderAuthMethod) {
     setState((previous) => ({
       ...previous,
       settingsSaving: true,
@@ -213,7 +211,25 @@ export function useProviderSettingsActions(
       error: undefined,
     }));
     try {
-      const result = await rootClient().providerAuthValidate(providerId);
+      const validationMethod =
+        method ??
+        providerAuthMethodForValidation(
+          providerId,
+          state().providerAuthMethods[providerId] ?? [],
+          state().authDrafts,
+        );
+      const draftKey = validationMethod
+        ? providerAuthDraftKey(providerId, validationMethod)
+        : undefined;
+      const draftKeyValue = draftKey ? state().authDrafts[draftKey]?.trim() : undefined;
+      const result = await rootClient().providerAuthValidate(providerId, {
+        type: validationMethod?.type,
+        kind: validationMethod?.kind,
+        login: validationMethod?.login,
+        token_env: validationMethod?.token_env,
+        key: draftKeyValue || undefined,
+        access: draftKeyValue || undefined,
+      });
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
@@ -240,7 +256,6 @@ export function useProviderSettingsActions(
   }
 
   async function startProviderLogin(providerId: string, methodIndex: number) {
-    const authWindow = window.open("", "_blank");
     setState((previous) => ({
       ...previous,
       settingsSaving: true,
@@ -252,13 +267,7 @@ export function useProviderSettingsActions(
         method: methodIndex,
       });
       if (result.url) {
-        if (authWindow) {
-          authWindow.location.href = result.url;
-        } else {
-          window.location.assign(result.url);
-        }
-      } else {
-        authWindow?.close();
+        await openExternalUrl(result.url);
       }
       await refreshProviderSurface(providerId);
       setState((previous) => ({
@@ -272,7 +281,6 @@ export function useProviderSettingsActions(
         void completeProviderLogin(providerId, "", methodIndex);
       }
     } catch (error) {
-      authWindow?.close();
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
@@ -281,16 +289,10 @@ export function useProviderSettingsActions(
     }
   }
 
-  async function waitForProviderAuthenticated(
-    providerId: string,
-    timeoutMs = 5 * 60_000,
-  ) {
+  async function waitForProviderAuthenticated(providerId: string, timeoutMs = 5 * 60_000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const status = await safe(
-        () => rootClient().providerAuthStatus(providerId),
-        undefined,
-      );
+      const status = await safe(() => rootClient().providerAuthStatus(providerId), undefined);
       if (status) {
         setState((previous) => ({
           ...previous,
@@ -298,12 +300,9 @@ export function useProviderSettingsActions(
             ...previous.providerAuthStatus,
             [providerId]: status,
           },
-          settingsNotice: status.authenticated
-            ? t("connected")
-            : previous.settingsNotice,
+          settingsNotice: status.authenticated ? t("connected") : previous.settingsNotice,
           providerAuthPanel:
-            status.authenticated &&
-            previous.providerAuthPanel?.providerId === providerId
+            status.authenticated && previous.providerAuthPanel?.providerId === providerId
               ? undefined
               : previous.providerAuthPanel,
         }));
@@ -320,11 +319,7 @@ export function useProviderSettingsActions(
     }));
   }
 
-  async function completeProviderLogin(
-    providerId: string,
-    code?: string,
-    methodIndex = 0,
-  ) {
+  async function completeProviderLogin(providerId: string, code?: string, methodIndex = 0) {
     setState((previous) => ({
       ...previous,
       settingsSaving: true,
@@ -397,22 +392,17 @@ export function useProviderSettingsActions(
     saveRuntimeSettings,
     updateModelTier,
     saveProviderKey,
-    validateProvider,
     startProviderLogin,
     completeProviderLogin,
     logoutProvider,
   };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-function providerAuthDraftKey(
-  providerId: string,
-  method: ProviderAuthMethod,
-): string {
-  return [providerId, method.token_env || method.login_env || method.kind].join(
-    "::",
-  );
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

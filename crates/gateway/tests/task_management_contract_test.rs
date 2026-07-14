@@ -1,8 +1,8 @@
 use chrono::Utc;
-use gateway::{api::types::SessionStatus, SessionStore};
+use gateway::SessionStore;
 
 #[test]
-fn explicit_start_condition_round_trips_and_idle_scheduler_claims_it() {
+fn explicit_start_condition_round_trips_and_waits_for_user_action_when_already_idle() {
     let store = SessionStore::new();
     let now = Utc::now();
     let session = store.create_session(
@@ -37,27 +37,17 @@ fn explicit_start_condition_round_trips_and_idle_scheduler_claims_it() {
         )
         .expect("task management should update");
 
-    assert_eq!(updated.task_management["status"], serde_json::Value::Null);
+    assert_eq!(updated.task_management["status"], "waiting_user");
     assert_eq!(updated.task_management["start_condition"], "session_idle");
 
-    let claimed = store.claim_due_task_runs(now);
-
-    let claimed_run = claimed
-        .iter()
-        .find(|run| run.session_id == session.id)
-        .expect("newly created idle task should be claimed");
-    assert_eq!(claimed_run.task_summary, "Run once the session is idle");
-    assert_eq!(
-        store
-            .get_session(&session.id)
-            .expect("session should exist")
-            .status,
-        SessionStatus::Busy
+    assert!(
+        store.claim_due_task_runs(now).is_empty(),
+        "newly created session_idle task should wait for user action while the session is already idle"
     );
 }
 
 #[test]
-fn legacy_status_start_condition_still_round_trips() {
+fn status_field_does_not_accept_start_condition_values() {
     let store = SessionStore::new();
     let session = store.create_session(
         Some("C:/workspace".to_string()),
@@ -71,6 +61,7 @@ fn legacy_status_start_condition_still_round_trips() {
         false,
         false,
     );
+    let before = session.task_management.clone();
 
     let updated = store
         .update_session(
@@ -84,12 +75,11 @@ fn legacy_status_start_condition_still_round_trips() {
             None,
             None,
             Some(serde_json::json!({
-                "task_summary": "Legacy queued task",
+                "task_summary": "Invalid queued task",
                 "status": "session_idle"
             })),
         )
-        .expect("legacy task management should update");
+        .expect("invalid task management remains non-fatal");
 
-    assert!(updated.task_management.get("status").is_none());
-    assert_eq!(updated.task_management["start_condition"], "session_idle");
+    assert_eq!(updated.task_management, before);
 }

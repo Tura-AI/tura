@@ -1,14 +1,15 @@
 use chrono::Utc;
 
 use super::config::config_value;
+use super::oauth_flow::extract_account_id_from_jwt;
 use super::oauth_support::{
     anthropic_oauth_client_id, anthropic_oauth_token_url, google_oauth_client_id,
     google_oauth_client_secret, google_oauth_token_url, openai_oauth_client_id,
     openai_oauth_token_url,
 };
 use super::{
-    auth_registry, auth_update, auth_validator, build_provider_auth_status,
-    extract_account_id_from_jwt, persist_provider_auth, ProviderAuthStatusResponse,
+    auth_registry, auth_update, auth_validator, build_provider_auth_status, persist_provider_auth,
+    ProviderAuthStatusResponse,
 };
 
 pub(super) async fn refresh_provider_auth_if_needed(
@@ -110,15 +111,21 @@ async fn refresh_anthropic_provider_auth(
     let response = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| {
+            format!("failed to build Anthropic OAuth refresh client for {provider_id}: {error}")
+        })?
         .post(anthropic_oauth_token_url())
         .header("content-type", "application/x-www-form-urlencoded")
         .form(&form)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            format!("failed to send Anthropic OAuth refresh request for {provider_id}: {error}")
+        })?;
     let http_status = response.status();
-    let body: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
+    let body: serde_json::Value = response.json().await.map_err(|error| {
+        format!("failed to parse Anthropic OAuth refresh response for {provider_id}: {error}")
+    })?;
     if !http_status.is_success() {
         return Err(format!(
             "Anthropic token endpoint returned {http_status}: {body}"
@@ -152,9 +159,15 @@ async fn refresh_oauth_provider_auth(
         .form(&form)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            format!(
+                "failed to send {display_name} OAuth refresh request for {provider_id}: {error}"
+            )
+        })?;
     let http_status = response.status();
-    let body: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
+    let body: serde_json::Value = response.json().await.map_err(|error| {
+        format!("failed to parse {display_name} OAuth refresh response for {provider_id}: {error}")
+    })?;
     if !http_status.is_success() {
         return Err(format!(
             "{display_name} token endpoint returned {http_status}: {body}"
@@ -202,5 +215,6 @@ async fn persist_oauth_refresh_response(
         "oauth",
         None,
     );
-    persist_provider_auth(provider_id, &auth).map_err(|error| error.to_string())
+    persist_provider_auth(provider_id, &auth)
+        .map_err(|error| format!("failed to persist OAuth refresh auth for {provider_id}: {error}"))
 }

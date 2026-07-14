@@ -1,6 +1,6 @@
-import { GatewayError } from "@tura/gateway-sdk";
+import { GatewayError, type ProviderAuthMethod } from "@tura/gateway-sdk";
 import { t } from "../i18n";
-import { type AppState, type ThemeMode } from "../state/global-store";
+import { type AppState, type CornerRadiusMode, type ThemeMode } from "../state/global-store";
 export { copyText } from "./app-format";
 
 export type ProviderAuthDisplayLevel = "ok" | "warn" | "fail" | "neutral";
@@ -11,47 +11,35 @@ export type ProviderAuthDisplayState = {
   configured: boolean;
 };
 
-export function defaultModel(
-  providers: AppState["providers"],
-): string | undefined {
+export function defaultModel(providers: AppState["providers"]): string | undefined {
   if (!providers) {
-    return "openai/gpt-5.5";
+    return "openai/gpt-5.6-sol";
   }
   if (
-    providers.all.some(
-      (provider) => provider.id === "openai" && provider.models["gpt-5.5"],
-    )
+    providers.all.some((provider) => provider.id === "openai" && provider.models["gpt-5.6-sol"])
   ) {
-    return "openai/gpt-5.5";
+    return "openai/gpt-5.6-sol";
   }
   const firstConnected = providers.connected[0];
   if (firstConnected && providers.default[firstConnected]) {
     return `${firstConnected}/${providers.default[firstConnected]}`;
   }
   const firstProvider = providers.all[0];
-  const firstModel = firstProvider
-    ? Object.keys(firstProvider.models)[0]
-    : undefined;
-  return firstProvider && firstModel
-    ? `${firstProvider.id}/${firstModel}`
-    : undefined;
+  const firstModel = firstProvider ? Object.keys(firstProvider.models)[0] : undefined;
+  return firstProvider && firstModel ? `${firstProvider.id}/${firstModel}` : undefined;
 }
 
-export function configToDraft(
-  config: AppState["config"],
-): Record<string, string> {
+export function configToDraft(config: AppState["config"]): Record<string, string> {
   if (!config) {
     return {};
   }
   return {
-    language: config.language ?? "",
     theme: config.theme ?? "",
+    corner_radius: config.corner_radius ?? "",
     main_font: config.main_font ?? "",
     code_font: config.code_font ?? "",
     main_font_size: config.main_font_size ? String(config.main_font_size) : "",
     code_font_size: config.code_font_size ? String(config.code_font_size) : "",
-    model: config.model ?? "",
-    agent: config.agent ?? "",
     skill_folders: (config.skill_folders ?? []).join(", "),
   };
 }
@@ -59,16 +47,15 @@ export function configToDraft(
 export function configDraftToPatch(
   draft: Record<string, string>,
   themeMode: ThemeMode,
+  cornerRadius: CornerRadiusMode,
 ): Partial<NonNullable<AppState["config"]>> {
   return {
-    language: draft.language || null,
     theme: themeMode,
+    corner_radius: cornerRadius,
     main_font: draft.main_font || null,
     code_font: draft.code_font || null,
     main_font_size: draft.main_font_size ? Number(draft.main_font_size) : null,
     code_font_size: draft.code_font_size ? Number(draft.code_font_size) : null,
-    model: draft.model || null,
-    agent: draft.agent || null,
     skill_folders: draft.skill_folders
       ? draft.skill_folders
           .split(",")
@@ -78,17 +65,11 @@ export function configDraftToPatch(
   };
 }
 
-export function recordToDraft(
-  record: Record<string, unknown>,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [key, draftValue(value)]),
-  );
+export function recordToDraft(record: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, draftValue(value)]));
 }
 
-export function draftToRecord(
-  draft: Record<string, string>,
-): Record<string, unknown> {
+export function draftToRecord(draft: Record<string, string>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(draft).map(([key, value]) => [key, parseDraftValue(value)]),
   );
@@ -209,13 +190,6 @@ export function providerAuthDisplayState(
       configured: true,
     };
   }
-  if (state.providers?.connected.includes(providerId)) {
-    return {
-      label: t("connected"),
-      level: "neutral",
-      configured: true,
-    };
-  }
   return {
     label: t("notConfigured"),
     level: "neutral",
@@ -223,17 +197,23 @@ export function providerAuthDisplayState(
   };
 }
 
-export function providerConfigured(
-  state: AppState,
-  providerId: string,
-): boolean {
+export function providerConfigured(state: AppState, providerId: string): boolean {
   return providerAuthDisplayState(state, providerId).configured;
 }
 
-export function providerIdFromAuthError(
-  error: unknown,
-  state: AppState,
-): string | undefined {
+export function providerAuthDraftKey(providerId: string, method: ProviderAuthMethod): string {
+  return [providerId, method.token_env || method.login_env || method.kind].join("::");
+}
+
+export function providerAuthMethodForValidation(
+  providerId: string,
+  methods: ProviderAuthMethod[],
+  authDrafts: Record<string, string>,
+): ProviderAuthMethod | undefined {
+  return methods.find((method) => authDrafts[providerAuthDraftKey(providerId, method)]?.trim());
+}
+
+export function providerIdFromAuthError(error: unknown, state: AppState): string | undefined {
   if (!(error instanceof GatewayError)) {
     return undefined;
   }
@@ -248,16 +228,10 @@ export function providerIdFromAuthError(
   if (!authLike) {
     return undefined;
   }
-  const direct = [
-    body.provider_id,
-    body.providerID,
-    body.provider,
-    body.llm_provider,
-  ].find((value): value is string => typeof value === "string");
-  if (
-    direct &&
-    state.providers?.all.some((provider) => provider.id === direct)
-  ) {
+  const direct = [body.provider_id, body.providerID, body.provider, body.llm_provider].find(
+    (value): value is string => typeof value === "string",
+  );
+  if (direct && state.providers?.all.some((provider) => provider.id === direct)) {
     return direct;
   }
   const fromText = state.providers?.all.find((provider) =>

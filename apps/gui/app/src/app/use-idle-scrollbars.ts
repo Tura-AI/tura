@@ -28,9 +28,7 @@ export function useIdleScrollbars() {
     }
 
     function isAtScrollBottom(element: HTMLElement) {
-      return (
-        element.scrollHeight - element.scrollTop - element.clientHeight <= 2
-      );
+      return element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
     }
 
     function scheduleScrollbarHide(element: HTMLElement) {
@@ -45,10 +43,7 @@ export function useIdleScrollbars() {
       }
       const timer = window.setTimeout(() => {
         scrollbarTimers.delete(element);
-        if (
-          isAtScrollBottom(element) &&
-          !scrollbarPointerElements.has(element)
-        ) {
+        if (isAtScrollBottom(element) && !scrollbarPointerElements.has(element)) {
           element.classList.add(hideClass);
         }
       }, 5000);
@@ -73,18 +68,12 @@ export function useIdleScrollbars() {
       return document.scrollingElement as HTMLElement | null;
     }
 
-    function pointerInVerticalScrollbar(
-      element: HTMLElement,
-      event: PointerEvent,
-    ) {
+    function pointerInVerticalScrollbar(element: HTMLElement, event: PointerEvent) {
       if (!canScrollVertically(element)) {
         return false;
       }
       const rect = element.getBoundingClientRect();
-      const scrollbarWidth = Math.max(
-        12,
-        element.offsetWidth - element.clientWidth,
-      );
+      const scrollbarWidth = Math.max(12, element.offsetWidth - element.clientWidth);
       return (
         event.clientX >= rect.right - scrollbarWidth - 2 &&
         event.clientX <= rect.right + 2 &&
@@ -96,10 +85,7 @@ export function useIdleScrollbars() {
     function handleScrollbarPointerMove(event: PointerEvent) {
       const current = scrollableElementFromPoint(event.target);
       for (const element of Array.from(scrollbarPointerElements)) {
-        if (
-          element !== current ||
-          !pointerInVerticalScrollbar(element, event)
-        ) {
+        if (element !== current || !pointerInVerticalScrollbar(element, event)) {
           scrollbarPointerElements.delete(element);
           scheduleScrollbarHide(element);
         }
@@ -112,22 +98,10 @@ export function useIdleScrollbars() {
     }
 
     document.addEventListener("scroll", handleScrollableIdle, scrollOptions);
-    document.addEventListener(
-      "pointermove",
-      handleScrollbarPointerMove,
-      pointerOptions,
-    );
+    document.addEventListener("pointermove", handleScrollbarPointerMove, pointerOptions);
     onCleanup(() => {
-      document.removeEventListener(
-        "scroll",
-        handleScrollableIdle,
-        scrollOptions,
-      );
-      document.removeEventListener(
-        "pointermove",
-        handleScrollbarPointerMove,
-        pointerOptions,
-      );
+      document.removeEventListener("scroll", handleScrollableIdle, scrollOptions);
+      document.removeEventListener("pointermove", handleScrollbarPointerMove, pointerOptions);
       for (const timer of scrollbarTimers.values()) {
         window.clearTimeout(timer);
       }

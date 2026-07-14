@@ -112,7 +112,7 @@ async fn tura_config_reads_configured_provider_model_options_and_updates_one_tie
             .as_array()
             .expect("options")
             .len(),
-        1
+        2
     );
     let option_providers = value["tiers"][0]["options"]
         .as_array()
@@ -121,6 +121,7 @@ async fn tura_config_reads_configured_provider_model_options_and_updates_one_tie
         .filter_map(|option| option.get("provider").and_then(Value::as_str))
         .collect::<Vec<_>>();
     assert!(option_providers.contains(&"codex"));
+    assert!(option_providers.contains(&"google"));
     assert!(!option_providers.contains(&"claude-code"));
 
     let update = serde_json::json!({
@@ -128,22 +129,6 @@ async fn tura_config_reads_configured_provider_model_options_and_updates_one_tie
         "provider": "google",
         "model": "gemini-2.5-flash"
     });
-    let (status, body) = request(
-        Method::PUT,
-        "/model_config",
-        "application/json",
-        update.to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let value: Value = serde_json::from_str(&body).expect("json");
-    assert!(value["error"]
-        .as_str()
-        .expect("unconfigured provider should be rejected")
-        .contains("not available"));
-
-    std::env::set_var("GOOGLE_API_KEY", "configured-google");
-    std::env::set_var("GOOGLE_REFRESH_TOKEN", "");
     let (status, body) = request(
         Method::PUT,
         "/model_config",
@@ -167,34 +152,19 @@ async fn tura_config_reads_configured_provider_model_options_and_updates_one_tie
 }
 
 #[tokio::test]
-async fn gui_config_reads_and_writes_exact_text() {
-    let _guard = ENV_LOCK.lock().await;
-    let config_path = std::env::current_dir()
-        .expect("cwd")
-        .join("config")
-        .join("gui_config.toml");
-    let original_content = fs::read_to_string(&config_path).ok();
-
-    let content = "theme = \"dark\"\nraw = true\n";
+async fn provider_model_validate_route_is_mounted() {
     let (status, body) = request(
-        Method::PUT,
-        "/gui_config",
-        "text/plain; charset=utf-8",
-        content.to_string(),
+        Method::POST,
+        "/provider/model/validate",
+        "application/json",
+        serde_json::json!({ "providerID": "", "modelID": "" }).to_string(),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, content);
 
-    let (status, body) = request(Method::GET, "/gui_config", "text/plain", String::new()).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, content);
-
-    if let Some(original_content) = original_content {
-        fs::write(&config_path, original_content).expect("restore gui config");
-    } else {
-        let _ = fs::remove_file(&config_path);
-    }
+    let value: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["message"], "providerID and modelID are required");
 }
 
 fn temp_dir(name: &str) -> PathBuf {

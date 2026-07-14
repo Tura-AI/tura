@@ -1,8 +1,4 @@
-import type {
-  PollInterval,
-  PlanStatus,
-  StartCondition,
-} from "@tura/gateway-sdk";
+import type { PollInterval, PlanStatus, StartCondition } from "@tura/gateway-sdk";
 import type { ComposerImage, SettingsSection, ThemeMode } from "./global-store";
 
 export type DraftState = {

@@ -1,4 +1,6 @@
-import type { Command } from "@tura/gateway-sdk";
+import { GatewayClient, type Command } from "@tura/gateway-sdk";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import ArrowUp from "lucide-solid/icons/arrow-up";
 import ExternalLink from "lucide-solid/icons/external-link";
 import FolderOpen from "lucide-solid/icons/folder-open";
@@ -12,17 +14,28 @@ import {
   createMemo,
   createSignal,
   onCleanup,
+  onMount,
 } from "solid-js";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
 import { type ComposerImage } from "../state/global-store";
+import { composerActionState } from "./composer-action";
 import { ImageLightbox } from "./message-rich-text";
+import { mediaSource } from "./message-rich-text-paths";
+
+type NativeInputFile = {
+  name: string;
+  contentBase64: string;
+  mimeType?: string | null;
+};
 
 export function Composer(props: {
   text: string;
   images: ComposerImage[];
   submitting: boolean;
   slashCommands: Command[];
+  gatewayUrl: string;
+  directory?: string;
   onText: (text: string) => void;
   onImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
@@ -35,6 +48,8 @@ export function Composer(props: {
   let fileInput: HTMLInputElement | undefined;
   let textarea: HTMLTextAreaElement | undefined;
   let editor: HTMLDivElement | undefined;
+  let composer: HTMLElement | undefined;
+  let unlistenNativeDrag: (() => void) | undefined;
   let attachmentPressTimer: number | undefined;
   let lastSubmitAt = 0;
   const [previewImageId, setPreviewImageId] = createSignal<string>();
@@ -43,17 +58,18 @@ export function Composer(props: {
     x: number;
     y: number;
   }>();
-  const imageById = createMemo(
-    () => new Map(props.images.map((image) => [image.id, image])),
+  const [composerDragDepth, setComposerDragDepth] = createSignal(0);
+  const [attachmentError, setAttachmentError] = createSignal<string>();
+  const inputClient = createMemo(
+    () => new GatewayClient({ baseUrl: props.gatewayUrl, directory: props.directory }),
   );
+  const imageById = createMemo(() => new Map(props.images.map((image) => [image.id, image])));
   const attachmentsById = imageById;
   const previewImage = createMemo(() =>
     previewImageId() ? imageById().get(previewImageId()!) : undefined,
   );
   const imagePaths = createMemo(() =>
-    props.images
-      .filter((image) => attachmentKind(image) === "image")
-      .map((image) => image.dataUrl),
+    props.images.filter((image) => attachmentKind(image) === "image").map((image) => image.dataUrl),
   );
   const previewImageIndex = createMemo(() => {
     const image = previewImage();
@@ -61,16 +77,63 @@ export function Composer(props: {
   });
   const submitBlocked = createMemo(
     () =>
-      props.submitting ||
-      (!props.running && props.submitDisabled) ||
-      (!props.text.trim() && props.images.length === 0),
+      props.submitting || props.submitDisabled || (!props.text.trim() && props.images.length === 0),
   );
+  const textEmpty = createMemo(() => !props.text.trim() && props.images.length === 0);
+  const actionState = createMemo(() =>
+    composerActionState({
+      text: props.text,
+      imageCount: props.images.length,
+      running: Boolean(props.running),
+      submitting: props.submitting,
+      submitDisabled: props.submitDisabled,
+      hasStopHandler: Boolean(props.onStop),
+    }),
+  );
+  const composerDragActive = createMemo(() => composerDragDepth() > 0);
+
+  function controlActionThrottled(): boolean {
+    const now = Date.now();
+    if (now - lastSubmitAt < 350) {
+      return true;
+    }
+    lastSubmitAt = now;
+    return false;
+  }
 
   function submitFromControl() {
-    if (props.running) {
-      void props.onStop?.();
+    if (submitBlocked()) {
       return;
     }
+    if (controlActionThrottled()) {
+      return;
+    }
+    void props.onSubmit();
+  }
+
+  function stopFromControl() {
+    if (actionState().disabled || actionState().kind !== "stop") {
+      return;
+    }
+    if (controlActionThrottled()) {
+      return;
+    }
+    void props.onStop?.();
+  }
+
+  function activateControlAction() {
+    if (actionState().kind === "stop") {
+      stopFromControl();
+      return;
+    }
+    submitFromControl();
+  }
+
+  function submitFromKeyboard(event: KeyboardEvent) {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
+      return;
+    }
+    event.preventDefault();
     if (submitBlocked()) {
       return;
     }
@@ -82,31 +145,11 @@ export function Composer(props: {
     void props.onSubmit();
   }
 
-  function submitFromKeyboard(event: KeyboardEvent) {
-    if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
-      return;
-    }
-    event.preventDefault();
-    if (props.running) {
-      return;
-    }
-    if (submitBlocked()) {
-      return;
-    }
-    const now = Date.now();
-    if (now - lastSubmitAt < 350) {
-      return;
-    }
-    lastSubmitAt = now;
-    void ((event.metaKey || event.ctrlKey) && props.onQueueSubmit
-      ? props.onQueueSubmit()
-      : props.onSubmit());
-  }
-
   const sendButtonTitle = createMemo(() =>
-    props.running
-      ? t("stop")
-      : t("sendButtonHint", { modifier: shortcutModifierLabel() }),
+    t("sendButtonHint", { modifier: shortcutModifierLabel() }),
+  );
+  const actionButtonTitle = createMemo(() =>
+    actionState().kind === "stop" ? t("stop") : sendButtonTitle(),
   );
 
   createEffect(() => {
@@ -119,42 +162,208 @@ export function Composer(props: {
   });
 
   onCleanup(() => {
+    unlistenNativeDrag?.();
     if (attachmentPressTimer) {
       window.clearTimeout(attachmentPressTimer);
     }
   });
 
-  async function attachFiles(files: FileList | null) {
+  onMount(() => {
+    if (!isTauri()) {
+      return;
+    }
+    let nativeDragInsideComposer = false;
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === "leave") {
+          nativeDragInsideComposer = false;
+          setComposerDragDepth(0);
+          return;
+        }
+        const inside = composerContainsPhysicalPoint(
+          composer,
+          payload.position.x,
+          payload.position.y,
+        );
+        if (payload.type === "enter" || payload.type === "over") {
+          nativeDragInsideComposer = inside;
+          setComposerDragDepth(inside ? 1 : 0);
+          return;
+        }
+        const shouldAttach = nativeDragInsideComposer || inside;
+        nativeDragInsideComposer = false;
+        setComposerDragDepth(0);
+        if (shouldAttach) {
+          void attachNativePaths(payload.paths);
+        }
+      })
+      .then((unlisten) => {
+        unlistenNativeDrag = unlisten;
+      })
+      .catch((error: unknown) => setAttachmentFailure(error));
+  });
+
+  async function attachFiles(files: FileList | File[] | null) {
     const selectedFiles = Array.from(files ?? []);
     if (selectedFiles.length === 0) {
       return;
     }
-    const inserted: ComposerImage[] = [];
-    for (const file of selectedFiles) {
-      const kind = file.type.startsWith("image/") ? "image" : "file";
-      inserted.push({
-        id: crypto.randomUUID(),
-        name: file.name,
-        dataUrl:
-          kind === "image"
-            ? await readImageDataUrl(file)
-            : URL.createObjectURL(file),
-        objectUrl: URL.createObjectURL(file),
-        mimeType: file.type,
-        kind,
-      });
+    try {
+      const inserted: ComposerImage[] = [];
+      for (const file of selectedFiles) {
+        inserted.push(
+          await persistInputFile({
+            name: file.name,
+            contentBase64: await readFileBase64(file),
+            mimeType: file.type || undefined,
+          }),
+        );
+      }
+      addAttachments(inserted);
+    } catch (error) {
+      setAttachmentFailure(error);
     }
-    props.onImages([...props.images, ...inserted]);
-    insertComposerTokens(inserted);
     if (fileInput) {
       fileInput.value = "";
     }
   }
 
+  async function attachNativePaths(paths: string[]) {
+    try {
+      const inserted: ComposerImage[] = [];
+      for (const path of paths) {
+        const files = await invoke<NativeInputFile[]>("read_input_file", { path });
+        for (const file of files) {
+          inserted.push(await persistInputFile(file));
+        }
+      }
+      addAttachments(inserted);
+    } catch (error) {
+      setAttachmentFailure(error);
+    }
+  }
+
+  async function persistInputFile(file: NativeInputFile): Promise<ComposerImage> {
+    if (!props.directory) {
+      throw new Error(t("attachmentWorkspaceRequired"));
+    }
+    const saved = await inputClient().saveInputFile({
+      name: file.name,
+      content: file.contentBase64,
+      encoding: "base64",
+      mimeType: file.mimeType,
+    });
+    const mimeType = saved.mimeType ?? file.mimeType ?? undefined;
+    return {
+      id: crypto.randomUUID(),
+      name: file.name,
+      dataUrl: saved.path,
+      mimeType: mimeType ?? undefined,
+      kind: isImageAttachment(file.name, mimeType) ? "image" : "file",
+    };
+  }
+
+  function addAttachments(inserted: ComposerImage[]) {
+    if (inserted.length === 0) {
+      return;
+    }
+    setAttachmentError(undefined);
+    props.onImages([...props.images, ...inserted]);
+    insertComposerTokens(inserted);
+  }
+
+  function setAttachmentFailure(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    setAttachmentError(t("attachmentSaveFailed", { message }));
+  }
+
+  function composerDataTransferHasFiles(dataTransfer: DataTransfer | null): boolean {
+    if (!dataTransfer) {
+      return false;
+    }
+    if (Array.from(dataTransfer.items ?? []).some((item) => item.kind === "file")) {
+      return true;
+    }
+    return dataTransfer.files.length > 0;
+  }
+
+  function handleComposerDragEnter(event: DragEvent) {
+    if (!composerDataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setComposerDragDepth((depth) => depth + 1);
+  }
+
+  function handleComposerDragOver(event: DragEvent) {
+    if (!composerDataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  }
+
+  function handleComposerDragLeave(event: DragEvent) {
+    if (!composerDataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setComposerDragDepth((depth) => Math.max(0, depth - 1));
+  }
+
+  function handleComposerDrop(event: DragEvent) {
+    if (!composerDataTransferHasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setComposerDragDepth(0);
+    if (!isTauri()) {
+      void attachFiles(event.dataTransfer?.files ?? null);
+    }
+  }
+
+  function handleComposerPaste(event: ClipboardEvent) {
+    const imageFiles = Array.from(event.clipboardData?.files ?? []).filter((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (imageFiles.length > 0) {
+      event.preventDefault();
+      void attachFiles(imageFiles);
+      return;
+    }
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    if (text) {
+      event.preventDefault();
+      document.execCommand("insertText", false, text);
+      syncEditor();
+      return;
+    }
+    if (isTauri()) {
+      event.preventDefault();
+      void attachClipboardImage();
+    }
+  }
+
+  async function attachClipboardImage() {
+    try {
+      const file = await invoke<NativeInputFile | null>("read_clipboard_image");
+      if (file) {
+        addAttachments([await persistInputFile(file)]);
+      }
+    } catch (error) {
+      setAttachmentFailure(error);
+    }
+  }
+
   function insertComposerTokens(images: ComposerImage[]) {
-    const tokens = images
-      .map((image) => composerAttachmentToken(image))
-      .join("\n");
+    const tokens = images.map((image) => composerAttachmentToken(image)).join("\n");
     const before = props.text;
     const after: string = "";
     const prefix = before && !before.endsWith("\n") ? "\n" : "";
@@ -200,18 +409,14 @@ export function Composer(props: {
         }
         const attachment = attachmentsById().get(segment.value);
         if (!attachment) {
-          return document.createTextNode(
-            composerToken(segment.type, segment.value),
-          );
+          return document.createTextNode(composerToken(segment.type, segment.value));
         }
         return createAttachmentTokenElement(attachment);
       }),
     );
   }
 
-  function createAttachmentTokenElement(
-    attachment: ComposerImage,
-  ): HTMLElement {
+  function createAttachmentTokenElement(attachment: ComposerImage): HTMLElement {
     const kind = attachmentKind(attachment);
     const wrapper = document.createElement("span");
     wrapper.className = classNames(
@@ -226,12 +431,8 @@ export function Composer(props: {
       wrapper.dataset.imageId = attachment.id;
     }
     wrapper.title = composerAttachmentToken(attachment);
-    wrapper.addEventListener("contextmenu", (event) =>
-      openAttachmentMenu(event, attachment),
-    );
-    wrapper.addEventListener("pointerdown", (event) =>
-      beginAttachmentPress(event, attachment),
-    );
+    wrapper.addEventListener("contextmenu", (event) => openAttachmentMenu(event, attachment));
+    wrapper.addEventListener("pointerdown", (event) => beginAttachmentPress(event, attachment));
     wrapper.addEventListener("pointerup", cancelAttachmentPress);
     wrapper.addEventListener("pointerleave", cancelAttachmentPress);
 
@@ -240,7 +441,7 @@ export function Composer(props: {
     viewButton.addEventListener("click", () => viewAttachment(attachment));
     if (kind === "image") {
       const image = document.createElement("img");
-      image.src = attachment.dataUrl;
+      image.src = mediaSource(attachment.dataUrl, props.directory, props.gatewayUrl);
       image.alt = "";
       viewButton.append(image);
     } else {
@@ -257,9 +458,7 @@ export function Composer(props: {
     removeButton.type = "button";
     removeButton.title = t("remove");
     removeButton.textContent = "×";
-    removeButton.addEventListener("click", () =>
-      removeAttachment(attachment.id),
-    );
+    removeButton.addEventListener("click", () => removeAttachment(attachment.id));
 
     wrapper.append(viewButton, removeButton);
     return wrapper;
@@ -295,26 +494,15 @@ export function Composer(props: {
       setPreviewImageId(attachment.id);
       return;
     }
-    window.open(
-      attachment.objectUrl ?? attachment.dataUrl,
-      "_blank",
-      "noopener",
-    );
+    void inputClient().openFile(attachment.dataUrl).catch(setAttachmentFailure);
   }
 
   function openAttachmentLocation(attachment: ComposerImage) {
     setAttachmentMenu(undefined);
-    window.open(
-      attachment.objectUrl ?? attachment.dataUrl,
-      "_blank",
-      "noopener",
-    );
+    void inputClient().openFileLocation(attachment.dataUrl).catch(setAttachmentFailure);
   }
 
-  function openAttachmentMenu(
-    event: MouseEvent | PointerEvent,
-    attachment: ComposerImage,
-  ) {
+  function openAttachmentMenu(event: MouseEvent | PointerEvent, attachment: ComposerImage) {
     event.preventDefault();
     event.stopPropagation();
     setAttachmentMenu({
@@ -324,10 +512,7 @@ export function Composer(props: {
     });
   }
 
-  function beginAttachmentPress(
-    event: PointerEvent,
-    attachment: ComposerImage,
-  ) {
+  function beginAttachmentPress(event: PointerEvent, attachment: ComposerImage) {
     if (event.pointerType !== "touch") {
       return;
     }
@@ -344,7 +529,14 @@ export function Composer(props: {
   }
 
   return (
-    <footer class="bottom-composer composer">
+    <footer
+      ref={composer}
+      class={classNames("bottom-composer composer", composerDragActive() && "composer-drag-active")}
+      onDragEnter={handleComposerDragEnter}
+      onDragOver={handleComposerDragOver}
+      onDragLeave={handleComposerDragLeave}
+      onDrop={handleComposerDrop}
+    >
       <Show when={props.slashCommands.length > 0}>
         <div class="slash-menu">
           <For each={props.slashCommands}>
@@ -357,22 +549,7 @@ export function Composer(props: {
           </For>
         </div>
       </Show>
-      <div
-        class="composer-input"
-        onDragOver={(event) => {
-          if (
-            Array.from(event.dataTransfer?.items ?? []).some(
-              (item) => item.kind === "file",
-            )
-          ) {
-            event.preventDefault();
-          }
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          void attachFiles(event.dataTransfer?.files ?? null);
-        }}
-      >
+      <div class="composer-input">
         <div
           ref={editor}
           class="composer-rich-editor"
@@ -383,12 +560,7 @@ export function Composer(props: {
           onInput={syncEditor}
           onCopy={copyEditorText}
           onKeyDown={submitFromKeyboard}
-          onPaste={(event) => {
-            event.preventDefault();
-            const text = event.clipboardData?.getData("text/plain") ?? "";
-            document.execCommand("insertText", false, text);
-            syncEditor();
-          }}
+          onPaste={handleComposerPaste}
         />
         <textarea
           ref={textarea}
@@ -400,6 +572,13 @@ export function Composer(props: {
           onKeyDown={submitFromKeyboard}
           placeholder={t("writeMessage")}
         />
+        <Show when={attachmentError()}>
+          {(message) => (
+            <div class="composer-attachment-error" role="alert">
+              {message()}
+            </div>
+          )}
+        </Show>
       </div>
       <div class="composer-toolbar">
         <button
@@ -422,25 +601,30 @@ export function Composer(props: {
         <button
           class="composer-send"
           type="button"
-          title={sendButtonTitle()}
-          disabled={props.running ? !props.onStop : submitBlocked()}
+          title={actionButtonTitle()}
+          aria-label={actionButtonTitle()}
+          data-action={actionState().kind}
+          data-submitting={props.submitting ? "true" : "false"}
+          data-submit-disabled={props.submitDisabled ? "true" : "false"}
+          data-text-empty={textEmpty() ? "true" : "false"}
+          disabled={actionState().disabled}
           onPointerDown={(event) => {
             if (event.button !== 0) {
               return;
             }
             event.preventDefault();
-            submitFromControl();
+            activateControlAction();
           }}
           onClick={(event) => {
             event.preventDefault();
-            submitFromControl();
+            activateControlAction();
           }}
         >
           <Show
-            when={props.running}
+            when={actionState().kind === "stop"}
             fallback={<ArrowUp size={16} strokeWidth={1.8} />}
           >
-            <Square size={13} strokeWidth={2} fill="currentColor" />
+            <Square size={14} strokeWidth={2.1} />
           </Show>
         </button>
       </div>
@@ -448,11 +632,11 @@ export function Composer(props: {
         <ImageLightbox
           paths={imagePaths()}
           index={previewImageIndex()}
+          workspaceDirectory={props.directory}
+          gatewayUrl={props.gatewayUrl}
           onIndex={(index) =>
             setPreviewImageId(
-              props.images.filter((image) => attachmentKind(image) === "image")[
-                index
-              ]?.id,
+              props.images.filter((image) => attachmentKind(image) === "image")[index]?.id,
             )
           }
           onClose={() => setPreviewImageId(undefined)}
@@ -507,8 +691,7 @@ export type ComposerPreviewSegment =
   | { type: "image"; value: string }
   | { type: "file"; value: string };
 
-export const COMPOSER_ATTACHMENT_TOKEN_PATTERN =
-  /\[\[(image|file):([a-zA-Z0-9_-]+)\]\]/gu;
+export const COMPOSER_ATTACHMENT_TOKEN_PATTERN = /\[\[(image|file):([a-zA-Z0-9_-]+)\]\]/gu;
 
 export function composerImageToken(id: string): string {
   return `[[image:${id}]]`;
@@ -518,9 +701,7 @@ export function composerFileToken(id: string): string {
   return `[[file:${id}]]`;
 }
 
-export function composerPreviewSegments(
-  text: string,
-): ComposerPreviewSegment[] {
+export function composerPreviewSegments(text: string): ComposerPreviewSegment[] {
   const segments: ComposerPreviewSegment[] = [];
   let cursor = 0;
   for (const match of text.matchAll(COMPOSER_ATTACHMENT_TOKEN_PATTERN)) {
@@ -543,18 +724,9 @@ export function removeComposerImageToken(text: string, id: string): string {
   return removeComposerAttachmentToken(text, id);
 }
 
-export function removeComposerAttachmentToken(
-  text: string,
-  id: string,
-): string {
+export function removeComposerAttachmentToken(text: string, id: string): string {
   return text
-    .replace(
-      new RegExp(
-        `\\n?\\[\\[(?:image|file):${escapeRegExp(id)}\\]\\]\\n?`,
-        "gu",
-      ),
-      "\n",
-    )
+    .replace(new RegExp(`\\n?\\[\\[(?:image|file):${escapeRegExp(id)}\\]\\]\\n?`, "gu"), "\n")
     .replace(/\n{3,}/gu, "\n\n");
 }
 
@@ -564,43 +736,53 @@ export function composerAttachmentToken(attachment: ComposerImage): string {
     : composerFileToken(attachment.id);
 }
 
-export function composerToken(
-  type: ComposerPreviewSegment["type"],
-  id: string,
-): string {
+export function composerToken(type: ComposerPreviewSegment["type"], id: string): string {
   return type === "file" ? composerFileToken(id) : composerImageToken(id);
 }
 
 export function composerTokenForElement(element: HTMLElement): string {
   const id = element.dataset.attachmentId ?? "";
-  return element.dataset.attachmentKind === "file"
-    ? composerFileToken(id)
-    : composerImageToken(id);
+  return element.dataset.attachmentKind === "file" ? composerFileToken(id) : composerImageToken(id);
 }
 
 export function attachmentKind(attachment: ComposerImage): "image" | "file" {
-  return (
-    attachment.kind ??
-    (attachment.mimeType?.startsWith("image/") ? "image" : "image")
-  );
+  return attachment.kind ?? (attachment.mimeType?.startsWith("image/") ? "image" : "image");
 }
 
 function shortcutModifierLabel(): string {
   const platform =
-    typeof navigator === "undefined"
-      ? ""
-      : `${navigator.userAgent} ${navigator.platform}`;
+    typeof navigator === "undefined" ? "" : `${navigator.userAgent} ${navigator.platform}`;
   return /\b(Mac|iPhone|iPad|iPod)\b/iu.test(platform) ? "Command" : "Ctrl";
 }
 
-export function readImageDataUrl(file: File): Promise<string> {
+export function readFileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () =>
-      reject(reader.error ?? new Error("Failed to read image"));
+    reader.onload = () => resolve(String(reader.result ?? "").split(",", 2)[1] ?? "");
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
+}
+
+function isImageAttachment(name: string, mimeType?: string | null): boolean {
+  return Boolean(
+    mimeType?.startsWith("image/") || /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/iu.test(name),
+  );
+}
+
+function composerContainsPhysicalPoint(
+  composer: HTMLElement | undefined,
+  physicalX: number,
+  physicalY: number,
+): boolean {
+  if (!composer) {
+    return false;
+  }
+  const scale = window.devicePixelRatio || 1;
+  const rect = composer.getBoundingClientRect();
+  const x = physicalX / scale;
+  const y = physicalY / scale;
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
 
 export function escapeRegExp(value: string): string {
@@ -622,10 +804,7 @@ export function placeCaretAtEnd(element: HTMLElement) {
 export function composerInputHeight(value: string): string {
   const lines = Math.min(
     8,
-    Math.max(
-      2,
-      value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 88),
-    ),
+    Math.max(2, value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 88)),
   );
   return `${lines * 22 + 18}px`;
 }

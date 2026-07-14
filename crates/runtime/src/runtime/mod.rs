@@ -10,7 +10,7 @@ pub mod types {
     pub use crate::state_machine::agent_management::AgentId;
     pub use crate::state_machine::runtime_management::{
         RuntimeCallResultStatus, RuntimeError, RuntimeId, RuntimeManagement, RuntimeProviderConfig,
-        RuntimeState, ToolCallRecord, UsageReport,
+        RuntimeSessionSyncStatus, RuntimeState, ToolCallRecord, UsageReport,
     };
     pub use crate::state_machine::session_management::SessionId;
 

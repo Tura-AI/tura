@@ -1,13 +1,23 @@
 import { GatewayClient } from "../gateway/client.js";
 import { CliUsageError, type CliContext } from "../types/common.js";
-import type { AgentConfig, AgentProviderConfig, AgentUpsertRequest } from "../types/agent.js";
+import type { AgentConfig, AgentUpsertRequest } from "../types/agent.js";
 import { HumanOutput } from "../output/human.js";
 import { printJson } from "../output/json.js";
 import { existsSync, readFileSync } from "node:fs";
 import { t } from "../i18n.js";
+import { agentDescription } from "../agent-display.js";
+import {
+  agentRuntimeConfig,
+  applyAgentRuntimeConfig,
+  modelPairText,
+} from "../agent-runtime-config.js";
 
 export async function agentCommand(context: CliContext, args: string[]): Promise<void> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   const subcommand = args.shift() ?? "list";
   const json = context.json || takeFlag(args, "--json");
   if (subcommand === "list") {
@@ -16,7 +26,7 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     else {
       const human = new HumanOutput(context.color);
       for (const agent of agents) {
-        human.out(`${agent.summary?.name ?? agent.summary?.id}\t${agent.summary?.description ?? ""}`);
+        human.out(`${agent.summary?.name ?? agent.summary?.id}\t${agentDescription(agent)}`);
       }
     }
     return;
@@ -29,7 +39,7 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     else {
       const human = new HumanOutput(context.color);
       human.out(`${agent.summary.id}\t${agent.summary.source}\t${agent.summary.path}`);
-      human.out(agent.summary.description);
+      human.out(agentDescription(agent));
     }
     return;
   }
@@ -37,8 +47,14 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     const id = args.shift();
     if (!id) throw new CliUsageError(t("agentRequiresId", { command: subcommand }));
     const payload = parseAgentUpsertArgs(id, args);
-    if (args.length > 0) throw new CliUsageError(t("unknownAgentArguments", { command: subcommand, args: args.join(" ") }));
-    const agent = subcommand === "create" ? await client.createAgent(payload) : await client.updateAgent(id, payload);
+    if (args.length > 0)
+      throw new CliUsageError(
+        t("unknownAgentArguments", { command: subcommand, args: args.join(" ") }),
+      );
+    const agent =
+      subcommand === "create"
+        ? await client.createAgent(payload)
+        : await client.updateAgent(id, payload);
     if (json) printJson(agent);
     else new HumanOutput(context.color).out(`${agent.summary.id}\t${agent.summary.path}`);
     return;
@@ -51,35 +67,40 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     else new HumanOutput(context.color).out(deleted ? t("deleted") : t("notDeleted"));
     return;
   }
-  if (subcommand === "tier") {
+  if (subcommand === "tier" || subcommand === "model") {
     const id = args.shift();
     if (!id) throw new CliUsageError(t("agentTierRequiresId"));
-    const tier = args.shift();
+    const modelArg = args.shift();
     const stored = await client.getAgent(id);
-    if (!tier) {
-      const provider = providerObject(stored.config.provider);
+    if (!modelArg) {
+      const runtime = agentRuntimeConfig(undefined, stored);
       const response = {
         agent: id,
-        tier: stringValue(provider.tura_llm_name) ?? "thinking",
-        reasoning_effort: stringValue(provider.model_reasoning_effort) ?? "low",
-        priority: provider.service_tier === "priority" || provider.model_acceleration_enabled === true,
+        default_model_tier: runtime.defaultModelTier,
+        current_model: modelPairText(runtime.currentModel) ?? "",
+        reasoning_effort: runtime.reasoningLevel,
+        priority: runtime.priorityEnabled,
       };
       if (json) printJson(response);
-      else new HumanOutput(context.color).out(`${response.agent}\t${response.tier}\t${response.reasoning_effort}\t${response.priority ? t("priority") : t("defaultModel")}`);
+      else
+        new HumanOutput(context.color).out(
+          `${response.agent}\t${response.current_model || response.default_model_tier}\t${response.reasoning_effort}\t${response.priority ? "priority" : "auto"}`,
+        );
       return;
     }
+    const currentModel = parseProviderModel(modelArg, args);
     const reasoning = takeOption(args, "--reasoning") ?? takeOption(args, "--reasoning-effort");
-    const priority = takeFlag(args, "--priority");
-    const noPriority = takeFlag(args, "--no-priority");
-    if (args.length > 0) throw new CliUsageError(t("unknownAgentTierArguments", { args: args.join(" ") }));
-    const config = agentConfigWithProviderTier(stored.config, {
-      tier,
+    const priority = takePriorityOption(args);
+    if (args.length > 0)
+      throw new CliUsageError(t("unknownAgentTierArguments", { args: args.join(" ") }));
+    const config = agentConfigWithCurrentModel(stored.config, {
+      currentModel,
       reasoningEffort: reasoning,
-      priority: priority ? true : noPriority ? false : undefined,
+      priorityEnabled: priority,
     });
     const updated = await client.updateAgent(id, { config, prompt: stored.prompt ?? undefined });
     if (json) printJson(updated);
-    else new HumanOutput(context.color).out(`${id} -> ${tier}`);
+    else new HumanOutput(context.color).out(`${id} -> ${currentModel}`);
     return;
   }
   throw new CliUsageError(t("unknownAgentCommand", { command: subcommand }));
@@ -89,7 +110,8 @@ function parseAgentUpsertArgs(id: string, args: string[]): AgentUpsertRequest {
   const configInput = takeOption(args, "--config");
   const prompt = takeOption(args, "--prompt");
   const promptFile = takeOption(args, "--prompt-file");
-  if (prompt && promptFile) throw new CliUsageError(t("useOnlyOneOption", { left: "--prompt", right: "--prompt-file" }));
+  if (prompt && promptFile)
+    throw new CliUsageError(t("useOnlyOneOption", { left: "--prompt", right: "--prompt-file" }));
   const config = configInput ? readJsonValue<AgentConfig>(configInput, "--config") : undefined;
   return {
     id,
@@ -99,35 +121,28 @@ function parseAgentUpsertArgs(id: string, args: string[]): AgentUpsertRequest {
   };
 }
 
-function agentConfigWithProviderTier(
+function agentConfigWithCurrentModel(
   config: AgentConfig,
-  settings: { tier: string; reasoningEffort?: string; priority?: boolean },
+  settings: { currentModel: string; reasoningEffort?: string; priorityEnabled?: boolean },
 ): AgentConfig {
-  const provider = providerObject(config.provider);
-  return {
-    ...config,
-    provider: {
-      ...provider,
-      tura_llm_name: settings.tier,
-      ...(settings.reasoningEffort ? { model_reasoning_effort: settings.reasoningEffort } : {}),
-      ...(settings.priority !== undefined
-        ? {
-            model_acceleration_enabled: settings.priority,
-            service_tier: settings.priority ? "priority" : "default",
-          }
-        : {}),
-    },
-  };
+  const runtime = agentRuntimeConfig(undefined, { config });
+  return applyAgentRuntimeConfig(config, {
+    defaultModelTier: runtime.defaultModelTier,
+    currentModel: settings.currentModel,
+    reasoningLevel: settings.reasoningEffort ?? runtime.reasoningLevel,
+    priorityEnabled: settings.priorityEnabled ?? runtime.priorityEnabled,
+  });
 }
 
-function providerObject(value: unknown): AgentProviderConfig {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? { ...(value as AgentProviderConfig) }
-    : {};
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
+function parseProviderModel(first: string, args: string[]): string {
+  if (first.includes("/")) {
+    const [provider, ...modelParts] = first.split("/");
+    const model = modelParts.join("/");
+    if (provider && model) return `${provider}/${model}`;
+  }
+  const model = args.shift();
+  if (first && model) return `${first}/${model}`;
+  throw new CliUsageError(t("modelTierRequiresProviderModelPair"));
 }
 
 function takeOption(args: string[], name: string): string | undefined {
@@ -146,16 +161,33 @@ function takeFlag(args: string[], name: string): boolean {
   return true;
 }
 
+function takePriorityOption(args: string[]): boolean | undefined {
+  const priority = takeFlag(args, "--priority");
+  const noPriority = takeFlag(args, "--no-priority");
+  if (priority && noPriority) {
+    throw new CliUsageError(t("useOnlyOneOption", { left: "--priority", right: "--no-priority" }));
+  }
+  if (priority) return true;
+  if (noPriority) return false;
+  return undefined;
+}
+
 function readJsonValue<T>(value: string, option: string): T {
-  const source = value.trim().startsWith("{") || value.trim().startsWith("[")
-    ? value
-    : existsSync(value)
-      ? readTextFile(value, option)
-      : value;
+  const source =
+    value.trim().startsWith("{") || value.trim().startsWith("[")
+      ? value
+      : existsSync(value)
+        ? readTextFile(value, option)
+        : value;
   try {
     return JSON.parse(source) as T;
   } catch (error) {
-    throw new CliUsageError(t("jsonOrFileRequired", { option, error: error instanceof Error ? error.message : String(error) }));
+    throw new CliUsageError(
+      t("jsonOrFileRequired", {
+        option,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 }
 
@@ -163,6 +195,11 @@ function readTextFile(path: string, option: string): string {
   try {
     return readFileSync(path, "utf8");
   } catch (error) {
-    throw new CliUsageError(t("jsonFileReadFailed", { option, error: error instanceof Error ? error.message : String(error) }));
+    throw new CliUsageError(
+      t("jsonFileReadFailed", {
+        option,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 }

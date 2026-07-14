@@ -11,21 +11,24 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use super::common::{
-    insert_opt, message_content_text, normalized_reasoning_effort, normalized_service_tier,
-    should_pass_service_tier,
+    insert_opt, normalized_reasoning_effort, normalized_service_tier, should_pass_service_tier,
 };
-use crate::metrics::{extract_openapi_metrics, fill_missing_estimated_usage};
+use crate::metrics::extract_openapi_metrics;
 use crate::streaming::{
     next_provider_stream_chunk, read_provider_response_body, send_provider_request_first_response,
 };
 use crate::tura_llm::{
-    default_client, estimate_context_utilization, normalize_response_content, CallMetrics,
-    CallOptions, CostDetails, ProviderResponse, ProviderStreamEventSink, TuraError, UsageDetails,
+    default_client, normalize_response_content, record_context_utilization, CallMetrics,
+    CallOptions, CostDetails, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink,
+    TuraError, UsageDetails,
 };
 use crate::utils::{
     deep_merge_json, emit_command_run_stream_events_from_content, strip_json_fence,
 };
-use crate::utils::{openai_chat_content_from_canonical, openai_chat_media_content_from_canonical};
+
+#[path = "chat_message_normalize.rs"]
+mod chat_message_normalize;
+pub(crate) use chat_message_normalize::normalize_messages_for_provider;
 
 pub async fn embed(
     base_url: &str,
@@ -99,7 +102,15 @@ pub async fn call_with_stream_events(
     let payload = build_chat_payload(provider, model, messages, options);
 
     if options.stream.unwrap_or(false) {
-        return stream_call(base_url, &client, url, payload, options.context_window).await;
+        return stream_call(
+            provider,
+            &client,
+            url,
+            payload,
+            options.context_window,
+            stream_events.as_ref(),
+        )
+        .await;
     }
 
     let resp = send_provider_request_first_response(client.post(url).json(&payload)).await?;
@@ -121,6 +132,7 @@ pub async fn call_with_stream_events(
     if let Some(text) = content.as_str() {
         content = Value::String(strip_json_fence(text));
     }
+    validate_chat_success_content(provider, &data, &content)?;
     emit_command_run_stream_events_from_content(&content, stream_events.as_ref());
 
     let mut metrics = extract_openapi_metrics(&data, options.context_window);
@@ -128,9 +140,52 @@ pub async fn call_with_stream_events(
 
     Ok(ProviderResponse {
         content,
-        raw: data.clone(),
+        raw: data,
         metrics: Some(metrics),
     })
+}
+
+fn validate_chat_success_content(
+    provider: &str,
+    data: &Value,
+    content: &Value,
+) -> Result<(), TuraError> {
+    let Some(choices) = data.get("choices").and_then(Value::as_array) else {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "missing choices in chat completion response".to_string(),
+        });
+    };
+    if choices.is_empty() {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "empty choices in chat completion response".to_string(),
+        });
+    }
+    let Some(message) = choices.first().and_then(|choice| choice.get("message")) else {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "missing message in chat completion response".to_string(),
+        });
+    };
+    let has_content = message.get("content").is_some_and(|value| !value.is_null());
+    let has_tool_calls = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|value| !value.is_empty());
+    if !has_content && !has_tool_calls {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "missing response content in chat completion response".to_string(),
+        });
+    }
+    if content.is_null() {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "missing response content after normalization".to_string(),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn build_chat_payload(
@@ -211,7 +266,7 @@ pub(crate) fn build_chat_payload(
     insert_opt(
         &mut payload,
         "reasoning_effort",
-        normalized_reasoning_effort(options).map(Value::from),
+        normalized_reasoning_effort(options, model).map(Value::from),
     );
     insert_opt(&mut payload, "prediction", options.prediction.clone());
     insert_opt(
@@ -342,7 +397,7 @@ fn should_pass_chat_tool_choice(provider: &str, model: &str, options: &CallOptio
     }
     if provider.eq_ignore_ascii_case("openrouter")
         && model.to_ascii_lowercase().starts_with("qwen/")
-        && normalized_reasoning_effort(options).is_some()
+        && normalized_reasoning_effort(options, model).is_some()
     {
         return false;
     }
@@ -350,11 +405,12 @@ fn should_pass_chat_tool_choice(provider: &str, model: &str, options: &CallOptio
 }
 
 async fn stream_call(
-    _base_url: &str,
+    provider: &str,
     client: &reqwest::Client,
     url: String,
     payload: Value,
     context_window: Option<u64>,
+    stream_events: Option<&ProviderStreamEventSink>,
 ) -> Result<ProviderResponse, TuraError> {
     let resp = send_provider_request_first_response(client.post(url).json(&payload)).await?;
     let status = resp.status();
@@ -392,7 +448,8 @@ async fn stream_call(
                 &mut full_content,
                 &mut tool_calls,
                 &mut stream_state,
-            ) {
+                stream_events,
+            )? {
                 saw_output = true;
                 last_output_at = Instant::now();
             }
@@ -411,7 +468,8 @@ async fn stream_call(
             &mut full_content,
             &mut tool_calls,
             &mut stream_state,
-        );
+            stream_events,
+        )?;
     }
 
     let content = if !full_content.is_empty() && !tool_calls.is_empty() {
@@ -431,6 +489,7 @@ async fn stream_call(
     } else {
         Value::Null
     };
+    validate_stream_success_content(provider, &content)?;
 
     let mut metrics = if let Some(usage) = stream_state.stream_usage.clone() {
         let mut metrics = extract_openapi_metrics(&json!({ "usage": usage }), context_window);
@@ -455,20 +514,32 @@ async fn stream_call(
             raw_usage: None,
         }
     };
-    if stream_state.stream_usage.is_none() {
-        fill_missing_estimated_usage(
-            &mut metrics,
-            &payload,
-            &content,
-            "codex_oauth_stream_returned_before_provider_usage",
-        );
-    }
-    estimate_context_utilization(&mut metrics);
+    record_context_utilization(&mut metrics);
 
     Ok(ProviderResponse {
         content,
         raw: json!({ "tool_calls": tool_calls, "usage": stream_state.stream_usage }),
         metrics: Some(metrics),
+    })
+}
+
+fn validate_stream_success_content(provider: &str, content: &Value) -> Result<(), TuraError> {
+    let has_content = content.as_str().is_some_and(|text| !text.is_empty())
+        || content
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty());
+    let has_tool_calls = content
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| !calls.is_empty());
+    if has_content || has_tool_calls {
+        return Ok(());
+    }
+
+    Err(TuraError::ProviderRequest {
+        provider: provider.to_string(),
+        message: "missing response content in chat completion stream".to_string(),
     })
 }
 
@@ -494,7 +565,9 @@ pub(crate) fn process_chat_stream_line_for_test(line: &str) -> (bool, String, St
     let mut full = String::new();
     let mut tools = Vec::new();
     let mut state = OpenAiCompatibleStreamState::default();
-    let event = process_openai_compatible_stream_line(line, &mut full, &mut tools, &mut state);
+    let event =
+        process_openai_compatible_stream_line(line, &mut full, &mut tools, &mut state, None)
+            .unwrap_or(false);
     (event, full, state.reasoning_buffer)
 }
 
@@ -503,18 +576,17 @@ fn process_openai_compatible_stream_line(
     full_content: &mut String,
     tool_calls: &mut Vec<Value>,
     state: &mut OpenAiCompatibleStreamState,
-) -> bool {
+    stream_events: Option<&ProviderStreamEventSink>,
+) -> Result<bool, TuraError> {
     let Some(line) = line.trim_start().strip_prefix("data:") else {
-        return false;
+        return Ok(false);
     };
     let line = line.trim_start();
     if line == "[DONE]" {
         state.stream_done = true;
-        return false;
+        return Ok(false);
     }
-    let Ok(delta) = serde_json::from_str::<Value>(line) else {
-        return false;
-    };
+    let delta = serde_json::from_str::<Value>(line)?;
     let mut output_event = false;
     if let Some(usage) = delta.get("usage").filter(|usage| !usage.is_null()) {
         state.stream_usage = Some(usage.clone());
@@ -531,6 +603,11 @@ fn process_openai_compatible_stream_line(
             {
                 if !text.is_empty() {
                     output_event = true;
+                    if let Some(sink) = stream_events {
+                        sink(ProviderStreamEvent::TextDelta {
+                            text: text.to_string(),
+                        });
+                    }
                 }
                 full_content.push_str(text);
                 if emit_minimax_streaming_tool_call(
@@ -611,7 +688,7 @@ fn process_openai_compatible_stream_line(
             state.finish_reason = Some(reason.to_string());
         }
     }
-    output_event
+    Ok(output_event)
 }
 
 #[derive(Default)]
@@ -813,281 +890,6 @@ pub(crate) async fn force_search(
     })
 }
 
-pub(crate) fn normalize_messages_for_provider(provider: &str, messages: &[Value]) -> Vec<Value> {
-    if needs_chat_tool_result_messages(provider) {
-        return normalize_openai_compatible_chat_messages(messages);
-    }
-
-    messages
-        .iter()
-        .map(|m| {
-            let mut msg = m.clone();
-            if msg.get("role").and_then(Value::as_str) == Some("assistant")
-                && msg.get("content").is_some_and(Value::is_null)
-            {
-                msg["content"] = Value::String(String::new());
-            }
-            msg
-        })
-        .collect()
-}
-
-fn needs_chat_tool_result_messages(provider: &str) -> bool {
-    !(provider.eq_ignore_ascii_case("openai") || provider.eq_ignore_ascii_case("anthropic"))
-}
-
-/// Normalize a conversation for an OpenAI-compatible Chat Completions endpoint
-/// while **preserving native roles**. Earlier revisions collapsed every turn
-/// into a `user` message (folding `system`/`tool` into prose), which threw away
-/// the instruction/tool-call structure these providers natively understand.
-///
-/// The rules now:
-/// * `system` stays `system`.
-/// * `assistant` stays `assistant`, keeping any `tool_calls` array intact even
-///   when the textual content is empty (the Chat API requires the assistant
-///   turn that issued the calls to precede their `tool` results).
-/// * `tool` stays `tool`, carrying its `tool_call_id` so the result binds to the
-///   originating call.
-/// * Responses-API items (`function_call` / `function_call_output`) are
-///   translated into the equivalent assistant `tool_calls` / `tool` messages via
-///   [`normalize_responses_tool_item_for_chat`].
-fn normalize_openai_compatible_chat_messages(messages: &[Value]) -> Vec<Value> {
-    let mut normalized = Vec::new();
-
-    for message in messages {
-        let items = normalize_responses_tool_item_for_chat(message);
-        if !items.is_empty() {
-            normalized.extend(items);
-            continue;
-        }
-
-        let role = message
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("user");
-
-        let tool_calls = message
-            .get("tool_calls")
-            .filter(|value| value.as_array().is_some_and(|calls| !calls.is_empty()))
-            .cloned();
-
-        let content_text = message_content_text(message.get("content"))
-            .map(|text| text.trim().to_string())
-            .filter(|text| !text.is_empty());
-        let chat_content = openai_chat_content_from_canonical(message.get("content"));
-
-        match role {
-            "assistant" => {
-                if tool_calls.is_none() && content_text.is_none() {
-                    continue;
-                }
-                let mut item = json!({
-                    "role": "assistant",
-                    "content": content_text.unwrap_or_default(),
-                });
-                if let Some(tool_calls) = tool_calls {
-                    item["tool_calls"] = tool_calls;
-                }
-                normalized.push(item);
-            }
-            "tool" => {
-                let Some(content) = content_text else {
-                    continue;
-                };
-                let mut item = json!({
-                    "role": "tool",
-                    "content": content,
-                });
-                if let Some(call_id) = message
-                    .get("tool_call_id")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.trim().is_empty())
-                {
-                    item["tool_call_id"] = json!(call_id);
-                }
-                normalized.push(item);
-            }
-            "system" | "developer" => {
-                let Some(content) = content_text else {
-                    continue;
-                };
-                normalized.push(json!({
-                    "role": "system",
-                    "content": content,
-                }));
-            }
-            _ => {
-                let Some(content) = chat_content else {
-                    continue;
-                };
-                normalized.push(json!({
-                    "role": "user",
-                    "content": content,
-                }));
-            }
-        }
-    }
-
-    if normalized.is_empty() {
-        normalized.push(json!({
-            "role": "user",
-            "content": "Continue.",
-        }));
-    }
-
-    normalized
-}
-
-fn normalize_responses_tool_item_for_chat(message: &Value) -> Vec<Value> {
-    match message.get("type").and_then(Value::as_str) {
-        Some("function_call") => {
-            let call_id = message
-                .get("call_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("call_command_run");
-            let name = message
-                .get("name")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("command_run");
-            let arguments = message
-                .get("arguments")
-                .and_then(Value::as_str)
-                .map(ToString::to_string)
-                .unwrap_or_else(|| {
-                    message
-                        .get("arguments")
-                        .cloned()
-                        .unwrap_or(Value::Object(Default::default()))
-                        .to_string()
-                });
-            vec![json!({
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": arguments,
-                    },
-                }],
-            })]
-        }
-        Some("function_call_output") => {
-            let call_id = message
-                .get("call_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("call_command_run");
-            let output_value = message.get("output").or_else(|| message.get("content"));
-            let output = message_content_text(output_value).unwrap_or_default();
-            let mut items = vec![json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": output,
-            })];
-            if let Some(media_content) = openai_chat_media_content_from_canonical(output_value) {
-                let mut content = vec![json!({
-                    "type": "text",
-                    "text": "Media payload from the preceding read_media tool result:",
-                })];
-                if let Some(parts) = media_content.as_array() {
-                    content.extend(parts.iter().cloned());
-                }
-                items.push(json!({
-                    "role": "user",
-                    "content": content,
-                }));
-            }
-            items
-        }
-        _ => Vec::new(),
-    }
-}
-
 #[cfg(test)]
-mod media_tests {
-    use super::*;
-
-    #[test]
-    fn openai_compatible_function_output_media_gets_sidecar_user_image() {
-        let messages = vec![
-            json!({
-                "type": "function_call",
-                "name": "command_run",
-                "call_id": "call_media",
-                "arguments": "{\"commands\":[]}"
-            }),
-            json!({
-                "type": "function_call_output",
-                "call_id": "call_media",
-                "output": [
-                    { "type": "input_text", "text": "read_media returned image" },
-                    { "type": "input_image", "image_url": "data:image/jpeg;base64,AAA" }
-                ]
-            }),
-        ];
-
-        let normalized = normalize_messages_for_provider("openrouter", &messages);
-
-        assert_eq!(normalized[1]["role"], "tool");
-        assert_eq!(normalized[1]["content"], "read_media returned image");
-        assert_eq!(normalized[2]["role"], "user");
-        assert_eq!(normalized[2]["content"][1]["type"], "image_url");
-        assert_eq!(
-            normalized[2]["content"][1]["image_url"]["url"],
-            "data:image/jpeg;base64,AAA"
-        );
-    }
-
-    #[test]
-    fn openrouter_qwen_thinking_omits_object_tool_choice() {
-        let payload = build_chat_payload(
-            "openrouter",
-            "qwen3.7-max",
-            &[json!({"role": "user", "content": "hi"})],
-            &CallOptions {
-                tools: Some(vec![json!({
-                    "type": "function",
-                    "function": {
-                        "name": "command_run",
-                        "parameters": {"type": "object"}
-                    }
-                })]),
-                tool_choice: Some(json!({
-                    "type": "function",
-                    "function": {"name": "command_run"}
-                })),
-                reasoning_effort: Some("low".to_string()),
-                ..Default::default()
-            },
-        );
-
-        assert!(payload.get("tool_choice").is_none());
-        assert!(payload.get("tools").is_some());
-        assert_eq!(payload["model"], "qwen/qwen3.7-max");
-    }
-
-    #[test]
-    fn openrouter_user_facing_models_are_mapped_to_router_ids() {
-        let payload = build_chat_payload(
-            "openrouter",
-            "deepseek-v4-pro",
-            &[json!({"role": "user", "content": "hi"})],
-            &CallOptions::default(),
-        );
-
-        assert_eq!(payload["model"], "deepseek/deepseek-v4-pro");
-
-        let legacy_payload = build_chat_payload(
-            "openrouter",
-            "qwen/qwen3.6-flash",
-            &[json!({"role": "user", "content": "hi"})],
-            &CallOptions::default(),
-        );
-
-        assert_eq!(legacy_payload["model"], "qwen/qwen3.6-flash");
-    }
-}
+#[path = "chat_tests.rs"]
+mod media_tests;

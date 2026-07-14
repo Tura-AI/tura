@@ -1,0 +1,11 @@
+# CODEOWNERS requires a GitHub account or team, not an email address.
+# Primary maintainer contact: yohji.sakamoto@gmail.com
+# Project contact: info@turaai.net
+* @Yohjisakamoto
+
+/crates/runtime/ @Yohjisakamoto
+/crates/session_log/ @Yohjisakamoto
+/apps/tui/ @Yohjisakamoto
+/apps/gui/ @Yohjisakamoto
+/.github/ @Yohjisakamoto
+/scripts/ @Yohjisakamoto

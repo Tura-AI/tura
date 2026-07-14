@@ -3,6 +3,10 @@ import { t } from "../i18n.js";
 
 const COMMANDS = [
   "run",
+  "exec",
+  "bash",
+  "zsh",
+  "shel",
   "resume",
   "session",
   "config",
@@ -20,7 +24,9 @@ const COMMANDS = [
 export function completionCommand(args: string[]): void {
   const shell = args[0] ?? "bash";
   if (shell === "bash") {
-    process.stdout.write(`_tura_complete(){ COMPREPLY=( $(compgen -W "${COMMANDS.join(" ")}" -- "\${COMP_WORDS[COMP_CWORD]}") ); }\ncomplete -F _tura_complete tura\n`);
+    process.stdout.write(
+      `_tura_complete(){ COMPREPLY=( $(compgen -W "${COMMANDS.join(" ")}" -- "\${COMP_WORDS[COMP_CWORD]}") ); }\ncomplete -F _tura_complete tura\n`,
+    );
     return;
   }
   if (shell === "zsh") {

@@ -6,10 +6,7 @@ import { classNames } from "../state/format";
 import { parentPath } from "../utils/app-format";
 import type { AppShellViewModel } from "./app-shell-view-model";
 
-export function AppRail(props: {
-  view: AppShellViewModel;
-  collapseAfterSelection: () => void;
-}) {
+export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection: () => void }) {
   const {
     state,
     closeSettings,
@@ -25,11 +22,12 @@ export function AppRail(props: {
     fileTree,
     fileLoadingPath,
     expandedFileTreePaths,
-    expandedWorkspace,
+    expandedWorkspaces,
     loadFiles,
     openFile,
     toggleFileTreeDirectory,
-    renameSession,
+    deleteSession,
+    deleteWorkspace,
     openSettings,
     openIssueConversation,
     toggleWorkspace,
@@ -46,22 +44,11 @@ export function AppRail(props: {
   }
 
   return (
-    <aside
-      class={classNames(
-        "rail",
-        state().activeTab === "settings" && "settings-mode",
-      )}
-    >
+    <aside class={classNames("rail", state().activeTab === "settings" && "settings-mode")}>
       <Show
         when={state().activeTab === "settings"}
         fallback={
           <>
-            <div class="brand">
-              <div class="brand-mark" />
-              <div>
-                <strong>Tura</strong>
-              </div>
-            </div>
             <MainTabs
               active={state().previousMainTab}
               conversationLabel={t("session")}
@@ -75,6 +62,8 @@ export function AppRail(props: {
               projects={state().projects}
               directory={state().directory}
               sessions={state().sessions}
+              messagesBySession={state().messagesBySession}
+              sessionsLoading={state().sessionsLoading}
               selectedSessionId={state().selectedSessionId}
               productIssues={state().productIssues}
               filePath={state().filePath}
@@ -83,21 +72,19 @@ export function AppRail(props: {
               fileLoadingPath={fileLoadingPath()}
               expandedFileTreePaths={expandedFileTreePaths()}
               selectedFile={state().selectedFile}
-              expandedWorkspace={expandedWorkspace()}
+              expandedWorkspaces={expandedWorkspaces()}
               expandedGroup={expandedRailGroup()}
               attentionAcknowledged={sessionAttentionAcknowledged}
               onWorkspace={selectWorkspace}
-              onBlankSession={() => {
-                openBlankSession();
+              onBlankSession={(project) => {
+                openBlankSession(project);
                 props.collapseAfterSelection();
               }}
               onGroup={toggleRailGroup}
               onIssue={openIssueConversation}
               onStatus={updatePlanTicketStatus}
               onSession={(sessionId) => {
-                const session = state().sessions.find(
-                  (item) => item.id === sessionId,
-                );
+                const session = state().sessions.find((item) => item.id === sessionId);
                 if (state().activeTab === "plan" && session) {
                   void openPlanSession(session);
                   props.collapseAfterSelection();
@@ -106,20 +93,16 @@ export function AppRail(props: {
                 void openSession(sessionId);
                 props.collapseAfterSelection();
               }}
-              onRenameSession={renameSession}
+              onDeleteSession={deleteSession}
+              onDeleteWorkspace={deleteWorkspace}
               onFile={(file) => {
                 void openFile(file);
                 props.collapseAfterSelection();
               }}
               onFileTreeDirectory={toggleFileTreeDirectory}
               onUp={() => loadFiles(parentPath(state().filePath))}
-              onSettings={openAppearanceSettings}
             />
-            <button
-              class="settings-entry"
-              type="button"
-              onClick={openAppearanceSettings}
-            >
+            <button class="settings-entry" type="button" onClick={openAppearanceSettings}>
               {t("settings")}
             </button>
           </>

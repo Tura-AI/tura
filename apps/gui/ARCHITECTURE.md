@@ -2,8 +2,10 @@
 
 ## Goal
 
-`apps/gui` is the graphical Tura client and the only browser/desktop-facing UI
-for the gateway. It must preserve the current Tura architecture:
+`apps/gui` is Tura's graphical client and the only browser/desktop-facing UI for
+the gateway. The useful boundary is simple: the GUI presents and edits gateway
+state; it does not quietly become another backend. It must preserve the current
+Tura architecture:
 
 - the GUI talks to `crates/gateway` only through the TypeScript gateway SDK
 - runtime execution, provider auth, PTY, file IO, command execution, session
@@ -29,7 +31,7 @@ The first screen must be a usable workbench/dashboard, never a marketing page.
 - Do not persist provider credentials, session records, messages, issue data,
   workspace membership, or task queue state directly from the GUI.
 - Do not create a second local database in the GUI.
-- Do not make `/tui/*` compatibility routes the main GUI path.
+- Do not make `/tui/*` shortcut routes the main GUI path.
 - Do not hide Multica features behind placeholder text. Every route described
   here must map to a real gateway contract before code implementation.
 
@@ -52,6 +54,12 @@ apps/gui/
     gateway/
       package.json
       src/
+  tests/
+    unit/
+    e2e/
+      business/
+      live/
+        business/
   ARCHITECTURE.md
 ```
 
@@ -155,7 +163,7 @@ Default gateway URL resolution:
 1. `?gatewayUrl=<url>` query parameter.
 2. `localStorage["tura.gatewayUrl"]`.
 3. `VITE_TURA_GATEWAY_URL`.
-4. `http://127.0.0.1:4096`.
+4. `http://127.0.0.1:4126`.
 
 `TURA_GATEWAY_URL` is a shell/runtime convenience variable. Browser code does
 not read it directly; start scripts translate it to `VITE_TURA_GATEWAY_URL`
@@ -197,6 +205,12 @@ of opening those files.
 ## Core Tura Endpoint Map
 
 The existing coding workbench keeps using these gateway routes:
+
+- Composer files, dropped paths, and clipboard images are persisted through
+  `POST /file/input` under the selected workspace's `.tura/media/input` before
+  the editor inserts attachment tokens. Sent image and non-image attachments
+  both use `[MEDIA:<workspace-relative-path>:MEDIA]`, so history rendering,
+  previews, and file-open actions remain gateway-backed after a GUI restart.
 
 ```text
 health                         GET    /global/health
@@ -1006,6 +1020,12 @@ GUI settings must cover:
 - Repositories/GitHub installation
 - Agents, Runtimes, Skills, Autopilots management shortcuts
 - Desktop-only daemon and update tabs when desktop shell exists
+- About as the final settings page, with release/system information and support
+  actions. GUI and TUI must use the shared gateway SDK methods
+  `aboutInfo`, `starTuraRepository`, `openAboutTarget`, `checkTuraUpdate`, and
+  `installTuraUpdate`; clients must not read tokens, call GitHub/npm, open URLs,
+  or install updates directly. Gateway owns the fixed `/about`, `/about/star`,
+  `/about/open`, `/about/update/check`, and `/about/update/install` routes.
 
 ### Attachments And Editor
 
@@ -1147,6 +1167,11 @@ E2E tests against mocked gateway:
 
 Live smoke tests can later start `crates/gateway` and exercise a minimal
 session plus issue/task flow.
+
+Release-entry acceptance tests that validate the registered release
+command surface belong in `apps/gui/tests/e2e/live/business/` for the GUI surface. Root
+`tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
+`benchmark/` owns comparison and scoring benchmarks.
 
 ## Implementation Phases
 

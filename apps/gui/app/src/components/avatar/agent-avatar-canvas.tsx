@@ -1,12 +1,13 @@
 import type { AgentAvatarConfig, PersonaMediaConfig } from "@tura/gateway-sdk";
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  onMount,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { classNames } from "../../state/format";
+import { EMOJI_ALIASES, avatarExpressionIdsForEmoji } from "./agent-avatar-protocol";
+import {
+  avatarImageKey,
+  avatarImageKeyForLoaded,
+  avatarPixelAfterThreshold,
+  type AvatarExpressionInfo,
+} from "./agent-avatar-rendering";
 
 export type AvatarRenderSettings = AgentAvatarConfig;
 export type AvatarDisplayMode = NonNullable<AgentAvatarConfig["display_mode"]>;
@@ -16,15 +17,12 @@ export const DEFAULT_AVATAR_SETTINGS: AvatarRenderSettings = {
   role: "tura",
   display_mode: "static",
   pixel_size: 20,
-  threshold: 150,
-  scale: 100,
+  threshold: 160,
 };
-const FALLBACK_AVATAR_IMAGE = "/assets/avatar-fallback/tura-vigilant-right.png";
 
 export const AVATAR_SETTING_LIMITS = {
   pixelSize: { min: 10, max: 30 },
   threshold: { min: 100, max: 200 },
-  scale: { min: 100, max: 120 },
 };
 
 const CANVAS_SIZE = 768;
@@ -56,43 +54,24 @@ const FALLBACK_EXPRESSIONS = [
   "confused",
   "nervous",
   "vigilant",
-  "laufgh",
+  "laugh",
   "smirk",
   "tired",
 ];
-const EMOJI_ALIASES: Record<string, string[]> = {
-  panic: ["😱", "😨", "😰", "🤯", "🥶", "😧", "😵", "😦", "😮"],
-  crying: ["😭", "😢", "😿", "😥", "🥺", "😪", "😓"],
-  confused: ["😕", "🤔", "🙄", "🫤", "🤨", "🧐", "🙃", "🥴"],
-  nervous: ["😬", "😅", "😟", "😓", "😰", "🫥", "🫨"],
-  vigilant: ["👀", "🫢", "🫣", "🔎", "🔍", "⚠", "🚨", "🎯"],
-  laufgh: ["😂", "😄", "😆", "🤣", "😁", "😹", "😃"],
-  smirk: ["😏", "😉", "😌", "😼", "😈", "😎", "🤭"],
-  tired: ["😴", "😪", "😩", "🫠", "🥱", "😔", "🤧"],
-};
-
 type LoadedImages = Record<string, HTMLImageElement>;
-type ExpressionInfo = {
-  id: string;
-  aliases: string[];
-  frames: Record<string, string>;
-};
 type ImageEntry = {
   key: string;
   src: string;
 };
 
 const avatarImageCache = new Map<string, HTMLImageElement>();
-const avatarImageRequestCache = new Map<
-  string,
-  Promise<HTMLImageElement | undefined>
->();
+const avatarImageRequestCache = new Map<string, Promise<HTMLImageElement | undefined>>();
 
 function fallbackMedia(role: string): PersonaMediaConfig {
   return {
     name: role,
-    root_directory: `/assets/persona/${role}/media`,
-    expression_directory: `/assets/persona/${role}/media/expressions`,
+    root_directory: `personas/src/${role}/media`,
+    expression_directory: `personas/src/${role}/media/expressions`,
     direction_order: DIRECTIONS,
     default_expression: "vigilant",
     default_direction: "right",
@@ -100,12 +79,12 @@ function fallbackMedia(role: string): PersonaMediaConfig {
       id,
       name: id,
       emoji_aliases: EMOJI_ALIASES[id] ?? [],
-      source_directory: `/assets/persona/${role}/media/expressions/${id}`,
-      grid_path: `/assets/persona/${role}/media/expressions/${id}/grid/sheet.png`,
+      source_directory: `personas/src/${role}/media/expressions/${id}`,
+      grid_path: `personas/src/${role}/media/expressions/${id}/grid/sheet.jpg`,
       frames: Object.fromEntries(
         DIRECTIONS.map((direction) => [
           direction,
-          `/assets/persona/${role}/media/expressions/${id}/frames/${direction}.png`,
+          `personas/src/${role}/media/expressions/${id}/frames/${direction}.jpg`,
         ]),
       ),
     })),
@@ -129,11 +108,6 @@ export function normalizeAvatarSettings(
       AVATAR_SETTING_LIMITS.threshold.min,
       AVATAR_SETTING_LIMITS.threshold.max,
     ),
-    scale: clamp(
-      Number(value?.scale ?? DEFAULT_AVATAR_SETTINGS.scale),
-      AVATAR_SETTING_LIMITS.scale.min,
-      AVATAR_SETTING_LIMITS.scale.max,
-    ),
   };
 }
 
@@ -141,9 +115,7 @@ export function normalizeAvatarDisplayMode(value: unknown): AvatarDisplayMode {
   return value === "hidden" || value === "dynamic" ? value : "static";
 }
 
-export function avatarSettingsFromConfigValue(
-  value: unknown,
-): AvatarRenderSettings {
+export function avatarSettingsFromConfigValue(value: unknown): AvatarRenderSettings {
   if (!value) {
     return normalizeAvatarSettings({
       ...DEFAULT_AVATAR_SETTINGS,
@@ -166,9 +138,7 @@ export function avatarSettingsFromConfigValue(
       persona_id: DEFAULT_AVATAR_SETTINGS.role,
     });
   }
-  const settings = normalizeAvatarSettings(
-    value as Partial<AvatarRenderSettings>,
-  );
+  const settings = normalizeAvatarSettings(value as Partial<AvatarRenderSettings>);
   return {
     ...settings,
     persona_id: settings.persona_id ?? settings.role,
@@ -189,14 +159,12 @@ export function AgentAvatarCanvas(props: {
   expressionId?: string;
   interactive?: boolean;
   previewCycle?: boolean;
-  thinking?: boolean;
+  gatewayUrl?: string;
   class?: string;
   label?: string;
 }) {
   const settings = createMemo(() => normalizeAvatarSettings(props.settings));
-  const media = createMemo(() =>
-    agentAvatarMedia(props.media, settings().role),
-  );
+  const media = createMemo(() => agentAvatarMedia(props.media, settings().role));
   const expressions = createMemo(() => expressionInfos(media()));
   const [images, setImages] = createSignal<LoadedImages>({});
   const [loading, setLoading] = createSignal(true);
@@ -225,32 +193,20 @@ export function AgentAvatarCanvas(props: {
     });
   }
 
-  function chooseExpressionForEmoji(
-    emoji: string | undefined,
-  ): string | undefined {
-    const clean = emoji?.trim();
-    if (!clean) {
-      return undefined;
-    }
-    const matches = expressions().filter((item) =>
-      item.aliases.includes(clean),
-    );
-    return randomItem(matches)?.id;
+  function chooseExpressionForEmoji(emoji: string | undefined): string | undefined {
+    return randomItem(avatarExpressionIdsForEmoji(media(), emoji));
   }
 
   createEffect(() => {
     const nextMedia = media();
     const nextExpressions = expressions();
     setExpression(
-      props.expressionId ||
-        nextMedia.default_expression ||
-        nextExpressions[0]?.id ||
-        "vigilant",
+      props.expressionId || nextMedia.default_expression || nextExpressions[0]?.id || "vigilant",
     );
     setDirection("right");
     const requestId = ++loadRequestId;
-    setLoading(!allImagesCached(nextExpressions));
-    void loadImages(nextExpressions).then((loaded) => {
+    setLoading(!allImagesCached(nextExpressions, props.gatewayUrl));
+    void loadImages(nextExpressions, props.gatewayUrl).then((loaded) => {
       if (requestId !== loadRequestId) {
         return;
       }
@@ -335,14 +291,10 @@ export function AgentAvatarCanvas(props: {
       }
       commitDirection(directionFromPointer(canvas, clientX, clientY));
     };
-    const pointerMove = (event: PointerEvent) =>
-      updateDirection(event.clientX, event.clientY);
-    const pointerDown = (event: PointerEvent) =>
-      updateDirection(event.clientX, event.clientY);
-    const mouseMove = (event: MouseEvent) =>
-      updateDirection(event.clientX, event.clientY);
-    const mouseDown = (event: MouseEvent) =>
-      updateDirection(event.clientX, event.clientY);
+    const pointerMove = (event: PointerEvent) => updateDirection(event.clientX, event.clientY);
+    const pointerDown = (event: PointerEvent) => updateDirection(event.clientX, event.clientY);
+    const mouseMove = (event: MouseEvent) => updateDirection(event.clientX, event.clientY);
+    const mouseDown = (event: MouseEvent) => updateDirection(event.clientX, event.clientY);
     const touchStart = (event: TouchEvent) => {
       const touch = event.touches[0] ?? event.changedTouches[0];
       if (touch) {
@@ -399,14 +351,17 @@ export function AgentAvatarCanvas(props: {
     if (!context) {
       return;
     }
-    const info =
-      expressions().find((item) => item.id === expression()) ??
-      expressions()[0];
     const image =
-      (info && images()[imageKey(info.id, direction())]) ||
-      (info &&
-        images()[imageKey(info.id, media().default_direction || "right")]) ||
-      images()[fallbackImageKey()];
+      images()[
+        avatarImageKeyForLoaded(
+          expressions(),
+          Object.keys(images()),
+          expression(),
+          direction(),
+          media().default_direction || "right",
+          media().default_expression,
+        )
+      ];
     if (!image) {
       return;
     }
@@ -414,12 +369,8 @@ export function AgentAvatarCanvas(props: {
     context.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     const pixelSize = settings().pixel_size;
     const identity = pixelSize <= 0;
-    const smallWidth = identity
-      ? CANVAS_SIZE
-      : Math.max(1, Math.floor(CANVAS_SIZE / pixelSize));
-    const smallHeight = identity
-      ? CANVAS_SIZE
-      : Math.max(1, Math.floor(CANVAS_SIZE / pixelSize));
+    const smallWidth = identity ? CANVAS_SIZE : Math.max(1, Math.floor(CANVAS_SIZE / pixelSize));
+    const smallHeight = identity ? CANVAS_SIZE : Math.max(1, Math.floor(CANVAS_SIZE / pixelSize));
     offscreen.width = smallWidth;
     offscreen.height = smallHeight;
     offscreenContext.imageSmoothingEnabled = true;
@@ -429,9 +380,8 @@ export function AgentAvatarCanvas(props: {
 
     const baseWidth = identity ? CANVAS_SIZE : smallWidth * pixelSize;
     const baseHeight = identity ? CANVAS_SIZE : smallHeight * pixelSize;
-    const scaleFactor = settings().scale / 100;
-    const drawWidth = Math.max(1, Math.round(baseWidth * scaleFactor));
-    const drawHeight = Math.max(1, Math.round(baseHeight * scaleFactor));
+    const drawWidth = Math.max(1, Math.round(baseWidth));
+    const drawHeight = Math.max(1, Math.round(baseHeight));
     const offsetX = Math.round((CANVAS_SIZE - drawWidth) / 2);
     const offsetY = Math.round((CANVAS_SIZE - drawHeight) / 2);
     context.imageSmoothingEnabled = false;
@@ -455,10 +405,10 @@ export function AgentAvatarCanvas(props: {
   ) {
     const imageData = context.getImageData(0, 0, width, height);
     const data = imageData.data;
-    const transparentValue = isDarkTheme() ? 0 : 255;
+    const darkTheme = isDarkTheme();
     for (let index = 0; index < data.length; index += 4) {
       const originalAlpha = data[index + 3] ?? 0;
-      if (originalAlpha <= 8) {
+      if (!darkTheme && originalAlpha <= 8) {
         data[index + 3] = 0;
         continue;
       }
@@ -466,23 +416,18 @@ export function AgentAvatarCanvas(props: {
         (data[index] ?? 0) * 0.299 +
         (data[index + 1] ?? 0) * 0.587 +
         (data[index + 2] ?? 0) * 0.114;
-      const value = gray < settings().threshold ? 0 : 255;
-      data[index] = value;
-      data[index + 1] = value;
-      data[index + 2] = value;
-      data[index + 3] = value === transparentValue ? 0 : originalAlpha;
+      const pixel = avatarPixelAfterThreshold(gray, originalAlpha, settings().threshold, darkTheme);
+      data[index] = pixel.value;
+      data[index + 1] = pixel.value;
+      data[index + 2] = pixel.value;
+      data[index + 3] = pixel.alpha;
     }
     context.putImageData(imageData, 0, 0);
   }
 
   return (
     <div
-      class={classNames(
-        "agent-avatar-stage",
-        props.thinking && "thinking",
-        loading() && "loading",
-        props.class,
-      )}
+      class={classNames("agent-avatar-stage", loading() && "loading", props.class)}
       role={props.label ? "img" : undefined}
       aria-label={props.label}
       aria-hidden={props.label ? undefined : "true"}
@@ -503,48 +448,43 @@ export function AgentAvatarCanvas(props: {
   );
 }
 
-function expressionInfos(media: PersonaMediaConfig): ExpressionInfo[] {
+function expressionInfos(media: PersonaMediaConfig): AvatarExpressionInfo[] {
   return (media.expressions ?? []).map((expression) => ({
     id: expression.id,
     aliases: [
       ...(expression.emoji_aliases ?? []),
-      ...((expression as unknown as { emojiAliases?: string[] }).emojiAliases ??
-        []),
+      ...((expression as unknown as { emojiAliases?: string[] }).emojiAliases ?? []),
       ...(EMOJI_ALIASES[expression.id] ?? []),
     ].filter(Boolean),
     frames: expression.frames,
   }));
 }
 
-function imageEntries(expressions: ExpressionInfo[]): ImageEntry[] {
-  const entries: ImageEntry[] = expressions.flatMap((expression) =>
+function imageEntries(expressions: AvatarExpressionInfo[]): ImageEntry[] {
+  return expressions.flatMap((expression) =>
     Object.entries(expression.frames).map(([direction, src]) => ({
-      key: imageKey(expression.id, direction),
+      key: avatarImageKey(expression.id, direction),
       src,
     })),
   );
-  entries.push({ key: fallbackImageKey(), src: FALLBACK_AVATAR_IMAGE });
-  return entries;
 }
 
-function allImagesCached(expressions: ExpressionInfo[]): boolean {
+function allImagesCached(expressions: AvatarExpressionInfo[], gatewayUrl?: string): boolean {
   return imageEntries(expressions).every((entry) =>
-    avatarImageCache.has(mediaSource(entry.src)),
+    avatarImageCache.has(mediaSource(entry.src, gatewayUrl)),
   );
 }
 
-function loadImages(expressions: ExpressionInfo[]): Promise<LoadedImages> {
+function loadImages(
+  expressions: AvatarExpressionInfo[],
+  gatewayUrl?: string,
+): Promise<LoadedImages> {
   const entries = imageEntries(expressions);
   return Promise.all(
-    entries.map(async ({ key, src }) => [
-      key,
-      await loadCachedImage(mediaSource(src)),
-    ]),
+    entries.map(async ({ key, src }) => [key, await loadCachedImage(mediaSource(src, gatewayUrl))]),
   ).then((loaded) =>
     Object.fromEntries(
-      loaded.filter(
-        (item): item is [string, HTMLImageElement] => item[1] !== undefined,
-      ),
+      loaded.filter((item): item is [string, HTMLImageElement] => item[1] !== undefined),
     ),
   );
 }
@@ -560,6 +500,7 @@ function loadCachedImage(src: string): Promise<HTMLImageElement | undefined> {
   }
   const request = new Promise<HTMLImageElement | undefined>((resolve) => {
     const image = new Image();
+    image.crossOrigin = "anonymous";
     image.onload = () => {
       avatarImageCache.set(src, image);
       avatarImageRequestCache.delete(src);
@@ -575,39 +516,36 @@ function loadCachedImage(src: string): Promise<HTMLImageElement | undefined> {
   return request;
 }
 
-function imageKey(expression: string, direction: string): string {
-  return `${expression}:${direction}`;
-}
-
-function fallbackImageKey(): string {
-  return "fallback:tura-vigilant-right";
-}
-
-function mediaSource(path: string): string {
-  if (/^(https?:|data:|\/)/iu.test(path)) {
+function mediaSource(path: string, gatewayUrl?: string): string {
+  if (/^(https?:|data:)/iu.test(path)) {
     return path;
   }
   const normalized = path.replace(/\\/gu, "/");
-  const personaAsset = normalized.match(
-    /(?:^|\/)(?:crates\/persona|personas)\/src\/([^/]+)\/media\/(.+)$/u,
-  );
+  const personaAsset = normalized.match(/(?:^|\/)personas\/(?:src\/)?([^/]+)\/media\/(.+)$/u);
   if (personaAsset) {
-    return `/assets/persona/${personaAsset[1]}/media/${personaAsset[2]}`;
+    return personaMediaSource(personaAsset[1], personaAsset[2], gatewayUrl);
   }
-  const publicPersonaAsset = normalized.match(
-    /(?:^|\/)assets\/persona\/([^/]+)\/media\/(.+)$/u,
-  );
+  const publicPersonaAsset = normalized.match(/(?:^|\/)assets\/persona\/([^/]+)\/media\/(.+)$/u);
   if (publicPersonaAsset) {
-    return `/assets/persona/${publicPersonaAsset[1]}/media/${publicPersonaAsset[2]}`;
+    return personaMediaSource(publicPersonaAsset[1], publicPersonaAsset[2], gatewayUrl);
+  }
+  if (normalized.startsWith("/")) {
+    return normalized;
   }
   return `/assets/${normalized.replace(/^.*\//u, "")}`;
 }
 
-function directionFromPointer(
-  canvas: HTMLCanvasElement,
-  clientX: number,
-  clientY: number,
-): string {
+function personaMediaSource(personaId: string, path: string, gatewayUrl?: string): string {
+  const baseUrl = (gatewayUrl || "http://127.0.0.1:4126").replace(/\/+$/u, "");
+  const mediaPath = path
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `${baseUrl}/persona/${encodeURIComponent(personaId)}/media/${mediaPath}`;
+}
+
+function directionFromPointer(canvas: HTMLCanvasElement, clientX: number, clientY: number): string {
   const rect = canvas.getBoundingClientRect();
   const centerX = rect.left + rect.width / 2;
   const centerY = rect.top + rect.height / 2;
@@ -641,22 +579,16 @@ function directionsAdjacent(current: string, next: string): boolean {
 }
 
 function isDarkTheme(): boolean {
-  const paper = getComputedStyle(document.documentElement)
-    .getPropertyValue("--paper")
-    .trim();
+  const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
   const rgb = parseCssColor(paper);
   if (!rgb) {
-    return ["dark", "liangzhu"].includes(
-      document.documentElement.dataset.theme ?? "",
-    );
+    return ["dark", "liangzhu"].includes(document.documentElement.dataset.theme ?? "");
   }
   const luminance = (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
   return luminance < 0.45;
 }
 
-function parseCssColor(
-  value: string,
-): { r: number; g: number; b: number } | undefined {
+function parseCssColor(value: string): { r: number; g: number; b: number } | undefined {
   const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/iu)?.[1];
   if (hex) {
     const full =
@@ -672,9 +604,7 @@ function parseCssColor(
       b: Number.parseInt(full.slice(4, 6), 16),
     };
   }
-  const rgb = value.match(
-    /^rgba?\(\s*([.\d]+)\s*,\s*([.\d]+)\s*,\s*([.\d]+)/iu,
-  );
+  const rgb = value.match(/^rgba?\(\s*([.\d]+)\s*,\s*([.\d]+)\s*,\s*([.\d]+)/iu);
   if (!rgb) {
     return undefined;
   }

@@ -1,0 +1,293 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "fix/**"
+    tags:
+      - "release*"
+      - "release-v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Quality Smell Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/tui/package-lock.json
+      - name: Install TUI dependencies
+        run: npm ci --prefix apps/tui
+      - name: Cache quality binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/bin/cargo-deny
+            ~/.cargo/bin/typos
+          key: ${{ runner.os }}-quality-bins-cargo-audit-deny-typos
+      - name: Install quality binaries
+        run: |
+          command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
+          command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny --locked
+          command -v typos >/dev/null 2>&1 || cargo install typos-cli --locked
+      - name: Run quality smell gate
+        run: sh scripts/check-backend-quality.sh
+
+  crate-tests:
+    name: Crate ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - tura_workspace
+          - router
+          - agents
+          - personas
+          - session_log
+          - tura_path
+          - tools
+          - provider
+          - runtime
+          - read_media
+          - web_discover
+          - gateway
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: crate-${{ matrix.crate }}
+          cache-on-failure: true
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            pkg-config
+      - name: Run crate clippy and tests
+        run: sh xtask/scripts/run-ci-crate-tests.sh --crate "${{ matrix.crate }}" --jobs 1 --timeout-seconds 600
+
+  backend-business:
+    name: Backend Business
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: backend-business
+          cache-on-failure: true
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            pkg-config
+      - name: Run backend business tests
+        run: sh xtask/scripts/run-backend-business-tests.sh --jobs 4 --timeout-seconds 300
+
+  tui-tests:
+    name: TUI Unit And E2E
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/tui/package-lock.json
+      - name: Install TUI dependencies
+        run: npm ci --prefix apps/tui
+      - name: Install TUI Playwright browser
+        working-directory: apps/tui
+        run: npx playwright install --with-deps chromium
+      - name: Run TUI unit tests
+        run: npm --prefix apps/tui run test:unit
+      - name: Run TUI e2e tests
+        shell: bash
+        run: |
+          set +e
+          npm --prefix apps/tui run test:e2e 2>&1 | tee tui-e2e.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail_output="$(tail -n 80 tui-e2e.log)"
+            tail_output="${tail_output//'%'/'%25'}"
+            tail_output="${tail_output//$'\r'/'%0D'}"
+            tail_output="${tail_output//$'\n'/'%0A'}"
+            echo "::error title=TUI E2E failure::$tail_output"
+          fi
+          exit "$status"
+      - name: Upload TUI e2e failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tui-e2e-failure-log
+          path: tui-e2e.log
+          if-no-files-found: error
+
+  gui-tests:
+    name: GUI Unit
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bun setup
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install GUI dependencies
+        working-directory: apps/gui
+        run: bun install --frozen-lockfile
+      - name: Run GUI unit tests
+        working-directory: apps/gui
+        run: bun run test:unit
+
+  install-script-tests:
+    name: Install Scripts ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    needs: quality
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ubuntu-latest
+            runner: ubuntu-latest
+            log: .ci-results/install-ubuntu-latest.log
+          - label: macos-latest
+            runner: macos-latest
+            log: .ci-results/install-macos-latest.log
+          - label: windows-2022
+            runner: windows-2022
+            log: .ci-results/install-windows-2022.log
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run install script tests (Windows)
+        if: runner.os == 'Windows'
+        id: install_windows
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Continue"
+          New-Item -ItemType Directory -Path .ci-results -Force | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tests\scripts\test-install.ps1 -SkipApps *>&1 | Tee-Object -FilePath "${{ matrix.log }}"
+          $exitCode = $LASTEXITCODE
+          "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($exitCode -ne 0) { exit $exitCode }
+      - name: Run install script tests (Linux/macOS)
+        if: runner.os != 'Windows'
+        id: install_posix
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p .ci-results
+          sh scripts/tests/scripts/test-install.sh --skip-apps 2>&1 | tee "${{ matrix.log }}"
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=${exit_code}" >> "$GITHUB_OUTPUT"
+          exit "$exit_code"
+      - name: Upload install script logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-script-${{ matrix.label }}-logs
+          path: ${{ matrix.log }}
+          if-no-files-found: warn
+      - name: Fail if install script tests failed
+        if: steps.install_windows.outcome == 'failure' || steps.install_posix.outcome == 'failure'
+        shell: pwsh
+        run: exit 1
+
+  ci-complete:
+    name: CI Complete
+    runs-on: ubuntu-latest
+    needs:
+      - crate-tests
+      - backend-business
+      - tui-tests
+      - gui-tests
+      - install-script-tests
+    steps:
+      - run: echo "CI flow passed"
+
+  release-dry-run:
+    name: Release Dry Run
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/release')
+    needs: ci-complete
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-dry-run
+          cache-on-failure: true
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/tui/package-lock.json
+      - name: Bun setup
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Cache command Python environments
+        uses: actions/cache@v4
+        with:
+          path: |
+            commands/read_media/.venv
+            commands/web_discover/.venv
+          key: ${{ runner.os }}-command-venv-${{ hashFiles('commands/*/requirements.txt', 'commands/*/pyproject.toml') }}
+      - name: Install dependencies
+        run: sh scripts/install.sh --environment-only
+      - name: Build release artifacts without publishing
+        run: sh scripts/run-release-dry-run.sh --skip-install --skip-ci --jobs 4

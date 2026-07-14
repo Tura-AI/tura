@@ -1,55 +1,54 @@
-use super::constants::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
-use super::final_response::user_visible_runtime_text;
-use super::gateway_events::{
-    publish_gateway_agent_message, publish_runtime_failure_message, publish_runtime_usage_record,
+use crate::gateway_events::{
+    publish_gateway_agent_message_from_runtime, publish_runtime_failure_message,
+    publish_runtime_usage_record,
 };
-use super::prompt_messages::{
-    messages_for_turn, planning_current_task_text, push_no_tool_task_status_retry_message,
-    push_task_status_nudge,
+use crate::manas::constants::PLANNING_TOOL;
+use crate::manas::prompt_messages::push_no_tool_task_status_retry_message;
+use crate::manas::runtime_turn::execute_turn;
+use crate::manas::tool_catalog::{command_run_commands_for_agent, planning_child_depth};
+use crate::manas::TASK_STATUS_COMMAND;
+use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
+use crate::prompt_style::{
+    provider_retry, runtime_prompt_manual, tail_injection, terminal_final_response,
 };
-use super::runtime_turn::execute_turn;
-use super::tool_catalog::{command_run_commands_for_agent, planning_child_depth};
-use super::tool_execution::execute_tool_calls;
-use super::validator_feedback::apply_validator_reliability_feedback;
+use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
+use crate::tool_flow::execute::execute_tool_calls;
 use chrono::Utc;
-use std::{
-    collections::HashSet,
-    io::Write,
-    sync::{Mutex, OnceLock},
-    thread,
-    time::Duration,
-};
+use std::thread;
 use tracing::{info, warn};
 use tura_llm_rust::{
     provider_media_fallback, replace_unsupported_content_type_in_messages, ProviderMediaFallback,
 };
 
+use crate::checkpoint::session_snapshot::persist_session_checkpoint;
 use crate::context::{
-    accumulate_tool_result_with_provider_metadata, build_context, compact_session_context,
-    ContextInput,
+    accumulate_tool_result_with_provider_metadata, build_context,
+    compact_session_context_automatically_with_capabilities,
+    compact_session_context_with_agent_message_and_capabilities, estimated_tokens_from_bytes_u64,
+    CompactContextAgentMessage, ContextInput,
 };
 use crate::manas::ManasOverrides;
-use crate::mano::persist_gateway_session;
+use crate::provider_flow::errors::{
+    provider_timeout_retry_wait, runtime_failure_allows_retry, runtime_failure_text,
+};
 use crate::state_machine::agent_management::{AgentManagement, AgentState};
 use crate::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeId, RuntimeManagement,
 };
-use crate::state_machine::session_management::TaskStatus;
-use crate::state_machine::session_management::{SessionManagement, SessionState};
-use crate::tool_router::execute_tool::ToolExecutionResult;
-
-#[cfg(test)]
-use super::agent_prompts::load_agent_prompt_messages;
-#[cfg(test)]
-use super::constants::PLANNING_TOOL;
-#[cfg(test)]
-use super::tool_arguments::{normalize_tool_arguments, normalize_tool_arguments_for_tool};
-#[cfg(test)]
-use super::tool_catalog::{
-    filter_tools_for_turn, remove_tool, require_planning_tool_for_planning_mode,
+use crate::state_machine::session_management::{PlanStatus, SessionManagement, SessionState};
+use crate::turn_loop::finalization::create_dummy_runtime;
+use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
+use crate::turn_loop::provider_step::accumulate_session_from_runtime;
+use crate::turn_loop::retry_policy::env_flag;
+use crate::turn_loop::task_progress::{
+    active_doing_task_user_message, active_task_user_message, command_run_result_has_command,
+    command_run_result_is_single_task_status, command_run_result_terminal_task_status,
+    record_task_focus_message, record_task_focus_message_for_terminal_done,
 };
-#[cfg(test)]
-use tura_llm_rust::provider_unsupported_content_type;
+use crate::turn_loop::tool_step::{command_run_results_empty, extract_compact_context_results};
+
+const DEFAULT_MANAS_MAX_TURNS: u64 = 256;
+const DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF: usize = 1_000;
 
 pub struct ManasInput<'a> {
     pub agents: &'a mut [AgentManagement],
@@ -62,6 +61,7 @@ pub struct ManasResult {
     pub agents: Vec<AgentManagement>,
     pub session: SessionManagement,
     pub final_runtime: RuntimeManagement,
+    pub final_error: Option<String>,
 }
 
 pub fn process_manas_internal(
@@ -86,39 +86,66 @@ pub fn process_manas_internal(
         agents
     };
 
-    let now = Utc::now();
-
-    session.transition(SessionState::Running, now)?;
+    let agent_commands = agents.first().map(command_run_commands_for_agent);
+    if let Some(commands) = agent_commands.as_ref() {
+        session.record_session_capabilities(commands.iter().map(String::as_str));
+    }
+    session.transition(SessionState::Running, Utc::now())?;
     persist_session_checkpoint(session, "running");
 
+    let active_agent_capabilities = agent_commands
+        .as_ref()
+        .map(|commands| commands.iter().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
     let mut current_messages = initial_messages.clone();
     let mut last_runtime_id: Option<RuntimeId> = None;
     let original_user_task = session.input.user_input.clone();
     let mut turn = 0_u64;
     let mut provider_timeout_retries = 0_u8;
-    let mut no_tool_retries = 0_u8;
+    let mut no_tool_retries = 0_u64;
     let mut final_session_state = SessionState::Completed;
-    let supports_task_status = agents
-        .first()
-        .map(command_run_commands_for_agent)
+    let mut final_error: Option<String> = None;
+    let supports_task_status = agent_commands
+        .as_ref()
         .is_some_and(|commands| commands.contains(TASK_STATUS_COMMAND));
-    // Count consecutive command_run turns that neither wrote (apply_patch) nor
-    // settled task state (task_status). After the threshold, inject the
-    // task_status nudge so a model stuck re-running read-only/verification
-    // commands is reminded to mark done or ask a question.
-    let mut no_write_command_run_turns = 0_u64;
+    let supports_planning = agent_commands
+        .as_ref()
+        .is_some_and(|commands| commands.contains(PLANNING_TOOL));
     loop {
         turn = turn.saturating_add(1);
+        if turn > manas_max_turns() {
+            warn!(
+                session_id = %session.session_id,
+                turn = turn,
+                max_turns = manas_max_turns(),
+                "manas turn limit reached; failing session"
+            );
+            let error = format!(
+                "Session stopped after reaching the maximum turn limit of {}.",
+                manas_max_turns()
+            );
+            publish_runtime_failure_message(
+                session,
+                last_runtime_id.as_deref().unwrap_or_default(),
+                &error,
+            );
+            final_error = Some(error);
+            final_session_state = SessionState::Failed;
+            break;
+        }
         info!(
             session_id = %session.session_id,
             turn = turn,
             "starting turn"
         );
+        append_active_runtime_prompt_manual_context(session, &mut current_messages)?;
 
         let runtime_result = match execute_turn(
             agents,
             session,
-            &messages_for_turn(&current_messages, session, &original_user_task),
+            &current_messages,
+            &original_user_task,
+            None,
             redis_url,
             turn == 1,
             false,
@@ -136,9 +163,10 @@ pub fn process_manas_internal(
                     .clone()
                     .unwrap_or_else(|| format!("runtime-error-{}", session.session_id));
                 publish_runtime_failure_message(session, &runtime_id, &error);
-                if env_flag("TURA_FAIL_ON_RUNTIME_ERROR") {
+                if env_flag("TURA_RUNTIME_ERRORS_FATAL") {
                     return Err(error);
                 }
+                final_error = Some(error);
                 final_session_state = SessionState::Failed;
                 break;
             }
@@ -150,10 +178,9 @@ pub fn process_manas_internal(
         last_runtime_id = Some(runtime.runtime_id.clone());
 
         accumulate_session_from_runtime(session, &runtime, true)?;
-        apply_validator_reliability_feedback(&runtime);
-        publish_runtime_usage_record(session, &runtime);
-        session.increment_turn(now);
+        increment_turn_with_fresh_timestamp(session);
         persist_session_checkpoint(session, "runtime");
+        publish_runtime_usage_record(session, &runtime);
 
         if runtime.call_result_status == RuntimeCallResultStatus::TimedOut
             || runtime_failure_allows_retry(&runtime)
@@ -172,13 +199,11 @@ pub fn process_manas_internal(
                         error = %error_text,
                         "provider rejected required media content; not retrying without media"
                     );
-                    publish_runtime_failure_message(
-                        session,
-                        &runtime.runtime_id,
-                        &format!(
-                            "Provider/model does not support `{content_type}` media input for this request. Use an image-capable model or a route whose model metadata includes that input modality. Original provider error: {error_text}"
-                        ),
+                    let error = format!(
+                        "Provider/model does not support `{content_type}` media input for this request. Use an image-capable model or a route whose model metadata includes that input modality. Original provider error: {error_text}"
                     );
+                    publish_runtime_failure_message(session, &runtime.runtime_id, &error);
+                    final_error = Some(error);
                     final_session_state = SessionState::Failed;
                     break;
                 }
@@ -205,17 +230,22 @@ pub fn process_manas_internal(
                 );
                 thread::sleep(wait_duration);
                 if let Some((content_type, removed)) = removed_media {
-                    current_messages.push(serde_json::json!({
-                        "role": "system",
-                        "content": format!(
-                            "The provider rejected `{content_type}` media content. {removed} item(s) were omitted from the next request and replaced with text placeholders; continue using the remaining text and supported media."
-                        )
-                    }));
+                    tail_injection::append_tail_prompt(
+                        &mut current_messages,
+                        tail_injection::TailPrompt::developer(provider_retry::media_fallback(
+                            content_type,
+                            removed,
+                        )),
+                    );
                 }
-                current_messages.push(serde_json::json!({
-                    "role": "system",
-                    "content": format!("Provider failure while waiting for the model response: {error_text}. This is transient provider failure retry {} of 3, not task completion. Retry the current task with the normal command_run tool unless the requested edits and validation are actually complete.", provider_timeout_retries)
-                }));
+                tail_injection::append_tail_prompt(
+                    &mut current_messages,
+                    tail_injection::TailPrompt::developer(provider_retry::transient_failure_retry(
+                        &error_text,
+                        provider_timeout_retries,
+                        3,
+                    )),
+                );
                 continue;
             }
 
@@ -228,13 +258,11 @@ pub fn process_manas_internal(
                 retries = provider_timeout_retries,
                 "provider runtime failed transiently after retries; publishing visible failure"
             );
-            publish_runtime_failure_message(
-                session,
-                &runtime.runtime_id,
-                &format!(
-                    "Provider runtime failed after 3 retries before completing the task: {error_text}"
-                ),
+            let error = format!(
+                "Provider runtime failed after 3 retries before completing the task: {error_text}"
             );
+            publish_runtime_failure_message(session, &runtime.runtime_id, &error);
+            final_error = Some(error);
             final_session_state = SessionState::Failed;
             break;
         }
@@ -249,22 +277,23 @@ pub fn process_manas_internal(
                 "provider runtime failed"
             );
             publish_runtime_failure_message(session, &runtime.runtime_id, &error_text);
-            if env_flag("TURA_FAIL_ON_RUNTIME_ERROR") {
+            if env_flag("TURA_RUNTIME_ERRORS_FATAL") {
                 return Err(error_text);
             }
+            final_error = Some(error_text);
             final_session_state = SessionState::Failed;
             break;
         }
 
         if !tool_calls.is_empty() {
-            if let Some(content) = user_visible_runtime_text(&runtime.text)
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())
-            {
-                if let Err(error) = publish_gateway_agent_message(
+            let visible_reply_before_tool = visible_runtime_reply(&runtime);
+            let visible_reply_published_before_terminal_status =
+                visible_reply_before_tool.is_some();
+            if let Some(content) = visible_reply_before_tool.as_deref() {
+                if let Err(error) = publish_gateway_agent_message_from_runtime(
                     &session.session_id,
-                    &runtime.runtime_id,
-                    content,
+                    &runtime,
+                    content.to_string(),
                     String::new(),
                 ) {
                     warn!(
@@ -279,21 +308,14 @@ pub fn process_manas_internal(
             no_tool_retries = 0;
             let mut tool_results =
                 execute_tool_calls(&tool_calls, agents.first(), session, &runtime, redis_url)?;
-            apply_compact_context_results(session, &mut tool_results)?;
+            let pending_compact_contexts =
+                extract_compact_context_results(&mut tool_results, Some(&runtime));
             let terminal_task_status = tool_results
                 .iter()
                 .find_map(|result| command_run_result_terminal_task_status(&result.result));
-            let terminal_task_status_seen = terminal_task_status.is_some();
-
-            // Track consecutive command_run turns with no write/state command.
-            if command_run_turn_has_write_or_status(&tool_calls) || terminal_task_status_seen {
-                no_write_command_run_turns = 0;
-            } else if tool_calls
+            let terminal_status_followed_command = tool_results
                 .iter()
-                .any(|tool_call| tool_call.tool_name == COMMAND_RUN_TOOL)
-            {
-                no_write_command_run_turns = no_write_command_run_turns.saturating_add(1);
-            }
+                .any(|result| command_run_result_has_command(&result.result));
 
             for (index, tool_result) in tool_results.iter().enumerate() {
                 if command_run_results_empty(&tool_result.result) {
@@ -306,12 +328,95 @@ pub fn process_manas_internal(
                     tool_result.result.clone(),
                     tool_result.success,
                     tool_result.error.clone(),
+                    Some(&runtime.runtime_id),
                     tool_calls
                         .get(index)
                         .and_then(|tool_call| tool_call.provider_metadata.clone()),
                 )?;
             }
             persist_session_checkpoint(session, "tool_results");
+
+            if pending_compact_contexts.is_empty()
+                && should_end_turn_without_task_status_backfill(
+                    &tool_results,
+                    terminal_task_status.as_deref(),
+                    visible_reply_before_tool.as_deref(),
+                )
+            {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    runtime_id = %runtime.runtime_id,
+                    "single done task_status followed a long visible assistant reply; ending turn without tool-result backfill"
+                );
+                break;
+            }
+
+            if !pending_compact_contexts.is_empty() {
+                for pending in &pending_compact_contexts {
+                    compact_session_context_with_agent_message_and_capabilities(
+                        session,
+                        &pending.summary,
+                        pending.agent_message_content.as_deref().map(|content| {
+                            CompactContextAgentMessage {
+                                content,
+                                timestamp: pending.agent_message_timestamp,
+                            }
+                        }),
+                        &active_agent_capabilities,
+                    )?;
+                }
+                persist_session_checkpoint(session, "compact_context");
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    runtime_id = %runtime.runtime_id,
+                    "compact_context applied after persisted tool results; continuing task with rebuilt compacted context"
+                );
+
+                let context_output = build_context(ContextInput {
+                    session: session.clone(),
+                    runtime: runtime.clone(),
+                    additional_messages: Vec::new(),
+                })?;
+
+                current_messages = messages_with_initial_context_prefix(
+                    &initial_messages,
+                    context_output.messages,
+                    &original_user_task,
+                );
+                continue;
+            }
+
+            if let Some(summary) =
+                auto_compact_summary_after_new_context(session, &runtime, &tool_results)
+            {
+                compact_session_context_automatically_with_capabilities(
+                    session,
+                    &summary,
+                    &active_agent_capabilities,
+                )?;
+                persist_session_checkpoint(session, "auto_compact_context");
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    runtime_id = %runtime.runtime_id,
+                    "automatic context compaction applied after new tool context exceeded active limit; continuing task"
+                );
+
+                let context_output = build_context(ContextInput {
+                    session: session.clone(),
+                    runtime: runtime.clone(),
+                    additional_messages: Vec::new(),
+                })?;
+
+                current_messages = messages_with_initial_context_prefix(
+                    &initial_messages,
+                    context_output.messages,
+                    &original_user_task,
+                );
+                continue;
+            }
 
             let context_output = build_context(ContextInput {
                 session: session.clone(),
@@ -324,38 +429,48 @@ pub fn process_manas_internal(
                 context_output.messages,
                 &original_user_task,
             );
-            let next_task = if terminal_task_status.as_deref() == Some("done") {
-                active_todo_task_user_message(session)
-            } else {
-                active_task_user_message(session)
-            };
-            if let Some(next_task) = next_task {
-                record_task_focus_message_for_terminal_done(
-                    session,
-                    &next_task,
-                    terminal_task_status.as_deref() == Some("done"),
+            if should_auto_complete_non_planning_doing_after_tool_turn(
+                session.goal_mode,
+                supports_planning,
+                terminal_task_status.as_deref(),
+                visible_reply_published_before_terminal_status,
+                terminal_status_followed_command,
+            ) {
+                if complete_active_doing_task_after_non_planning_reply(session, true) {
+                    persist_session_checkpoint(session, "task_auto_completed");
+                }
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    "non-planning agent returned visible final text without a command_run result that needs backfill; active task was auto-completed and loop ended"
                 );
-                persist_session_checkpoint(session, "task_focus");
-                current_messages.push(next_task);
-            } else if matches!(terminal_task_status.as_deref(), Some("done" | "question")) {
-                if let Some(content) = terminal_task_status_final_message(
-                    session,
-                    terminal_task_status.as_deref().unwrap_or("done"),
-                    &original_user_task,
+                break;
+            }
+            if matches!(terminal_task_status.as_deref(), Some("done" | "question")) {
+                let final_response_published = if terminal_status_needs_final_response_turn(
+                    terminal_task_status.as_deref(),
+                    visible_reply_published_before_terminal_status,
+                    terminal_status_followed_command,
                 ) {
-                    if let Err(error) = publish_gateway_agent_message(
-                        &session.session_id,
-                        &runtime.runtime_id,
-                        content,
-                        String::new(),
-                    ) {
-                        warn!(
-                            session_id = %session.session_id,
-                            runtime_id = %runtime.runtime_id,
-                            error = %error,
-                            "failed to publish terminal task_status assistant message"
-                        );
-                    }
+                    run_terminal_final_response_turn(
+                        agents,
+                        session,
+                        &current_messages,
+                        redis_url,
+                        &original_user_task,
+                    )?
+                } else {
+                    true
+                };
+                if !final_response_published {
+                    warn!(
+                        session_id = %session.session_id,
+                        runtime_id = %runtime.runtime_id,
+                        status = terminal_task_status.as_deref().unwrap_or("unknown"),
+                        "terminal task_status produced no user-facing reply; suppressing internal fallback text"
+                    );
                 }
                 info!(
                     session_id = %session.session_id,
@@ -364,22 +479,44 @@ pub fn process_manas_internal(
                     "terminal task_status returned and no next executable task exists; ending loop"
                 );
                 break;
+            } else if terminal_task_status.as_deref() == Some("doing") {
+                if let Some(next_task) = active_doing_task_user_message(session) {
+                    record_task_focus_message_for_terminal_done(session, &next_task, false);
+                    persist_session_checkpoint(session, "task_focus");
+                }
+            } else if let Some(next_task) = active_task_user_message(session) {
+                record_task_focus_message_for_terminal_done(session, &next_task, false);
+                persist_session_checkpoint(session, "task_focus");
             }
-
-            // The model keeps running command_run without writing or settling
-            // task state; remind it to mark done or ask a question.
-            if supports_task_status
-                && no_write_command_run_turns >= NO_WRITE_COMMAND_RUN_NUDGE_THRESHOLD
-            {
+        } else {
+            if let Some(summary) = auto_compact_summary_after_new_context(session, &runtime, &[]) {
+                compact_session_context_automatically_with_capabilities(
+                    session,
+                    &summary,
+                    &active_agent_capabilities,
+                )?;
+                persist_session_checkpoint(session, "auto_compact_context");
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
-                    no_write_turns = no_write_command_run_turns,
-                    "injecting task_status nudge after consecutive no-write command_run turns"
+                    runtime_id = %runtime.runtime_id,
+                    "automatic context compaction applied after new assistant context exceeded active limit; continuing task"
                 );
-                push_task_status_nudge(&mut current_messages);
+
+                let context_output = build_context(ContextInput {
+                    session: session.clone(),
+                    runtime: runtime.clone(),
+                    additional_messages: Vec::new(),
+                })?;
+
+                current_messages = messages_with_initial_context_prefix(
+                    &initial_messages,
+                    context_output.messages,
+                    &original_user_task,
+                );
+                continue;
             }
-        } else {
+
             let context_output = build_context(ContextInput {
                 session: session.clone(),
                 runtime: runtime.clone(),
@@ -400,13 +537,90 @@ pub fn process_manas_internal(
                 break;
             }
 
-            if no_tool_retries < no_tool_retry_limit() {
+            let has_visible_reply = visible_runtime_reply(&runtime).is_some();
+
+            let has_active_doing_task = active_doing_task_user_message(session).is_some();
+            if has_visible_reply {
+                if complete_active_doing_task_after_non_planning_reply(
+                    session,
+                    !session.goal_mode && !supports_planning,
+                ) {
+                    persist_session_checkpoint(session, "task_auto_completed");
+                }
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    has_active_doing_task = has_active_doing_task,
+                    "turn completed without command_run but produced a user-visible reply; ending session after any required task_status backfill"
+                );
+                break;
+            }
+            if !has_active_doing_task {
+                if should_retry_no_tool_task_status(
+                    session,
+                    supports_planning,
+                    supports_task_status,
+                    false,
+                ) && should_continue_no_tool_task_status_retry(session, no_tool_retries)
+                {
+                    no_tool_retries = no_tool_retries.saturating_add(1);
+                    push_no_tool_task_status_retry_message(&mut current_messages, session);
+                    warn!(
+                        session_id = %session.session_id,
+                        turn = turn,
+                        runtime_id = %runtime.runtime_id,
+                        no_tool_retries = no_tool_retries,
+                        "goal-mode turn returned no tool calls and no task_status marker; retrying until task_status settles the goal"
+                    );
+                    continue;
+                }
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    "turn completed without command_run and no task_status doing marker; ending session"
+                );
+                break;
+            }
+
+            if !session.goal_mode && !supports_planning {
+                if complete_active_doing_task_after_non_planning_reply(session, false) {
+                    persist_session_checkpoint(session, "task_auto_completed");
+                }
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    "turn completed without command_run while task_status is still active; non-planning agent ended and active task was settled when a visible reply existed"
+                );
+                break;
+            }
+
+            if !should_retry_no_tool_task_status(
+                session,
+                supports_planning,
+                supports_task_status,
+                true,
+            ) {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    goal_mode = session.goal_mode,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    "turn completed without command_run while task_status is still active; retry mode is not enabled or task_status is unavailable"
+                );
+                break;
+            }
+
+            if should_continue_no_tool_task_status_retry(session, no_tool_retries) {
                 no_tool_retries = no_tool_retries.saturating_add(1);
                 push_no_tool_task_status_retry_message(&mut current_messages, session);
-                if let Some(next_task) = active_task_user_message(session) {
+                if let Some(next_task) = active_doing_task_user_message(session) {
                     record_task_focus_message(session, &next_task);
                     persist_session_checkpoint(session, "task_focus");
-                    current_messages.push(next_task);
                 }
                 warn!(
                     session_id = %session.session_id,
@@ -427,7 +641,7 @@ pub fn process_manas_internal(
         }
     }
 
-    session.transition(final_session_state, now)?;
+    session.transition(final_session_state, Utc::now())?;
     persist_session_checkpoint(
         session,
         if final_session_state == SessionState::Failed {
@@ -436,6 +650,12 @@ pub fn process_manas_internal(
             "completed"
         },
     );
+    let git_event = if final_session_state == SessionState::Failed {
+        "failed"
+    } else {
+        "completed"
+    };
+    commit_terminal_session_checkpoint(session, git_event);
 
     for agent in agents.iter_mut() {
         agent.state = if final_session_state == SessionState::Failed {
@@ -446,386 +666,139 @@ pub fn process_manas_internal(
         agent.updated_at = Utc::now();
     }
 
-    let final_runtime = create_dummy_runtime(last_runtime_id.unwrap_or_default(), session);
+    let final_runtime = create_dummy_runtime(last_runtime_id.unwrap_or_default(), session)?;
 
     Ok(ManasResult {
         agents: agents.to_vec(),
         session: session.clone(),
         final_runtime,
+        final_error,
     })
 }
 
-/// Inject the task_status nudge once this many consecutive command_run turns
-/// have produced no write (`apply_patch`) and no task state change
-/// (`task_status`).
-const NO_WRITE_COMMAND_RUN_NUDGE_THRESHOLD: u64 = 3;
-
-/// True if any command_run tool call in this turn includes a write command
-/// (`apply_patch`) or a task-state command (`task_status`).
-fn command_run_turn_has_write_or_status(
-    tool_calls: &[crate::runtime::types::ToolCallData],
-) -> bool {
-    tool_calls.iter().any(|tool_call| {
-        if tool_call.tool_name != COMMAND_RUN_TOOL {
-            return false;
-        }
-        tool_call
-            .arguments
-            .get("commands")
-            .and_then(|commands| commands.as_array())
-            .is_some_and(|commands| {
-                commands.iter().any(|command| {
-                    let command_type = command
-                        .get("command_type")
-                        .or_else(|| command.get("command"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_ascii_lowercase()
-                        .replace('-', "_");
-                    matches!(command_type.as_str(), "apply_patch" | "task_status")
-                })
-            })
-    })
-}
-
-fn command_run_result_terminal_task_status(result: &serde_json::Value) -> Option<String> {
-    let result = result.get("streamed_command_run_result").unwrap_or(result);
-    result
-        .get("results")
-        .and_then(|value| value.as_array())
-        .and_then(|items| items.iter().find_map(command_run_item_terminal_task_status))
-}
-
-fn command_run_item_terminal_task_status(item: &serde_json::Value) -> Option<String> {
-    let command_type = item
-        .get("command_type")
-        .or_else(|| item.get("command"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .replace('-', "_");
-    if command_type != TASK_STATUS_COMMAND {
-        return None;
-    }
-    if item.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
-        return None;
-    }
-    item.get("output")
-        .and_then(|output| output.get("task_status"))
-        .and_then(|status| status.get("status"))
-        .and_then(serde_json::Value::as_str)
-        .filter(|status| matches!(*status, "done" | "question"))
-        .map(ToString::to_string)
-}
-
-fn terminal_task_status_final_message(
-    session: &SessionManagement,
-    status: &str,
-    original_user_task: &str,
-) -> Option<String> {
-    if status == "done" {
-        if let Some(exact) = requested_exact_reply(original_user_task) {
-            return Some(exact);
-        }
-    }
-    let summary = session
-        .task_plan
-        .detailed_tasks
-        .iter()
-        .rev()
-        .find_map(|task| non_empty_text(&task.task_summary))
-        .or_else(|| non_empty_text(&session.task_plan.plan_summary))
-        .or_else(|| non_empty_text(original_user_task))?;
-    let prefix = if status == "question" { "Question" } else { "Done" };
-    Some(format!("{prefix}: {summary}"))
-}
-
-fn requested_exact_reply(text: &str) -> Option<String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    for marker in [
-        "reply with exactly",
-        "reply exactly",
-        "respond with exactly",
-        "respond exactly",
-        "只回复这一行，不要解释：",
-        "只回复这一行，不要解释:",
-        "只回复：",
-        "只回复:",
-    ] {
-        if let Some(index) = trimmed.to_ascii_lowercase().find(marker) {
-            let marker_len = marker.len();
-            let source = &trimmed[index + marker_len..];
-            let candidate = source
-                .trim_start_matches(|ch: char| ch.is_whitespace() || matches!(ch, ':' | '：' | '"' | '\'' | '`'))
-                .split(" and no extra")
-                .next()
-                .unwrap_or(source)
-                .trim()
-                .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | '.' | '。'))
-                .trim();
-            if !candidate.is_empty() {
-                return Some(candidate.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn non_empty_text(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_string())
-}
-
-fn apply_compact_context_results(
-    session: &mut SessionManagement,
-    tool_results: &mut [ToolExecutionResult],
-) -> Result<(), String> {
-    for tool_result in tool_results.iter_mut() {
-        if tool_result.tool_name != COMMAND_RUN_TOOL {
-            continue;
-        }
-        let Some(summary) = compact_context_summary_from_command_run(&tool_result.result) else {
-            continue;
-        };
-        compact_session_context(session, &summary)?;
-        strip_compact_context_from_command_run(&mut tool_result.arguments, &mut tool_result.result);
-        tool_result.success = command_run_result_success_value(&tool_result.result);
-        tool_result.error = command_run_result_error_value(&tool_result.result);
-    }
-    Ok(())
-}
-
-fn compact_context_summary_from_command_run(result: &serde_json::Value) -> Option<String> {
-    result
-        .get("results")
-        .and_then(serde_json::Value::as_array)?
-        .iter()
-        .find(|item| {
-            item.get("command_type")
-                .or_else(|| item.get("command"))
-                .and_then(serde_json::Value::as_str)
-                == Some("compact_context")
-                && item.get("success").and_then(serde_json::Value::as_bool) == Some(true)
-        })
-        .and_then(|item| {
-            item.get("output")
-                .and_then(|output| {
-                    output
-                        .get("compact_context")
-                        .and_then(serde_json::Value::as_str)
-                        .or_else(|| output.as_str())
-                })
-                .map(ToString::to_string)
-        })
-}
-
-fn strip_compact_context_from_command_run(
-    arguments: &mut serde_json::Value,
-    result: &mut serde_json::Value,
-) {
-    if let Some(commands) = arguments
-        .get_mut("commands")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        commands.retain(|command| {
-            command
-                .get("command_type")
-                .or_else(|| command.get("command"))
-                .and_then(serde_json::Value::as_str)
-                .map(canonical_command_name)
-                .as_deref()
-                != Some("compact_context")
-        });
-    }
-    if let Some(results) = result
-        .get_mut("results")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        results.retain(|item| {
-            item.get("command_type")
-                .or_else(|| item.get("command"))
-                .and_then(serde_json::Value::as_str)
-                != Some("compact_context")
-        });
-    }
-}
-
-fn canonical_command_name(name: &str) -> String {
-    name.trim().to_ascii_lowercase().replace('-', "_")
-}
-
-fn command_run_results_empty(result: &serde_json::Value) -> bool {
-    result
-        .get("results")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|results| results.is_empty())
-}
-
-fn command_run_result_success_value(result: &serde_json::Value) -> bool {
-    result
-        .get("results")
-        .and_then(serde_json::Value::as_array)
-        .map(|results| {
-            results
-                .iter()
-                .all(|item| item.get("success").and_then(serde_json::Value::as_bool) == Some(true))
-        })
-        .unwrap_or(true)
-}
-
-fn command_run_result_error_value(result: &serde_json::Value) -> Option<String> {
-    if command_run_result_success_value(result) {
-        return None;
-    }
-    result
-        .get("results")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|results| {
-            results.iter().find_map(|item| {
-                if item.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
-                    item.get("error")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToString::to_string)
-                } else {
-                    None
-                }
-            })
-        })
-}
-
-fn active_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
-    task_user_message_by(session, task_is_executable)
-}
-
-fn active_todo_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
-    task_user_message_by(session, task_is_user_action_todo)
-}
-
-fn task_user_message_by(
-    session: &SessionManagement,
-    predicate: fn(&crate::state_machine::session_management::TaskStep) -> bool,
-) -> Option<serde_json::Value> {
-    let (_index, task) = session
-        .task_plan
-        .detailed_tasks
-        .iter()
-        .enumerate()
-        .find(|(_, task)| predicate(task))?;
-    let current_task = planning_current_task_text(task);
-    Some(serde_json::json!({
-        "role": "user",
-        "content": format!(
-            "[current objective]:\n{}\n\n{}",
-            session.current_objective.trim(),
-            current_task
-        )
-    }))
-}
-
-fn record_task_focus_message(session: &mut SessionManagement, message: &serde_json::Value) {
-    record_task_focus_message_for_terminal_done(session, message, false);
-}
-
-fn record_task_focus_message_for_terminal_done(
-    session: &mut SessionManagement,
-    message: &serde_json::Value,
-    only_todo: bool,
-) {
-    let Some(task) = session.task_plan.detailed_tasks.iter().find(|task| {
-        if only_todo {
-            task_is_user_action_todo(task)
-        } else {
-            task_is_executable(task)
-        }
-    }) else {
-        return;
-    };
-    let task_id = task.task_id.clone();
-    if session.session_log.iter().rev().any(|entry| {
-        serde_json::from_str::<serde_json::Value>(entry)
-            .ok()
-            .filter(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("task_focus"))
-            .and_then(|value| {
-                value
-                    .get("task_id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(|seen| seen == task_id)
-            })
-            .unwrap_or(false)
-    }) {
-        return;
-    }
-    let now = Utc::now();
-    session.push_log(
-        serde_json::json!({
-            "type": "task_focus",
-            "task_id": task.task_id,
-            "step": task.step,
-            "task_summary": task.task_summary,
-            "deliverable": task.step_deliverable_description,
-            "content": message.get("content").cloned().unwrap_or(serde_json::Value::Null),
-            "timestamp": now.to_rfc3339(),
-        })
-        .to_string(),
-        now,
-    );
-}
-
-fn task_is_executable(task: &crate::state_machine::session_management::TaskStep) -> bool {
-    task.status == TaskStatus::Doing
-        || (task.status == TaskStatus::Todo
-            && task.start_condition
-                == crate::state_machine::session_management::StartCondition::UserAction)
-}
-
-fn task_is_user_action_todo(task: &crate::state_machine::session_management::TaskStep) -> bool {
-    task.status == TaskStatus::Todo
-        && task.start_condition
-            == crate::state_machine::session_management::StartCondition::UserAction
-}
-
-fn persist_session_checkpoint(session: &SessionManagement, stage: &str) {
-    if let Err(err) = persist_gateway_session(session) {
-        warn!(
+fn commit_terminal_session_checkpoint(session: &SessionManagement, git_event: &str) -> bool {
+    if crate::router_command_run::command_run_sandbox_enabled() {
+        info!(
             session_id = %session.session_id,
-            stage,
-            error = %err,
-            "failed to persist gateway session checkpoint"
+            event = git_event,
+            "skipping workspace session checkpoint commit because command_run sandbox is enabled"
         );
+        return false;
     }
-    emit_cli_live_checkpoint(session, stage);
+
+    match crate::workspace_git::commit_session_checkpoint(session, git_event) {
+        Ok(Some(commit)) => info!(
+            session_id = %session.session_id,
+            commit = %commit,
+            event = git_event,
+            "committed workspace session checkpoint"
+        ),
+        Ok(None) => info!(
+            session_id = %session.session_id,
+            event = git_event,
+            "workspace session checkpoint commit completed without a resolved hash"
+        ),
+        Err(error) => warn!(
+            session_id = %session.session_id,
+            event = git_event,
+            error = %error,
+            "failed to commit workspace session checkpoint"
+        ),
+    }
+    true
 }
 
-fn emit_cli_live_checkpoint(session: &SessionManagement, stage: &str) {
-    if !env_flag("TURA_CLI_LIVE_JSONL") {
-        return;
+fn manas_max_turns() -> u64 {
+    std::env::var("TURA_MANAS_MAX_TURNS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MANAS_MAX_TURNS)
+}
+
+fn increment_turn_with_fresh_timestamp(session: &mut SessionManagement) {
+    session.increment_turn(Utc::now());
+}
+
+fn should_retry_no_tool_task_status(
+    session: &SessionManagement,
+    supports_planning: bool,
+    supports_task_status: bool,
+    has_active_doing_task: bool,
+) -> bool {
+    if !supports_task_status {
+        return false;
     }
-    if matches!(stage, "completed") {
-        return;
+    if session.goal_mode {
+        return true;
     }
-    static EMITTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    let emitted = EMITTED.get_or_init(|| Mutex::new(HashSet::new()));
-    let Ok(mut emitted) = emitted.lock() else {
-        return;
+    supports_planning && has_active_doing_task
+}
+
+fn should_continue_no_tool_task_status_retry(
+    session: &SessionManagement,
+    no_tool_retries: u64,
+) -> bool {
+    if session.goal_mode {
+        return true;
+    }
+    no_tool_retries < u64::from(no_tool_retry_limit())
+}
+
+fn complete_active_doing_task_after_non_planning_reply(
+    session: &mut SessionManagement,
+    has_visible_reply: bool,
+) -> bool {
+    if !has_visible_reply {
+        return false;
+    }
+    let Some(task) = session
+        .task_plan
+        .detailed_tasks
+        .iter_mut()
+        .find(|task| task.status == PlanStatus::Doing)
+    else {
+        return false;
     };
-    if !emitted.insert(session.session_id.clone()) {
-        return;
-    }
-    let event = serde_json::json!({
-        "type": "item.completed",
-        "item": {
-            "id": "item_live_0",
-            "type": "agent_message",
-            "text": "Runtime session is active; detailed command events will follow."
-        }
-    });
-    println!("{event}");
-    let _ = std::io::stdout().flush();
+    task.status = PlanStatus::Done;
+    session.session_last_update_at = Utc::now();
+    true
+}
+
+fn should_auto_complete_non_planning_doing_after_tool_turn(
+    _goal_mode: bool,
+    _supports_planning: bool,
+    _terminal_task_status: Option<&str>,
+    _visible_reply_already_published: bool,
+    _terminal_status_followed_command: bool,
+) -> bool {
+    // A `doing` task_status is only a progress update. It must be replayed to the
+    // next model turn so newly activated manuals and task context can be used.
+    false
+}
+
+fn should_end_turn_without_task_status_backfill(
+    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+    terminal_task_status: Option<&str>,
+    visible_reply: Option<&str>,
+) -> bool {
+    let Some(status @ ("done" | "question")) = terminal_task_status else {
+        return false;
+    };
+
+    visible_reply.is_some_and(|reply| reply.len() > DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF)
+        && command_run_has_only_terminal_task_status_result(tool_results, status)
+}
+
+fn command_run_has_only_terminal_task_status_result(
+    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+    status: &str,
+) -> bool {
+    let [tool_result] = tool_results else {
+        return false;
+    };
+    tool_result.tool_name == crate::manas::COMMAND_RUN_TOOL
+        && command_run_result_is_single_task_status(&tool_result.result, status)
 }
 
 fn messages_with_initial_context_prefix(
@@ -845,482 +818,153 @@ fn messages_with_initial_context_prefix(
     messages
 }
 
-fn env_flag(name: &str) -> bool {
-    std::env::var(name).ok().is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    })
-}
-
-fn no_tool_retry_limit() -> u8 {
-    std::env::var("TURA_NO_TOOL_RETRY_LIMIT")
-        .ok()
-        .and_then(|value| value.trim().parse::<u8>().ok())
-        .unwrap_or(20)
-}
-
-fn accumulate_session_from_runtime(
+fn append_active_runtime_prompt_manual_context(
     session: &mut SessionManagement,
-    runtime: &RuntimeManagement,
-    publish_runtime_text: bool,
+    current_messages: &mut Vec<serde_json::Value>,
 ) -> Result<(), String> {
-    let now = Utc::now();
-
-    if let Some(usage) = &runtime.usage {
-        session.push_log(
-            serde_json::json!({
-                "type": "runtime_usage",
-                "runtime_id": runtime.runtime_id,
-                "usage": usage,
-                "status": format!("{:?}", runtime.call_result_status),
-                "cache_diagnostics": runtime_cache_diagnostics(runtime),
-                "timestamp": now.to_rfc3339(),
-            })
-            .to_string(),
-            now,
-        );
-    }
-
-    if !publish_runtime_text {
-        return Ok(());
-    }
-
-    if let Some(content) = user_visible_runtime_text(&runtime.text) {
-        session.push_log(
-            serde_json::json!({
-                "role": "assistant",
-                "content": content,
-            })
-            .to_string(),
-            now,
-        );
-    }
-
-    Ok(())
+    runtime_prompt_manual::append_missing_runtime_prompt_manuals(session, Some(current_messages))
+        .map(|_| ())
 }
 
-fn runtime_cache_diagnostics(runtime: &RuntimeManagement) -> serde_json::Value {
-    let input = runtime.input.as_ref();
-    let messages = input
-        .and_then(|input| input.get("messages"))
-        .and_then(serde_json::Value::as_array);
-    let tools = input
-        .and_then(|input| input.get("tools"))
-        .and_then(serde_json::Value::as_array);
-    let options = input.and_then(|input| input.get("options"));
-    serde_json::json!({
-        "input_hash": input.map(stable_json_hash).unwrap_or_default(),
-        "message_count": messages.map(|messages| messages.len()).unwrap_or_default(),
-        "tool_count": tools.map(|tools| tools.len()).unwrap_or_default(),
-        "first_message_hash": messages
-            .and_then(|messages| messages.first())
-            .map(stable_json_hash)
-            .unwrap_or_default(),
-        "last_message_hash": messages
-            .and_then(|messages| messages.last())
-            .map(stable_json_hash)
-            .unwrap_or_default(),
-        "tools_hash": tools
-            .map(|tools| stable_json_hash(&serde_json::Value::Array(tools.clone())))
-            .unwrap_or_default(),
-        "prompt_cache_key": options
-            .and_then(|options| options.get("prompt_cache_key"))
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-    })
-}
-
-fn stable_json_hash(value: &serde_json::Value) -> String {
-    let serialized = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in serialized.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{hash:016x}")
-}
-
-fn provider_timeout_retry_wait(retry_count: u8) -> Option<Duration> {
-    match retry_count {
-        0 => Some(Duration::from_secs(5)),
-        1 => Some(Duration::from_secs(15)),
-        2 => Some(Duration::from_secs(45)),
-        _ => None,
-    }
-}
-
-fn runtime_failure_allows_retry(runtime: &RuntimeManagement) -> bool {
-    runtime.call_result_status == RuntimeCallResultStatus::Failed
-        && runtime
-            .error
-            .as_ref()
-            .map(|error| error.retry_allowed)
-            .unwrap_or(false)
-}
-
-fn runtime_failure_text(runtime: &RuntimeManagement) -> Option<String> {
-    runtime
-        .error
+fn run_terminal_final_response_turn(
+    agents: &[AgentManagement],
+    session: &mut SessionManagement,
+    current_messages: &[serde_json::Value],
+    redis_url: &str,
+    original_user_task: &str,
+) -> Result<bool, String> {
+    let (runtime, _tool_calls) = execute_turn(
+        agents,
+        session,
+        current_messages,
+        original_user_task,
+        Some(terminal_final_response::TERMINAL_FINAL_RESPONSE),
+        redis_url,
+        false,
+        true,
+        true,
+    )?;
+    let visible_text = visible_runtime_reply(&runtime);
+    let has_visible_text = visible_text
         .as_ref()
-        .and_then(|error| error.error_text.clone())
+        .map(|text| !text.trim().is_empty())
+        .unwrap_or(false);
+    let visible_text = visible_text.filter(|text| !text.trim().is_empty());
+    accumulate_session_from_runtime(session, &runtime, true)?;
+    session.increment_turn(Utc::now());
+    persist_session_checkpoint(session, "terminal_final_response");
+    if let Some(content) = visible_text {
+        if let Err(error) = publish_gateway_agent_message_from_runtime(
+            &session.session_id,
+            &runtime,
+            content,
+            String::new(),
+        ) {
+            warn!(
+                session_id = %session.session_id,
+                runtime_id = %runtime.runtime_id,
+                error = %error,
+                "failed to publish terminal final response assistant message"
+            );
+        }
+    }
+    publish_runtime_usage_record(session, &runtime);
+    Ok(has_visible_text)
+}
+
+fn visible_runtime_reply(runtime: &RuntimeManagement) -> Option<String> {
+    user_visible_runtime_text(&runtime.text)
         .or_else(|| {
             runtime
                 .output
                 .as_ref()
-                .and_then(|output| output.get("error"))
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string)
+                .and_then(user_visible_runtime_output_text)
         })
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
 }
 
-fn create_dummy_runtime(runtime_id: RuntimeId, session: &SessionManagement) -> RuntimeManagement {
-    let now = Utc::now();
-    let provider_name = crate::agent_router::coding_agent_provider_name();
+fn auto_compact_summary_after_new_context(
+    session: &SessionManagement,
+    runtime: &RuntimeManagement,
+    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+) -> Option<String> {
+    let limit = session.context_tokens.limit;
+    if limit == 0 {
+        return None;
+    }
+    let added_tokens = estimated_new_context_tokens(runtime, tool_results);
+    if added_tokens == 0 {
+        return None;
+    }
+    let input_tokens = session.context_tokens.input;
+    let projected = input_tokens.saturating_add(added_tokens);
+    if projected <= limit {
+        return None;
+    }
+    Some(format!(
+        "Automatic context checkpoint: provider input was about {input_tokens} tokens, newly persisted context is estimated at about {added_tokens} tokens by bytes/4, and the projected total {projected} exceeds the active context limit {limit}. Continue the same task from the retained timeline above; preserve completed commands and validation results, and do not rerun work unless the current task requires it."
+    ))
+}
 
-    let runtime_provider_config = crate::state_machine::runtime_management::RuntimeProviderConfig {
-        base: crate::state_machine::agent_management::ProviderConfig {
-            tura_llm_name: provider_name.clone(),
-            stream: true,
-            temperature: 0.5,
-            max_tokens: 0,
-            tool_choice: crate::state_machine::agent_management::ToolChoice::Auto,
-            time_out_ms: 120_000,
-        },
-        thinking: false,
-        provider_name: provider_name.clone(),
-        model_name: String::new(),
-        provider_url_name: String::new(),
-        llm_provider_name: provider_name,
-    };
+fn estimated_new_context_tokens(
+    runtime: &RuntimeManagement,
+    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+) -> u64 {
+    let visible_bytes = visible_runtime_reply(runtime)
+        .map(|text| text.len() as u64)
+        .unwrap_or(0);
+    let tool_bytes = tool_results
+        .iter()
+        .map(|result| {
+            let mut result = result.clone();
+            result.result = sanitize_tool_callback_output(&result.result);
+            serde_json::to_string(&result)
+                .map(|text| text.len() as u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    estimated_tokens_from_bytes_u64(visible_bytes.saturating_add(tool_bytes))
+}
 
-    let mut runtime = RuntimeManagement::new(
-        runtime_id,
-        session.session_id.clone(),
-        session.session_id.clone(),
-        runtime_provider_config,
-        now,
-    );
-
-    let _ = runtime.finish_success(now, None);
-
-    runtime
+fn terminal_status_needs_final_response_turn(
+    terminal_task_status: Option<&str>,
+    visible_reply_already_published: bool,
+    terminal_status_followed_command: bool,
+) -> bool {
+    match terminal_task_status {
+        Some("done") => true,
+        Some("question") => !visible_reply_already_published || terminal_status_followed_command,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        command_run_turn_has_write_or_status, filter_tools_for_turn, load_agent_prompt_messages,
-        messages_with_initial_context_prefix, normalize_tool_arguments,
-        normalize_tool_arguments_for_tool, provider_timeout_retry_wait,
-        provider_unsupported_content_type, remove_tool,
-        replace_unsupported_content_type_in_messages, require_planning_tool_for_planning_mode,
-        runtime_failure_allows_retry, runtime_failure_text, user_visible_runtime_text,
-        COMMAND_RUN_TOOL, PLANNING_TOOL,
+        auto_compact_summary_after_new_context, commit_terminal_session_checkpoint,
+        complete_active_doing_task_after_non_planning_reply, increment_turn_with_fresh_timestamp,
+        manas_max_turns, messages_with_initial_context_prefix,
+        should_auto_complete_non_planning_doing_after_tool_turn,
+        should_continue_no_tool_task_status_retry, should_end_turn_without_task_status_backfill,
+        should_retry_no_tool_task_status, terminal_status_needs_final_response_turn,
+        DEFAULT_MANAS_MAX_TURNS,
     };
-    use crate::context::build_messages_from_session;
-    use crate::runtime::types::ToolCallData;
-    use crate::state_machine::agent_management::{
-        AgentCapabilityItem, AgentManagement, AgentPromptItem, ProviderConfig, ToolChoice,
-        ValidatorConfig,
-    };
+    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{
-        RuntimeCallResultStatus, RuntimeError, RuntimeManagement, RuntimeProviderConfig,
+        RuntimeManagement, RuntimeProviderConfig, UsageReport,
     };
     use crate::state_machine::session_management::{
-        PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
+        PlanStatus, SessionInput, SessionManagement, TaskStep,
     };
-    use chrono::Utc;
+    use crate::tool_router::execute_tool::ToolExecutionResult;
+    use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
+    use chrono::{Duration, Utc};
     use serde_json::json;
-    use std::collections::HashSet;
     use std::path::PathBuf;
+    use std::sync::Mutex;
 
-    fn command_run_call(command_types: &[&str]) -> ToolCallData {
-        ToolCallData {
-            tool_name: COMMAND_RUN_TOOL.to_string(),
-            arguments: json!({
-                "commands": command_types
-                    .iter()
-                    .map(|ct| json!({ "command_type": ct, "command_line": "x" }))
-                    .collect::<Vec<_>>()
-            }),
-            provider_metadata: None,
-        }
-    }
-
-    #[test]
-    fn no_write_detection_drives_task_status_nudge_counter() {
-        // Read-only / verification-only command_run turns are "no write".
-        assert!(!command_run_turn_has_write_or_status(&[command_run_call(
-            &["shell_command"]
-        )]));
-        assert!(!command_run_turn_has_write_or_status(&[command_run_call(
-            &["shell_command", "read_media"]
-        )]));
-        // A write (apply_patch) or a task state command (task_status) counts.
-        assert!(command_run_turn_has_write_or_status(&[command_run_call(
-            &["shell_command", "apply_patch"]
-        )]));
-        assert!(command_run_turn_has_write_or_status(&[command_run_call(
-            &["task_status"]
-        )]));
-        // Alias spelling normalizes too.
-        assert!(command_run_turn_has_write_or_status(&[command_run_call(
-            &["apply-patch"]
-        )]));
-    }
-
-    #[test]
-    fn task_status_detection_accepts_streamed_command_run_results() {
-        let result = json!({
-            "streamed_command_run_result": {
-                "results": [{
-                    "command_type": "task_status",
-                    "output": {
-                        "task_status": {
-                            "status": "done",
-                            "task_summary": "finished"
-                        }
-                    }
-                }]
-            }
-        });
-
-        assert_eq!(
-            super::command_run_result_terminal_task_status(&result).as_deref(),
-            Some("done")
-        );
-
-        let question = json!({
-            "results": [{
-                "command_type": "task_status",
-                "output": {
-                    "task_status": {
-                        "status": "question",
-                        "content": "Need API key."
-                    }
-                }
-            }]
-        });
-        assert_eq!(
-            super::command_run_result_terminal_task_status(&question).as_deref(),
-            Some("question")
-        );
-    }
-
-    fn session_with_tasks(tasks: Vec<TaskStep>) -> SessionManagement {
-        let now = Utc::now();
-        let mut session = SessionManagement::new(
-            "sess-executable-task".to_string(),
-            "task routing".to_string(),
-            PathBuf::from("C:/workspace"),
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "finish queued work".to_string(),
-                file_input: vec![],
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "finish queued work".to_string(),
-            now,
-        );
-        session.task_plan.detailed_tasks = tasks;
-        session
-    }
-
-    fn task(step: u64, status: PlanStatus, start_condition: StartCondition) -> TaskStep {
-        TaskStep {
-            task_id: format!("task-{step}"),
-            step,
-            task_summary: format!("Task {step}"),
-            step_deliverable_description: format!("Deliverable {step}"),
-            status,
-            start_condition,
-            ..TaskStep::default()
-        }
-    }
-
-    #[test]
-    fn terminal_task_status_continues_when_gateway_added_task_is_executable() {
-        let session = session_with_tasks(vec![
-            task(1, PlanStatus::Done, StartCondition::UserAction),
-            task(2, PlanStatus::Todo, StartCondition::UserAction),
-        ]);
-
-        let message =
-            super::active_todo_task_user_message(&session).expect("todo task is executable");
-        assert!(message["content"]
-            .as_str()
-            .expect("message content")
-            .contains("Task 2"));
-    }
-
-    #[test]
-    fn terminal_task_status_done_only_continues_for_todo_user_action_task() {
-        let session = session_with_tasks(vec![
-            task(1, PlanStatus::Done, StartCondition::UserAction),
-            task(2, PlanStatus::Doing, StartCondition::UserAction),
-        ]);
-
-        assert!(super::active_todo_task_user_message(&session).is_none());
-    }
-
-    #[test]
-    fn terminal_task_status_done_focuses_nearest_todo_not_existing_doing() {
-        let mut session = session_with_tasks(vec![
-            task(1, PlanStatus::Done, StartCondition::UserAction),
-            task(2, PlanStatus::Doing, StartCondition::UserAction),
-            task(3, PlanStatus::Todo, StartCondition::UserAction),
-        ]);
-        session.current_objective = "Original user objective".to_string();
-
-        let message =
-            super::active_todo_task_user_message(&session).expect("todo task should be selected");
-        super::record_task_focus_message_for_terminal_done(&mut session, &message, true);
-
-        let content = message["content"].as_str().expect("message content");
-        assert!(content.contains("[current objective]:\nOriginal user objective"));
-        assert!(!content.contains("[current task]:"));
-        assert!(content.ends_with("\n\nTask 3"));
-        assert_eq!(session.current_objective, "Original user objective");
-        let focus_event = session
-            .session_log
-            .iter()
-            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
-            .find(|value| {
-                value.get("type").and_then(serde_json::Value::as_str) == Some("task_focus")
-            })
-            .expect("task focus should be recorded");
-        assert_eq!(focus_event["task_id"], "task-3");
-    }
-
-    #[test]
-    fn task_focus_is_audited_without_entering_model_context() {
-        let mut session = session_with_tasks(vec![
-            task(1, PlanStatus::Done, StartCondition::UserAction),
-            task(2, PlanStatus::Todo, StartCondition::UserAction),
-        ]);
-        let message = super::active_task_user_message(&session).expect("todo task is executable");
-
-        super::record_task_focus_message(&mut session, &message);
-        super::record_task_focus_message(&mut session, &message);
-
-        let focus_events = session
-            .session_log
-            .iter()
-            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
-            .filter(|value| {
-                value.get("type").and_then(serde_json::Value::as_str) == Some("task_focus")
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(focus_events.len(), 1);
-        assert_eq!(focus_events[0]["task_id"], "task-2");
-        let context_messages = build_messages_from_session(&session);
-        assert!(!context_messages.iter().any(|value| {
-            value
-                .get("content")
-                .map(|content| content.to_string().contains("[current objective]"))
-                .unwrap_or(false)
-        }));
-    }
-
-    #[test]
-    fn terminal_task_status_ends_when_only_scheduled_or_completed_tasks_remain() {
-        let session = session_with_tasks(vec![
-            task(1, PlanStatus::Done, StartCondition::UserAction),
-            task(2, PlanStatus::Todo, StartCondition::ScheduledTask),
-        ]);
-
-        assert!(super::active_todo_task_user_message(&session).is_none());
-        assert!(super::active_task_user_message(&session).is_none());
-    }
-
-    #[test]
-    fn exact_reply_prompt_becomes_terminal_task_status_message() {
-        let session = session_with_tasks(vec![task(
-            1,
-            PlanStatus::Done,
-            StartCondition::UserAction,
-        )]);
-
-        assert_eq!(
-            super::terminal_task_status_final_message(
-                &session,
-                "done",
-                "TUI real business test: reply with exactly TUI_BUSINESS_OK and no extra text."
-            )
-            .as_deref(),
-            Some("TUI_BUSINESS_OK")
-        );
-        assert_eq!(
-            super::terminal_task_status_final_message(
-                &session,
-                "done",
-                "只回复这一行，不要解释：TUI_WEB_OK"
-            )
-            .as_deref(),
-            Some("TUI_WEB_OK")
-        );
-    }
-
-    #[test]
-    fn terminal_task_status_message_falls_back_to_task_summary() {
-        let session = session_with_tasks(vec![task(
-            1,
-            PlanStatus::Done,
-            StartCondition::UserAction,
-        )]);
-
-        assert_eq!(
-            super::terminal_task_status_final_message(&session, "done", "finish queued work")
-                .as_deref(),
-            Some("Done: Task 1")
-        );
-    }
-
-    #[test]
-    fn provider_timeout_retry_waits_use_three_step_backoff() {
-        assert_eq!(
-            provider_timeout_retry_wait(0),
-            Some(std::time::Duration::from_secs(5))
-        );
-        assert_eq!(
-            provider_timeout_retry_wait(1),
-            Some(std::time::Duration::from_secs(15))
-        );
-        assert_eq!(
-            provider_timeout_retry_wait(2),
-            Some(std::time::Duration::from_secs(45))
-        );
-        assert_eq!(provider_timeout_retry_wait(3), None);
-    }
-
-    #[test]
-    fn provider_schema_error_removes_rejected_media_content_type() {
-        let error = "http status 400: Invalid value: 'input_file'. Supported values are: 'input_text', 'input_image'";
-        assert_eq!(provider_unsupported_content_type(error), Some("input_file"));
-
-        let mut messages = vec![json!({
-            "type": "function_call_output",
-            "call_id": "call_1",
-            "output": [
-                { "type": "input_text", "text": "kept" },
-                { "type": "input_file", "filename": "tone.mp3", "file_data": "data:audio/mpeg;base64,QUJD" },
-                { "type": "input_image", "image_url": "data:image/jpeg;base64,AAA" }
-            ]
-        })];
-
-        let removed = replace_unsupported_content_type_in_messages(&mut messages, "input_file");
-        assert_eq!(removed, 1);
-        let serialized = serde_json::to_string(&messages).expect("serialize");
-        assert!(serialized.contains("Unsupported media omitted"));
-        assert!(serialized.contains("input_image"));
-        assert!(!serialized.contains("file_data"));
-        assert!(!serialized.contains("tone.mp3"));
-    }
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn initial_context_prefix_keeps_only_developer_prefix_without_replaying_history() {
@@ -1347,429 +991,434 @@ mod tests {
     }
 
     #[test]
-    fn retry_allowed_failed_runtime_uses_provider_retry_path() {
-        let mut runtime = runtime_for_retry_test("retryable-runtime");
-        runtime.call_result_status = RuntimeCallResultStatus::Failed;
-        runtime.error = Some(RuntimeError {
-            error_code: Some("CALL_FAILED".to_string()),
-            error_text: Some(
-                "all providers failed: openai:gpt-5.1 => network error: error decoding response body"
-                    .to_string(),
-            ),
-            retry_allowed: true,
-            fallback_allowed: true,
-            fallback_to_id: None,
-        });
+    fn manas_max_turns_uses_positive_env_override_and_ignores_invalid_values() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let previous = std::env::var_os("TURA_MANAS_MAX_TURNS");
 
-        assert!(runtime_failure_allows_retry(&runtime));
-        assert_eq!(
-            runtime_failure_text(&runtime).as_deref(),
-            Some(
-                "all providers failed: openai:gpt-5.1 => network error: error decoding response body"
-            )
+        std::env::set_var("TURA_MANAS_MAX_TURNS", "3");
+        assert_eq!(manas_max_turns(), 3);
+
+        std::env::set_var("TURA_MANAS_MAX_TURNS", "0");
+        assert_eq!(manas_max_turns(), DEFAULT_MANAS_MAX_TURNS);
+
+        std::env::set_var("TURA_MANAS_MAX_TURNS", "not-a-number");
+        assert_eq!(manas_max_turns(), DEFAULT_MANAS_MAX_TURNS);
+
+        if let Some(previous) = previous {
+            std::env::set_var("TURA_MANAS_MAX_TURNS", previous);
+        } else {
+            std::env::remove_var("TURA_MANAS_MAX_TURNS");
+        }
+    }
+
+    #[test]
+    fn completed_turn_timestamp_does_not_regress_after_runtime_log_update() {
+        let started_at = Utc::now() - Duration::minutes(5);
+        let mut session = SessionManagement::new(
+            "session-timestamp".to_string(),
+            "Timestamp".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "work".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "work".to_string(),
+            started_at,
+        );
+        let runtime_log_at = Utc::now();
+        session.push_log("runtime output", runtime_log_at);
+
+        increment_turn_with_fresh_timestamp(&mut session);
+
+        assert_eq!(session.session_current_turn, 1);
+        assert!(
+            session.session_last_update_at >= runtime_log_at,
+            "turn completion must not restore the stale session start timestamp"
         );
     }
 
     #[test]
-    fn non_retryable_failed_runtime_does_not_use_provider_retry_path() {
-        let mut runtime = runtime_for_retry_test("non-retryable-runtime");
-        runtime.call_result_status = RuntimeCallResultStatus::Failed;
-        runtime.error = Some(RuntimeError {
-            error_code: Some("CALL_FAILED".to_string()),
-            error_text: Some("provider rejected invalid request".to_string()),
-            retry_allowed: false,
-            fallback_allowed: false,
-            fallback_to_id: None,
+    fn non_planning_visible_reply_auto_completes_active_doing_task() {
+        let mut session = test_session("session-auto-done");
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "active".to_string(),
+            step: 1,
+            task_summary: "Answer directly".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
         });
 
-        assert!(!runtime_failure_allows_retry(&runtime));
+        assert!(complete_active_doing_task_after_non_planning_reply(
+            &mut session,
+            true,
+        ));
+
+        assert_eq!(session.task_plan.detailed_tasks[0].status, PlanStatus::Done);
+    }
+
+    #[test]
+    fn non_planning_without_visible_reply_keeps_active_doing_task_open() {
+        let mut session = test_session("session-no-visible-reply");
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "active".to_string(),
+            step: 1,
+            task_summary: "Wait for real output".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+
+        assert!(!complete_active_doing_task_after_non_planning_reply(
+            &mut session,
+            false,
+        ));
+
         assert_eq!(
-            runtime_failure_text(&runtime).as_deref(),
-            Some("provider rejected invalid request")
+            session.task_plan.detailed_tasks[0].status,
+            PlanStatus::Doing
         );
     }
 
-    fn runtime_for_retry_test(runtime_id: &str) -> RuntimeManagement {
+    #[test]
+    fn non_planning_tool_turn_auto_completes_only_visible_status_only_doing() {
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            false,
+            false,
+            Some("doing"),
+            true,
+            false,
+        ));
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            false,
+            true,
+            Some("doing"),
+            true,
+            false,
+        ));
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            false,
+            false,
+            Some("doing"),
+            false,
+            false,
+        ));
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            false,
+            false,
+            Some("doing"),
+            true,
+            true,
+        ));
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            false,
+            false,
+            Some("done"),
+            true,
+            false,
+        ));
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            true,
+            false,
+            Some("doing"),
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn no_tool_retry_uses_goal_mode_instead_of_planning_capability() {
+        let mut session = test_session("session-goal-retry");
+
+        assert!(!should_retry_no_tool_task_status(
+            &session, true, true, false
+        ));
+        assert!(should_retry_no_tool_task_status(&session, true, true, true));
+        assert!(!should_retry_no_tool_task_status(
+            &session, false, true, true
+        ));
+
+        session.goal_mode = true;
+        assert!(should_retry_no_tool_task_status(
+            &session, false, true, false
+        ));
+        assert!(!should_retry_no_tool_task_status(
+            &session, true, false, true
+        ));
+    }
+
+    #[test]
+    fn goal_mode_no_tool_retry_ignores_retry_limit() {
+        let mut session = test_session("session-goal-retry-budget");
+        session.goal_mode = true;
+
+        assert!(should_continue_no_tool_task_status_retry(&session, 0));
+        assert!(should_continue_no_tool_task_status_retry(&session, 20));
+        assert!(should_continue_no_tool_task_status_retry(&session, 10_000));
+
+        session.goal_mode = false;
+        assert!(should_continue_no_tool_task_status_retry(&session, 0));
+        assert!(!should_continue_no_tool_task_status_retry(
+            &session,
+            u64::from(no_tool_retry_limit())
+        ));
+    }
+
+    #[test]
+    fn auto_compact_summary_triggers_when_new_context_estimate_exceeds_limit() {
+        let mut session = test_session("session-auto-compact");
+        session.context_tokens.input = 950;
+        session.context_tokens.limit = 1_000;
+        let runtime = test_runtime_with_usage(&session, 950);
+        let tool_results = vec![ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"shell_command","command_line":"probe"}]}),
+            result: json!({"results":[{"step":1,"command_type":"shell_command","success":true,"output":"X".repeat(300)}]}),
+            success: true,
+            error: None,
+        }];
+
+        let summary = auto_compact_summary_after_new_context(&session, &runtime, &tool_results)
+            .expect("new context should force automatic compaction");
+
+        assert!(summary.contains("Automatic context checkpoint"));
+        assert!(summary.contains("bytes/4"));
+        assert!(summary.contains("active context limit 1000"));
+    }
+
+    #[test]
+    fn auto_compact_summary_does_not_trigger_when_projection_fits_limit() {
+        let mut session = test_session("session-auto-compact-fits");
+        session.context_tokens.input = 100;
+        session.context_tokens.limit = 1_000;
+        let runtime = test_runtime_with_usage(&session, 100);
+
+        assert!(auto_compact_summary_after_new_context(&session, &runtime, &[]).is_none());
+    }
+
+    #[test]
+    fn long_visible_terminal_task_status_can_end_without_backfill_only_when_single_status_call() {
+        let status_result = ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"task_status"}]}),
+            result: json!({"results":[{
+                "command_type":"task_status",
+                "success":true,
+                "output":{"task_status":{"status":"done"}}
+            }]}),
+            success: true,
+            error: None,
+        };
+        let question_status_result = ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"task_status"}]}),
+            result: json!({"results":[{
+                "command_type":"task_status",
+                "success":true,
+                "output":{"task_status":{"status":"question"}}
+            }]}),
+            success: true,
+            error: None,
+        };
+        let doing_status_result = ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"task_status"}]}),
+            result: json!({"results":[{
+                "command_type":"task_status",
+                "success":true,
+                "output":{"task_status":{"status":"doing"}}
+            }]}),
+            success: true,
+            error: None,
+        };
+        let long_reply = "x".repeat(1_001);
+
+        assert!(should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&status_result),
+            Some("done"),
+            Some(&long_reply),
+        ));
+        assert!(!should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&status_result),
+            Some("done"),
+            Some(&"x".repeat(1_000)),
+        ));
+        assert!(should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&question_status_result),
+            Some("question"),
+            Some(&long_reply),
+        ));
+        assert!(!should_end_turn_without_task_status_backfill(
+            std::slice::from_ref(&doing_status_result),
+            Some("doing"),
+            Some(&long_reply),
+        ));
+
+        let mut with_command = status_result.clone();
+        with_command.result = json!({"results":[
+            {"command_type":"shell_command","success":true,"output":"ok"},
+            {"command_type":"task_status","success":true,"output":{"task_status":{"status":"done"}}}
+        ]});
+        assert!(!should_end_turn_without_task_status_backfill(
+            &[with_command],
+            Some("done"),
+            Some(&long_reply),
+        ));
+
+        let multibyte_reply_over_byte_cutoff = "完".repeat(400);
+        assert!(should_end_turn_without_task_status_backfill(
+            &[status_result],
+            Some("done"),
+            Some(&multibyte_reply_over_byte_cutoff),
+        ));
+    }
+
+    #[test]
+    fn terminal_done_skips_final_response_turn_when_reply_is_already_visible() {
+        assert!(terminal_status_needs_final_response_turn(
+            Some("done"),
+            true,
+            false,
+        ));
+        assert!(terminal_status_needs_final_response_turn(
+            Some("done"),
+            false,
+            false,
+        ));
+        assert!(terminal_status_needs_final_response_turn(
+            Some("done"),
+            true,
+            true,
+        ));
+        assert!(!terminal_status_needs_final_response_turn(
+            Some("question"),
+            true,
+            false,
+        ));
+        assert!(terminal_status_needs_final_response_turn(
+            Some("question"),
+            false,
+            false,
+        ));
+        assert!(terminal_status_needs_final_response_turn(
+            Some("question"),
+            true,
+            true,
+        ));
+        assert!(!terminal_status_needs_final_response_turn(
+            Some("doing"),
+            false,
+            true,
+        ));
+        assert!(!terminal_status_needs_final_response_turn(None, true, true));
+    }
+
+    #[test]
+    fn terminal_checkpoint_commit_skips_when_command_run_sandbox_is_enabled() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let _sandbox = EnvGuard::set("TURA_COMMAND_RUN_SANDBOX", "enabled");
+        let temp = tempfile::tempdir().expect("temp workspace");
+        std::fs::write(temp.path().join("src.txt"), "sandboxed change").expect("fixture file");
+        let mut session = test_session("session-sandbox-checkpoint");
+        session.session_directory = temp.path().to_path_buf();
+
+        assert!(!commit_terminal_session_checkpoint(&session, "completed"));
+        assert!(
+            !temp.path().join(".git").exists(),
+            "sandboxed runtime completion must not initialize git or create checkpoint commits"
+        );
+    }
+
+    fn test_session(id: &str) -> SessionManagement {
         let now = Utc::now();
-        let provider = "openai".to_string();
-        RuntimeManagement::new(
-            runtime_id.to_string(),
-            "session-for-retry-test".to_string(),
-            "session-for-retry-test".to_string(),
+        SessionManagement::new(
+            id.to_string(),
+            "Test".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "work".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "work".to_string(),
+            now,
+        )
+    }
+
+    fn test_runtime_with_usage(
+        session: &SessionManagement,
+        input_tokens: u64,
+    ) -> RuntimeManagement {
+        let mut runtime = RuntimeManagement::new(
+            format!("runtime-{}", session.session_id),
+            session.session_id.clone(),
+            "agent-test".to_string(),
             RuntimeProviderConfig {
                 base: ProviderConfig {
-                    tura_llm_name: provider.clone(),
-                    stream: true,
+                    tura_llm_name: "provider".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
+                    stream: false,
                     temperature: 0.0,
                     max_tokens: 0,
                     tool_choice: ToolChoice::Auto,
                     time_out_ms: 120_000,
                 },
                 thinking: false,
-                provider_name: provider.clone(),
-                model_name: "gpt-5.1".to_string(),
-                provider_url_name: provider.clone(),
-                llm_provider_name: provider,
+                provider_name: "provider".to_string(),
+                model_name: "model".to_string(),
+                provider_url_name: "provider".to_string(),
+                llm_provider_name: "provider".to_string(),
             },
-            now,
-        )
-    }
-
-    #[test]
-    fn planning_mode_still_exposes_only_command_run() {
-        let tools = vec![
-            json!({
-                "type": "function",
-                "function": { "name": "read_block", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "grep", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "find_definition", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "write_file", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "delete_file", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "apply_diff", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "command_run", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
-            }),
-        ];
-
-        let filtered = filter_tools_for_turn(tools, false, false, false, true)
-            .expect("planning filtering should succeed");
-        let names = filtered
-            .iter()
-            .filter_map(|tool| tool["function"]["name"].as_str())
-            .collect::<HashSet<_>>();
-
-        assert_eq!(names.len(), 1);
-        assert!(!names.contains("read_block"));
-        assert!(!names.contains("grep"));
-        assert!(!names.contains("find_definition"));
-        assert!(!names.contains("write_file"));
-        assert!(!names.contains("delete_file"));
-        assert!(!names.contains("apply_diff"));
-        assert!(names.contains("command_run"));
-        assert!(!names.contains(PLANNING_TOOL));
-    }
-
-    #[test]
-    fn planning_mode_requires_planning_command() {
-        let tools = vec![
-            json!({
-                "type": "function",
-                "function": { "name": "read_block", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "find_definition", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "write_file", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "command_run", "parameters": { "type": "object" } }
-            }),
-        ];
-
-        let error = require_planning_tool_for_planning_mode(tools)
-            .expect_err("planning should be required");
-
-        assert!(error.contains("planning mode requested but planning is unavailable"));
-    }
-
-    #[test]
-    fn default_non_final_turn_keeps_development_tools_without_planning() {
-        let tools = vec![
-            json!({
-                "type": "function",
-                "function": { "name": "read_block", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "write_file", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "delete_file", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "apply_diff", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "command_run", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
-            }),
-        ];
-
-        let filtered = filter_tools_for_turn(tools, false, false, false, false)
-            .expect("default filtering should succeed");
-        let names = filtered
-            .iter()
-            .filter_map(|tool| tool["function"]["name"].as_str())
-            .collect::<HashSet<_>>();
-
-        assert_eq!(names.len(), 1);
-        assert!(!names.contains("read_block"));
-        assert!(!names.contains("write_file"));
-        assert!(!names.contains("delete_file"));
-        assert!(!names.contains("apply_diff"));
-        assert!(names.contains("command_run"));
-        assert!(!names.contains(PLANNING_TOOL));
-    }
-
-    #[test]
-    fn planning_child_turn_keeps_development_tools_and_removes_planning_command() {
-        let tools = vec![
-            json!({
-                "type": "function",
-                "function": { "name": "write_file", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": "command_run", "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
-            }),
-        ];
-
-        let filtered = filter_tools_for_turn(tools, false, false, true, true)
-            .expect("child filtering should succeed");
-        let names = filtered
-            .iter()
-            .filter_map(|tool| tool["function"]["name"].as_str())
-            .collect::<HashSet<_>>();
-
-        assert_eq!(names.len(), 1);
-        assert!(!names.contains("write_file"));
-        assert!(names.contains("command_run"));
-        assert!(!names.contains(PLANNING_TOOL));
-    }
-
-    #[test]
-    fn remove_tool_filters_matching_provider_schema() {
-        let tools = vec![
-            json!({
-                "type": "function",
-                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
-            }),
-            json!({
-                "type": "function",
-                "function": { "name": COMMAND_RUN_TOOL, "parameters": { "type": "object" } }
-            }),
-        ];
-
-        let filtered = remove_tool(tools, PLANNING_TOOL);
-        let names = filtered
-            .iter()
-            .filter_map(|tool| tool["function"]["name"].as_str())
-            .collect::<HashSet<_>>();
-
-        assert_eq!(names, HashSet::from([COMMAND_RUN_TOOL]));
-    }
-
-    #[test]
-    fn tool_argument_normalization_removes_runtime_reporting_fields() {
-        let normalized = normalize_tool_arguments(json!({
-            "reply_message": "done",
-            "new_learning": "state changed",
-            "step_summary": "summarize"
-        }));
-
-        assert_eq!(normalized["reply_message"], "done");
-        assert_eq!(normalized["new_learning"], "state changed");
-        assert!(normalized.get("step_summary").is_none());
-        assert!(normalized.get("last_tool_call_status").is_none());
-        assert!(normalized.get("last_tool_call_summary").is_none());
-    }
-
-    #[test]
-    fn tool_argument_normalization_unwraps_batch_requests() {
-        let normalized = normalize_tool_arguments(json!({
-            "requests": [
-                { "pattern": "*.rs", "directory": "." }
-            ],
-            "step_summary": "list files"
-        }));
-
-        assert_eq!(normalized, json!([{ "pattern": "*.rs", "directory": "." }]));
-    }
-
-    #[test]
-    fn command_run_tool_keeps_runtime_reporting_fields() {
-        let arguments = json!({
-            "commands": [
-                { "command": "shell_command", "command_line": "pwd" },
-                { "command": "shell_command", "command_line": "Write-Output 2" },
-                { "command": "shell_command", "command_line": "Write-Output 3" },
-                { "command": "shell_command", "command_line": "Write-Output 4" },
-                { "command": "shell_command", "command_line": "Write-Output 5" }
-            ],
-            "step_summary": "Run pwd."
+            Utc::now(),
+        );
+        runtime.usage = Some(UsageReport {
+            input_tokens,
+            output_tokens: 0,
+            total_tokens: input_tokens,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            attachment_input_tokens: 0,
+            input_cost: 0.0,
+            output_cost: 0.0,
+            total_cost: 0.0,
+            currency: "USD".to_string(),
+            pricing_source: "test".to_string(),
+            latency_ms: 0,
+            time_to_first_token_ms: 0,
+            token_per_second: 0.0,
         });
-
-        let normalized = normalize_tool_arguments_for_tool(
-            COMMAND_RUN_TOOL,
-            arguments.clone(),
-            std::path::Path::new("C:/workspace"),
-        );
-
-        assert_eq!(normalized, arguments);
+        runtime
     }
 
-    #[test]
-    fn command_run_legacy_steps_are_normalized_to_commands() {
-        let normalized = normalize_tool_arguments_for_tool(
-            COMMAND_RUN_TOOL,
-            json!({
-                "steps": [
-                    {
-                        "step": 2,
-                        "tool_package_name": "shell_command",
-                        "command_code": "Get-ChildItem",
-                        "timeout_secs": 15
-                    },
-                    {
-                        "tool_name": "shell_command",
-                        "command_code": "Get-Content src/lib.rs -TotalCount 5"
-                    }
-                ],
-                "step_summary": "legacy provider shape"
-            }),
-            std::path::Path::new("C:/workspace"),
-        );
-
-        assert!(normalized.get("steps").is_none());
-        assert_eq!(normalized["step_summary"], "legacy provider shape");
-        assert_eq!(normalized["commands"][0]["command_type"], "shell_command");
-        assert_eq!(normalized["commands"][0]["command_line"], "Get-ChildItem");
-        assert_eq!(normalized["commands"][0]["step"], 2);
-        assert_eq!(normalized["commands"][0]["timeout_secs"], 15);
-        assert_eq!(normalized["commands"][1]["command_type"], "shell_command");
-        assert_eq!(normalized["commands"][1]["step"], 1);
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
     }
 
-    #[test]
-    fn user_visible_runtime_text_extracts_reply_message_from_tool_payload() {
-        let text = json!({
-            "error": null,
-            "input": {
-                "reply_message": "final answer",
-                "new_learning": "",
-                "runtime_id": "runtime-1"
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
             }
-        })
-        .to_string();
-
-        assert_eq!(
-            user_visible_runtime_text(&text).as_deref(),
-            Some("final answer")
-        );
-    }
-
-    #[test]
-    fn user_visible_runtime_text_hides_raw_tool_argument_payload() {
-        let text = json!({
-            "requests": [{
-                "path": "services/sd-text-to-image/main.py",
-                "start_line": 1,
-                "end_line": 250
-            }],
-            "step_summary": "Read the Stable Diffusion image service main.py to find the port it runs on."
-        })
-        .to_string();
-
-        assert_eq!(user_visible_runtime_text(&text), None);
-    }
-
-    #[test]
-    fn prompt_loading_only_includes_agent_prompt() {
-        let now = chrono::Utc::now();
-        let unique = format!(
-            "mano-prompt-test-{:x}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let root = std::env::temp_dir().join(unique);
-        let agent_prompt_dir = root.join("agent-prompts");
-        let tool_dir = root.join("tools");
-        std::fs::create_dir_all(&agent_prompt_dir).expect("agent prompt dir should be created");
-        std::fs::write(agent_prompt_dir.join("prompt.md"), "agent prompt")
-            .expect("agent prompt should be written");
-
-        let provider = ProviderConfig {
-            tura_llm_name: "test".to_string(),
-            stream: false,
-            temperature: 0.0,
-            max_tokens: 0,
-            tool_choice: ToolChoice::Auto,
-            time_out_ms: 1_000,
-        };
-        let validator = ValidatorConfig {
-            need_validator: false,
-            validator_name: None,
-        };
-        let mut agent = AgentManagement::new(
-            "agent-id".to_string(),
-            "agent".to_string(),
-            root.clone(),
-            None,
-            true,
-            false,
-            provider,
-            validator,
-            now,
-        );
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: "agent".to_string(),
-                prompt_directory: agent_prompt_dir,
-            },
-            now,
-        );
-        agent.add_capability(
-            AgentCapabilityItem {
-                capability_name: COMMAND_RUN_TOOL.to_string(),
-                capability_directory: tool_dir,
-            },
-            now,
-        );
-
-        let messages = load_agent_prompt_messages(&agent).expect("prompt loading should succeed");
-        let content = messages
-            .iter()
-            .filter_map(|message| message.get("content").and_then(|content| content.as_str()))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(content.contains("agent prompt"));
-        assert!(!content.contains("command_run prompt"));
-
-        let _ = std::fs::remove_dir_all(root);
+        }
     }
 }

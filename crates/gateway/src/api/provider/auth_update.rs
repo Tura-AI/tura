@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::api::types::ProviderAuth;
+use crate::contracts::ProviderAuth;
 
 pub(super) fn oauth_auth(
     access: String,

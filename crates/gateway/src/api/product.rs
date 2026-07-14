@@ -3,6 +3,7 @@
 //! This is intentionally thin: durable collaboration storage can replace this
 //! store later without changing the GUI contract.
 
+use crate::contracts::*;
 use crate::session::session_store;
 use axum::{
     extract::{Path, Query},
@@ -11,154 +12,10 @@ use axum::{
 use chrono::Utc;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use uuid::Uuid;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PublicConfig {
-    pub deployment_mode: String,
-    pub signup_enabled: bool,
-    pub google_oauth_enabled: bool,
-    pub version: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProductUser {
-    pub id: String,
-    pub email: String,
-    pub name: String,
-    pub avatar_url: Option<String>,
-    pub language: String,
-    pub timezone: String,
-    pub onboarded_at: Option<i64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct UserPatch {
-    pub name: Option<String>,
-    pub language: Option<String>,
-    pub timezone: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Workspace {
-    pub id: String,
-    pub name: String,
-    pub slug: String,
-    pub description: Option<String>,
-    pub context: Option<String>,
-    pub issue_prefix: String,
-    pub avatar: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum IssueStatus {
-    Backlog,
-    Todo,
-    InProgress,
-    Review,
-    Done,
-    Closed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum IssuePriority {
-    Low,
-    Medium,
-    High,
-    Urgent,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Issue {
-    pub id: String,
-    pub workspace_id: String,
-    pub number: u32,
-    pub title: String,
-    pub description: String,
-    pub status: IssueStatus,
-    pub priority: IssuePriority,
-    pub position: i64,
-    pub assignee_type: Option<String>,
-    pub assignee_id: Option<String>,
-    pub project_id: Option<String>,
-    pub labels: Vec<String>,
-    pub session_id: Option<String>,
-    pub active_task: Option<TaskRun>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct IssueInput {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub status: Option<IssueStatus>,
-    pub priority: Option<IssuePriority>,
-    pub assignee_type: Option<String>,
-    pub assignee_id: Option<String>,
-    pub project_id: Option<String>,
-    pub labels: Option<Vec<String>>,
-    pub session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct IssueQuery {
-    pub workspace_id: Option<String>,
-    pub workspace_slug: Option<String>,
-    pub status: Option<IssueStatus>,
-    pub search: Option<String>,
-    pub project_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProductProject {
-    pub id: String,
-    pub workspace_id: String,
-    pub title: String,
-    pub description: String,
-    pub status: String,
-    pub priority: String,
-    pub lead_type: Option<String>,
-    pub lead_id: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProductAgent {
-    pub id: String,
-    pub workspace_id: String,
-    pub name: String,
-    pub description: String,
-    pub provider: String,
-    pub model: String,
-    pub runtime_id: Option<String>,
-    pub status: String,
-    pub visibility: String,
-    pub thinking_level: Option<String>,
-    pub run_count_7d: u32,
-    pub run_count_30d: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskRun {
-    pub id: String,
-    pub issue_id: Option<String>,
-    pub agent_id: String,
-    pub runtime_id: Option<String>,
-    pub status: String,
-    pub session_id: Option<String>,
-    pub title: String,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
 
 #[derive(Debug)]
 struct ProductStore {
@@ -175,7 +32,7 @@ impl ProductStore {
         let now = Utc::now().timestamp_millis();
         let workspace_id = "local".to_string();
         let runtime_id = "runtime-local".to_string();
-        let agent_id = "thinking-planning".to_string();
+        let agent_id = "thoughtful".to_string();
         let task_id = "task-active".to_string();
 
         let mut workspaces = HashMap::new();
@@ -200,24 +57,24 @@ impl ProductStore {
             ProductAgent {
                 id: agent_id.clone(),
                 workspace_id: workspace_id.clone(),
-                name: "Thinking Planning".to_string(),
-                description: "Default Tura thinking agent with planning".to_string(),
+                name: "Thoughtful".to_string(),
+                description: "对每步行为进行自我反思，可以在长线任务中稳定执行。".to_string(),
                 provider: "openai".to_string(),
                 model: "default".to_string(),
                 runtime_id: Some(runtime_id.clone()),
                 status: "online".to_string(),
                 visibility: "workspace".to_string(),
-                thinking_level: Some("low".to_string()),
+                thinking_level: Some("medium".to_string()),
                 run_count_7d: 3,
                 run_count_30d: 12,
             },
         );
 
         let active_task = TaskRun {
-            id: task_id.clone(),
+            id: task_id,
             issue_id: Some("issue-2".to_string()),
             agent_id: agent_id.clone(),
-            runtime_id: Some(runtime_id.clone()),
+            runtime_id: Some(runtime_id),
             status: "running".to_string(),
             session_id: None,
             title: "Connect GUI and gateway".to_string(),
@@ -261,7 +118,7 @@ impl ProductStore {
                 project_id: Some("project-core".to_string()),
                 labels: vec!["gateway".to_string()],
                 session_id: None,
-                active_task: Some(active_task.clone()),
+                active_task: Some(active_task),
                 created_at: now - 2_900_000,
                 updated_at: now - 120_000,
             },
@@ -314,8 +171,8 @@ impl ProductStore {
             "project-core".to_string(),
             ProductProject {
                 id: "project-core".to_string(),
-                workspace_id: workspace_id.clone(),
-                title: "Tura GUI".to_string(),
+                workspace_id,
+                title: "tura_gui".to_string(),
                 description: "Minimal gateway-backed workbench".to_string(),
                 status: "active".to_string(),
                 priority: "high".to_string(),
@@ -367,16 +224,20 @@ lazy_static! {
 }
 
 pub async fn public_config() -> Json<PublicConfig> {
-    Json(PublicConfig {
+    Json(public_config_value())
+}
+
+pub fn public_config_value() -> PublicConfig {
+    PublicConfig {
         deployment_mode: "local".to_string(),
         signup_enabled: false,
         google_oauth_enabled: false,
         version: env!("CARGO_PKG_VERSION").to_string(),
-    })
+    }
 }
 
 pub async fn current_user() -> Json<ProductUser> {
-    Json(PRODUCT_STORE.user.read().clone())
+    Json(current_user_snapshot())
 }
 
 pub fn current_user_snapshot() -> ProductUser {
@@ -398,25 +259,39 @@ pub async fn patch_current_user(Json(input): Json<UserPatch>) -> Json<ProductUse
 }
 
 pub async fn list_workspaces() -> Json<Vec<Workspace>> {
-    Json(sorted_values(PRODUCT_STORE.workspaces.read().clone()))
+    Json(list_workspaces_value())
+}
+
+pub fn list_workspaces_value() -> Vec<Workspace> {
+    sorted_values(PRODUCT_STORE.workspaces.read().clone())
 }
 
 pub async fn list_issues(Query(query): Query<IssueQuery>) -> Json<Vec<Issue>> {
-    Json(filter_issues(query))
+    Json(list_issues_value(query))
+}
+
+pub fn list_issues_value(query: IssueQuery) -> Vec<Issue> {
+    filter_issues(query)
 }
 
 pub async fn quick_create_issue(Json(input): Json<IssueInput>) -> Json<Issue> {
-    Json(create_issue_record(input))
+    Json(quick_create_issue_value(input))
+}
+
+pub fn quick_create_issue_value(input: IssueInput) -> Issue {
+    create_issue_record(input)
 }
 
 pub async fn patch_issue(
     Path(issue_id): Path<String>,
     Json(input): Json<IssueInput>,
 ) -> Json<Option<Issue>> {
+    Json(patch_issue_value(issue_id, input))
+}
+
+pub fn patch_issue_value(issue_id: String, input: IssueInput) -> Option<Issue> {
     let mut issues = PRODUCT_STORE.issues.write();
-    let Some(issue) = issues.get_mut(&issue_id) else {
-        return Json(None);
-    };
+    let issue = issues.get_mut(&issue_id)?;
     if let Some(title) = input.title.filter(|value| !value.trim().is_empty()) {
         issue.title = title;
     }
@@ -445,7 +320,7 @@ pub async fn patch_issue(
         issue.session_id = input.session_id;
     }
     issue.updated_at = Utc::now().timestamp_millis();
-    Json(Some(issue.clone()))
+    Some(issue.clone())
 }
 
 pub async fn issue_usage(Path(_issue_id): Path<String>) -> Json<Value> {
@@ -457,10 +332,18 @@ pub async fn issue_usage(Path(_issue_id): Path<String>) -> Json<Value> {
 }
 
 pub async fn list_product_projects() -> Json<Vec<ProductProject>> {
-    Json(sorted_values(PRODUCT_STORE.projects.read().clone()))
+    Json(list_product_projects_value())
+}
+
+pub fn list_product_projects_value() -> Vec<ProductProject> {
+    sorted_values(PRODUCT_STORE.projects.read().clone())
 }
 
 pub async fn list_product_agents() -> Json<Vec<ProductAgent>> {
+    Json(list_product_agents_value())
+}
+
+pub fn list_product_agents_value() -> Vec<ProductAgent> {
     let mut agents = sorted_values(PRODUCT_STORE.agents.read().clone());
     for agent in &mut agents {
         let session_count = session_store()
@@ -471,7 +354,7 @@ pub async fn list_product_agents() -> Json<Vec<ProductAgent>> {
         agent.run_count_7d = agent.run_count_7d.max(session_count);
         agent.run_count_30d = agent.run_count_30d.max(session_count);
     }
-    Json(agents)
+    agents
 }
 
 pub async fn agent_templates() -> Json<Vec<Value>> {

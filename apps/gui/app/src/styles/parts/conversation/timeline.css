@@ -1,5 +1,4 @@
-.plan-gantt,
-.plan-calendar {
+.plan-gantt {
   min-height: 0;
 }
 
@@ -27,14 +26,6 @@
 }
 
 @media (max-width: 560px) {
-  .plan-schedule-datetime {
-    grid-template-columns: 1fr;
-  }
-
-  .plan-schedule-presets {
-    grid-template-columns: 1fr;
-  }
-
   .plan-timeline-grid {
     --plan-left-width: 76px;
     --plan-scale-height: 78px;
@@ -227,8 +218,7 @@
   background: transparent;
 }
 
-.plan-timeline-bar,
-.plan-calendar-event {
+.plan-timeline-bar {
   z-index: 1;
   align-self: center;
   display: grid;
@@ -251,32 +241,82 @@
   position: absolute;
   z-index: var(--plan-ticket-z, 3);
   top: 50%;
-  width: min(
-    var(--plan-bar-width, 156px),
-    calc(var(--plan-day-width) * 3 - 8px)
-  );
+  width: min(var(--plan-bar-width, 156px), calc(var(--plan-day-width) * 3 - 8px));
   transform: translateY(-50%);
+}
+
+.plan-pipeline-grid {
+  overflow: auto;
+  --plan-day-width: max(156px, calc((100% - var(--plan-left-width)) / var(--plan-days)));
+}
+
+.plan-timeline-scale [data-plan-step] {
+  display: grid;
+  grid-row: 2;
+  align-content: center;
+  min-height: 46px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  background: transparent;
+  color: var(--muted);
+  text-align: center;
+  cursor: default;
+}
+
+.plan-pipeline-track {
+  align-items: center;
+  overflow: visible;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(var(--plan-day-width) - 1px),
+    color-mix(in srgb, var(--line) 72%, transparent) calc(var(--plan-day-width) - 1px),
+    color-mix(in srgb, var(--line) 72%, transparent) var(--plan-day-width)
+  );
+}
+
+.plan-pipeline-task {
+  position: relative;
+  top: auto;
+  justify-self: stretch;
+  width: auto;
+  max-width: calc(var(--plan-day-width) - 8px);
+  margin: 0 4px;
+  transform: none;
+}
+
+.plan-pipeline-task.drop-step {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--line-strong) 64%, transparent),
+    0 5px 14px rgb(28 28 24 / 10%);
+}
+
+.plan-pipeline-empty {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--font-small);
 }
 
 .plan-drag-ghost.plan-timeline-bar {
   transform: translateY(-50%);
 }
 
-.plan-calendar-event {
-  grid-template-columns: minmax(0, 1fr) auto;
+.plan-drag-ghost.plan-pipeline-task {
+  transform: none;
 }
 
 .plan-timeline-bar:hover,
-.plan-timeline-bar:focus-visible,
-.plan-calendar-event:hover,
-.plan-calendar-event:focus-visible {
+.plan-timeline-bar:focus-visible {
   border-color: var(--line-strong);
   background: var(--wash);
   box-shadow: 0 5px 14px rgb(28 28 24 / 10%);
 }
 
-.plan-timeline-bar.selected,
-.plan-calendar-event.selected {
+.plan-timeline-bar.selected {
   border-color: var(--line-strong);
   background: color-mix(in srgb, var(--wash) 72%, var(--paper));
   box-shadow: 0 6px 16px rgb(28 28 24 / 12%);
@@ -312,8 +352,8 @@
   position: absolute;
   inset: var(--plan-scale-height) auto 0
     calc(
-      var(--plan-left-width) +
-        (100% - var(--plan-left-width) - var(--plan-right-width)) * var(--today)
+      var(--plan-left-width) + (100% - var(--plan-left-width) - var(--plan-right-width)) *
+        var(--today)
     );
   z-index: 1;
   width: 2px;

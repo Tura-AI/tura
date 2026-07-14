@@ -19,7 +19,7 @@ When NOT to plan:
 Plan quality rules:
 - Before calling `planning`, use earlier commands to identify the authoritative sources, required behavior, acceptance tests, fixtures, expected inputs/outputs, and all known problem areas. Only dispatch tasks after that discovery is done.
 - The first planned step must be executable work against a known problem, not exploration.
-- Intermediate notes, summaries, markdown files, or generated checklists are working memory only. They are not the source of truth. Each step must keep checking the original authoritative sources and final acceptance criteria.
+- Intermediate notes, summaries, markdown files, or generated checklists are working notes only. They are not the source of truth. Each step must keep checking the original authoritative sources and final acceptance criteria.
 - Keep each step short. A `task_summary` is ~20 words and only names the next queue item. It is not a replacement for the user's full objective.
 - Prefer 3-7 steps.
 

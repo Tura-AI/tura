@@ -5,6 +5,8 @@ use sysinfo::{Pid, Process, System};
 
 const MAX_PROCESSES: usize = 24;
 const MAX_CMD_CHARS: usize = 500;
+const BACKGROUND_PROCESS_KIND_ENV: &str = "TURA_BACKGROUND_PROCESS_KIND";
+const RUNTIME_SHELL_BACKGROUND_PROCESS_KIND: &str = "runtime_shell";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionProcessSnapshot {
@@ -42,6 +44,14 @@ pub fn collect_session_process_snapshot(session_directory: &Path) -> SessionProc
     }
 }
 
+pub fn collect_runtime_shell_process_snapshot(session_directory: &Path) -> SessionProcessSnapshot {
+    let mut snapshot = collect_session_process_snapshot(session_directory);
+    snapshot
+        .processes
+        .retain(|process| process.kind == RUNTIME_SHELL_BACKGROUND_PROCESS_KIND);
+    snapshot
+}
+
 pub fn stop_session_process(session_directory: &Path, target_pid: u32) -> Result<(), String> {
     let target = normalize_path(session_directory);
     let mut system = System::new_all();
@@ -58,6 +68,37 @@ pub fn stop_session_process(session_directory: &Path, target_pid: u32) -> Result
     if process_info_for_session(Pid::from_u32(target_pid), process, &target).is_none() {
         return Err(format!(
             "process {target_pid} is not under this session directory"
+        ));
+    }
+
+    if process.kill() {
+        Ok(())
+    } else {
+        Err(format!("failed to stop process {target_pid}"))
+    }
+}
+
+pub fn stop_runtime_shell_process(session_directory: &Path, target_pid: u32) -> Result<(), String> {
+    let target = normalize_path(session_directory);
+    let mut system = System::new_all();
+    system.refresh_processes();
+
+    let Some((_, process)) = system
+        .processes()
+        .iter()
+        .find(|(pid, _)| pid.as_u32() == target_pid)
+    else {
+        return Err(format!("process {target_pid} was not found"));
+    };
+
+    let Some(info) = process_info_for_session(Pid::from_u32(target_pid), process, &target) else {
+        return Err(format!(
+            "process {target_pid} is not under this session directory"
+        ));
+    };
+    if info.kind != RUNTIME_SHELL_BACKGROUND_PROCESS_KIND {
+        return Err(format!(
+            "process {target_pid} is not a runtime shell background process"
         ));
     }
 
@@ -88,6 +129,14 @@ fn process_info_for_session(
         return None;
     }
 
+    let kind = if runtime_shell_background_process(process) {
+        RUNTIME_SHELL_BACKGROUND_PROCESS_KIND
+    } else if cmd.contains("command_run") || process.name().contains("command_run") {
+        "command_run"
+    } else {
+        "workspace"
+    };
+
     Some(SessionProcessInfo {
         pid: pid.as_u32(),
         name: process.name().to_string(),
@@ -98,12 +147,13 @@ fn process_info_for_session(
             .exe()
             .map(|path| path.display().to_string())
             .or_else(|| cmd.split_whitespace().next().map(ToString::to_string)),
-        kind: if cmd.contains("command_run") || process.name().contains("command_run") {
-            "command_run".to_string()
-        } else {
-            "workspace".to_string()
-        },
+        kind: kind.to_string(),
     })
+}
+
+fn runtime_shell_background_process(process: &Process) -> bool {
+    let marker = format!("{BACKGROUND_PROCESS_KIND_ENV}={RUNTIME_SHELL_BACKGROUND_PROCESS_KIND}");
+    process.environ().iter().any(|value| value == &marker)
 }
 
 fn command_mentions_path(cmd: &str, target: &Path) -> bool {

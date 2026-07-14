@@ -1,13 +1,13 @@
 # Personas Crate Architecture
 
 `personas` owns persona identity, prompt resources, avatar media, and
-expression-to-media mapping. Agents bind to personas by `persona_name`; runtime
-loads the prompt fragments and gateway/front-end surfaces can read the media
-metadata.
+expression-to-media mapping. Agents bind to personas by `persona_name`; the
+runtime loads the prompt fragments, while gateway/front-end surfaces read the
+media metadata. Voice and presentation live here. Execution authority does not.
 
 Personas do not own runtime diagnostics. Session and task history belongs in
 `crates/session_log`; provider-call diagnostics live under `log/provider/` or
-`LOG_PATH`.
+`LOG_PATH`. A pleasant voice is not a second logging system.
 
 ## Current Layout
 
@@ -22,26 +22,27 @@ personas/
     store.rs
     state_machine.rs
     expression_manifest.json
+    communication_style/
+      communication_style.md
     <persona_id>/
       persona_config.json
       prompt/
         persona.md
-        communication_style.md
       media/
         expressions/
           <expression_id>/
             frames/
-              center.png
-              up.png
-              down.png
-              left.png
-              right.png
-              up-left.png
-              up-right.png
-              down-left.png
-              down-right.png
+              center.jpg
+              up.jpg
+              down.jpg
+              left.jpg
+              right.jpg
+              up-left.jpg
+              up-right.jpg
+              down-left.jpg
+              down-right.jpg
             grid/
-              sheet.png
+              sheet.jpg
 ```
 
 User-created dynamic personas live under project-root `personas/<persona_id>/`
@@ -58,7 +59,7 @@ persona with a given lowercased id wins.
 3. Scan `personas/src/<persona_id>` for static personas.
 4. Load `persona_config.json`.
 5. Load optional `prompt/persona.md`.
-6. Load optional `prompt/communication_style.md`.
+6. Load shared `personas/src/communication_style/communication_style.md`, falling back to legacy per-persona communication style files only for compatibility.
 7. Enrich media expressions from `personas/src/expression_manifest.json`.
 
 Static personas with `default_config: true` are protected from deletion.
@@ -74,13 +75,17 @@ Dynamic personas are expected to use `default_config: false`.
   personas.
 - `persona_directory`: repository-relative or project-root-relative persona
   directory.
-- `prompt_directory`: directory containing `persona.md` and
-  `communication_style.md`.
+- `prompt_directory`: directory containing `persona.md`; shared
+  communication style lives in `personas/src/communication_style/`.
 - `media`: optional avatar media mapping.
 - `metadata`: free-form non-secret metadata.
 
 The front-end should not infer media paths from naming conventions. It should
 consume the media mapping returned by persona or agent APIs.
+Built-in expression images are 200 by 200 pixel JPEG files stored only under
+the owning persona directory. The gateway serves them through the read-only
+persona media endpoint with `Cache-Control: no-store`; GUI builds must not copy
+persona media into their public asset directory.
 
 ## Manual Persona Configuration
 
@@ -89,12 +94,11 @@ To add a built-in persona:
 1. Create `personas/src/<persona_id>/`.
 2. Add `persona_config.json`.
 3. Add `prompt/persona.md`.
-4. Add `prompt/communication_style.md`.
-5. Set `persona_directory` to `personas/src/<persona_id>`.
-6. Set `prompt_directory` to `personas/src/<persona_id>/prompt`.
-7. Set `default_config: true` only for protected built-ins.
-8. Add optional media under `media/expressions`.
-9. Run `cargo test -p tura-personas` if persona loader behavior changes.
+4. Set `persona_directory` to `personas/src/<persona_id>`.
+5. Set `prompt_directory` to `personas/src/<persona_id>/prompt`.
+6. Set `default_config: true` only for protected built-ins.
+7. Add optional media under `media/expressions`.
+8. Run `cargo test -p personas` if persona loader behavior changes.
 
 To add a user-created persona manually, use `personas/<persona_id>/` instead and
 set `default_config: false`.
@@ -115,32 +119,21 @@ Minimal dynamic persona example:
 }
 ```
 
-## Binding A Persona To An Agent
+## Persona Independence
 
-Agents reference personas through `agent_persona` in
-`agents/src/<agent_id>/agent_config.json`:
-
-```json
-{
-  "agent_persona": [
-    {
-      "persona_name": "tura",
-      "persona_directory": "personas/src/tura/prompt"
-    }
-  ]
-}
-```
-
-`persona_directory` points at the prompt directory used by the runtime prompt
-assembly path. The persona config itself still lives at
-`personas/src/<persona_id>/persona_config.json` for built-ins or
-`personas/<persona_id>/persona_config.json` for dynamic personas.
+Personas are stored and discovered independently from agents. Agent
+configuration must not reference persona ids or persona directories. Persona
+config still lives at `personas/src/<persona_id>/persona_config.json` for
+built-ins or `personas/<persona_id>/persona_config.json` for dynamic personas.
 
 ## Expression Manifest
 
-`personas/src/expression_manifest.json` is the canonical expression and emoji
-mapping file. Do not keep per-persona or per-expression emoji mapping files.
-Persona loading enriches each expression from this manifest at runtime.
+`personas/src/expression_manifest.json` is the canonical expression, emoji, and
+react-kaomoji mapping file. Do not keep per-persona or per-expression mapping
+files. Persona loading enriches each expression from this manifest at runtime.
+React kaomoji are stored as three text frames per role under each expression;
+front-ends play them as a 1-2-3-2 loop instead of storing duplicate animation
+frames.
 
 ## State Machine
 

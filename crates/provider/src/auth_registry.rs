@@ -146,6 +146,9 @@ const GITHUB_COPILOT_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::
 )];
 
 const OPENAI_MODELS: &[&str] = &[
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.3-codex-spark",
     "gpt-5.4-mini",
@@ -154,6 +157,9 @@ const OPENAI_MODELS: &[&str] = &[
     "text-embedding-3-small",
 ];
 const OPENAI_API_MODELS: &[&str] = &[
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5-pro",
     "gpt-5.5",
     "gpt-5.4-mini",

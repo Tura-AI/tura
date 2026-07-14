@@ -10,33 +10,16 @@ export const queryKeys = {
   workspaces: (): QueryKey => ["global", "workspaces"],
   providers: (): QueryKey => ["execution", "providers"],
   agents: (directory?: string): QueryKey => ["execution", "agents", directory],
-  sessions: (directory?: string): QueryKey => [
-    "execution",
-    "sessions",
-    directory,
-  ],
-  messages: (sessionId: string): QueryKey => [
-    "execution",
-    "messages",
-    sessionId,
-  ],
-  files: (directory?: string, path = ""): QueryKey => [
-    "execution",
-    "files",
-    directory,
-    path,
-  ],
+  sessions: (directory?: string): QueryKey => ["execution", "sessions", directory],
+  messages: (sessionId: string): QueryKey => ["execution", "messages", sessionId],
+  files: (directory?: string, path = ""): QueryKey => ["execution", "files", directory, path],
   issues: (workspaceId?: string, search?: string): QueryKey => [
     "workspace",
     "issues",
     workspaceId,
     search,
   ],
-  projects: (workspaceId?: string): QueryKey => [
-    "workspace",
-    "projects",
-    workspaceId,
-  ],
+  projects: (workspaceId?: string): QueryKey => ["workspace", "projects", workspaceId],
 } as const;
 
 export function serializeQueryKey(key: QueryKey): string {
@@ -56,10 +39,7 @@ export function createQueryCache() {
     invalidate(prefix: QueryKey): void {
       const serializedPrefix = serializeQueryKey(prefix);
       for (const key of cache.keys()) {
-        if (
-          key === serializedPrefix ||
-          key.startsWith(`${serializedPrefix}\u001f`)
-        ) {
+        if (key === serializedPrefix || key.startsWith(`${serializedPrefix}\u001f`)) {
           cache.delete(key);
         }
       }

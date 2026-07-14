@@ -1,5 +1,6 @@
 //! API module - OpenCode-compatible HTTP API handlers
 
+pub mod about;
 pub mod agent;
 pub mod command;
 pub mod directory_picker;
@@ -14,4 +15,4 @@ pub(crate) mod registry;
 pub mod service;
 pub mod session;
 pub mod session_log;
-pub mod types;
+pub mod tool;

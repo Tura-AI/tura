@@ -1,203 +1,201 @@
-# Scripts Architecture
+# Scripts
 
-`scripts/` owns setup, startup, package environments, auto-install manifests,
-and persistent reusable CLI workflows used by router/tools commands.
-Scripts may print diagnostic commands, but they must not create another
-session store. Session/task history is queried through `session_log`; provider
-call logs live under `log/provider/` or `LOG_PATH`.
+The scripts have a deliberately small job: build and register the two standard
+Cargo output directories, and nothing more mysterious than that:
 
-## Layout
+- `target/debug`
+- `target/release`
 
-```text
-scripts/
-  install.ps1
-  install.sh
-  start.ps1
-  start.sh
+Command entries:
 
-  installers/
-    media.toml
-    playwright.toml
+- `tura_exec`: Rust one-shot CLI binary.
+- `tura`: compiled terminal entry. Use `tura` for the TUI, `tura run "prompt"` for the TUI gateway client, or `tura exec "prompt"` for the Rust CLI front.
+- `tura_gateway`, `tura_router`, `tura_session_db`, `tura_runtime`: backend services.
 
-  packages/
-    playwright_node/
-      manifest.toml
-    python/
-      ...
-    read_media/
-      entry.py
-      manifest.toml
-```
+Important scripts:
 
-There is no active top-level `scripts/persistent/` directory in the current
-tree. Add persistent reusable workflows only when a router/tools command has a
-real reuse case and a documented output contract.
+- `install.*`: run the complete source installation by default: dependency
+  setup, full release build, and user PATH registration. The root installer checks
+  `shell_command`, `bash`, `zsh`, and `git` coverage on every platform, ensures
+  user-local `uv`, Python 3.12 through `uv`, and `bun`, calls command-owned
+  `commands/*/install.*` scripts, and runs Bun installs inside app/package
+  directories. `--skip-uv`/`-SkipUv` requires command installers to be skipped,
+  and `--skip-bun`/`-SkipBun` requires app installs to be skipped when Bun
+  workspaces are present. Use `-EnvironmentOnly` or `--environment-only` to stop
+  after dependency setup; partial dependency and check-only switches require
+  that explicit mode.
+  Windows adds common Git/MSYS shell paths before checking bash/zsh. macOS
+  asserts zsh and bash and reports optional PowerShell (`pwsh`) coverage.
+- `build-debug.*`: build Rust debug binaries and the TUI entry into `target/debug`.
+- `build-release.*`: build Rust release binaries, the web GUI dist, the TUI entry,
+  and the Tauri desktop bundle. CLI/TUI artifacts and copied web assets land in
+  `target/release`; Tauri bundle artifacts are produced by the Tauri CLI under
+  the release target bundle directory. Tauri reads the release version from the
+  root `package.json`, keeping installer and npm versions identical. Before
+  bundling, the build scripts remove the generated bundle directory so an older
+  version cannot leak into npm or GitHub Release assets. Release builds preserve local session
+  DB/cache state by default; pass `-Clean` on PowerShell or `-clean`/`--clean` on
+  POSIX shells when a build must intentionally remove repository-local session
+  DB/cache files first. The build scripts only stop repo-owned backend/service
+  binaries before rebuilding; they do not stop the interactive `tura` TUI or
+  `tura_gui` desktop process. If a frontend executable is locked, close it
+  explicitly and rerun. Pass `-BackendOnly` or `--backend-only` when a CI job only
+  needs Rust release artifacts.
+- `register-cli.*`: add `target/release` to the user PATH. No wrapper directory is created; the registered CLI command is `tura exec`. The POSIX script ensures `.profile` exists, updates shell profiles when present, and creates `.zprofile`/`.zshrc` on macOS so new Terminal sessions work.
+- `unregister-cli.*`: remove `target/release` from PATH and delete a stale `cli-bin` directory if present.
+- `start.*`: convenience runner for `target/debug` by default, or `target/release` with `--release`. The runner repeats the same shell coverage checks before launching; set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` when optional zsh/PowerShell gaps should fail the run.
+- `check-backend-quality.*`: CI smell gate. It runs backend Rust test-layout
+  policy, Rust formatting, TUI formatting, Rust dependency policy, and spelling.
+  It intentionally does not run `cargo test --workspace`; crate tests are owned
+  by `xtask/scripts/run-ci-crate-tests.*`.
+- `run-ci.*`: local CI orchestrator. It runs `check-backend-quality.*` first,
+  then monitors crate tests, backend business tests, and TUI business tests in
+  parallel.
+- `run-release-dry-run.*`: release dry-run orchestrator. It runs install, the CI
+  flow, and release artifact build without publishing.
+- `scripts/npm/install-release.mjs`: npm postinstall release installer for the
+  public `tura-ai` package. It uses the installed platform package such as
+  `tura-win32-x64` and fails directly when that optional dependency is
+  unavailable; postinstall does not download release archives. The installed
+  runtime layout is `target/release` with
+  `config/provider_config.json`, backend binaries, TUI, GUI dist, and Tauri
+  bundle artifacts. After verifying the release files it calls
+  `scripts/npm/cli-path.mjs` so npm installs register the `tura` command on the
+  current OS. On Windows it resolves PowerShell from PATH, standard Windows
+  install locations, or `TURA_POWERSHELL_PATH`; set
+  `TURA_NPM_SKIP_CLI_REGISTRATION=1` to suppress PATH/profile changes in
+  automation. Current npm releases do not run uninstall lifecycle scripts, so
+  the package exposes `tura unregister-cli` for PATH/profile cleanup before
+  `npm uninstall tura-ai` instead of publishing fake `uninstall` scripts. The
+  npm release workflow builds CLI/backend/TUI, web GUI, and Tauri bundles on
+  every supported platform. Desktop bundle failures block publication, and the
+  release tag must match the root npm package version before builds run. The
+  platform npm packages used by `npm install tura-ai` include the desktop binary
+  plus the native installer bundle. All four platform jobs must pass before a
+  single publishing job uploads any platform package to npm; GitHub Release
+  assets are flattened into one collision-free set and uploaded once, after the
+  platform and main npm publications succeed. The final asset gate requires all
+  four npm tarballs, all four platform archives, and at least one native Tauri
+  installer for each supported platform without assuming a fixed bundle count.
+  Linux release runners install both AppImage patching and RPM packaging tools
+  because the Tauri configuration requests every supported bundle target.
+  Its local install
+  verifier stages the freshly packed platform tarball outside the main install
+  tree and points `TURA_NPM_PLATFORM_PACKAGE_DIR` at it, avoiding npm registry
+  lookups for optional platform packages before those packages are published.
+  The verifier checks the installed release files, verifies PATH registration,
+  runs `tura unregister-cli`, and asserts the PATH entry was removed. The wrapper
+  passes `TURA_RELEASE_BIN_DIR` so the compiled TUI resolves sibling Rust release
+  binaries from the installed package.
+- `scripts/npm/verify-npm-install-fixture.mjs`: fast multi-OS npm install
+  verifier used by `.github/workflows/npm-install-matrix.yml`. It builds a small
+  fixture platform package for the current runner, packs the slim main npm
+  package, installs through `postinstall`, verifies release binaries and the npm
+  `tura` shim landed, then checks CLI registration and `unregister-cli` cleanup.
+  On Windows it intentionally runs the main install with PATH restricted to the
+  Node directory so PowerShell resolution does not depend on `powershell.exe`
+  already being on PATH.
+- `scripts/npm/stage-main-package.mjs` and
+  `scripts/npm/restore-main-package.mjs`: temporarily replace the repository
+  `package.json` during `npm pack`/`npm publish` so the published main package
+  contains only runtime files and the real `postinstall` lifecycle script. The
+  repository package metadata is restored in `postpack`; the release workflow
+  publishes the resulting packed tarball so npm registry metadata also reflects
+  the slim runtime manifest.
+- `scripts/npm/package-platform.mjs`: stages the current OS release into a
+  platform npm package: `tura-linux-x64`, `tura-darwin-x64`,
+  `tura-darwin-arm64`, or `tura-win32-x64`. A desktop binary and installable
+  Tauri bundle are mandatory.
+- `scripts/npm/package-release.mjs`: creates the matching GitHub Release archive
+  under `release/`, for example `tura-v0.1.0-windows-x64.zip` or
+  `tura-v0.1.0-macos-arm64.tar.gz`; each archive contains the same Tauri output.
+- `scripts/npm/stage-desktop-release-assets.mjs`: copies native Tauri installers
+  to `release/desktop` with platform-qualified names for direct GitHub Release
+  upload, avoiding asset collisions between macOS architectures.
 
-## Install Scripts
+## Xtask test collection scripts
 
-Install scripts should:
+- `xtask/scripts/run-ci-crate-tests.*`: GitHub-style crate matrix runner. It
+  discovers default backend workspace packages, excludes `tura_gui`, and runs
+  clippy plus `cargo test -p <crate>` for each crate. Local runs can batch
+  crates in parallel.
+- Typed Rust test directories are peers: `tests/business`, `tests/os_testing`,
+  `tests/performance`, `tests/live`, `tests/release`, and `tests/benchmark`.
+  Business and OS testing may use `helpers/` plus target-owned module
+  directories beside the top-level entrypoint; other crate-owned typed
+  directories stay flat. Do not keep empty typed directories. The workspace root `tests/benchmark` is the manual benchmark
+  exception and keeps historical second-level categories such as `bug-fix`,
+  `frontend-playwright`, `project-rebuild-refactor`, and `tui`.
+- Typed test runners discover cases by scanning the matching directory type.
+  Do not add one-off hardcoded script paths when a directory scan can find the
+  case.
+- `xtask/scripts/run-backend-business-tests.*`: run root Rust business tests plus
+  crate-owned Rust tests from `crates/*/tests/business`, `commands/*/tests/business`,
+  `agents/*/tests/business`, and `personas/*/tests/business` using one-level
+  typed-directory scans. Business targets run in parallel batches and the
+  runner reports all failed `package::target` entries after the discovered set
+  finishes. Process, daemon, service-owner, lifecycle, and OS policy coverage
+  belongs to `xtask/scripts/run-backend-os-tests.*`. These backend runners do
+  not execute `.mjs` app, TUI, or GUI scripts; run app suites from `apps/tui` or
+  `apps/gui`.
+- `xtask/scripts/run-backend-os-tests.*`: run root and crate-owned Rust tests from
+  `tests/os_testing` with the `os-tests` feature gate. Every target runs
+  serially with `--test-threads=1` to avoid process-global env, local socket,
+  owner-lock, daemon, and child-process cleanup conflicts.
+- `xtask/scripts/run-backend-live-tests.*`: run opt-in root/backend Rust live tests and
+  backend-owned root live scripts using one-level typed-directory scans and the
+  `live-tests` feature gate when the package declares it. These backend
+  runners do not execute app-owned TUI/GUI scripts; run those from the app
+  package commands.
+- `xtask/scripts/run-backend-release-tests.*`: run opt-in backend release-binary
+  tests discovered from root `tests/release/*.mjs`. TUI/GUI release entrypoints
+  also live in `tests/release`, but the backend runner skips `tui_*` and
+  `gui_*`; run those directly or through the app package aliases.
+- `xtask/scripts/run-backend-performance-tests.*`: runner for crate-owned Rust
+  performance tests from `crates/*/tests/performance`; each target is killed if
+  it exceeds the configured timeout.
 
-- Detect installed versions and verify minimum versions where the project has
-  one, such as Node.js 20+ and Python 3.10+.
-- Automatically install Rust/Cargo through rustup when possible; if company
-  policy, network, or permissions block installation, print rustup guidance.
-- Automatically install other toolchains when possible:
-  - Windows: `winget`.
-  - Linux: `apt-get`, `dnf`, `yum`, `pacman`, or `apk`.
-  - macOS: Homebrew.
-- Install or verify Git, Node/npm, Python, Bun, ffmpeg, native build tools, and
-  the platform shell.
-- Install `apps/tui` dependencies from `package-lock.json`.
-- Install and build `apps/gui` when Bun is available.
-- Run `cargo fetch`.
-- Build `gateway` binaries `tura` and `gateway`.
-- Build `tura_router`.
-- Check runtime, tools, provider, and agents packages by Cargo package
-  name.
-- Install Python fallback packages into `scripts/packages/python`, never the
-  repository root or a tracked package directory.
-- Export `PYTHONPATH` and `LIBCLANG_PATH` for the current script invocation
-  when local fallback packages are installed.
-- Install Playwright Chromium unless explicitly skipped, then verify a headless
-  Chromium launch with Playwright. Verification failures must print platform
-  guidance for proxy, endpoint security, sudo/system-library, and browser-cache
-  issues.
-- Respect skip flags for frontend, Playwright, Python fallback packages, and
-  Rust build work. Check-only mode must verify without installing.
-- Avoid writing generated logs or screenshots into tracked paths.
-- Fail with actionable messages when required system toolchains are missing.
+Script tests:
 
-Supported first-party install entrypoints:
+- `tests/scripts/test-install.*`: checks script syntax where available, runs the
+  root dependency installer, and verifies command-owned Python environments.
+- `tests/scripts/test-build-release.*`: validates a dry-run release probe such as
+  `release-v0.0.0-ci`, runs `build-release.*`, checks expected artifacts, and
+  verifies command protocol health. Pass `-BackendOnly` or `--backend-only` when
+  a CI job only needs Rust release artifacts.
 
-```text
-scripts/install.ps1     Windows PowerShell
-scripts/install.sh      Linux/macOS POSIX shell
-```
+Source installation contract:
 
-## Start Scripts
+- `scripts/install.ps1` and `scripts/install.sh` run environment setup, the full
+  release build, and CLI PATH registration by default.
+- `-EnvironmentOnly` and `--environment-only` are the explicit dependency-only
+  modes. Partial dependency switches and check-only mode must be paired with
+  that flag.
+- Internal release and packaging flows that build separately must invoke the
+  installer in environment-only mode to avoid duplicate release builds.
 
-Start scripts should:
+GitHub Actions:
 
-- Prefer CLI-driven startup.
-- Default to running `cargo run -p gateway --bin tura -- exec ...`.
-- Support a gateway-server mode for the TypeScript CLI/TUI:
-  `cargo run -p gateway --bin gateway`.
-- Support a TUI-client mode that runs `node apps/tui/dist/index.js ...`.
-- Support a GUI dev-server mode that runs `bun run dev` from `apps/gui`.
-- Start the router binary when CLI forwarding or managed lifecycle is needed,
-  for example
-  `cargo run -p tura_router -- forward <command> [args...]`.
-- Pass router/gateway/frontend overrides when a local UI flow needs them.
-- For GUI startup, set `VITE_TURA_GATEWAY_URL` from `TURA_GATEWAY_URL` when
-  present, otherwise from the selected gateway port.
-- Avoid introducing independent service startup paths.
-- Let router pull up and monitor managed local services/processes.
-- Print CLI endpoints, UI URLs, and health status when applicable.
+- `.github/workflows/ci.yml` runs the smell gate first. After that, crate matrix
+  jobs, backend business tests, and TUI business tests run in parallel with
+  Cargo and npm caches. Tags starting with `release` trigger a release dry-run
+  job after CI completes; the job builds release artifacts and does not publish
+  a GitHub release.
+- `.github/workflows/source-install.yml` runs the default complete source
+  installer on Ubuntu, macOS, Windows Server 2022, and Windows Server 2025, then
+  verifies `tura --help` through user PATH in a fresh shell and uploads logs.
+- `.github/workflows/os-worker-tests.yml` runs the four current OS runners
+  (`ubuntu-latest`, `macos-latest`, `windows-2022`, and `windows-2025`) through
+  install-script checks, backend release-script checks, and serial backend OS
+  tests.
+- `.github/workflows/npm-release.yml` builds the four npm platform releases
+  (`tura-linux-x64`, `tura-darwin-x64`, `tura-darwin-arm64`, and
+  `tura-win32-x64`), verifies a local `npm install` of the main `tura-ai` package
+  against the platform package, verifies the slim main npm package contents,
+  verifies postinstall CLI registration plus `tura unregister-cli`, uploads
+  release archives, and publishes npm packages when `NPM_TOKEN` is configured.
 
-Supported first-party start entrypoints:
-
-```text
-scripts/start.ps1       Windows PowerShell
-scripts/start.sh        Linux/macOS POSIX shell
-```
-
-Supported first-party start modes:
-
-```text
-scripts/start.ps1 "Prompt"                  Rust CLI exec
-scripts/start.ps1 -Gateway -Port 4096       gateway HTTP server
-scripts/start.ps1 -Tui --help               TypeScript CLI/TUI
-scripts/start.ps1 -Gui                      GUI Vite dev server
-
-scripts/start.sh "Prompt"                   Rust CLI exec
-scripts/start.sh --gateway --port 4096      gateway HTTP server
-scripts/start.sh --tui --help               TypeScript CLI/TUI
-scripts/start.sh --gui                      GUI Vite dev server
-```
-
-## Auto Install Manifests
-
-Installer manifests define what router/tools commands may install
-automatically:
-
-- Tool id.
-- Platform support.
-- Installer command.
-- Verification command.
-- Timeout.
-- Permission requirement.
-- Cache key.
-- Environment variables.
-
-The model should not invent installer commands when a manifest exists.
-
-Current installer manifests:
-
-- `scripts/installers/media.toml`: media tool support, including ffmpeg
-  verification.
-- `scripts/installers/playwright.toml`: Playwright/Chromium setup and headless
-  Chromium verification for frontend-debugging E2E flows.
-
-Browser installation remains an installer concern so command handlers can ask
-for a known capability instead of embedding ad hoc setup commands in prompts or
-test fixtures.
-
-## Package Environments
-
-Each package environment manifest defines:
-
-- Package id.
-- Python version requirement.
-- Dependencies.
-- Entry script.
-- Allowed network during setup.
-- Cached virtual environment path.
-- Rebuild trigger.
-
-Router/tools should route `py:<package>` commands through this layer.
-
-Current package environments:
-
-- `scripts/packages/playwright_node/manifest.toml`: Node package environment
-  for Playwright-based browser checks.
-- `scripts/packages/read_media/manifest.toml`: Python entrypoint metadata for
-  media reading.
-- `scripts/packages/python/`: local fallback Python packages installed by
-  setup scripts when the global environment is missing optional media
-  dependencies.
-
-The Playwright package environment provides the stable dependency boundary for
-command-run sessions that need screenshots, DOM inspection, or local frontend
-smoke tests.
-
-## Persistent Scripts
-
-Persistent scripts, when added, are reusable CLI workflows stored under
-`scripts/persistent/<workflow_id>`.
-
-Each persistent script needs:
-
-- `manifest.toml`
-- `script.py` or another declared entrypoint.
-- `params.schema.json`
-- Output contract.
-- Permission category.
-- Provenance fields.
-- Example command request.
-
-Scripts must read task-specific values from stdin JSON or
-`TURA_COMMAND_PARAMS`. They must not hard-code one run's workspace paths,
-markers, output paths, or entity names.
-
-## Command Integration
-
-Router/tools commands use scripts for:
-
-- Python package execution.
-- Auto-install verification.
-- Persistent reusable workflows.
-- Script provenance and reuse.
-- Environment isolation.
-
-Command search should return records whose examples call the routed command.
-Raw source commands are debug/reference fields only.
+Local source builds still resolve directly from `target/release`. Published npm
+installs resolve through the main `tura-ai` package plus the matching platform
+package. A missing platform package is an installation error; there is no
+postinstall download fallback.

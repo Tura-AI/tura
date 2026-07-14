@@ -2,7 +2,6 @@ import {
   type Command,
   type Message,
   type PlanStatus,
-  type PollInterval,
   type Session,
   type StartCondition,
   type TaskManagement,
@@ -33,36 +32,22 @@ import {
 } from "../../state/global-store";
 import { rootSessions } from "../../state/session-tree";
 
+import { PlanDragGhost, beginPlanPointerDrag, type PlanDragState } from "../../features/plan/drag";
 import {
-  PlanDragGhost,
-  beginPlanPointerDrag,
-  type PlanDragState,
-} from "../../features/plan/drag";
-import {
-  defaultPollInterval,
-  hasVisibleSessionTasks,
-  localDateTimeToUtcIso,
   planSessionStatus,
   sessionTaskState,
   sessionTasks,
+  shouldShowSessionAttention,
   shortSessionId,
+  sortedSessionTasks,
   taskDisplayText,
   taskNonceId,
-  taskPollInterval,
-  taskStartAt,
   taskStartCondition,
-  timedTaskPatch,
-  utcIsoToLocalDateTime,
+  taskSummaryText,
 } from "../../features/plan/tasks";
-import {
-  relativeSessionTime,
-  samePath,
-  shortWorkspaceLabel,
-} from "../../utils/app-format";
-import { PlanCalendarView } from "./plan-calendar";
+import { relativeSessionTime, samePath, shortWorkspaceLabel } from "../../utils/app-format";
 import {
   PlanComposerControls,
-  PlanComposerTaskList,
   PlanConversationFeedbackNotice,
   PlanDraftSessionPicker,
   PlanModeButtons,
@@ -81,13 +66,13 @@ export function PlanView(props: {
   state: AppState;
   previewSession?: Session;
   previewMessages: Message[];
+  previewInitialScrollTop?: number;
+  onPreviewTranscriptScroll?: (scrollTop: number) => void;
   slashCommands: Command[];
   onPlanMode: (value: PlanMode) => void;
   onSearch: (value: string) => void;
   onDraftLane: (value: PlanStatus | undefined) => void;
   onDraftStartCondition: (value: StartCondition) => void;
-  onDraftStartAt: (value: string) => void;
-  onDraftPollInterval: (value: PollInterval) => void;
   onDraftSession: (value: string | undefined) => void;
   onCreateTicket: (sessionId?: string) => void;
   onStatus: (session: Session, status: PlanStatus) => void;
@@ -97,24 +82,17 @@ export function PlanView(props: {
     patch: Partial<
       TaskManagement & {
         status: PlanStatus;
-        start_at: string;
-        poll_interval: PollInterval;
       }
     >,
   ) => void;
   onReorderTasks: (session: Session, tasks: TaskManagement[]) => void;
-  onEditTask: (
-    session: Session,
-    task: TaskManagement,
-    composerText: string,
-  ) => void;
-  onDeleteTask: (session: Session, task: TaskManagement) => void;
+  onEditTask: (session: Session, task: TaskManagement, composerText: string) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
-  onCreateSessionFromTask: (session: Session, task: TaskManagement) => void;
   onOpenSession: (session: Session) => void;
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
+  onQueueSubmit?: () => void;
   onStop: (session: Session) => void;
   onAgent: (agentId: string) => void;
   onOpenSettings: (section: SettingsSection) => void;
@@ -123,11 +101,7 @@ export function PlanView(props: {
   leftRailOpen?: boolean;
   leftRailWidth?: number;
   onRequestCollapseLeftRail?: () => void;
-  onPanelLayout?: (layout: {
-    open: boolean;
-    overlay: boolean;
-    width: number;
-  }) => void;
+  onPanelLayout?: (layout: { open: boolean; overlay: boolean; width: number }) => void;
 }) {
   const workspaceSessions = createMemo(() =>
     props.state.sessions.filter((session) =>
@@ -137,9 +111,7 @@ export function PlanView(props: {
   const visibleSessions = createMemo(() => {
     const query = props.state.issueSearch.trim().toLowerCase();
     const sessions = rootSessions(
-      workspaceSessions().filter(
-        (session) => planSessionStatus(session) !== "archived",
-      ),
+      workspaceSessions().filter((session) => planSessionStatus(session) !== "archived"),
     );
     if (!query) {
       return sessions;
@@ -150,14 +122,13 @@ export function PlanView(props: {
         session.id.toLowerCase().includes(query),
     );
   });
-  const panelOpen = createMemo(() =>
-    Boolean(props.previewSession || props.state.planDraftLane),
-  );
+  const panelOpen = createMemo(() => Boolean(props.previewSession || props.state.planDraftLane));
   const agentMenu = () => (
     <AgentComposerMenu
       agents={props.state.agents}
       modelConfig={props.state.modelConfig}
       selectedAgent={props.state.selectedAgent}
+      selectedModel={props.state.selectedModel}
       onAgent={props.onAgent}
       onSettings={props.onOpenSettings}
     />
@@ -168,18 +139,14 @@ export function PlanView(props: {
     if (!preview || !editing || editing.sessionId !== preview.id) {
       return undefined;
     }
-    return sessionTasks(preview).find(
-      (task) => taskNonceId(task) === editing.task_id,
-    );
+    return sessionTasks(preview).find((task) => taskNonceId(task) === editing.task_id);
   });
   const composerTask = createMemo(() => {
     const preview = props.previewSession;
     if (!preview) {
       return undefined;
     }
-    return (
-      editingTask() ?? sessionTasks(preview)[0] ?? sessionTaskState(preview)
-    );
+    return editingTask() ?? sessionTasks(preview)[0] ?? sessionTaskState(preview);
   });
   const composerTaskNonce = createMemo(() => {
     const preview = props.previewSession;
@@ -214,29 +181,19 @@ export function PlanView(props: {
   function panelMaxWidth(width = workbenchWidth()) {
     return Math.min(
       PLAN_PANEL_MAX_WIDTH,
-      Math.max(
-        PLAN_PANEL_MIN_WIDTH,
-        width - PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_GAP,
-      ),
+      Math.max(PLAN_PANEL_MIN_WIDTH, width - PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_GAP),
     );
   }
   function clampPanelWidth(width: number, availableWidth = workbenchWidth()) {
-    return Math.min(
-      panelMaxWidth(availableWidth),
-      Math.max(PLAN_PANEL_MIN_WIDTH, width),
-    );
+    return Math.min(panelMaxWidth(availableWidth), Math.max(PLAN_PANEL_MIN_WIDTH, width));
   }
   const planPanelFullscreen = createMemo(
-    () =>
-      panelOpen() &&
-      workbenchWidth() - panelWidth() + PLAN_PANEL_GAP < PLAN_MAIN_MIN_WIDTH,
+    () => panelOpen() && workbenchWidth() - panelWidth() + PLAN_PANEL_GAP < PLAN_MAIN_MIN_WIDTH,
   );
 
   onMount(() => {
     const updateWorkbenchWidth = () =>
-      setWorkbenchWidth(
-        workbenchEl?.getBoundingClientRect().width ?? window.innerWidth,
-      );
+      setWorkbenchWidth(workbenchEl?.getBoundingClientRect().width ?? window.innerWidth);
     updateWorkbenchWidth();
     workbenchResizeObserver = new ResizeObserver(updateWorkbenchWidth);
     if (workbenchEl) {
@@ -259,8 +216,7 @@ export function PlanView(props: {
       props.leftRailOpen &&
       availableWidth + (props.leftRailWidth ?? 0) >=
         PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_MIN_WIDTH - PLAN_PANEL_GAP &&
-      availableWidth <
-        PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_MIN_WIDTH - PLAN_PANEL_GAP
+      availableWidth < PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_MIN_WIDTH - PLAN_PANEL_GAP
     ) {
       props.onRequestCollapseLeftRail?.();
       return;
@@ -278,11 +234,8 @@ export function PlanView(props: {
 
   function beginPanelResize(event: PointerEvent) {
     event.preventDefault();
-    const workbench =
-      (event.currentTarget as HTMLElement).closest(".plan-workbench") ??
-      undefined;
-    const workbenchWidth =
-      workbench?.getBoundingClientRect().width ?? window.innerWidth;
+    const workbench = (event.currentTarget as HTMLElement).closest(".plan-workbench") ?? undefined;
+    const workbenchWidth = workbench?.getBoundingClientRect().width ?? window.innerWidth;
     const startX = event.clientX;
     const startWidth = panelWidth();
     const onMove = (move: PointerEvent) => {
@@ -295,10 +248,7 @@ export function PlanView(props: {
       }
       if (
         props.leftRailOpen &&
-        workbenchWidth +
-          (props.leftRailWidth ?? 0) -
-          nextWidth +
-          PLAN_PANEL_GAP >=
+        workbenchWidth + (props.leftRailWidth ?? 0) - nextWidth + PLAN_PANEL_GAP >=
           PLAN_MAIN_MIN_WIDTH &&
         workbenchWidth - nextWidth + PLAN_PANEL_GAP < PLAN_MAIN_MIN_WIDTH
       ) {
@@ -322,17 +272,6 @@ export function PlanView(props: {
     props.onDraftLane(lane);
     props.onDraftSession(undefined);
     props.onDraftStartCondition("user_action");
-    props.onDraftStartAt("");
-    props.onDraftPollInterval(defaultPollInterval());
-    props.onComposerText("");
-  }
-
-  function openDraftAt(startAt: string) {
-    props.onDraftLane("todo");
-    props.onDraftSession(undefined);
-    props.onDraftStartCondition("scheduled_task");
-    props.onDraftStartAt(utcIsoToLocalDateTime(startAt));
-    props.onDraftPollInterval(defaultPollInterval());
     props.onComposerText("");
   }
 
@@ -342,9 +281,8 @@ export function PlanView(props: {
       return;
     }
     const session =
-      workspaceSessions().find(
-        (item) => item.id === props.state.selectedSessionId,
-      ) ?? visibleSessions()[0];
+      workspaceSessions().find((item) => item.id === props.state.selectedSessionId) ??
+      visibleSessions()[0];
     if (session) {
       void props.onOpenSession(session);
     }
@@ -358,11 +296,22 @@ export function PlanView(props: {
       props.onCreateTicket();
       return;
     }
+    if (props.previewSession?.status === "busy") {
+      props.onSubmit();
+      return;
+    }
     if (props.previewSession && props.state.composerText.trim()) {
       props.onCreateTicket(props.previewSession.id);
       return;
     }
     props.onSubmit();
+  }
+  function queueSubmitComposer() {
+    if (props.state.editingTask) {
+      props.onSubmit();
+      return;
+    }
+    props.onQueueSubmit?.();
   }
   return (
     <section
@@ -401,12 +350,7 @@ export function PlanView(props: {
           </div>
         </header>
 
-        <main
-          class={classNames(
-            "plan-board",
-            props.state.planMode === "calendar" && "calendar-mode",
-          )}
-        >
+        <main class="plan-board">
           <Switch>
             <Match when={props.state.planMode === "gantt"}>
               <PlanGanttView
@@ -418,30 +362,13 @@ export function PlanView(props: {
                   props.onOpenSession(session);
                   props.onEditTask(session, task, taskDisplayText(task));
                 }}
-                onSchedule={(session, task, startAt) =>
-                  props.onTask(session, {
-                    task_id: taskNonceId(task),
-                    start_at: startAt,
-                  })
-                }
-              />
-            </Match>
-            <Match when={props.state.planMode === "calendar"}>
-              <PlanCalendarView
-                sessions={visibleSessions()}
-                selectedSessionId={props.state.planPreviewSessionId}
-                onOpenSession={props.onOpenSession}
-                onCreateAt={openDraftAt}
-                onSchedule={(session, startAt) =>
-                  props.onTask(session, {
-                    start_at: startAt,
-                  })
-                }
+                onReorder={props.onReorderTasks}
               />
             </Match>
             <Match when={true}>
               <PlanBoard
                 sessions={visibleSessions()}
+                messagesBySession={props.state.messagesBySession}
                 selectedSessionId={props.state.planPreviewSessionId}
                 draftLane={props.state.planDraftLane}
                 onDraftLane={openDraft}
@@ -478,11 +405,7 @@ export function PlanView(props: {
                     : t("conversation")}
               </strong>
             </div>
-            <button
-              class="inspector-close"
-              title={t("close")}
-              onClick={closePlanPanel}
-            >
+            <button class="inspector-close" title={t("close")} onClick={closePlanPanel}>
               ×
             </button>
           </header>
@@ -490,19 +413,17 @@ export function PlanView(props: {
             state={props.state}
             session={props.previewSession}
             messages={props.previewMessages}
+            initialScrollTop={props.previewInitialScrollTop}
+            onTranscriptScroll={props.onPreviewTranscriptScroll}
             slashCommands={props.slashCommands}
             onComposerText={props.onComposerText}
             onComposerImages={props.onComposerImages}
             onSubmit={submitComposer}
-            onStop={() =>
-              props.previewSession && props.onStop(props.previewSession)
-            }
-            running={Boolean(
-              props.previewSession && props.previewSession.status !== "idle",
-            )}
+            onQueueSubmit={queueSubmitComposer}
+            onStop={() => props.previewSession && props.onStop(props.previewSession)}
+            running={props.previewSession?.status === "busy"}
             submitDisabled={
-              Boolean(props.state.planDraftLane) &&
-              props.state.composerText.trim().length === 0
+              Boolean(props.state.planDraftLane) && props.state.composerText.trim().length === 0
             }
             composerToolbar={
               props.state.planDraftLane ? (
@@ -513,24 +434,18 @@ export function PlanView(props: {
                     onSession={props.onDraftSession}
                   />
                   <PlanComposerControls
-                    startCondition={props.state.planDraftStartCondition}
-                    startAt={props.state.planDraftStartAt}
-                    pollInterval={props.state.planDraftPollInterval}
+                    startCondition="session_idle"
+                    queueOnly
                     onStartCondition={props.onDraftStartCondition}
-                    onStartAt={props.onDraftStartAt}
-                    onPollInterval={props.onDraftPollInterval}
                   />
                   {agentMenu()}
                 </div>
               ) : props.previewSession && !props.state.editingTask ? (
                 <>
                   <PlanComposerControls
-                    startCondition={props.state.planDraftStartCondition}
-                    startAt={props.state.planDraftStartAt}
-                    pollInterval={props.state.planDraftPollInterval}
+                    startCondition="session_idle"
+                    queueOnly
                     onStartCondition={props.onDraftStartCondition}
-                    onStartAt={props.onDraftStartAt}
-                    onPollInterval={props.onDraftPollInterval}
                   />
                   {agentMenu()}
                 </>
@@ -538,83 +453,23 @@ export function PlanView(props: {
                 <>
                   <PlanComposerControls
                     startCondition={taskStartCondition(composerTask()!)}
-                    startAt={utcIsoToLocalDateTime(
-                      taskStartAt(composerTask()!),
-                    )}
-                    pollInterval={taskPollInterval(composerTask()!)}
                     onStartCondition={(startCondition) => {
                       const currentTask = composerTask()!;
                       if (startCondition === "user_action") {
-                        props.onRunTask(
-                          props.previewSession!,
-                          taskWithComposerText(currentTask),
-                        );
+                        props.onRunTask(props.previewSession!, taskWithComposerText(currentTask));
                         return;
                       }
-                      const startAt = localDateTimeToUtcIso(
-                        utcIsoToLocalDateTime(taskStartAt(currentTask)),
-                      );
                       props.onTask(props.previewSession!, {
                         task_id: composerTaskNonce(),
                         status: "todo",
-                        ...timedTaskPatch(
-                          startCondition,
-                          startAt,
-                          taskPollInterval(currentTask),
-                        ),
+                        start_condition: "session_idle",
+                        start_at: undefined,
+                        poll_interval: undefined,
                       });
                     }}
-                    onStartAt={(value) => {
-                      const start_at = localDateTimeToUtcIso(value);
-                      if (start_at) {
-                        props.onTask(props.previewSession!, {
-                          task_id: composerTaskNonce(),
-                          start_at,
-                        });
-                      }
-                    }}
-                    onPollInterval={(poll_interval) =>
-                      props.onTask(props.previewSession!, {
-                        task_id: composerTaskNonce(),
-                        poll_interval,
-                      })
-                    }
                   />
                   {agentMenu()}
                 </>
-              ) : undefined
-            }
-            composerTaskList={
-              props.previewSession &&
-              !props.state.planDraftLane &&
-              hasVisibleSessionTasks(props.previewSession) ? (
-                <PlanComposerTaskList
-                  session={props.previewSession}
-                  selected_task_id={props.state.editingTask?.task_id}
-                  pulseNonceId={
-                    props.state.taskPulse?.sessionId === props.previewSession.id
-                      ? props.state.taskPulse.task_id
-                      : undefined
-                  }
-                  pulseToken={
-                    props.state.taskPulse?.sessionId === props.previewSession.id
-                      ? props.state.taskPulse.token
-                      : undefined
-                  }
-                  onEdit={(task, composerText) =>
-                    props.onEditTask(props.previewSession!, task, composerText)
-                  }
-                  onDelete={(task) =>
-                    props.onDeleteTask(props.previewSession!, task)
-                  }
-                  onRun={(task) => props.onRunTask(props.previewSession!, task)}
-                  onCreateSession={(task) =>
-                    props.onCreateSessionFromTask(props.previewSession!, task)
-                  }
-                  onReorder={(tasks) =>
-                    props.onReorderTasks(props.previewSession!, tasks)
-                  }
-                />
               ) : undefined
             }
             conversationNotice={
@@ -626,10 +481,7 @@ export function PlanView(props: {
                   onOpenProviderSettings={props.onOpenProviderSettings}
                 />
               ) : props.previewSession &&
-                shouldShowPlanFeedbackPrompt(
-                  props.previewSession,
-                  props.state.composerText,
-                ) ? (
+                shouldShowPlanFeedbackPrompt(props.previewSession, props.state.composerText) ? (
                 <PlanConversationFeedbackNotice />
               ) : undefined
             }
@@ -644,6 +496,7 @@ export function PlanView(props: {
 
 export function PlanBoard(props: {
   sessions: Session[];
+  messagesBySession: Record<string, Message[]>;
   selectedSessionId?: string;
   draftLane?: PlanStatus;
   onDraftLane: (value: PlanStatus | undefined) => void;
@@ -679,9 +532,7 @@ export function PlanBoard(props: {
       onSchedule: () => undefined,
       resolveSchedule: () => undefined,
       onDrop: (point) => {
-        const element = document.elementFromPoint(point.x, point.y) as
-          | HTMLElement
-          | undefined;
+        const element = document.elementFromPoint(point.x, point.y) as HTMLElement | undefined;
         const archive = element?.closest<HTMLElement>(".board-archive-zone");
         if (archive) {
           props.onStatus(session, "archived");
@@ -689,16 +540,16 @@ export function PlanBoard(props: {
         }
         const column = element?.closest<HTMLElement>("[data-plan-status]");
         const status = column?.dataset.planStatus as PlanStatus | undefined;
-        if (
-          status &&
-          ["todo", "doing", "question", "done"].includes(status)
-        ) {
+        if (status && ["todo", "doing", "question", "done"].includes(status)) {
           props.onStatus(session, status);
           return true;
         }
         return false;
       },
     });
+  }
+  function boardCardTitle(session: Session): string {
+    return sortedSessionTasks(session).map(taskSummaryText).find(Boolean) ?? sessionTitle(session);
   }
   return (
     <section class="board-shell">
@@ -707,9 +558,7 @@ export function PlanBoard(props: {
         <For each={columns}>
           {(column) => {
             const sessions = () =>
-              props.sessions.filter(
-                (session) => planSessionStatus(session) === column.id,
-              );
+              props.sessions.filter((session) => planSessionStatus(session) === column.id);
             return (
               <section
                 class="board-column"
@@ -732,10 +581,7 @@ export function PlanBoard(props: {
                   </Show>
                 </header>
                 <div
-                  class={classNames(
-                    "board-cards",
-                    props.draftLane === column.id && "draft-target",
-                  )}
+                  class={classNames("board-cards", props.draftLane === column.id && "draft-target")}
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={(event) => dropOnStatus(event, column.id)}
                 >
@@ -746,48 +592,40 @@ export function PlanBoard(props: {
                           "board-card",
                           props.selectedSessionId === session.id && "selected",
                         )}
+                        data-session-id={session.id}
                         draggable="true"
-                        onPointerDown={(event) =>
-                          beginBoardDrag(event, session)
-                        }
+                        onPointerDown={(event) => beginBoardDrag(event, session)}
                         onMouseDown={(event) => beginBoardDrag(event, session)}
                         onPointerUp={(event) => {
-                          if (
-                            !event.currentTarget.classList.contains(
-                              "plan-source-dragging",
-                            )
-                          ) {
+                          if (!event.currentTarget.classList.contains("plan-source-dragging")) {
                             props.onOpenSession(session);
                           }
                         }}
                         onDragStart={(event) => {
-                          event.dataTransfer?.setData(
-                            "text/session-id",
-                            session.id,
-                          );
-                          event.currentTarget.classList.add(
-                            "plan-source-dragging",
-                          );
+                          event.dataTransfer?.setData("text/session-id", session.id);
+                          event.currentTarget.classList.add("plan-source-dragging");
                         }}
                         onDragEnd={(event) =>
-                          event.currentTarget.classList.remove(
-                            "plan-source-dragging",
-                          )
+                          event.currentTarget.classList.remove("plan-source-dragging")
                         }
                         onClick={() => props.onOpenSession(session)}
-                        title={sessionTitle(session)}
+                        title={boardCardTitle(session)}
                       >
                         <small>{shortSessionId(session.id)}</small>
                         <span class="board-card-title">
-                          <strong>{sessionTitle(session)}</strong>
+                          <strong>{boardCardTitle(session)}</strong>
                           <Show
                             when={shouldShowSessionAttention(
                               session,
                               props.attentionAcknowledged(session),
+                              props.messagesBySession[session.id],
                             )}
                           >
                             <PlanStatusIndicator
-                              status={planSessionStatus(session)}
+                              status={planSessionStatus(
+                                session,
+                                props.messagesBySession[session.id],
+                              )}
                             />
                           </Show>
                         </span>
@@ -819,13 +657,7 @@ export function PlanBoard(props: {
 
 export function PlanStatusIndicator(props: { status: PlanStatus }) {
   return (
-    <Show
-      when={
-        props.status === "doing" ||
-        props.status === "question" ||
-        props.status === "done"
-      }
-    >
+    <Show when={props.status === "doing" || props.status === "question" || props.status === "done"}>
       <span
         class={classNames("plan-status-indicator", `status-${props.status}`)}
         aria-hidden="true"
@@ -834,35 +666,18 @@ export function PlanStatusIndicator(props: { status: PlanStatus }) {
   );
 }
 
-export function shouldShowSessionAttention(
-  session: Session,
-  acknowledged: boolean,
-): boolean {
-  const status = planSessionStatus(session);
-  return (
-    !acknowledged &&
-    (status === "doing" || status === "question" || status === "done")
-  );
-}
-
 export function SessionRowMeta(props: {
   session: Session;
+  messages?: Message[];
   attentionAcknowledged: boolean;
 }) {
-  const status = createMemo(() => planSessionStatus(props.session));
+  const status = createMemo(() => planSessionStatus(props.session, props.messages));
   return (
     <Show
-      when={shouldShowSessionAttention(
-        props.session,
-        props.attentionAcknowledged,
-      )}
-      fallback={
-        <small class="session-row-time">
-          {relativeSessionTime(props.session)}
-        </small>
-      }
+      when={shouldShowSessionAttention(props.session, props.attentionAcknowledged, props.messages)}
+      fallback={<small class="session-row-time">{relativeSessionTime(props.session)}</small>}
     >
-      <span class="session-row-status">
+      <span class={classNames("session-row-status", status() === "question" && "status-question")}>
         <PlanStatusIndicator status={status()} />
       </span>
     </Show>

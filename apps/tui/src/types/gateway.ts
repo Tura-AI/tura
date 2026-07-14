@@ -48,6 +48,7 @@ export interface StoredPersona {
   config?: PersonaConfig;
   persona?: string | null;
   communication_style?: string | null;
+  cli_communication_style?: string | null;
   management?: unknown;
   [key: string]: unknown;
 }
@@ -85,7 +86,6 @@ export interface PersonaMediaConfig {
 export interface PersonaExpression {
   id: string;
   name: string;
-  emoji_aliases?: string[];
   source_directory: string;
   grid_path: string;
   frames: Record<string, string>;
@@ -153,19 +153,4 @@ export interface TuraConfigUpdate {
   tier: string;
   provider: string;
   model: string;
-}
-
-export interface SessionLogWorkspace {
-  directory?: string;
-  session_count?: number;
-  updated_at?: number;
-  [key: string]: unknown;
-}
-
-export interface SessionLogSession {
-  id?: string;
-  session_id?: string;
-  directory?: string;
-  updated_at?: number;
-  [key: string]: unknown;
 }

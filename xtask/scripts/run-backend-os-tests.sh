@@ -1,0 +1,164 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+CRATE=""
+LIST=0
+TIMEOUT_SECONDS=240
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --crate)
+      shift
+      if [ "$#" -eq 0 ]; then echo "--crate requires a package name" >&2; exit 2; fi
+      CRATE=$1
+      ;;
+    --list) LIST=1 ;;
+    --timeout-seconds)
+      shift
+      if [ "$#" -eq 0 ]; then echo "--timeout-seconds requires a number" >&2; exit 2; fi
+      TIMEOUT_SECONDS=$1
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage:
+  xtask/scripts/run-backend-os-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N]
+
+Scans root tests/os_testing/*.rs and backend package tests/os_testing/*.rs.
+OS, daemon, process, service-owner, and lifecycle tests run serially.
+EOF
+      exit 0
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+cd "$REPO_ROOT"
+
+cases=$(mktemp)
+trap 'rm -f "$cases"' EXIT INT TERM
+
+run_cargo() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${TIMEOUT_SECONDS}s" cargo "$@"
+  else
+    cargo "$@"
+  fi
+}
+
+find_backend_os_tests() {
+  printf '%s\n' ./Cargo.toml
+  for root in crates commands agents personas; do
+    if [ -d "$root" ]; then
+      find "$root" -name Cargo.toml -type f ! -path '*/target/*'
+    fi
+  done
+}
+
+package_name() {
+  sed -n 's/^[[:space:]]*name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | sed -n '1p'
+}
+
+os_features() {
+  if grep -Eq '^[[:space:]]*os-tests[[:space:]]*=' "$1"; then
+    printf '%s' "os-tests"
+  fi
+}
+
+os_test_targets() {
+  awk '
+    /^[[:space:]]*\[\[test\]\][[:space:]]*$/ {
+      if (in_test && name != "" && os) print name;
+      in_test = 1; name = ""; os = 0; next;
+    }
+    /^[[:space:]]*\[/ {
+      if (in_test && name != "" && os) print name;
+      in_test = 0; name = ""; os = 0; next;
+    }
+    in_test && /^[[:space:]]*name[[:space:]]*=/ {
+      line = $0;
+      sub(/^[^"]*"/, "", line);
+      sub(/".*/, "", line);
+      name = line;
+    }
+    in_test && /^[[:space:]]*required-features[[:space:]]*=/ && /"os-tests"/ { os = 1; }
+    END { if (in_test && name != "" && os) print name; }
+  ' "$1"
+}
+
+run_case() {
+  record=$1
+  package=${record%%|*}
+  rest=${record#*|}
+  target=${rest%%|*}
+  features=${rest#*|}
+  printf '\n==> Running backend OS test %s::%s [serial]\n' "$package" "$target"
+  log=$(mktemp)
+  set +e
+  if [ -n "$features" ]; then
+    run_cargo test -p "$package" --features "$features" --test "$target" -- --nocapture --test-threads=1 > "$log" 2>&1
+    status=$?
+  else
+    run_cargo test -p "$package" --test "$target" -- --nocapture --test-threads=1 > "$log" 2>&1
+    status=$?
+  fi
+  set -e
+  cat "$log"
+  if [ "$status" -ne 0 ]; then
+    failure_text=$(awk '
+      /FAILED|failures|panicked|Error:|error:|assertion|Caused by|timed out|exceeded/ { capture = 80 }
+      capture > 0 { print; capture-- }
+    ' "$log" | tail -n 120 || true)
+    if [ -z "$failure_text" ]; then
+      failure_text=$(tail -n 40 "$log")
+    fi
+    tail_text=$(printf '%s' "$failure_text" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+    printf '::error title=Backend OS test failed::%s::%s exited with %s%%0A%s\n' "$package" "$target" "$status" "$tail_text"
+    rm -f "$log"
+    exit "$status"
+  fi
+  rm -f "$log"
+}
+
+add_case() {
+  package=$1
+  target=$2
+  features=$3
+  path=$4
+  if [ "$LIST" -eq 1 ]; then
+    echo "$package::$target [serial] $path"
+  else
+    printf '%s|%s|%s\n' "$package" "$target" "$features" >> "$cases"
+  fi
+}
+
+find_backend_os_tests | sort | while IFS= read -r cargo_toml; do
+  crate_root=${cargo_toml%/Cargo.toml}
+  crate_root=${crate_root#./}
+  if [ "$crate_root" = "Cargo.toml" ] || [ -z "$crate_root" ]; then
+    crate_root=.
+  fi
+  package=$(package_name "$cargo_toml")
+  crate_dir=${crate_root##*/}
+  if [ -n "$CRATE" ] && [ "$CRATE" != "$package" ] && [ "$CRATE" != "$crate_dir" ]; then
+    continue
+  fi
+  features=$(os_features "$cargo_toml")
+  os_test_targets "$cargo_toml" | while IFS= read -r target; do
+    add_case "$package" "$target" "$features" "$cargo_toml"
+  done
+done
+
+if [ "$LIST" -eq 0 ]; then
+  if [ ! -s "$cases" ]; then
+    echo "No backend OS tests matched."
+  else
+    count=$(wc -l < "$cases" | tr -d ' ')
+    printf '\n==> Running %s backend OS tests serially\n' "$count"
+    while IFS= read -r record; do
+      run_case "$record"
+    done < "$cases"
+  fi
+fi

@@ -1,8 +1,4 @@
-ddgs
-duckduckgo-search
-imageio-ffmpeg
-opencv-python
-Pillow
-PyMuPDF
-yt-dlp
-libclang
+# Root Python installs are intentionally unused.
+# Command-owned Python dependencies are installed with uv in:
+# - commands/read_media/requirements.txt
+# - commands/web_discover/requirements.txt

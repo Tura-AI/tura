@@ -5,7 +5,11 @@ import { printJson } from "../output/json.js";
 import { t } from "../i18n.js";
 
 export async function sessionCommand(context: CliContext, args: string[]): Promise<void> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   const subcommand = args.shift() ?? "list";
   if (subcommand === "list") {
     const all = takeFlag(args, "--all");
@@ -41,7 +45,8 @@ export async function sessionCommand(context: CliContext, args: string[]): Promi
     const id = args.shift();
     if (!id) throw new CliUsageError(t("sessionRequiresId", { command: "task-management" }));
     const data = takeOption(args, "--data") ?? takeOption(args, "-d");
-    if (!data) throw new CliUsageError(t("sessionRequiresDataJson", { command: "task-management" }));
+    if (!data)
+      throw new CliUsageError(t("sessionRequiresDataJson", { command: "task-management" }));
     const session = await client.updateSessionTaskManagement(id, parseJson(data, "--data"));
     if (context.json || takeFlag(args, "--json")) printJson(session);
     else new HumanOutput(context.color).out(`${session.id}\t${session.status ?? t("updated")}`);
@@ -82,6 +87,11 @@ function parseJson(value: string, option: string): Record<string, unknown> {
     }
     return parsed as Record<string, unknown>;
   } catch (error) {
-    throw new CliUsageError(t("jsonObjectRequired", { option, error: error instanceof Error ? error.message : String(error) }));
+    throw new CliUsageError(
+      t("jsonObjectRequired", {
+        option,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 }

@@ -5,9 +5,23 @@
 .cargo/*
 !.cargo/config.toml
 .tura/
+.tura-router-debug/
+/tura_workspace/
+/workspace/
 
 # Rust build output
 target/
+/target-deep-swe-debug/
+/bin/
+/NONE
+
+# Portable self-contained package produced by scripts/build-release.*
+release/
+!tests/release/
+!tests/release/**
+
+# Generated CLI launchers (scripts/install.* registers tura-tui / tura-gateway here)
+cli-bin/
 
 # JavaScript and TypeScript dependency/build output
 node_modules/
@@ -19,6 +33,7 @@ node_modules/
 
 # Python fallback dependencies and caches
 scripts/packages/python/
+commands/*/.venv/
 **/__pycache__/
 *.py[cod]
 *$py.class
@@ -26,11 +41,13 @@ scripts/packages/python/
 # Local databases, downloaded binaries, and storage
 storage/
 sessions/
+db/install.ps1
 db/session_log/
 db/qdrant/qdrant.exe
 
 # Logs, benchmark output, screenshots, and temporary run artifacts
 log/
+/benchmark/
 crates/provider/log/
 artifacts/
 tmp/
@@ -39,10 +56,18 @@ apps/**/test-results/
 tests/command-run-codex-two-way/records/runs/
 tests/command-run-codex-two-way/records/summaries/
 priority-param-probe-results.json
+*.bun-build
 *.log
+*.pid
+*.sqlite
+*.sqlite3
+*.sqlite3-*
 *.tmp
+*.init.lock
+.npm-package-json.backup
 
 # Editors and OS metadata
 .idea/
 .vscode/
+.vs/
 .DS_Store

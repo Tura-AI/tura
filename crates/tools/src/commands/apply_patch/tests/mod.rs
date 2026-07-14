@@ -1,4 +1,6 @@
-use super::{execute, normalize_apply_patch_text, patch_text_from_payload};
+use super::{
+    access, comparable_path_string, execute, normalize_apply_patch_text, patch_text_from_payload,
+};
 use crate::runtime::tool::ToolPayload;
 use serde_json::json;
 use std::fs;
@@ -8,6 +10,11 @@ fn temp_workspace(name: &str) -> std::path::PathBuf {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("create temp workspace");
     path
+}
+
+fn assert_no_outer_message_or_guidance(output: &serde_json::Value) {
+    assert!(output.get("message").is_none(), "{output}");
+    assert!(output.get("guidance").is_none(), "{output}");
 }
 
 #[test]
@@ -99,7 +106,7 @@ fn update_file_applies_multiple_hunks_without_position_shift() {
 }
 
 #[test]
-fn failed_middle_file_continues_and_reports_partial_changes() {
+fn failed_middle_file_reports_successes_and_failures_separately() {
     let root = temp_workspace("partial");
     fs::write(root.join("first.txt"), "old\n").expect("first");
     fs::write(root.join("second.txt"), "actual\n").expect("second");
@@ -112,19 +119,21 @@ fn failed_middle_file_continues_and_reports_partial_changes() {
 
     assert!(!result.success);
     assert_eq!(result.output["error_type"], json!("ContextMismatch"));
-    assert_eq!(
-        result.output["partial_changes"][0]["path"],
-        json!("first.txt")
-    );
-    assert_eq!(
-        result.output["partial_changes"][1]["path"],
-        json!("third.txt")
-    );
-    assert_eq!(result.output["failed_change"]["path"], json!("second.txt"));
+    assert_no_outer_message_or_guidance(&result.output);
+    assert!(result.output.get("failed_change").is_none());
+    assert!(result.output.get("partial_changes").is_none());
+    assert_eq!(result.changes[0]["path"], json!("first.txt"));
+    assert_eq!(result.changes[1]["path"], json!("third.txt"));
     assert_eq!(
         result.output["failed_changes"][0]["failed_change"]["path"],
         json!("second.txt")
     );
+    assert!(result.output["failed_changes"][0]["message"]
+        .as_str()
+        .is_some_and(|text| text.contains("patch context not found")));
+    assert!(result.output["failed_changes"][0]["guidance"]
+        .as_str()
+        .is_some_and(|text| text.contains("after earlier changes were applied")));
     assert_eq!(
         fs::read_to_string(root.join("first.txt")).expect("first"),
         "new\n"
@@ -141,22 +150,51 @@ fn failed_middle_file_continues_and_reports_partial_changes() {
 }
 
 #[test]
-fn path_escape_failure_is_classified_as_permission_denied() {
-    let root = temp_workspace("path-escape");
-    let outside = root.parent().unwrap().join("outside-apply-patch-test.txt");
+fn add_file_accepts_absolute_path_outside_session_dir() {
+    let root = temp_workspace("outside-absolute");
+    let outside = root
+        .parent()
+        .expect("temp workspace should have a parent")
+        .join("outside-apply-patch-test.txt");
     let _ = fs::remove_file(&outside);
 
     let result = execute(
         &format!(
-            "*** Begin Patch\n*** Add File: {}\n+bad\n*** End Patch\n",
+            "*** Begin Patch\n*** Add File: {}\n+ok\n*** End Patch\n",
             outside.display()
         ),
         &root,
     );
 
-    assert!(!result.success);
-    assert_eq!(result.output["error_type"], json!("PermissionDenied"));
-    assert!(!outside.exists());
+    assert!(result.success, "{}", result.stderr);
+    assert_eq!(fs::read_to_string(&outside).expect("outside file"), "ok\n");
+    assert_eq!(
+        result.changes[0]["path"],
+        json!(outside.display().to_string())
+    );
+    let _ = fs::remove_file(outside);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn access_locks_absolute_path_outside_session_dir() {
+    let root = temp_workspace("outside-access");
+    let outside = root
+        .parent()
+        .expect("temp workspace should have a parent")
+        .join("outside-apply-patch-access.txt");
+    let patch = format!(
+        "*** Begin Patch\n*** Add File: {}\n+ok\n*** End Patch\n",
+        outside.display()
+    );
+
+    let access = access(&patch, &root);
+
+    assert_eq!(
+        access.write_paths,
+        vec![format!("absolute:{}", comparable_path_string(&outside))]
+    );
+    assert!(!access.workspace_write);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -311,7 +349,20 @@ fn update_file_missing_is_structured_error() {
 
     assert!(!result.success);
     assert_eq!(result.output["error_type"], json!("UpdateFileNotFound"));
-    assert_eq!(result.output["failed_change"]["path"], json!("missing.txt"));
+    assert_no_outer_message_or_guidance(&result.output);
+    assert!(result.output.get("failed_change").is_none());
+    assert_eq!(
+        result.output["failed_changes"][0]["failed_change"]["path"],
+        json!("missing.txt")
+    );
+    assert_eq!(
+        result.output["failed_changes"][0]["message"],
+        json!("UpdateFileNotFound: missing.txt")
+    );
+    assert_eq!(
+        result.output["failed_changes"][0]["guidance"],
+        json!("apply_patch failed; inspect error_type and message before retrying.")
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -326,7 +377,12 @@ fn delete_file_missing_is_structured_error() {
 
     assert!(!result.success);
     assert_eq!(result.output["error_type"], json!("DeleteFileNotFound"));
-    assert_eq!(result.output["failed_change"]["path"], json!("missing.txt"));
+    assert_no_outer_message_or_guidance(&result.output);
+    assert!(result.output.get("failed_change").is_none());
+    assert_eq!(
+        result.output["failed_changes"][0]["failed_change"]["path"],
+        json!("missing.txt")
+    );
     let _ = fs::remove_dir_all(root);
 }
 

@@ -1,9 +1,10 @@
 # Gateway Crate Architecture
 
-`crates/gateway` is the middleware between frontend clients and Tura backend
-crates. It provides the HTTP/SSE/WebSocket API surface consumed by the GUI,
-translates UI payloads into runtime/router/provider calls, persists UI-facing
-state, and streams backend events back to clients.
+`crates/gateway` is the boundary between frontend clients and Tura's backend
+crates. It gives the GUI one HTTP/SSE/WebSocket API surface, translates UI
+payloads into runtime/router/provider calls, persists UI-facing state, and
+streams backend events back to clients. Frontends should not need to know which
+crate answers the request; gateway does need to know, precisely.
 
 Gateway must not run the agent loop or own low-level command routing. Runtime
 work goes through `crates/runtime`; provider calls go through `crates/provider`;
@@ -77,7 +78,7 @@ crates/gateway/
     mock/
     bin/
       gateway.rs
-      tura.rs
+      tura_exec.rs
 
     channel.rs
     handler.rs
@@ -91,13 +92,74 @@ Product domains such as collaboration issues, workspaces, daemon APIs, and
 separate transport/domain/client directories are architectural growth areas,
 not directories that currently exist in this crate.
 
+## Direct Rust CLI Output
+
+The `src/bin/tura_exec.rs` binary (formerly `tura.rs`) is the direct Rust CLI
+for one local prompt turn. It does not require the gateway HTTP server.
+
+As a **thin front** it links no runtime/DB executor by default: it probe-first
+connects to (or detaches) the per-home `tura_router` **socket daemon**, sends
+`execution.enqueue_turn`, and renders the final assistant message from the
+single `tura_session_db` owner. `--embedded` instead runs the runtime in-process
+(codex-style) while still connecting to that same shared owner — it never opens
+its own database. If the CLI request socket closes before the turn finishes,
+router cancels the active session and aborts unfinished router-owned
+`command_run` work for that connection.
+
+Gateway startup must also adopt a compatible already-running router for the same
+home rather than starting a second backend owner. The published router endpoint
+contains `addr`, `version`, `pid`, and `process_start_time`; gateway health
+checks the socket before reuse and only force-terminates a stuck daemon when the
+PID start-time fingerprint still matches. GUI/TUI launchers keep gateway stdin
+ignored and leave the gateway alive when the front exits. The gateway owns the
+desktop tray/menu lifecycle: a tray left click launches the packaged `tura_gui`
+desktop app with gateway/workspace/session arguments, while the context menu
+keeps short localized labels and delegates GUI items to the same desktop entry
+instead of opening the browser-served web GUI. The tray's background-process
+count and kill-all action are limited to runtime-created shell command processes
+marked with `TURA_BACKGROUND_PROCESS_KIND=runtime_shell`; gateway, router,
+session_db, runtime workers, and other native Tura owners are not tray-managed
+background processes. The Tauri shell owns the GUI
+single-instance boundary, so any duplicate tray, session, or direct executable
+launch is intercepted by the running `tura_gui` process, navigates with the new
+arguments, unminimizes the main window, and focuses it instead of creating a
+second GUI process. Router receives periodic
+`lifecycle.front_heartbeat` leases from live gateways and self-shuts down after
+its idle grace when no valid gateway lease, exec socket, active runtime worker,
+or active turn remains.
+Process/state regressions are
+covered by the mandatory root test
+`tests/os_testing/process_state_management_e2e.rs`: stale endpoints, gateway
+restart, same-home gateway lock conflict, orphan router adoption, orphan
+session_db adoption through router, router-owned command_run cancellation on
+socket disconnect, stdin-EOF gateway exit followed by router idle self-shutdown,
+and endpoint cleanup after graceful shutdown.
+`tests/os_testing/process_lifecycle_policy_matrix.rs` pins the same lifecycle
+contract for Windows, Linux, macOS, and fallback OS families so front leases,
+detached reusable owners, process-group cleanup, and Job Object cleanup remain
+explicit.
+
+Its output contract is:
+
+- default text mode prints only the final assistant message to `stdout`;
+- default lightweight progress goes to `stderr`, including runtime activation,
+  step summaries, and command-run tool start/completion lines;
+- `--quiet` and `--silent` suppress `stderr` progress;
+- `--json` switches `stdout` to JSONL events and disables human progress on
+  `stderr`;
+- `--output-last-message PATH` writes the same final assistant message that
+  text mode prints to `stdout`.
+
+This keeps shell pipelines and file redirects stable while still giving humans
+visible progress during long-running tasks.
+
 ## Owns
 
 Gateway owns:
 
 - frontend-facing HTTP API routes and DTOs
 - request validation, auth, workspace scoping, role checks, and response shaping
-- compatibility mapping between Multica-style APIs and Tura session/runtime APIs
+- mapping between Multica-style APIs and Tura session/runtime APIs
 - UI-facing persistence for workspaces, users, members, invitations, issues,
   comments, labels, attachments, reactions, subscribers, projects, squads,
   agents, skills, autopilots, chat, inbox, notification preferences, pins,
@@ -157,10 +219,10 @@ GET /session-log/{sessionID}/records?page=0&page_size=100
 The gateway binary also exposes the raw router/session-log bridge:
 
 ```powershell
-'{"command":"list_workspaces"}' | target\debug\gateway.exe session-log
-'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\gateway.exe session-log
-'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+'{"command":"list_workspaces"}' | target\debug\tura_gateway.exe session-log
+'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\tura_gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_gateway.exe session-log
 ```
 
 Use `get_session` when debugging the persisted `SessionInfo`, `management`,
@@ -170,9 +232,8 @@ message/event history.
 ## Persistence Model
 
 To recreate Multica's functionality, gateway needs durable product state.
-The persistence backend may be SQLite for local/single-user Tura deployments
-and PostgreSQL for hosted/multi-user deployments, but the domain model must not
-depend on the storage engine.
+The local persistence backend is embedded SQLite through `tura_session_db`, but
+the domain model must not depend on the storage engine.
 
 Required domains and fields:
 
@@ -351,8 +412,7 @@ All handlers should return:
 }
 ```
 
-for failures. Existing routes can keep legacy behavior until migration, but new
-Multica-compatible routes should use the shared envelope.
+for failures. Multica-style routes should use the shared envelope.
 
 ## Session Plan And Task Management
 
@@ -417,19 +477,28 @@ scheduled_task
 polling_task
 ```
 
+`status` and `start_condition` are separate fields. Do not pass
+`session_idle`, `user_action`, `scheduled_task`, or `polling_task` through the
+`status` field; invalid task-management patches are ignored and the previous
+state is kept.
+
 Single-task `task_management` is an object. Object patches apply to the active
 single task and may set the task `task_id`. Multi-task updates that need
 task-specific matching use `task_management.tasks[]`; array entries match by
 `task_id` and create missing tasks using supplied fields plus defaults.
 
-Current patch validation behavior is intentionally compatibility-preserving:
-invalid task-management patches are logged and ignored, prior state is kept,
-and the session response is returned. GUI/TUI behavior must reconcile by
-refreshing gateway state.
+Current patch validation behavior logs and ignores invalid task-management
+patches, keeps prior state, and returns the session response. GUI/TUI behavior
+must reconcile by refreshing gateway state.
 
 User messages appended through gateway message APIs are also appended to the
 session-management log so runtime context and hydration can keep follow-up
 constraints.
+
+If `POST /session/{sessionID}/prompt_async` starts as a normal prompt but the
+router reports `session_active_turn` for that session, gateway must treat the
+prompt as a follow-up command and forward it through `session.append_user_command`
+instead of surfacing a MANO failure.
 
 Pending follow-up controls are currently projected from `task_management` and
 `/session/{sessionID}/todo`. The current source of truth is the enriched
@@ -605,6 +674,13 @@ through lifecycle services.
 Gateway may expose UI-facing process, PTY, command status, managed service
 status, or project startup APIs, but lifecycle work is delegated to
 `crates/router` or narrow helpers.
+
+`RouterProcess` (`router_process.rs`) supervises the single persistent router
+(flock-guarded single instance via `process_lock.rs`, keyed by root/mode). It
+talks to the router over a line protocol and **multiplexes by `request_id`**: a
+background reader thread dispatches each response to a per-call mailbox, so
+concurrent calls never serialize behind a shared read lock, a stuck call times
+out without blocking others, and router EOF unblocks all pending callers.
 
 The router client should support:
 
@@ -1144,7 +1220,7 @@ Requirements:
 
 Unit tests:
 
-- DTO serialization compatibility
+- DTO serialization
 - workspace role middleware
 - auth/PAT/daemon token validation
 - issue filters/grouping/search params

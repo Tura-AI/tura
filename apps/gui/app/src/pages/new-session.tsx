@@ -1,45 +1,25 @@
-import {
-  type Command,
-  type FileInfo,
-  type PollInterval,
-  type Project,
-  type StartCondition,
-} from "@tura/gateway-sdk";
+import { type Command, type FileInfo, type Project, type StartCondition } from "@tura/gateway-sdk";
 import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import Search from "lucide-solid/icons/search";
-import {
-  For,
-  type JSX,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-} from "solid-js";
+import { For, type JSX, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Composer } from "../conversation/conversation-view";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
 import { type AppState, type ComposerImage } from "../state/global-store";
 
-import {
-  defaultWorkspaceDirectory,
-  samePath,
-  shortWorkspaceLabel,
-} from "../utils/app-format";
+import { defaultWorkspaceDirectory, samePath, shortWorkspaceLabel } from "../utils/app-format";
 import { PlanComposerControls } from "./plan/plan-composer";
 export function ConversationEmptyView(props: {
   state: AppState;
   slashCommands: Command[];
-  onWorkspace: (directory: string) => void;
+  onWorkspace: (directory: string) => void | Promise<void>;
   onCreateWorkspace: (name: string) => void | Promise<void>;
   onPickDirectory: () => Promise<void>;
   onComposerText: (value: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
   onDraftStartCondition: (value: StartCondition) => void;
-  onDraftStartAt: (value: string) => void;
-  onDraftPollInterval: (value: PollInterval) => void;
   agentMenu?: JSX.Element;
   onSubmit: () => void;
   onQueueSubmit?: () => void;
@@ -62,9 +42,7 @@ export function ConversationEmptyView(props: {
         if (!normalizedQuery) {
           return true;
         }
-        return `${project.name} ${project.worktree}`
-          .toLowerCase()
-          .includes(normalizedQuery);
+        return `${project.name} ${project.worktree}`.toLowerCase().includes(normalizedQuery);
       })
       .slice(0, 10);
   });
@@ -78,6 +56,8 @@ export function ConversationEmptyView(props: {
           images={props.state.composerImages}
           submitting={props.state.submitting}
           slashCommands={props.slashCommands}
+          gatewayUrl={props.state.gatewayUrl}
+          directory={props.state.directory}
           onText={props.onComposerText}
           onImages={props.onComposerImages}
           onSubmit={props.onSubmit}
@@ -96,11 +76,7 @@ export function ConversationEmptyView(props: {
               />
               <PlanComposerControls
                 startCondition={props.state.planDraftStartCondition}
-                startAt={props.state.planDraftStartAt}
-                pollInterval={props.state.planDraftPollInterval}
                 onStartCondition={props.onDraftStartCondition}
-                onStartAt={props.onDraftStartAt}
-                onPollInterval={props.onDraftPollInterval}
               />
               {props.agentMenu}
             </>
@@ -110,7 +86,7 @@ export function ConversationEmptyView(props: {
       <Show when={naming()}>
         <NameDialog
           title={t("createWorkspace")}
-          description={t("renameSessionHint")}
+          description={t("nameDialogHint")}
           initialValue="New project"
           onCancel={() => setNaming(false)}
           onSave={(value) => {
@@ -129,16 +105,14 @@ export function NewSessionWorkspacePicker(props: {
   query: string;
   defaultDirectory: string;
   onQuery: (value: string) => void;
-  onWorkspace: (directory: string) => void;
+  onWorkspace: (directory: string) => void | Promise<void>;
   onCreateWorkspace: () => void;
   onPickDirectory: () => Promise<void>;
 }) {
   let root: HTMLElement | undefined;
   const [open, setOpen] = createSignal(false);
   const selectedProject = createMemo(() =>
-    props.projects.find((project) =>
-      samePath(project.worktree, props.directory),
-    ),
+    props.projects.find((project) => samePath(project.worktree, props.directory)),
   );
 
   async function pickDirectory() {
@@ -170,9 +144,7 @@ export function NewSessionWorkspacePicker(props: {
         <FolderOpen size={15} strokeWidth={1.6} />
         <span>
           {selectedProject()?.name ??
-            (props.directory
-              ? shortWorkspaceLabel(props.directory)
-              : t("chooseWorkspace"))}
+            (props.directory ? shortWorkspaceLabel(props.directory) : t("chooseWorkspace"))}
         </span>
         <ChevronDown size={13} strokeWidth={1.8} />
       </button>
@@ -197,15 +169,13 @@ export function NewSessionWorkspacePicker(props: {
                     samePath(project.worktree, props.directory) && "selected",
                   )}
                   onClick={() => {
-                    props.onWorkspace(project.worktree);
+                    void props.onWorkspace(project.worktree);
                     setOpen(false);
                   }}
                   title={project.worktree}
                 >
                   <FolderOpen size={15} strokeWidth={1.6} />
-                  <span>
-                    {project.name || shortWorkspaceLabel(project.worktree)}
-                  </span>
+                  <span>{project.name || shortWorkspaceLabel(project.worktree)}</span>
                   <Show when={samePath(project.worktree, props.directory)}>
                     <Check size={14} strokeWidth={1.8} />
                   </Show>
@@ -223,7 +193,7 @@ export function NewSessionWorkspacePicker(props: {
             <button
               type="button"
               onClick={() => {
-                props.onWorkspace(props.defaultDirectory);
+                void props.onWorkspace(props.defaultDirectory);
                 setOpen(false);
               }}
             >
@@ -289,10 +259,7 @@ export function NameDialog(props: {
 
 export function FileTreeLabel(props: { file: FileInfo; expanded?: boolean }) {
   return (
-    <Show
-      when={props.file.type === "directory"}
-      fallback={<span>{props.file.name}</span>}
-    >
+    <Show when={props.file.type === "directory"} fallback={<span>{props.file.name}</span>}>
       <span>{`${props.file.name}/`}</span>
     </Show>
   );

@@ -1,0 +1,74 @@
+name: Feature request
+description: Propose a narrowly scoped user-facing or maintainer-facing capability.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for new behavior. Use the Performance proposal or Provider compatibility form when that is the primary goal.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Current problem
+      description: Describe who is blocked, the current behavior, and any workaround. Do not start with the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Observable outcome
+      description: State what a user or maintainer can observe when this is complete.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence of need
+      description: Link usage examples, repeated failures, roadmap items, or other evidence that the requirement exists now.
+    validations:
+      required: true
+  - type: textarea
+    id: minimal
+    attributes:
+      label: Smallest viable scope
+      description: Separate required behavior from future or speculative extensions.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Runtime or state management
+        - Session DB or persistence
+        - Gateway or CLI
+        - TUI
+        - GUI Plan, Calendar, or Session Tasks
+        - Source installation, release, or CI
+        - Testing or developer tooling
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable criteria and the smallest owning test layer.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility or migration concerns
+      description: Complete only when stored data, APIs, commands, or existing workflows may change.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and roadmap items.
+          required: true
+        - label: This request does not contain credentials or private session data.
+          required: true

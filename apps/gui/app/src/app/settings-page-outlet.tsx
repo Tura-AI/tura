@@ -1,13 +1,10 @@
-import type {
-  AgentUpsertRequest,
-  StoredAgent,
-  TuraConfigModelPair,
-} from "@tura/gateway-sdk";
+import type { AgentUpsertRequest, StoredAgent, TuraConfigModelPair } from "@tura/gateway-sdk";
 import type { Setter } from "solid-js";
 import {
   AVATAR_WORKSPACE_CONFIG_KEY,
   normalizeAvatarSettings,
 } from "../components/avatar/agent-avatar-canvas";
+import { setLanguage } from "../i18n";
 import { SettingsView } from "../pages/settings/settings-view";
 import type { AppState } from "../state/global-store";
 
@@ -21,10 +18,7 @@ export function SettingsPageOutlet(props: {
   onModelTier: (tier: string, option: TuraConfigModelPair) => Promise<void>;
   onRefreshAgents: () => Promise<void>;
   onGetAgent: (agentId: string) => Promise<StoredAgent | undefined>;
-  onSaveAgent: (
-    agentId: string | undefined,
-    payload: AgentUpsertRequest,
-  ) => Promise<void>;
+  onSaveAgent: (agentId: string | undefined, payload: AgentUpsertRequest) => Promise<void>;
   onDeleteAgent: (agentId: string) => Promise<void>;
 }) {
   return (
@@ -42,26 +36,26 @@ export function SettingsPageOutlet(props: {
       onGetAgent={props.onGetAgent}
       onSaveAgent={props.onSaveAgent}
       onDeleteAgent={props.onDeleteAgent}
-      onSavePersonalization={(avatar) =>
+      onSavePersonalization={(avatar, personaId) =>
         props.onRuntimeSetting((previous) => ({
           ...previous,
           workspaceConfigDraft: {
             ...previous.workspaceConfigDraft,
-            [AVATAR_WORKSPACE_CONFIG_KEY]: JSON.stringify(
-              normalizeAvatarSettings(avatar),
-            ),
+            active_persona: personaId,
+            [AVATAR_WORKSPACE_CONFIG_KEY]: JSON.stringify(normalizeAvatarSettings(avatar)),
           },
         }))
       }
-      onLanguage={(language) =>
+      onLanguage={(language) => {
+        setLanguage(language);
         props.onRuntimeSetting((previous) => ({
           ...previous,
-          configDraft: {
-            ...previous.configDraft,
+          workspaceConfigDraft: {
+            ...previous.workspaceConfigDraft,
             language,
           },
-        }))
-      }
+        }));
+      }}
       onConfigureProviders={() =>
         props.setState((previous) => ({
           ...previous,
@@ -75,6 +69,16 @@ export function SettingsPageOutlet(props: {
           configDraft: {
             ...previous.configDraft,
             theme: themeMode,
+          },
+        }))
+      }
+      onCornerRadius={(cornerRadius) =>
+        props.onRuntimeSetting((previous) => ({
+          ...previous,
+          cornerRadius,
+          configDraft: {
+            ...previous.configDraft,
+            corner_radius: cornerRadius,
           },
         }))
       }

@@ -1,4 +1,12 @@
 import type { AgentUpsertRequest, StoredAgent } from "../types/agent.js";
+import type {
+  AboutInfo,
+  AboutOpenResponse,
+  AboutOpenTarget,
+  AboutStarResponse,
+  AboutUpdateCheckResponse,
+  AboutUpdateInstallResponse,
+} from "../types/about.js";
 import type { SessionConfig } from "../types/config.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
 import type {
@@ -11,8 +19,6 @@ import type {
   GatewayPathResponse,
   Project,
   ServiceStatusResponse,
-  SessionLogSession,
-  SessionLogWorkspace,
   PersonaUpsertRequest,
   StoredPersona,
   TuraConfigResponse,
@@ -20,25 +26,39 @@ import type {
 } from "../types/gateway.js";
 import type {
   OAuthAuthorizeResponse,
+  OAuthCallbackInput,
+  ProviderAuthActionResponse,
   ProviderAuthMethodsResponse,
   ProviderAuthStatus,
   ProviderAuthUpsert,
+  ProviderAuthValidationInput,
   ProviderListResponse,
 } from "../types/provider.js";
-import type { CreateSessionRequest, Message, MessageEnvelope, PromptPayload, Session } from "../types/session.js";
-import { normalizeMessage } from "../types/session.js";
+import type {
+  CreateSessionRequest,
+  ForkSessionRequest,
+  Message,
+  PromptPayload,
+  Session,
+} from "../types/session.js";
+import { defaultGatewayUrl } from "./active-url.js";
 import { directoryHeader } from "./directory.js";
 import { GatewayHttpError } from "./errors.js";
 import { parseSse } from "./events.js";
 
 export interface GatewayClientOptions {
-  baseUrl: string;
+  baseUrl?: string;
   directory: string;
   verbose?: boolean;
   timeoutMs?: number;
 }
 
 export type GatewayHttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+export interface ListMessagesOptions {
+  limit?: number;
+  before?: string;
+  after?: string;
+}
 
 export class GatewayClient {
   readonly baseUrl: string;
@@ -47,14 +67,37 @@ export class GatewayClient {
   private timeoutMs: number;
 
   constructor(options: GatewayClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = (options.baseUrl ?? defaultGatewayUrl()).replace(/\/+$/, "");
     this.directory = options.directory;
     this.verbose = Boolean(options.verbose);
-    this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.timeoutMs = options.timeoutMs ?? 20_000;
   }
 
   async health(): Promise<{ healthy: boolean; version: string }> {
     return this.get("/global/health");
+  }
+
+  async aboutInfo(): Promise<AboutInfo> {
+    return this.get("/about");
+  }
+
+  async starTuraRepository(): Promise<AboutStarResponse> {
+    return this.post("/about/star", {});
+  }
+
+  async openAboutTarget(target: AboutOpenTarget): Promise<AboutOpenResponse> {
+    return this.post("/about/open", { target });
+  }
+
+  async checkTuraUpdate(): Promise<AboutUpdateCheckResponse> {
+    return this.get("/about/update/check");
+  }
+
+  async installTuraUpdate(
+    version: string,
+    sessionID?: string,
+  ): Promise<AboutUpdateInstallResponse> {
+    return this.post("/about/update/install", { version, session_id: sessionID });
   }
 
   async syncWorkspace(): Promise<void> {
@@ -113,7 +156,9 @@ export class GatewayClient {
     return this.post("/file/open-location", {}, { directory: this.directory, path });
   }
 
-  async listSessions(options: { all?: boolean; includeChildren?: boolean; limit?: number } = {}): Promise<Session[]> {
+  async listSessions(
+    options: { all?: boolean; includeChildren?: boolean; limit?: number } = {},
+  ): Promise<Session[]> {
     const query: Record<string, string | number | boolean> = {};
     if (!options.all) query.directory = this.directory;
     if (options.includeChildren) query.includeChildren = true;
@@ -122,31 +167,31 @@ export class GatewayClient {
   }
 
   async createSession(payload: CreateSessionRequest = {}): Promise<Session> {
-    return this.post("/session", { directory: this.directory, ...payload }, { directory: this.directory });
+    return this.post(
+      "/session",
+      { directory: this.directory, ...payload },
+      { directory: this.directory },
+    );
+  }
+
+  async forkSession(sessionID: string, payload: ForkSessionRequest = {}): Promise<Session> {
+    return this.post(`/session/${encodeURIComponent(sessionID)}/fork`, {
+      directory: this.directory,
+      copy_context: true,
+      ...payload,
+    });
   }
 
   async getSession(sessionID: string): Promise<Session> {
-    const sessions = await this.listSessions({ all: true, includeChildren: true });
-    const session = sessions.find((item) => item.id === sessionID);
-    if (!session) throw new Error(`session not found: ${sessionID}`);
-    return session;
+    return this.get(`/session/${encodeURIComponent(sessionID)}`);
   }
 
-  async listMessages(sessionID: string): Promise<Message[]> {
-    const response = await this.get<Array<Message | MessageEnvelope>>(`/session/${encodeURIComponent(sessionID)}/message`);
-    return response.map(normalizeMessage);
-  }
-
-  async listSessionLogWorkspaces(): Promise<SessionLogWorkspace[]> {
-    return this.get("/session-log/workspaces");
-  }
-
-  async listSessionLogSessions(): Promise<SessionLogSession[]> {
-    return this.get("/session-log/sessions", { directory: this.directory });
-  }
-
-  async listSessionLogRecords(sessionID: string): Promise<unknown[]> {
-    return this.get(`/session-log/${encodeURIComponent(sessionID)}/records`);
+  async listMessages(sessionID: string, options: ListMessagesOptions = {}): Promise<Message[]> {
+    const query: Record<string, string | number | boolean> = {};
+    if (options.limit) query.limit = options.limit;
+    if (options.before) query.before = options.before;
+    if (options.after) query.after = options.after;
+    return this.get<Message[]>(`/session/${encodeURIComponent(sessionID)}/message`, query);
   }
 
   async sendPromptAsync(sessionID: string, payload: PromptPayload): Promise<void> {
@@ -157,7 +202,14 @@ export class GatewayClient {
     return this.patch(`/session/${encodeURIComponent(sessionID)}`, payload);
   }
 
-  async updateSessionTaskManagement(sessionID: string, payload: Record<string, unknown>): Promise<Session> {
+  async deleteSession(sessionID: string): Promise<boolean> {
+    return this.delete(`/session/${encodeURIComponent(sessionID)}`);
+  }
+
+  async updateSessionTaskManagement(
+    sessionID: string,
+    payload: Record<string, unknown>,
+  ): Promise<Session> {
     return this.patch(`/session/${encodeURIComponent(sessionID)}/task-management`, payload);
   }
 
@@ -178,7 +230,27 @@ export class GatewayClient {
   }
 
   async providerOauthAuthorize(providerID: string, method = 0): Promise<OAuthAuthorizeResponse> {
-    return this.post(`/provider/${encodeURIComponent(providerID)}/oauth/authorize`, { method }, { directory: this.directory });
+    return this.post(
+      `/provider/${encodeURIComponent(providerID)}/oauth/authorize`,
+      { method },
+      { directory: this.directory },
+    );
+  }
+
+  async providerOauthCallback(
+    providerID: string,
+    payload: OAuthCallbackInput,
+  ): Promise<ProviderAuthActionResponse> {
+    return this.post(`/provider/${encodeURIComponent(providerID)}/oauth/callback`, payload, {
+      directory: this.directory,
+    });
+  }
+
+  async providerAuthValidate(
+    providerID: string,
+    payload: ProviderAuthValidationInput = {},
+  ): Promise<ProviderAuthActionResponse> {
+    return this.post(`/provider/${encodeURIComponent(providerID)}/auth/validate`, payload);
   }
 
   async providerLogout(providerID: string): Promise<unknown> {
@@ -204,7 +276,10 @@ export class GatewayClient {
     return this.get(`/agent/${encodeURIComponent(agentID)}`);
   }
 
-  async updateAgent(agentID: string, payload: { config?: unknown; prompt?: string | null }): Promise<StoredAgent> {
+  async updateAgent(
+    agentID: string,
+    payload: { config?: unknown; prompt?: string | null },
+  ): Promise<StoredAgent> {
     await this.syncWorkspace();
     return this.patch(`/agent/${encodeURIComponent(agentID)}`, payload);
   }
@@ -259,14 +334,26 @@ export class GatewayClient {
   }
 
   async raw<T = unknown>(method: GatewayHttpMethod, path: string, body?: unknown): Promise<T> {
-    return this.request<T>(method, path.startsWith("/") ? path : `/${path}`, body, { directory: this.directory });
+    return this.request<T>(method, path.startsWith("/") ? path : `/${path}`, body, {
+      directory: this.directory,
+    });
   }
 
   streamEvents(signal?: AbortSignal): AsyncGenerator<GatewayEventEnvelope> {
     return this.eventStream("/event", signal);
   }
 
-  private async *eventStream(path: string, signal?: AbortSignal): AsyncGenerator<GatewayEventEnvelope> {
+  streamSessionEvents(
+    sessionID: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<GatewayEventEnvelope> {
+    return this.eventStream(`/session/${encodeURIComponent(sessionID)}/events`, signal);
+  }
+
+  private async *eventStream(
+    path: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<GatewayEventEnvelope> {
     const response = await fetch(this.url(path), {
       method: "GET",
       headers: this.headers(),
@@ -278,23 +365,41 @@ export class GatewayClient {
     yield* parseSse(response);
   }
 
-  private async get<T>(path: string, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async get<T>(
+    path: string,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("GET", path, undefined, query);
   }
 
-  private async post<T>(path: string, body: unknown, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async post<T>(
+    path: string,
+    body: unknown,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("POST", path, body, query);
   }
 
-  private async put<T>(path: string, body: unknown, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async put<T>(
+    path: string,
+    body: unknown,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("PUT", path, body, query);
   }
 
-  private async patch<T>(path: string, body: unknown, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async patch<T>(
+    path: string,
+    body: unknown,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("PATCH", path, body, query);
   }
 
-  private async delete<T>(path: string, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async delete<T>(
+    path: string,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("DELETE", path, undefined, query);
   }
 
@@ -303,12 +408,15 @@ export class GatewayClient {
     path: string,
     body?: unknown,
     query?: Record<string, string | number | boolean>,
+    timeoutMs?: number,
   ): Promise<T> {
     const url = this.url(path, query);
     if (this.verbose) console.error(`[gateway] ${method} ${url}`);
     let response: Response;
     const controller = new AbortController();
-    const timer = this.timeoutMs > 0 ? setTimeout(() => controller.abort(), this.timeoutMs) : undefined;
+    const requestTimeoutMs = timeoutMs ?? this.timeoutMs;
+    const timer =
+      requestTimeoutMs > 0 ? setTimeout(() => controller.abort(), requestTimeoutMs) : undefined;
     try {
       response = await fetch(url, {
         method,
@@ -347,6 +455,11 @@ export class GatewayClient {
 
   private async httpError(response: Response): Promise<GatewayHttpError> {
     const body = await response.text().catch(() => "");
-    return new GatewayHttpError(response.status, response.url, `gateway returned HTTP ${response.status}`, body);
+    return new GatewayHttpError(
+      response.status,
+      response.url,
+      `gateway returned HTTP ${response.status}`,
+      body,
+    );
   }
 }

@@ -1,11 +1,5 @@
 import { GatewayClient } from "@tura/gateway-sdk";
-import {
-  createContext,
-  createMemo,
-  useContext,
-  type Accessor,
-  type JSX,
-} from "solid-js";
+import { createContext, createMemo, useContext, type Accessor, type JSX } from "solid-js";
 import type { AppState } from "../state/global-store";
 
 export type ExecutionContextValue = {
@@ -17,16 +11,11 @@ export type ExecutionContextValue = {
 
 const ExecutionContext = createContext<ExecutionContextValue>();
 
-export function ExecutionProvider(props: {
-  state: Accessor<AppState>;
-  gatewayUrl: Accessor<string>;
-  children: JSX.Element;
-}) {
+export function ExecutionProvider(props: { state: Accessor<AppState>; children: JSX.Element }) {
   const directory = createMemo(() => props.state().directory);
   const client = createMemo(
     () =>
       new GatewayClient({
-        baseUrl: props.gatewayUrl(),
         directory: directory(),
       }),
   );

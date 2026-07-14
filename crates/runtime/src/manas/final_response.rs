@@ -1,9 +1,9 @@
 use crate::prompt_style::runtime_fallback;
 use crate::state_machine::session_management::SessionManagement;
 
-use super::gateway_events::summarize_single_tool_output;
+use crate::gateway_events::summarize_single_tool_output;
 
-pub(super) fn user_visible_runtime_text(text: &str) -> Option<String> {
+pub(crate) fn user_visible_runtime_text(text: &str) -> Option<String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return None;
@@ -65,6 +65,27 @@ pub(super) fn user_visible_runtime_text(text: &str) -> Option<String> {
         return None;
     }
     Some(fallback)
+}
+
+pub(crate) fn user_visible_runtime_output_text(output: &serde_json::Value) -> Option<String> {
+    for key in [
+        "reply_message",
+        "output_text",
+        "final_text",
+        "message",
+        "text",
+        "content",
+        "summary",
+    ] {
+        if let Some(text) = output.get(key).and_then(serde_json::Value::as_str) {
+            if let Some(visible) = user_visible_runtime_text(text) {
+                return Some(visible);
+            }
+        }
+    }
+    let content = tura_llm_rust::normalize_response_content(output);
+    let text = tura_llm_rust::extract_response_text(&content)?;
+    user_visible_runtime_text(&tura_llm_rust::strip_thought_blocks(&text))
 }
 
 fn strip_tool_payload_suffix(text: &str) -> String {
@@ -131,6 +152,7 @@ pub(super) fn looks_like_tool_payload(text: &str) -> bool {
         || trimmed.contains("\"input\"")
         || trimmed.contains("\"last_tool_call_status\"")
         || trimmed.contains("\"last_tool_call_summary\"")
+        || trimmed.contains("\"task_group\"")
         || trimmed.contains("\"step_summary\"")
 }
 
@@ -139,6 +161,7 @@ pub(super) fn json_looks_like_tool_payload(value: &serde_json::Value) -> bool {
         serde_json::Value::Object(object) => {
             let has_reporting_fields = object.contains_key("last_tool_call_status")
                 || object.contains_key("last_tool_call_summary")
+                || object.contains_key("task_group")
                 || object.contains_key("step_summary");
             let has_tool_shape = object.contains_key("requests")
                 || object.contains_key("commands")
@@ -191,7 +214,7 @@ pub(super) fn is_runtime_markup_line(line: &str) -> bool {
         || (lower.starts_with("</tool_call") && lower.ends_with('>'))
 }
 
-pub(super) fn summarize_tool_results_for_user(session: &SessionManagement) -> Option<String> {
+pub(crate) fn summarize_tool_results_for_user(session: &SessionManagement) -> Option<String> {
     let tool_results: Vec<_> = session
         .session_log
         .iter()
@@ -220,4 +243,79 @@ pub(super) fn summarize_tool_results_for_user(session: &SessionManagement) -> Op
     }
 
     Some(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{user_visible_runtime_output_text, user_visible_runtime_text};
+    use serde_json::json;
+    #[test]
+    fn user_visible_runtime_text_extracts_reply_message_from_tool_payload() {
+        let text = json!({
+            "error": null,
+            "input": {
+                "reply_message": "final answer",
+                "new_learning": "",
+                "runtime_id": "runtime-1"
+            }
+        })
+        .to_string();
+
+        assert_eq!(
+            user_visible_runtime_text(&text).as_deref(),
+            Some("final answer")
+        );
+    }
+
+    #[test]
+    fn user_visible_runtime_text_hides_raw_tool_argument_payload() {
+        let text = json!({
+                "requests": [{
+                    "path": "services/sd-text-to-image/main.py",
+                    "start_line": 1,
+                    "end_line": 250
+                }],
+                "step_summary": "Read the Stable Diffusion image service main.py to find the port it runs on."
+            })
+            .to_string();
+
+        assert_eq!(user_visible_runtime_text(&text), None);
+    }
+
+    #[test]
+    fn user_visible_runtime_output_text_extracts_string_output() {
+        let output = json!("你好。小主管已上线。");
+
+        assert_eq!(
+            user_visible_runtime_output_text(&output).as_deref(),
+            Some("你好。小主管已上线。")
+        );
+    }
+
+    #[test]
+    fn user_visible_runtime_output_text_extracts_fixed_provider_text_locations() {
+        for (output, expected) in [
+            (
+                json!({"output_text": "from output_text"}),
+                "from output_text",
+            ),
+            (json!({"final_text": "from final_text"}), "from final_text"),
+            (json!({"message": "from message"}), "from message"),
+            (json!({"text": "from text"}), "from text"),
+            (json!({"content": "from content"}), "from content"),
+            (
+                json!({"choices": [{"message": {"content": "from choice"}}]}),
+                "from choice",
+            ),
+            (
+                json!({"parts": [{"text": "from "}, {"text": "parts"}]}),
+                "from parts",
+            ),
+        ] {
+            assert_eq!(
+                user_visible_runtime_output_text(&output).as_deref(),
+                Some(expected)
+            );
+        }
+    }
 }

@@ -1,10 +1,4 @@
-import {
-  createContext,
-  createMemo,
-  useContext,
-  type Accessor,
-  type JSX,
-} from "solid-js";
+import { createContext, createMemo, useContext, type Accessor, type JSX } from "solid-js";
 import type { AppState } from "../state/global-store";
 
 export type WorkspaceContextValue = {
@@ -16,19 +10,14 @@ export type WorkspaceContextValue = {
 
 const WorkspaceContext = createContext<WorkspaceContextValue>();
 
-export function WorkspaceProvider(props: {
-  state: Accessor<AppState>;
-  children: JSX.Element;
-}) {
+export function WorkspaceProvider(props: { state: Accessor<AppState>; children: JSX.Element }) {
   const workspaceId = createMemo(() => props.state().workspaces[0]?.id);
   const issues = createMemo(() => props.state().productIssues);
   const projects = createMemo(() => props.state().productProjects);
   const workspaces = createMemo(() => props.state().workspaces);
 
   return (
-    <WorkspaceContext.Provider
-      value={{ workspaceId, issues, projects, workspaces }}
-    >
+    <WorkspaceContext.Provider value={{ workspaceId, issues, projects, workspaces }}>
       {props.children}
     </WorkspaceContext.Provider>
   );

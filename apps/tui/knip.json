@@ -1,0 +1,8 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "project": ["src/**/*.ts"],
+  "ignoreDependencies": ["playwright"],
+  "ignoreBinaries": ["python", "taskkill"],
+  "exclude": ["exports", "types"],
+  "ignoreExportsUsedInFile": true
+}

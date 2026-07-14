@@ -1,10 +1,7 @@
-mod gateway_session;
 mod process;
-mod session_bootstrap;
 
 use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::session_management::{SessionInput, SessionManagement};
-pub(crate) use gateway_session::persist_gateway_session;
 pub use process::{
     orchestrate, orchestrate_for_session, orchestrate_for_session_in_directory,
     process_from_user_internal,
@@ -18,6 +15,7 @@ pub type ManasEntry = fn(&SessionManagement) -> Result<Vec<AgentManagement>, Str
 pub struct ManoProcessResult {
     pub session: SessionManagement,
     pub agents: Vec<AgentManagement>,
+    pub final_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Default)]

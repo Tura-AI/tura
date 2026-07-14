@@ -3,10 +3,10 @@
 //! structured stdout (results/matches/outline/…) as `path:line:content`
 //! CLI lines, with diagnostics/errors extracted.
 //!
-//! Pure rendering layer carved out of `context_management.rs`; exposes only
-//! `command_run_display_command` and `command_run_llm_streams`.
+//! Pure rendering layer that exposes only `command_run_display_command` and
+//! `command_run_llm_streams`.
 
-use super::text_truncate::{formatted_truncate_text, COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS};
+use super::char_budget::{formatted_truncate_text, COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS};
 
 pub(super) fn command_run_display_command(command: &str, command_line: &str) -> String {
     if command_line.trim().is_empty() {
@@ -98,7 +98,7 @@ fn verify_stdout_as_cli_streams(stdout: &str) -> Option<(String, String)> {
             };
             failure_blocks.push(format!(
                 "{name} {label}:\n{}",
-                formatted_truncate_text(text, COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS)
+                formatted_truncate_text(text, COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS)
             ));
         }
     }
@@ -119,7 +119,7 @@ fn structured_command_line_as_cli(command: &str, command_line: &str) -> Option<S
     let command = normalized_command_run_subcommand(command);
     let path = json_string_field(&item, &["path", "file_path", "filePath"]);
     match command.as_str() {
-        "read_line" | "cat" => {
+        "cat" => {
             let path = path?;
             let start =
                 json_usize_field(&item, "start_line").or_else(|| json_usize_field(&item, "line"));
@@ -138,7 +138,7 @@ fn structured_command_line_as_cli(command: &str, command_line: &str) -> Option<S
                 _ => Some(format!("cat {}", shell_quote(&path))),
             }
         }
-        "read_block" | "sed" => {
+        "sed" => {
             let path = path?;
             let start = json_usize_field(&item, "start_line")
                 .or_else(|| json_usize_field(&item, "line"))
@@ -155,40 +155,26 @@ fn structured_command_line_as_cli(command: &str, command_line: &str) -> Option<S
                 shell_quote(&path)
             ))
         }
-        "rg" | "grep" => {
+        "rg" => {
             let query = json_string_field(&item, &["query", "pattern"]).unwrap_or_default();
             let directory =
                 json_string_field(&item, &["directory", "path"]).unwrap_or_else(|| ".".to_string());
-            let mut parts = vec![if command == "grep" {
-                "grep".to_string()
-            } else {
-                "rg".to_string()
-            }];
-            if command == "rg" {
-                parts.push("-n".to_string());
-            } else {
-                parts.push("-R".to_string());
-            }
+            let mut parts = vec!["rg".to_string(), "-n".to_string()];
             if !json_bool_field(&item, "case_sensitive").unwrap_or(false) {
                 parts.push("-i".to_string());
             }
-            if command == "rg" && !json_bool_field(&item, "use_regex").unwrap_or(false) {
+            if !json_bool_field(&item, "use_regex").unwrap_or(false) {
                 parts.push("--fixed-strings".to_string());
             }
             if let Some(glob) = json_string_field(&item, &["file_glob", "glob"]) {
-                if command == "rg" {
-                    parts.push("-g".to_string());
-                    parts.push(shell_quote(&glob));
-                } else {
-                    parts.push("--include".to_string());
-                    parts.push(shell_quote(&glob));
-                }
+                parts.push("-g".to_string());
+                parts.push(shell_quote(&glob));
             }
             parts.push(shell_quote(&query));
             parts.push(shell_quote(&directory));
             Some(parts.join(" "))
         }
-        "glob" | "find" => {
+        "find" => {
             let directory =
                 json_string_field(&item, &["directory", "path"]).unwrap_or_else(|| ".".to_string());
             let pattern = json_string_field(&item, &["pattern", "glob"])
@@ -205,26 +191,12 @@ fn structured_command_line_as_cli(command: &str, command_line: &str) -> Option<S
                 shell_quote(&pattern)
             ))
         }
-        "write_file" => path.map(|path| format!("cat > {}", shell_quote(&path))),
         _ => None,
     }
 }
 
 fn is_structured_code_read_command(command: &str) -> bool {
-    matches!(
-        command,
-        "cat"
-            | "sed"
-            | "read_line"
-            | "read_block"
-            | "rg"
-            | "grep"
-            | "find"
-            | "glob"
-            | "get_file_outline"
-            | "find_definition"
-            | "find_references"
-    )
+    matches!(command, "cat" | "sed" | "rg" | "find" | "get_file_outline")
 }
 
 fn structured_stdout_as_cli_streams(command: &str, stdout: &str) -> Option<(String, String)> {
@@ -238,12 +210,12 @@ fn structured_stdout_as_cli_streams(command: &str, stdout: &str) -> Option<(Stri
     for result in results {
         stderr.extend(command_run_result_diagnostics(result));
         match command.as_str() {
-            "read_line" | "read_block" | "cat" | "sed" => {
+            "cat" | "sed" => {
                 if let Some(content) = result.get("content").and_then(serde_json::Value::as_str) {
                     blocks.push(content.trim_end().to_string());
                 }
             }
-            "rg" | "grep" | "find_definition" | "find_references" => {
+            "rg" => {
                 if let Some(matches) = result.get("matches").and_then(serde_json::Value::as_array) {
                     let lines = matches
                         .iter()
@@ -254,7 +226,7 @@ fn structured_stdout_as_cli_streams(command: &str, stdout: &str) -> Option<(Stri
                     }
                 }
             }
-            "glob" | "find" => {
+            "find" => {
                 if let Some(paths) = result
                     .get("matched_paths")
                     .and_then(serde_json::Value::as_array)
@@ -283,7 +255,7 @@ fn structured_stdout_as_cli_streams(command: &str, stdout: &str) -> Option<(Stri
                     }
                 }
             }
-            "apply_patch" | "apply_diff" | "write_file" | "delete_file" => {
+            "apply_patch" => {
                 if let Some(summary) = result
                     .get("summary_markdown")
                     .and_then(serde_json::Value::as_str)
@@ -323,19 +295,12 @@ fn normalized_command_run_subcommand(command: &str) -> String {
         .to_ascii_lowercase()
         .replace('-', "_");
     match command.as_str() {
-        "type" | "get_content" => "read_line".to_string(),
         "cat" => "cat".to_string(),
         "sed" => "sed".to_string(),
-        "read_line" => "read_line".to_string(),
-        "read_block" => "read_block".to_string(),
         "ripgrep" => "rg".to_string(),
-        "grep" => "grep".to_string(),
         "rg" => "rg".to_string(),
         "find" => "find".to_string(),
-        "glob" => "glob".to_string(),
         "outline" | "symbols" => "get_file_outline".to_string(),
-        "definition" => "find_definition".to_string(),
-        "references" => "find_references".to_string(),
         "patch" | "applypatch" => "apply_patch".to_string(),
         other => other.to_string(),
     }
@@ -483,4 +448,104 @@ fn shell_quote(value: &str) -> String {
         return value.to_string();
     }
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{command_run_display_command, command_run_llm_streams};
+    use serde_json::json;
+
+    #[test]
+    fn display_command_renders_structured_cat_as_sed_range() {
+        let command_line = json!({
+            "path": "src/main.rs",
+            "start_line": 10,
+            "end_line": 12
+        })
+        .to_string();
+
+        assert_eq!(
+            command_run_display_command("cat", &command_line),
+            "sed -n '10,12p' src/main.rs"
+        );
+    }
+
+    #[test]
+    fn display_command_renders_apply_patch_as_here_doc() {
+        let patch = "*** Begin Patch\n*** Add File: a.txt\n+ok\n*** End Patch\n";
+
+        assert_eq!(
+            command_run_display_command("apply_patch", patch),
+            "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: a.txt\n+ok\n*** End Patch\nPATCH"
+        );
+    }
+
+    #[test]
+    fn display_command_renders_structured_rg_with_fixed_string_defaults() {
+        let command_line = json!({
+            "query": "hello world",
+            "directory": "crates/runtime",
+            "glob": "*.rs"
+        })
+        .to_string();
+
+        assert_eq!(
+            command_run_display_command("ripgrep", &command_line),
+            "rg -n -i --fixed-strings -g '*.rs' 'hello world' crates/runtime"
+        );
+    }
+
+    #[test]
+    fn llm_streams_render_verify_json_with_failed_command_details() {
+        let stdout = json!({
+            "ok": false,
+            "returncodes": { "fmt": 0, "test": 101 },
+            "stdout": { "test": "running tests\nfailed" },
+            "stderr": { "test": "panic details" }
+        })
+        .to_string();
+
+        let (out, err) = command_run_llm_streams("shell_command", &stdout);
+
+        assert!(out.contains("verify.ps1 ok: false"), "{out}");
+        assert!(out.contains("fmt: passed"), "{out}");
+        assert!(err.contains("test stdout:"), "{err}");
+        assert!(err.contains("panic details"), "{err}");
+    }
+
+    #[test]
+    fn llm_streams_render_structured_rg_results_and_diagnostics() {
+        let stdout = json!({
+            "warnings": [{ "path": "src/a.rs", "code": "W1", "message": "partial scan" }],
+            "results": [{
+                "matches": [
+                    { "path": "src/a.rs", "line": 7, "content": "alpha" },
+                    { "path": "src/b.rs", "line_number": 9, "text": "beta" }
+                ]
+            }]
+        })
+        .to_string();
+
+        let (out, err) = command_run_llm_streams("rg", &stdout);
+
+        assert!(out.contains("src/a.rs:7:alpha"), "{out}");
+        assert!(out.contains("src/b.rs:9:beta"), "{out}");
+        assert_eq!(err, "src/a.rs: W1: partial scan");
+    }
+
+    #[test]
+    fn llm_streams_render_apply_patch_mutation_errors() {
+        let stdout = json!({
+            "results": [{
+                "path": "src/lib.rs",
+                "error": "context not found"
+            }]
+        })
+        .to_string();
+
+        let (out, err) = command_run_llm_streams("apply_patch", &stdout);
+
+        assert_eq!(out, "src/lib.rs: context not found");
+        assert_eq!(err, "context not found");
+    }
 }

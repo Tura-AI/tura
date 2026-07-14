@@ -253,8 +253,6 @@ fn build_contents(messages: &[Value]) -> Value {
     Value::Array(contents)
 }
 
-fn _removed_build_contents_old_marker() {}
-
 fn push_google_function_response(contents: &mut Vec<Value>, part: Value) {
     let Some(last) = contents.last_mut() else {
         contents.push(json!({ "role": "user", "parts": [part] }));

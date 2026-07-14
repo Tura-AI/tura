@@ -1,0 +1,377 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1278" height="817" viewBox="0 0 1278 817" role="img" aria-labelledby="title desc">
+  <title id="title">Tura GUI CI quality checks command run demo</title>
+  <desc id="desc">Animated SVG demo of the Tura GUI conversation page with the command inspector adding and running commands.</desc>
+  <defs>
+    <clipPath id="viewport">
+      <rect width="1278" height="817"/>
+    </clipPath>
+    <clipPath id="main-clip">
+      <rect x="238" y="38" width="612" height="779"/>
+    </clipPath>
+    <clipPath id="inspector-clip">
+      <rect x="850" y="38" width="428" height="779"/>
+    </clipPath>
+    <clipPath id="avatar-clip">
+      <rect x="296" y="316" width="56" height="56" rx="14" ry="14"/>
+    </clipPath>
+    <clipPath id="record-command-clip">
+      <rect x="176" y="0" width="160" height="22"/>
+    </clipPath>
+    <style><![CDATA[
+      :root {
+        --paper: #181a1b;
+        --surface: #222427;
+        --ink: #f2f0e8;
+        --ink-invert: #141414;
+        --accent: #d8d4ca;
+        --accent-ink: #141414;
+        --muted: #b9b5aa;
+        --faint: #7f817d;
+        --line: #3d4044;
+        --line-strong: #62666c;
+        --wash: #2c2f33;
+        --code-bg: #1d1f21;
+        --shadow: rgba(6, 7, 8, 0.34);
+      }
+
+      svg {
+        background: var(--paper);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--ink);
+      }
+      text {
+        dominant-baseline: text-before-edge;
+        white-space: pre;
+      }
+      .ui { font-size: 12px; font-weight: 520; fill: var(--ink); }
+      .body { font-size: 13px; font-weight: 520; fill: var(--ink); }
+      .user-text { font-size: 13px; font-weight: 520; fill: var(--accent-ink); }
+      .small { font-size: 10px; font-weight: 520; fill: var(--muted); }
+      .muted { fill: var(--muted); }
+      .faint { fill: var(--faint); }
+      .ink { fill: var(--ink); }
+      .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; fill: var(--ink); }
+      .tiny-code { font-size: 9.5px; }
+      .command-snippet { font-size: 11px; }
+      .line { stroke: var(--line); }
+      .line-strong { stroke: var(--line-strong); }
+      .panel { fill: var(--surface); }
+      .wash { fill: var(--wash); }
+      .paper { fill: var(--paper); }
+      .avatar-image { image-rendering: pixelated; }
+      .command-row,
+      .count-label,
+      .done-label,
+      .summary-count,
+      .summary-done,
+      .elapsed-time,
+      .summary-chevron-running,
+      .summary-chevron-done,
+      .status-running,
+      .status-final,
+      .console-line {
+        animation-duration: 7000ms;
+        animation-timing-function: steps(1, end);
+        animation-iteration-count: infinite;
+      }
+      .row-1 { animation-name: show-row-1; }
+      .row-2 { animation-name: show-row-2; }
+      .row-3 { animation-name: show-row-3; }
+      .row-4 { animation-name: show-row-4; }
+      .row-5 { animation-name: show-row-5; }
+      .row-6 { animation-name: show-row-6; }
+      .count-1 { animation-name: show-count-1; }
+      .count-2 { animation-name: show-count-2; }
+      .count-3 { animation-name: show-count-3; }
+      .count-4 { animation-name: show-count-4; }
+      .count-5 { animation-name: show-count-5; }
+      .count-6 { animation-name: show-count-6; }
+      .done-label { animation-name: show-done-label; }
+      .summary-1 { animation-name: show-count-1; }
+      .summary-2 { animation-name: show-count-2; }
+      .summary-3 { animation-name: show-count-3; }
+      .summary-4 { animation-name: show-count-4; }
+      .summary-5 { animation-name: show-count-5; }
+      .summary-6 { animation-name: show-count-6; }
+      .summary-done { animation-name: show-done-label; }
+      .summary-chevron-running { animation-name: show-summary-running-meta; }
+      .summary-chevron-done { animation-name: show-done-label; }
+      .elapsed-1 { animation-name: show-elapsed-1; }
+      .elapsed-2 { animation-name: show-elapsed-2; }
+      .elapsed-3 { animation-name: show-elapsed-3; }
+      .elapsed-4 { animation-name: show-elapsed-4; }
+      .elapsed-5 { animation-name: show-elapsed-5; }
+      .elapsed-6 { animation-name: show-elapsed-6; }
+      .elapsed-7 { animation-name: show-elapsed-7; }
+      .elapsed-8 { animation-name: show-elapsed-8; }
+      .task-running { animation-name: status-running-task; }
+      .task-final { animation-name: status-final-task; }
+      .cmd2-running { animation-name: status-running-cmd2; }
+      .cmd2-final { animation-name: status-final-cmd2; }
+      .cmd3-running { animation-name: status-running-cmd3; }
+      .cmd3-final { animation-name: status-final-cmd3; }
+      .cmd4-running { animation-name: status-running-cmd4; }
+      .cmd4-final { animation-name: status-final-cmd4; }
+      .cmd5-running { animation-name: status-running-cmd5; }
+      .cmd5-final { animation-name: status-final-cmd5; }
+      .cmd6-running { animation-name: status-running-cmd6; }
+      .cmd6-final { animation-name: status-final-cmd6; }
+      .console-line-1 { animation-name: console-line-1; }
+      .console-line-2 { animation-name: console-line-2; }
+      .console-line-3 { animation-name: console-line-3; }
+      .console-line-4 { animation-name: console-line-4; }
+      .console-line-5 { animation-name: console-line-5; }
+      .console-line-6 { animation-name: console-line-6; }
+
+      .thinking-line {
+        animation: assistant-thinking-drift 5s ease-in-out infinite;
+      }
+      .thinking-glyph {
+        display: inline-block;
+        transform-origin: 50% 55%;
+        animation: assistant-thinking-glyph-pulse 1.2s ease-in-out infinite;
+      }
+      .running-drift {
+        animation: assistant-thinking-drift 5s ease-in-out infinite;
+      }
+      .pulse-dot {
+        animation: pulse-dot 1.2s ease-in-out infinite;
+      }
+
+      @keyframes assistant-thinking-drift {
+        0%, 92%, 100% { opacity: 0.62; transform: translateX(0); }
+        46% { opacity: 0.86; transform: translateX(2px); }
+      }
+      @keyframes assistant-thinking-glyph-pulse {
+        0%, 100% { opacity: 0.72; transform: scale(0.92) rotate(0deg); }
+        45% { opacity: 1; transform: scale(1.18) rotate(12deg); }
+        72% { opacity: 0.86; transform: scale(1.02) rotate(-8deg); }
+      }
+      @keyframes pulse-dot {
+        0%, 100% { opacity: .35; }
+        50% { opacity: .95; }
+      }
+
+      @keyframes show-row-1 { 0%, 100% { opacity: 1; } }
+      @keyframes show-row-2 { 0%, 17.999% { opacity: 0; } 18%, 100% { opacity: 1; } }
+      @keyframes show-row-3 { 0%, 31.999% { opacity: 0; } 32%, 100% { opacity: 1; } }
+      @keyframes show-row-4 { 0%, 45.999% { opacity: 0; } 46%, 100% { opacity: 1; } }
+      @keyframes show-row-5 { 0%, 59.999% { opacity: 0; } 60%, 100% { opacity: 1; } }
+      @keyframes show-row-6 { 0%, 73.999% { opacity: 0; } 74%, 100% { opacity: 1; } }
+
+      @keyframes show-count-1 { 0%, 17.999% { opacity: 1; } 18%, 100% { opacity: 0; } }
+      @keyframes show-count-2 { 0%, 17.999%, 31.999%, 100% { opacity: 0; } 18%, 31.998% { opacity: 1; } }
+      @keyframes show-count-3 { 0%, 31.999%, 45.999%, 100% { opacity: 0; } 32%, 45.998% { opacity: 1; } }
+      @keyframes show-count-4 { 0%, 45.999%, 59.999%, 100% { opacity: 0; } 46%, 59.998% { opacity: 1; } }
+      @keyframes show-count-5 { 0%, 59.999%, 73.999%, 100% { opacity: 0; } 60%, 73.998% { opacity: 1; } }
+      @keyframes show-count-6 { 0%, 73.999%, 87.999%, 100% { opacity: 0; } 74%, 87.998% { opacity: 1; } }
+      @keyframes show-done-label { 0%, 87.999% { opacity: 0; } 88%, 100% { opacity: 1; } }
+      @keyframes show-summary-running-meta { 0%, 87.999% { opacity: 1; } 88%, 100% { opacity: 0; } }
+      @keyframes show-elapsed-1 { 0%, 17.999% { opacity: 1; } 18%, 100% { opacity: 0; } }
+      @keyframes show-elapsed-2 { 0%, 17.999%, 31.999%, 100% { opacity: 0; } 18%, 31.998% { opacity: 1; } }
+      @keyframes show-elapsed-3 { 0%, 31.999%, 45.999%, 100% { opacity: 0; } 32%, 45.998% { opacity: 1; } }
+      @keyframes show-elapsed-4 { 0%, 45.999%, 59.999%, 100% { opacity: 0; } 46%, 59.998% { opacity: 1; } }
+      @keyframes show-elapsed-5 { 0%, 59.999%, 73.999%, 100% { opacity: 0; } 60%, 73.998% { opacity: 1; } }
+      @keyframes show-elapsed-6 { 0%, 73.999%, 81.999%, 100% { opacity: 0; } 74%, 81.998% { opacity: 1; } }
+      @keyframes show-elapsed-7 { 0%, 81.999%, 87.999%, 100% { opacity: 0; } 82%, 87.998% { opacity: 1; } }
+      @keyframes show-elapsed-8 { 0%, 87.999% { opacity: 0; } 88%, 100% { opacity: 1; } }
+
+      @keyframes status-running-task { 0%, 15.999% { opacity: 1; } 16%, 100% { opacity: 0; } }
+      @keyframes status-final-task { 0%, 15.999% { opacity: 0; } 16%, 100% { opacity: 1; } }
+      @keyframes status-running-cmd2 { 0%, 35.999% { opacity: 1; } 36%, 100% { opacity: 0; } }
+      @keyframes status-final-cmd2 { 0%, 35.999% { opacity: 0; } 36%, 100% { opacity: 1; } }
+      @keyframes status-running-cmd3 { 0%, 49.999% { opacity: 1; } 50%, 100% { opacity: 0; } }
+      @keyframes status-final-cmd3 { 0%, 49.999% { opacity: 0; } 50%, 100% { opacity: 1; } }
+      @keyframes status-running-cmd4 { 0%, 63.999% { opacity: 1; } 64%, 100% { opacity: 0; } }
+      @keyframes status-final-cmd4 { 0%, 63.999% { opacity: 0; } 64%, 100% { opacity: 1; } }
+      @keyframes status-running-cmd5 { 0%, 77.999% { opacity: 1; } 78%, 100% { opacity: 0; } }
+      @keyframes status-final-cmd5 { 0%, 77.999% { opacity: 0; } 78%, 100% { opacity: 1; } }
+      @keyframes status-running-cmd6 { 0%, 87.999% { opacity: 1; } 88%, 100% { opacity: 0; } }
+      @keyframes status-final-cmd6 { 0%, 87.999% { opacity: 0; } 88%, 100% { opacity: 1; } }
+      @keyframes console-line-1 { 0%, 100% { opacity: 1; } }
+      @keyframes console-line-2 { 0%, 17.999% { opacity: 0; } 18%, 100% { opacity: 1; } }
+      @keyframes console-line-3 { 0%, 31.999% { opacity: 0; } 32%, 100% { opacity: 1; } }
+      @keyframes console-line-4 { 0%, 45.999% { opacity: 0; } 46%, 100% { opacity: 1; } }
+      @keyframes console-line-5 { 0%, 59.999% { opacity: 0; } 60%, 100% { opacity: 1; } }
+      @keyframes console-line-6 { 0%, 73.999% { opacity: 0; } 74%, 100% { opacity: 1; } }
+    ]]></style>
+  </defs>
+
+  <g clip-path="url(#viewport)">
+    <rect width="1278" height="817" fill="var(--paper)"/>
+
+    <rect x="0" y="0" width="1278" height="38" fill="#17191a"/>
+    <rect x="11" y="9" width="17" height="17" rx="4" fill="#101314" stroke="#2b3033"/>
+    <path d="M19.4 11.7 L15.7 18.1 H19.5 L17.7 25.2 L23.8 16.6 H20.2 Z" fill="#99f3ff"/>
+    <text x="37" y="12" class="ui" fill="var(--ink)">Tura</text>
+    <path d="M1161 19 H1170" stroke="var(--muted)" stroke-width="1"/>
+    <rect x="1207" y="11" width="10" height="10" fill="none" stroke="var(--muted)" stroke-width="1"/>
+    <path d="M1254 12 L1262 20 M1262 12 L1254 20" stroke="var(--muted)" stroke-width="1.2" stroke-linecap="round"/>
+    <line x1="0" y1="37.5" x2="1278" y2="37.5" stroke="var(--line)"/>
+
+    <g id="rail">
+      <rect x="0" y="38" width="238" height="779" fill="var(--paper)"/>
+      <line x1="237.5" y1="38" x2="237.5" y2="817" stroke="var(--line)"/>
+      <rect x="8" y="44" width="222" height="36" rx="6" fill="var(--wash)"/>
+      <text x="20" y="56" class="ui">Session</text>
+      <text x="20" y="126" class="ui">Workspace</text>
+      <path d="M193 128 L196 131 L199 128" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="8" y="150" width="206" height="36" rx="6" fill="var(--wash)"/>
+      <path d="M20.5 173.5 V163.5 H25.4 L27.6 161.2 H34.5 V173.5 Z M20.5 164.8 H34.5" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-linejoin="round"/>
+      <text x="49" y="161" class="ui">tura</text>
+      <rect x="8" y="190" width="206" height="36" rx="6" fill="var(--wash)" opacity=".96"/>
+      <text x="48" y="201" class="ui">CI quality checks</text>
+      <circle cx="189" cy="208" r="5.5" fill="none" stroke="var(--line)" stroke-width="1.2" class="pulse-dot"/>
+      <path d="M20.5 264.5 V254.5 H25.4 L27.6 252.2 H34.5 V264.5 Z M20.5 255.8 H34.5" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-linejoin="round"/>
+      <text x="49" y="252" class="ui">tura_workspace</text>
+      <text x="20" y="788" class="ui">Settings</text>
+    </g>
+
+    <g clip-path="url(#main-clip)">
+      <rect x="238" y="38" width="612" height="779" fill="var(--paper)"/>
+      <rect x="250" y="49" width="32" height="32" rx="6" fill="transparent" stroke="var(--line)"/>
+      <path d="M260 58 H273 V72 H260 Z M265 61 L261 65 L265 69 M269 61 V69" fill="none" stroke="var(--muted)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="312" y="53" class="ui">Conversation</text>
+      <text x="312" y="74" font-size="26" font-weight="650" fill="var(--ink)">CI quality checks</text>
+
+      <rect x="355" y="137" width="468" height="68" rx="8" fill="var(--accent)"/>
+      <text x="381" y="150" class="user-text">Help me run the lint and formatter steps in the GitHub CI workflow</text>
+      <text x="381" y="177" class="user-text">and fix any potential errors.</text>
+
+      <text x="358" y="220" class="body">I’ll inspect the GitHub workflow to identify the exact lint/format</text>
+      <text x="358" y="244" class="body">commands, run those locally, then patch only the failures they expose.</text>
+      <text x="358" y="267" class="body">Finish line is boring: CI-equivalent lint/format green, with the changed files</text>
+      <text x="358" y="292" class="body">and commands called out.</text>
+
+      <image x="296" y="316" width="56" height="56" clip-path="url(#avatar-clip)" class="avatar-image" preserveAspectRatio="xMidYMid slice" href="data:image/png;base64,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"/>
+
+      <g transform="translate(364,323)">
+        <rect x="0" y="0" width="11" height="11" rx="1" fill="none" stroke="var(--muted)" stroke-width="1"/>
+        <path d="M3 3 H8 M3 5.5 H6" stroke="var(--muted)" stroke-width="1" stroke-linecap="round"/>
+        <text x="21" y="-1" class="summary-count summary-1 ui muted">Running 1 command</text>
+        <text x="21" y="-1" class="summary-count summary-2 ui muted">Running 2 commands</text>
+        <text x="21" y="-1" class="summary-count summary-3 ui muted">Running 3 commands</text>
+        <text x="21" y="-1" class="summary-count summary-4 ui muted">Running 4 commands</text>
+        <text x="21" y="-1" class="summary-count summary-5 ui muted">Running 5 commands</text>
+        <text x="21" y="-1" class="summary-count summary-6 ui muted">Running 6 commands</text>
+        <text x="21" y="-1" class="summary-done ui muted">Ran 6 commands</text>
+        <text x="164" y="-1" class="elapsed-time elapsed-1 ui muted">1s</text>
+        <text x="164" y="-1" class="elapsed-time elapsed-2 ui muted">2s</text>
+        <text x="164" y="-1" class="elapsed-time elapsed-3 ui muted">3s</text>
+        <text x="164" y="-1" class="elapsed-time elapsed-4 ui muted">4s</text>
+        <text x="164" y="-1" class="elapsed-time elapsed-5 ui muted">5s</text>
+        <text x="164" y="-1" class="elapsed-time elapsed-6 ui muted">6s</text>
+        <text x="164" y="-1" class="elapsed-time elapsed-7 ui muted">7s</text>
+        <text x="186" y="-1" class="summary-chevron-running ui muted">›</text>
+        <text x="131" y="-1" class="elapsed-time elapsed-8 ui muted">8s</text>
+        <text x="153" y="-1" class="summary-chevron-done ui muted">›</text>
+      </g>
+      <g transform="translate(358,356)" class="thinking-line">
+        <text x="0" y="0" class="small"><tspan class="thinking-glyph">✦</tspan> Thinking</text>
+      </g>
+
+      <g id="composer" transform="translate(280,706)">
+        <rect x="0" y="0" width="528" height="111" rx="8" fill="transparent" stroke="var(--line)"/>
+        <text x="17" y="22" class="body muted">write a message...</text>
+        <path d="M22 86 H34 M28 80 V92" fill="none" stroke="var(--ink)" stroke-width="1.7" stroke-linecap="round"/>
+        <path d="M73 81 L73 91 L82 86 Z" fill="none" stroke="var(--ink)" stroke-width="1.4" stroke-linejoin="round"/>
+        <path d="M92 82 L96 86 L100 82" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-linecap="round"/>
+        <circle cx="140" cy="85" r="5" fill="#b6a6ff"/>
+        <rect x="135" y="89" width="10" height="3" rx="1.5" fill="#7a67d8"/>
+        <path d="M158 82 L162 86 L166 82" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-linecap="round"/>
+        <rect x="485" y="70" width="34" height="34" rx="6" fill="var(--accent)"/>
+        <rect x="497" y="82" width="10" height="10" rx="1" fill="none" stroke="var(--accent-ink)" stroke-width="1.4"/>
+      </g>
+    </g>
+
+    <g clip-path="url(#inspector-clip)">
+      <rect x="850" y="38" width="428" height="779" fill="var(--paper)"/>
+      <line x1="850.5" y1="38" x2="850.5" y2="817" stroke="var(--line)"/>
+      <rect x="850" y="38" width="428" height="45" fill="var(--paper)"/>
+      <text x="867" y="54" class="count-label count-1 ui">Running 1 command</text>
+      <text x="867" y="54" class="count-label count-2 ui">Running 2 commands</text>
+      <text x="867" y="54" class="count-label count-3 ui">Running 3 commands</text>
+      <text x="867" y="54" class="count-label count-4 ui">Running 4 commands</text>
+      <text x="867" y="54" class="count-label count-5 ui">Running 5 commands</text>
+      <text x="867" y="54" class="count-label count-6 ui">Running 6 commands</text>
+      <text x="867" y="54" class="done-label ui">Ran 6 commands</text>
+      <text x="1096" y="54" class="elapsed-time elapsed-1 small">1s</text>
+      <text x="1096" y="54" class="elapsed-time elapsed-2 small">2s</text>
+      <text x="1096" y="54" class="elapsed-time elapsed-3 small">3s</text>
+      <text x="1096" y="54" class="elapsed-time elapsed-4 small">4s</text>
+      <text x="1096" y="54" class="elapsed-time elapsed-5 small">5s</text>
+      <text x="1096" y="54" class="elapsed-time elapsed-6 small">6s</text>
+      <text x="1096" y="54" class="elapsed-time elapsed-7 small">7s</text>
+      <text x="1096" y="54" class="elapsed-time elapsed-8 small">8s</text>
+      <text x="1247" y="54" class="small">×</text>
+      <line x1="850" y1="82.5" x2="1278" y2="82.5" stroke="var(--line)"/>
+
+      <g transform="translate(863,94)">
+        <rect x="0" y="0" width="404" height="398" rx="6" fill="var(--wash)"/>
+        <text x="8" y="11" class="ui muted">#1</text>
+        <text x="48" y="11" class="ui">task_status</text>
+        <text x="125" y="11" class="code tiny-code">{&quot;task_group&quot;:&quot;CI quality checks&quot;,&quot;t...</text>
+        <text x="344" y="11" class="small status-running task-running">Running</text>
+        <text x="344" y="11" class="small status-final task-final">Completed</text>
+        <text x="8" y="36" class="small">Command</text>
+        <rect x="8" y="52" width="388" height="56" rx="6" fill="var(--code-bg)"/>
+        <text x="19" y="66" class="code">{&quot;task_group&quot;:&quot;CI quality checks&quot;,&quot;task_type&quot;:</text>
+        <text x="19" y="88" class="code">[&quot;debug&quot;,&quot;devops&quot;],&quot;status&quot;:&quot;doing&quot;}</text>
+        <text x="8" y="125" class="small">Console</text>
+        <rect x="8" y="142" width="388" height="216" rx="6" fill="var(--code-bg)"/>
+        <text x="20" y="153" class="code">{</text>
+        <text x="42" y="176" class="code">&quot;task_status&quot;: {</text>
+        <text x="64" y="199" class="code">&quot;status&quot;: &quot;doing&quot;,</text>
+        <text x="64" y="222" class="code">&quot;task_group&quot;: &quot;CI quality checks&quot;,</text>
+        <text x="64" y="245" class="code">&quot;task_type&quot;: [</text>
+        <text x="86" y="266" class="code">&quot;debug&quot;,</text>
+        <text x="86" y="287" class="code">&quot;devops&quot;</text>
+        <text x="64" y="306" class="code">]</text>
+        <text x="42" y="323" class="code">}</text>
+        <text x="20" y="340" class="code">}</text>
+        <text x="303" y="374" class="small">0.1s</text>
+        <text x="340" y="374" class="small status-running task-running">Exit code: --</text>
+        <text x="340" y="374" class="small status-final task-final">Exit code: 0</text>
+      </g>
+
+      <g id="records" transform="translate(863,499)">
+        <g class="command-row row-2" transform="translate(0,0)">
+          <text x="8" y="7" class="ui muted">#1</text>
+          <text x="48" y="7" class="ui muted">Shell command line</text>
+          <text x="176" y="7" class="ui muted command-snippet" clip-path="url(#record-command-clip)">rg --files .github/workflows -...</text>
+          <text x="344" y="7" class="small status-running cmd2-running">Running</text>
+          <text x="344" y="7" class="small status-final cmd2-final">Failed</text>
+        </g>
+        <g class="command-row row-3" transform="translate(0,34)">
+          <text x="8" y="7" class="ui muted">#1</text>
+          <text x="48" y="7" class="ui muted">Shell command line</text>
+          <text x="176" y="7" class="ui muted command-snippet" clip-path="url(#record-command-clip)">rg -n &quot;(lint|fmt|format|rust...</text>
+          <text x="344" y="7" class="small status-running cmd3-running">Running</text>
+          <text x="344" y="7" class="small status-final cmd3-final">Completed</text>
+        </g>
+        <g class="command-row row-4" transform="translate(0,68)">
+          <text x="8" y="7" class="ui muted">#1</text>
+          <text x="48" y="7" class="ui muted">Shell command line</text>
+          <text x="176" y="7" class="ui muted command-snippet" clip-path="url(#record-command-clip)">Get-Content -Raw .github/w...</text>
+          <text x="344" y="7" class="small status-running cmd4-running">Running</text>
+          <text x="344" y="7" class="small status-final cmd4-final">Failed</text>
+        </g>
+        <g class="command-row row-5" transform="translate(0,102)">
+          <text x="8" y="7" class="ui muted">#1</text>
+          <text x="48" y="7" class="ui muted">Shell command line</text>
+          <text x="176" y="7" class="ui muted command-snippet" clip-path="url(#record-command-clip)">Get-Content -Raw Cargo.t...</text>
+          <text x="344" y="7" class="small status-running cmd5-running">Running</text>
+          <text x="344" y="7" class="small status-final cmd5-final">Completed</text>
+        </g>
+        <g class="command-row row-6" transform="translate(0,136)">
+          <text x="8" y="7" class="ui muted">#1</text>
+          <text x="48" y="7" class="ui muted">Shell command line</text>
+          <text x="176" y="7" class="ui muted command-snippet" clip-path="url(#record-command-clip)">Get-Content -Raw apps/g...</text>
+          <text x="344" y="7" class="small status-running cmd6-running">Running</text>
+          <text x="344" y="7" class="small status-final cmd6-final">Completed</text>
+        </g>
+      </g>
+
+    </g>
+  </g>
+</svg>

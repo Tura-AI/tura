@@ -11,8 +11,9 @@
   position: relative;
   display: grid;
   grid-template-columns: var(--rail) minmax(0, 1fr);
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: calc(100dvh - var(--app-titlebar-height));
+  margin-top: var(--app-titlebar-height);
   overflow: hidden;
   background: var(--paper);
   font-family: var(--app-font-family);
@@ -23,7 +24,7 @@
   position: relative;
   z-index: 90;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   overflow: hidden;
   border-right: 1px solid var(--line);
@@ -45,15 +46,16 @@
 
 .workbench.rail-fullscreen .rail {
   position: fixed;
-  inset: 0;
+  inset: var(--app-titlebar-height) 0 0 0;
   z-index: 80;
   display: grid;
-  grid-template-rows: auto auto auto auto;
-  align-content: start;
-  width: 100vw;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
+  width: 100%;
+  height: calc(100dvh - var(--app-titlebar-height));
   max-width: none;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   border-right: 0;
   box-shadow: none;
 }
@@ -63,9 +65,13 @@
 }
 
 .workbench.rail-fullscreen .workspace-tree,
-.workbench.rail-fullscreen .settings-rail,
+.workbench.rail-fullscreen .settings-rail {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .workbench.rail-fullscreen .settings-section-list {
-  overflow: visible;
+  overflow: hidden;
 }
 
 .workbench.rail-fullscreen .rail-resize-handle {

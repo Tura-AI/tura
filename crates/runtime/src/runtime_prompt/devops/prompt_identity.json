@@ -1,0 +1,7 @@
+{
+  "id": "devops",
+  "display_name": "DevOps Operation Manual",
+  "description": "Use for CI, release, deployment, cloud infrastructure, hosted runners, operational debugging, and cost-sensitive DevOps work.",
+  "father_ids": [],
+  "capabilities": ["apply_patch", "shells"]
+}

@@ -7,7 +7,9 @@ export class NdjsonOutput {
   }
 
   event(event: NormalizedEvent): void {
-    process.stdout.write(`${JSON.stringify({ type: event.type, sessionID: event.sessionID, messageID: event.messageID, status: event.status, text: event.text, raw: event.raw })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ type: event.type, sessionID: event.sessionID, messageID: event.messageID, status: event.status, text: event.text, raw: event.raw })}\n`,
+    );
   }
 
   completed(result: RunResult): void {

@@ -5,18 +5,25 @@ import { printJson } from "../output/json.js";
 import { t } from "../i18n.js";
 
 export async function fileCommand(context: CliContext, args: string[]): Promise<void> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   const subcommand = args.shift() ?? "list";
   const json = context.json || takeFlag(args, "--json");
   if (subcommand === "list") {
     const files = await client.listFiles(args.shift() ?? "");
     if (json) return printJson(files);
-    return write(context, formatTable(files, [
-      { header: t("type"), value: (file) => file.type },
-      { header: t("status"), value: (file) => file.git_status ?? "" },
-      { header: t("size"), value: (file) => file.size_bytes ?? "" },
-      { header: t("path"), value: (file) => file.path },
-    ]));
+    return write(
+      context,
+      formatTable(files, [
+        { header: t("type"), value: (file) => file.type },
+        { header: t("status"), value: (file) => file.git_status ?? "" },
+        { header: t("size"), value: (file) => file.size_bytes ?? "" },
+        { header: t("path"), value: (file) => file.path },
+      ]),
+    );
   }
   if (subcommand === "read") {
     const path = args.shift();
@@ -28,8 +35,11 @@ export async function fileCommand(context: CliContext, args: string[]): Promise<
   if (subcommand === "open" || subcommand === "reveal") {
     const path = args.shift();
     if (!path) throw new CliUsageError(t("fileRequiresPath", { command: subcommand }));
-    const result = subcommand === "open" ? await client.openFile(path) : await client.openFileLocation(path);
-    return json ? printJson(result) : write(context, `${result.opened ? t("opened") : t("notOpened")} ${result.path}`);
+    const result =
+      subcommand === "open" ? await client.openFile(path) : await client.openFileLocation(path);
+    return json
+      ? printJson(result)
+      : write(context, `${result.opened ? t("opened") : t("notOpened")} ${result.path}`);
   }
   throw new CliUsageError(t("unknownFileCommand", { command: subcommand }));
 }

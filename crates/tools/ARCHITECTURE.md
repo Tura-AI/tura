@@ -1,16 +1,17 @@
 # Tools Crate Architecture
 
-`crates/tools` owns the model-visible tool layer, command handlers, validation,
-policy, sandbox, file locks, and tool output normalization. It does not own the
-command registry or managed process lifecycle; those live in `crates/router`.
-It also does not own durable session history or provider-call logs: session and
-task history lives in `crates/session_log`, while provider diagnostics live
-under `log/provider/` or `LOG_PATH`.
+`crates/tools` owns the part of execution that can touch the machine: the
+model-visible tool layer, command handlers, validation, policy, sandbox, file
+locks, and tool output normalization. It does not own the command registry or
+managed process lifecycle; those live in `crates/router`. It also does not own
+durable session history or provider-call logs: session and task history lives in
+`crates/session_log`, while provider diagnostics live under `log/provider/` or
+`LOG_PATH`. Sharp boundaries are useful around sharp tools.
 
 The Cargo package name should stay compatible with Tura:
 
 ```text
-package = code-tools
+package = tools
 ```
 
 ## Layout
@@ -61,15 +62,21 @@ crates/tools/
         schema.json
         prompt.md
         policy.toml
+      generate_media/
+        mod.rs
+        src/
+          args.rs
+          config.rs
+          files.rs
+          providers.rs
+          runner.rs
+        schema.json
+        prompt.md
+        policy.toml
       read_media/
         mod.rs
         src/
           config.rs
-        schema.json
-        prompt.md
-        policy.toml
-      compact_context/
-        mod.rs
         schema.json
         prompt.md
         policy.toml
@@ -110,6 +117,11 @@ crates/tools/
         schema.json
         prompt.md
         policy.toml
+      zsh/
+        mod.rs
+        schema.json
+        prompt.md
+        policy.toml
 
     modes/
       mod.rs
@@ -119,9 +131,12 @@ crates/tools/
         policy.toml
 
   tests/
-    command_run_current_flow.rs
     command_interceptor_e2e.rs
-    web_discover_live_provider_check.rs
+    business/
+      flow/
+        command_run_current_flow.rs
+    live/
+      web_discover_live_provider_check.rs
     docker/
       Dockerfile
     contracts/
@@ -145,8 +160,8 @@ command_run
 arguments. Tools asks `crates/router` to resolve that command name through the
 router-owned CLI registry, then executes the mapped command handler.
 
-Direct model-visible tools are allowed only for compatibility or provider routes
-that require them.
+Direct model-visible tools are allowed only for provider routes that require
+them.
 
 ## Command Contract
 
@@ -202,19 +217,27 @@ managed service/process lifecycle. Tools owns executable command handlers.
 Examples:
 
 - `powershell` -> router alias -> `shell_command`
-- `bash` -> router alias -> `shell_command`
 - `shell_command` -> router command id -> tools handler
+- `bash` -> router command id -> tools handler
+- `zsh` -> router command id -> tools handler
 - `apply_patch` -> router command id -> tools handler
+- `generate_media` -> router command id -> external command package
 - `read_media` -> router command id -> tools handler
 - `web_discover` -> router command id -> tools handler
-- `compact_context` -> command-run lifecycle handler
+- `task_status.compact_context` -> internal command-run context checkpoint
 - `task_status` -> internal command-run status command
 - `planning` -> optional planning/multiple-task state handler
 
-Only `shell_command`, `bash`, `apply_patch`, read-only `read_media`,
-`web_discover`, `compact_context`, and internal `task_status` are enabled for
-normal command-run coding-agent sessions in this version. `planning` is
+Only `shell_command`, `bash`, `zsh`, `apply_patch`, mutating `generate_media`,
+read-only `read_media`, `web_discover`, and internal `task_status` are enabled
+for normal command-run coding-agent sessions in this version. `planning` is
 injected only by the explicit multiple-task runtime mode.
+
+Shell surface selection is controlled by `TURA_COMMAND_RUN_SHELL`. Windows
+defaults to `shell_command`/PowerShell, macOS defaults to `zsh`, and other Unix
+systems default to `bash`. On macOS the executor prefers the user's supported
+shell, then zsh, bash, and sh; explicit zsh execution can be overridden with
+`TURA_ZSH_PATH`.
 
 `command_run/` must not contain a command registry. New command registration
 belongs in `crates/router`.
@@ -225,15 +248,16 @@ belongs in `crates/router`.
 
 Rules:
 
-- `command_type` is the canonical provider-facing command selector. Legacy
-  `command` input can be normalized for compatibility, but prompts and schemas
+- `command_type` is the canonical provider-facing command selector. `command`
+  input can be normalized at the handler boundary, but prompts and schemas
   should use `command_type`.
 - `step` is optional in the provider-facing schema to match codex-current.
   The handler normalizes missing steps to the command's original 1-based
   position.
 - Every command executes with a positive step after normalization.
-- Duplicate or earlier step values are normalized to the next later unique
-  step in input order.
+- Duplicate step values are preserved as dependency groups. Earlier step values
+  that would move backwards are normalized to the next later step in input
+  order.
 - Later steps wait for earlier steps.
 - Mutating commands acquire file locks.
 - Partial results may be emitted after each step group.
@@ -244,7 +268,7 @@ The internal name for the batched concurrent-read scheduling is
 **`macro_command`**, not "parallel". The unified naming covers handler
 internals, the router capability flag, and the per-command trait method:
 
-| Old (legacy) | New (unified) | Site |
+| Previous name | Current name | Site |
 |---|---|---|
 | `supports_parallel_tool_calls` | `supports_macro_command` | `ToolHandler` trait method on each command |
 | `tool_supports_parallel` | `tool_supports_macro_command` | `ToolRouter` capability probe |
@@ -257,12 +281,13 @@ The OpenAI provider-side wire field `parallel_tool_calls` is **unrelated** to
 this rename — that field is an OpenAI request parameter owned by the provider
 crate and keeps its upstream name.
 
-## Context Compaction Command
+## Context Compaction Checkpoint
 
-`compact_context` is a lifecycle command inside `command_run`. It should always
-be scheduled as the last step in a batch. The command output is a single
-handoff summary, capped by prompt guidance to stay compact enough for the next
-agent turn.
+Context compaction is carried by `task_status.compact_context` inside
+`command_run`; the standalone `compact_context` command has been removed. The
+checkpoint should always be scheduled as the last command in the highest step of
+a batch. The output is a single handoff summary, capped by prompt guidance to
+stay compact enough for the next agent turn.
 
 Runtime handles the command specially after execution:
 
@@ -271,6 +296,13 @@ Runtime handles the command specially after execution:
 - The session and task state machine continue; compaction does not reset work.
 - Workspace snapshot and recent-file snapshot are regenerated and injected.
 - Other commands in the same batch remain ordered and are not repeated.
+
+Runtime may also write an automatic checkpoint without a `task_status` handoff
+when the current provider input plus newly persisted context estimated as
+`bytes / 3` would exceed the active context limit. The automatic path preserves
+current-turn tool results in the rebuild timeline and trims older timeline
+entries when the compact text itself grows beyond roughly 12,000 estimated
+tokens.
 
 This is the main long-context optimization path. Prompt wording only tells the
 model when to call the command; the token reduction comes from runtime context
@@ -298,6 +330,16 @@ artifacts into declared workspace paths. Its fallback route order is controlled
 by `web_discover/policy.toml` `[configurable]` entries using the same
 `default` + `enum` policy shape as `read_media`.
 
+## Generate Media Command
+
+`generate_media` is a mutating, network-capable external command package under
+`commands/generate_media`. It writes generated images into declared workspace
+output directories and supports provider fallback across OpenAI GPT Image,
+Replicate Z-Image Turbo, Gemini image models, and xAI/Grok image endpoints.
+Provider keys are read through Tura config/environment instead of command-local
+secret storage. It is not macro-command safe because it writes files and spends
+provider quota.
+
 ## Command Interceptor
 
 `commands/command_safety.rs` is a single self-contained command interceptor,
@@ -318,7 +360,7 @@ model-visible failure (`success = false`, `exit_code = 126`, output
 instead of executing. The env var `TURA_COMMAND_INTERCEPTOR_DISABLED=1` turns the
 guardrail off entirely for trusted automation.
 
-Detection covers POSIX/bash, PowerShell, and CMD command shapes:
+Detection covers POSIX shell, PowerShell, and CMD command shapes:
 
 - Unix: `rm -r/-f` or `rm`/`rmdir` against a system path; `shutdown`/`reboot`/
   `halt`/`poweroff`; `init`/`telinit 0|6`; `dd of=/dev/…`; `mkfs`/`wipefs`/
@@ -332,7 +374,7 @@ Detection covers POSIX/bash, PowerShell, and CMD command shapes:
 Anti-bypass: connector splitting (`;` `&&` `||` `|` `\n`), command substitution
 (`$(…)` / backticks), wrapper stripping (`sudo`/`timeout`/`env`/`nice`/`xargs`/
 …), path normalization (`/bin/rm`, `rm.exe`), and recursion through
-`bash -c`/`eval`. A one-level library-exec layer also extracts command-line
+`bash -c`, `zsh -c`, `sh -c`, and `eval`. A one-level library-exec layer also extracts command-line
 strings smuggled through interpreter calls (`os.system(`, `subprocess.run(`,
 `child_process.exec(`, `shell_exec(`, …) and re-scans them against the same
 blacklist; whitespace-stripped marker matching defeats `os . system(` spacing,
@@ -344,7 +386,8 @@ Tests: unit tests live in `command_safety.rs`; `tests/command_interceptor_e2e.rs
 (Unix-gated) drives the real `command_run` entry point and *actually executes*
 commands inside the Linux Docker harness under `tests/docker/`, asserting that
 dangerous commands' destructive side effects never happen while safe commands
-still run.
+still run. The Docker harness installs zsh so zsh-specific interceptor coverage
+can run instead of being skipped.
 
 ## File Locks
 
@@ -374,7 +417,7 @@ Rules:
    direct routed tool.
 5. Add the handler field and dispatch branches in
    `crates/tools/src/runtime/tool.rs`.
-6. Add compatibility execution/access/display branches in
+6. Add execution/access/display branches in
    `crates/tools/src/commands/mod.rs` when `command_run` should support the
    command by name.
 7. Register command aliases, CLI forwarding metadata, and lifecycle metadata in
@@ -407,12 +450,13 @@ The current always-present command directories are:
 ```text
 apply_patch
 bash
-compact_context
+generate_media
 planning
 read_media
 shell_command
 task_status
 web_discover
+zsh
 ```
 
 `planning` is compiled but only exposed when `TURA_FORCE_PLANNING` or
@@ -427,14 +471,11 @@ If a command needs CLI routing or a managed local service/process, it asks
 state. Router owns startup, shutdown, status monitoring, and restart policy, but
 it does not own the command implementation.
 
-Memory-backed behavior crosses into `crates/memory` through explicit clients or
-commands.
-
 ## Checks
 
 Use:
 
 ```text
-cargo fmt -p code-tools
-cargo check -p code-tools
+cargo fmt -p tools
+cargo check -p tools
 ```

@@ -4,6 +4,7 @@ export interface ProviderModel {
   family?: string;
   release_date?: string;
   status?: string | null;
+  options?: Record<string, unknown>;
 }
 
 export interface Provider {
@@ -12,6 +13,9 @@ export interface Provider {
   source?: string;
   env?: string[];
   key?: string | null;
+  options?: Record<string, unknown>;
+  api?: string | null;
+  npm?: string | null;
   models?: Record<string, ProviderModel>;
 }
 
@@ -59,6 +63,29 @@ export interface ProviderAuthUpsert {
   metadata?: Record<string, unknown> | null;
 }
 
+export interface ProviderAuthValidationInput {
+  type?: string | null;
+  kind?: string | null;
+  login?: string | null;
+  token_env?: string | null;
+  key?: string | null;
+  access?: string | null;
+}
+
+export interface ProviderAuthActionResponse {
+  ok: boolean;
+  provider_id: string;
+  code?: string | null;
+  message: string;
+  level?: "valid" | "warning" | "invalid" | string | null;
+  details?: Array<{
+    code: string;
+    message: string;
+    value?: string | null;
+  }>;
+  status?: ProviderAuthStatus | null;
+}
+
 export interface ProviderAuthMethod {
   type: string;
   kind?: string;
@@ -81,4 +108,10 @@ export interface OAuthAuthorizeResponse {
   url: string;
   method: "auto" | "code" | string;
   instructions: string;
+}
+
+export interface OAuthCallbackInput {
+  method: number;
+  code?: string | null;
+  state?: string | null;
 }

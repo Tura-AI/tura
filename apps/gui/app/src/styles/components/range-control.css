@@ -20,7 +20,7 @@
 
 .range-control input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: linear-gradient(
     90deg,
     var(--range-fill) var(--range-progress, 50%),
@@ -34,7 +34,7 @@
   margin-top: -6px;
   appearance: none;
   border: 1px solid var(--line-strong);
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: var(--range-thumb);
   box-shadow: 0 2px 8px rgb(0 0 0 / 10%);
 }

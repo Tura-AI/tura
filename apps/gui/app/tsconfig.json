@@ -15,6 +15,6 @@
     "strict": true,
     "types": ["vite/client"]
   },
-  "include": ["src"],
+  "include": ["src", "../../tui/src/agent-runtime-config.ts"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const DEFAULT_GATEWAY_URL = "http://127.0.0.1:4096";
+const DEFAULT_GATEWAY_URL = "http://127.0.0.1:4126";
 const DEFAULT_ITERATIONS = 20;
 const DEFAULT_TIMEOUT_MS = 30_000;
 

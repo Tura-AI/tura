@@ -18,14 +18,11 @@ export function FileTreeRows(props: {
   return (
     <For
       each={props.files}
-      fallback={
-        props.depth === 1 ? <div class="rail-empty">{t("empty")}</div> : null
-      }
+      fallback={props.depth === 1 ? <div class="rail-empty">{t("empty")}</div> : null}
     >
       {(file) => {
         const loadedChildren = () => props.fileTree[file.path] ?? [];
-        const expanded = () =>
-          file.type === "directory" && props.expandedPaths.has(file.path);
+        const expanded = () => file.type === "directory" && props.expandedPaths.has(file.path);
         return (
           <>
             <button
@@ -37,9 +34,7 @@ export function FileTreeRows(props: {
               )}
               style={{ "--depth": 1, "--file-depth": props.depth }}
               onClick={() =>
-                file.type === "directory"
-                  ? props.onDirectory(file)
-                  : props.onFile(file)
+                file.type === "directory" ? props.onDirectory(file) : props.onFile(file)
               }
               title={file.path}
             >

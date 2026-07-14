@@ -1,14 +1,15 @@
 # Agents Crate Architecture
 
-`agents` is the canonical home for agent definitions. Runtime code loads agent
-configuration, prompt resources, provider route preferences, and tool
-capabilities from this crate instead of hard-coding them in the MANO/MANAS
-runtime loop.
+`agents` is the canonical home for agent definitions. The runtime comes here for
+agent configuration, prompt resources, provider route preferences, and tool
+capabilities instead of burying them in the MANO/MANAS runtime loop. That keeps
+an agent inspectable as a configuration, not a scavenger hunt through execution
+code.
 
 The Cargo package and library names stay compatible with Tura:
 
 ```text
-package = tura-agents
+package = agents
 library = tura_agents
 ```
 
@@ -24,16 +25,16 @@ agents/
     lib.rs
     coding_agent.rs
     store.rs
-    fast/
+    direct/
       agent_config.json
       prompt.md
-    fast-text-only/
+    direct-text-only/
       agent_config.json
       prompt.md
-    thinking/
+    balanced/
       agent_config.json
       prompt.md
-    thinking-planning/
+    thoughtful/
       agent_config.json
       prompt.md
 ```
@@ -67,14 +68,16 @@ Each agent directory contains:
 
 - `agent_name`: canonical id. It should match the directory name.
 - `description`: human-readable summary for gateway/TUI listings.
-- `aliases`: optional compatibility names, such as `coding_agent`.
+- `aliases`: optional accepted names, such as `coding_agent`.
 - `agent_directory`: repository-relative path to the agent directory.
 - `default_config`: `true` for built-in protected agents, `false` for
   user-created agents.
+- `reflection`: controls whether runtime prompt assembly appends reflective
+  task-status/objective prompt style for the active agent. Built-ins set this to
+  `true` only for `thoughtful`; planning tool availability is configured
+  separately through capabilities.
 - `provider.tura_llm_name`: named route from
   `crates/provider/config/provider_config.json`.
-- `agent_persona[]`: persona bindings, normally pointing at
-  `personas/src/<persona_id>/prompt`.
 - `agent_prompt[]`: prompt resources, normally pointing at the agent directory.
 - `agent_capabilities[]`: enabled command/tool capability ids.
 - `validator`: validator settings; `need_validator: false` disables validator
@@ -92,10 +95,9 @@ To add or edit an agent manually:
 3. Add `prompt.md`.
 4. Set `agent_directory` to `agents/src/<agent_id>`.
 5. Set `agent_prompt[0].prompt_directory` to the same directory.
-6. Bind one or more personas through `agent_persona`.
-7. Choose a provider route through `provider.tura_llm_name`.
-8. Enable only the command capabilities the agent should receive.
-9. Run `cargo test -p tura-agents` after changing loader-visible fields.
+6. Choose a provider route through `provider.tura_llm_name`.
+7. Enable only the command capabilities the agent should receive.
+8. Run `cargo test -p agents` after changing loader-visible fields.
 
 Minimal custom agent example:
 
@@ -107,8 +109,9 @@ Minimal custom agent example:
   "agent_directory": "agents/src/my-agent",
   "report_to_user": true,
   "default_config": false,
+  "reflection": false,
   "provider": {
-    "tura_llm_name": "flagship_thinking",
+    "tura_llm_name": "thinking",
     "stream": true,
     "temperature": 0.2,
     "max_tokens": 0,
@@ -119,12 +122,6 @@ Minimal custom agent example:
     {
       "agent_prompt": "my-agent",
       "prompt_directory": "agents/src/my-agent"
-    }
-  ],
-  "agent_persona": [
-    {
-      "persona_name": "tura",
-      "persona_directory": "personas/src/tura/prompt"
     }
   ],
   "agent_capabilities": [
@@ -141,15 +138,15 @@ Minimal custom agent example:
       "capability_directory": "crates/tools/src"
     },
     {
+      "capability_name": "zsh",
+      "capability_directory": "crates/tools/src"
+    },
+    {
       "capability_name": "read_media",
       "capability_directory": "crates/tools/src"
     },
     {
       "capability_name": "web_discover",
-      "capability_directory": "crates/tools/src"
-    },
-    {
-      "capability_name": "compact_context",
       "capability_directory": "crates/tools/src"
     },
     {
@@ -165,17 +162,16 @@ Minimal custom agent example:
 ```
 
 `planning` is optional and should only be enabled for agents that are expected to
-use the multi-task planning runtime path.
+use the multi-task planning runtime path. It does not control reflective
+task-status prompt style; use `reflection` for that.
 
 ## Provider Route Selection
 
 Agents should reference provider routes by stable tier names such as:
 
 ```text
-flagship_thinking
-thinking
-fast
-instant
+balanced
+direct
 embedding_high
 embedding_low
 ```
@@ -192,14 +188,14 @@ Agent prompt resources live with the selected agent:
 agents/src/<agent_id>/prompt.md
 ```
 
-Persona and communication style resources are not copied into agent directories.
-They are loaded from the persona binding declared in `agent_persona`.
+Persona resources are independent from agents and are not loaded by agent
+configuration.
 
 ## Tests
 
 Agent changes should include the narrowest useful checks:
 
-- `cargo test -p tura-agents` for config discovery and loader behavior.
+- `cargo test -p agents` for config discovery and loader behavior.
 - Runtime activation tests when provider route, capability selection, or prompt
   assembly behavior changes.
 - Gateway/TUI smoke tests when an agent id, alias, or listing behavior changes.

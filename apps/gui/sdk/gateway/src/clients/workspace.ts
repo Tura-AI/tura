@@ -6,8 +6,7 @@ export function workspaceClient(client: GatewayClient) {
     createWorkspace: (input: Parameters<GatewayClient["createWorkspace"]>[0]) =>
       client.createWorkspace(input),
     defaultWorkspace: () => client.defaultWorkspace(),
-    selectLocalWorkspace: (
-      input?: Parameters<GatewayClient["selectLocalWorkspace"]>[0],
-    ) => client.selectLocalWorkspace(input),
+    selectLocalWorkspace: (input?: Parameters<GatewayClient["selectLocalWorkspace"]>[0]) =>
+      client.selectLocalWorkspace(input),
   };
 }

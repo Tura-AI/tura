@@ -5,12 +5,7 @@ import {
   type Session,
 } from "@tura/gateway-sdk";
 import { t } from "../i18n";
-import {
-  sessionTitle,
-  sessionUpdatedAt,
-  type AppState,
-  type MainTab,
-} from "../state/global-store";
+import { sessionTitle, sessionUpdatedAt, type AppState, type MainTab } from "../state/global-store";
 
 import {
   formatTicketTime,
@@ -20,6 +15,10 @@ import {
   taskStartAt,
   taskStartCondition,
 } from "../features/plan/tasks";
+
+const DEFAULT_WORKSPACE_NAME = "tura_workspace";
+const DOCUMENTS_DIRECTORY_NAMES = ["Documents", "文档"];
+
 export function copyText(value: string): void {
   if (typeof navigator !== "undefined" && navigator.clipboard) {
     void navigator.clipboard.writeText(value);
@@ -39,10 +38,7 @@ export function formatModelLimit(value?: number): string {
   return String(value);
 }
 
-export function eventBelongsToState(
-  state: AppState,
-  directory?: string | null,
-): boolean {
+export function eventBelongsToState(state: AppState, directory?: string | null): boolean {
   if (!directory || directory === "global") {
     return true;
   }
@@ -84,9 +80,7 @@ export function shortWorkspaceLabel(path?: string | null): string {
   return shortPathLabel(path) ?? t("noWorkspace");
 }
 
-export function defaultWorkspaceDirectory(
-  paths?: Partial<PathResponse>,
-): string {
+export function defaultWorkspaceDirectory(paths?: Partial<PathResponse>): string {
   const existing = [paths?.directory, paths?.worktree]
     .map((value) => value?.trim())
     .find((value): value is string => Boolean(value));
@@ -95,17 +89,27 @@ export function defaultWorkspaceDirectory(
   }
   const home = paths?.home?.trim();
   if (!home) {
-    return "tura workspace";
+    return DEFAULT_WORKSPACE_NAME;
   }
-  const separator = home.includes("\\") ? "\\" : "/";
-  const root = home.replace(/[\\/]+$/u, "");
-  return `${root}${separator}Documents${separator}tura workspace`;
+  return joinPath(documentDirectoryFromHome(home), DEFAULT_WORKSPACE_NAME);
 }
 
-export function fixtureFiles(
-  fixture: string | undefined,
-  path = "",
-): FileInfo[] {
+function documentDirectoryFromHome(home: string): string {
+  const root = home.replace(/[\\/]+$/u, "");
+  const parts = root.replaceAll("\\", "/").split("/").filter(Boolean);
+  const last = parts.at(-1)?.toLowerCase();
+  if (last && DOCUMENTS_DIRECTORY_NAMES.some((name) => name.toLowerCase() === last)) {
+    return root;
+  }
+  return joinPath(root, DOCUMENTS_DIRECTORY_NAMES[0]);
+}
+
+function joinPath(root: string, child: string): string {
+  const separator = root.includes("\\") ? "\\" : "/";
+  return `${root.replace(/[\\/]+$/u, "")}${separator}${child}`;
+}
+
+export function fixtureFiles(fixture: string | undefined, path = ""): FileInfo[] {
   if (fixture !== "plan-sessions") {
     return [];
   }
@@ -163,20 +167,18 @@ export function relativeSessionTime(session: Session): string {
   const delta = Math.max(0, Date.now() - normalizeTimeMs(updated));
   const minutes = Math.max(1, Math.floor(delta / 60_000));
   if (minutes < 60) {
-    return `${minutes}分钟`;
+    return t("relativeMinutes", { count: minutes });
   }
   const hours = Math.floor(minutes / 60);
   if (hours < 24) {
-    return `${hours}小时`;
+    return t("relativeHours", { count: hours });
   }
-  return `${Math.floor(hours / 24)}天`;
+  return t("relativeDays", { count: Math.floor(hours / 24) });
 }
 
 export function sessionHoverTitle(session: Session): string {
   const schedule = sessionScheduleHoverText(session);
-  return schedule
-    ? `${sessionTitle(session)}\n${schedule}`
-    : sessionTitle(session);
+  return schedule ? `${sessionTitle(session)}\n${schedule}` : sessionTitle(session);
 }
 
 export function sessionScheduleHoverText(session: Session): string | undefined {
@@ -222,10 +224,7 @@ export function normalizeTimeMs(value: number): number {
   return value > 10_000_000_000 ? value : value * 1000;
 }
 
-export function readConfigString(
-  config: Record<string, unknown>,
-  key: string,
-): string | undefined {
+export function readConfigString(config: Record<string, unknown>, key: string): string | undefined {
   const value = config[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -253,10 +252,7 @@ export function readConfigBoolean(
 export function inputHeight(value: string): string {
   const lines = Math.min(
     12,
-    Math.max(
-      3,
-      value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 72),
-    ),
+    Math.max(3, value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 72)),
   );
   return `${lines * 24 + 36}px`;
 }
@@ -334,10 +330,7 @@ export function readBooleanSearchParam(name: string): boolean {
 
 export function readMainTabSearchParam(): MainTab | undefined {
   const tab = readSearchParam("tab");
-  return tab === "plan" ||
-    tab === "conversation" ||
-    tab === "files" ||
-    tab === "settings"
+  return tab === "plan" || tab === "conversation" || tab === "files" || tab === "settings"
     ? tab
     : tab === "new"
       ? "conversation"
@@ -357,8 +350,7 @@ export function withInitialOverrides(
   return {
     ...state,
     activeTab,
-    previousMainTab:
-      activeTab === "settings" ? state.previousMainTab : activeTab,
+    previousMainTab: activeTab === "settings" ? state.previousMainTab : activeTab,
     selectedSessionId:
       overrides.selectedSessionId === null
         ? undefined
