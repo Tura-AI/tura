@@ -198,6 +198,14 @@ async function runWebTerminalE2e(gateway) {
           fullPage: false,
         });
         await assertTerminalFits(page, `${profile} mobile`);
+        await page.waitForFunction(
+          () =>
+            [...document.querySelectorAll(".xterm-rows > div")].some((row) =>
+              /Rich Fixture/.test(row.textContent ?? ""),
+            ),
+          null,
+          { timeout: 10_000 },
+        );
         const mobileViewport = await terminalViewportText(page);
         assert.match(
           mobileViewport,

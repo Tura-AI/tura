@@ -82,6 +82,8 @@ jobs:
             libssl-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
+            patchelf \
+            rpm \
             pkg-config
 
       - name: Run complete source installer (Windows)
@@ -143,4 +145,11 @@ jobs:
       - name: Fail if source installation failed
         if: steps.install_windows.outcome == 'failure' || steps.install_posix.outcome == 'failure'
         shell: pwsh
-        run: exit 1
+        run: |
+          $log = ".ci-results/source-install-${{ matrix.label }}.log"
+          if (Test-Path -LiteralPath $log -PathType Leaf) {
+            $tail = (Get-Content -LiteralPath $log -Tail 120) -join "`n"
+            $tail = $tail.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Host "::error title=Source install failure::$tail"
+          }
+          exit 1
