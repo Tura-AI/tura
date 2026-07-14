@@ -194,7 +194,14 @@ GitHub Actions:
   `tura-win32-x64`), verifies a local `npm install` of the main `tura-ai` package
   against the platform package, verifies the slim main npm package contents,
   verifies postinstall CLI registration plus `tura unregister-cli`, uploads
-  release archives, and publishes npm packages when `NPM_TOKEN` is configured.
+  release archives, and publishes npm packages with the first configured token
+  from `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or `NPM_AUTH_TOKEN`. Token authentication
+  is checked before the four platform builds, and npmjs publishing explicitly
+  disables provenance because this path does not use trusted publishing.
+  A branch named `npm-release/<tag>/<run-id>` invokes the idempotent recovery
+  path: it verifies the tag and completed source run, reuses that run's four
+  platform artifacts, and resumes platform, main, GitHub Release, and GitHub
+  Package publishing without rebuilding them.
 
 Local source builds still resolve directly from `target/release`. Published npm
 installs resolve through the main `tura-ai` package plus the matching platform
