@@ -6,24 +6,29 @@ not occur on every machine. Link a concrete GitHub issue when a failure can be
 reproduced, and remove an entry only after its exit criteria and regression
 coverage are satisfied. Optimism is useful. It is not a test result.
 
-## Provider benchmark coverage is narrow
+## Provider and reasoning-level benchmark coverage is narrow
 
 **Status:** Open
 
 The provider catalog configures many protocol families, and repository tests
 contain OpenAI, Google, Anthropic/Claude, Codex, and compatibility fixtures.
 However, the published long-horizon benchmark evidence is concentrated on the
-named Codex/OpenAI-style configurations. A configured provider or a mocked
-request is not proof of production compatibility or comparative performance.
+named GPT-5.6 SOL and Codex/OpenAI-style configurations. It does not include a
+matched Codex CLI run at High reasoning effort. This is a missing benchmark
+baseline, not a claim that Codex CLI has no High reasoning setting. A configured
+provider or a mocked request is not proof of production compatibility or
+comparative performance.
 
 **Risk:** Provider-specific streaming events, tool-call formats, usage fields,
 reasoning metadata, caching, retries, and cancellation can regress unnoticed.
 
-**Required evidence:** A published provider matrix with protocol fixtures and
-cost-bounded live smoke tests, followed by repeated long-horizon runs for at
-least Anthropic/Claude, Google/Gemini, one OpenAI-compatible third party, and one
-local endpoint. Record exact provider/model versions, settings, dates, raw
-artifacts, failure taxonomy, and cost.
+**Required evidence:** Add a matched Tura and Codex CLI reasoning-level matrix,
+including High, while holding the model version, provider, task revisions,
+timeout, evaluator, and run count fixed. Publish a provider matrix with protocol
+fixtures and cost-bounded live smoke tests, followed by repeated long-horizon
+runs for at least Anthropic/Claude, Google/Gemini, one OpenAI-compatible third
+party, and one local endpoint. Record exact provider/model versions, settings,
+dates, raw artifacts, failure taxonomy, and cost.
 
 ## Runtime/session parsing is not end-to-end single-source
 
@@ -47,6 +52,44 @@ contract or generated compatibility layer. Preserve fixtures for legacy/current
 records and test transition parity, checkpoint/recovery, compaction, malformed
 records, and mixed-version replay. Do not remove a parser merely because two
 functions have similar names.
+
+## Cross-crate communication contracts are bundled with implementations
+
+**Status:** Open architecture issue
+
+Communication contracts are not isolated at either the frontend or internal
+Rust boundaries. Frontend-facing request, response, and event types live under
+`crates/gateway/src/contracts`. Router IPC request/response types live in the
+router crate; session DB commands, responses, and snapshots live in the
+`session_log` crate; and runtime status and session types live in the runtime
+crate. A caller such as gateway cannot express a dependency on only those wire
+types. It must depend on the implementation crates even where a boundary needs
+only their communication contracts.
+
+Cargo therefore places the full implementation crates in the build graph; it
+cannot compile only their protocol modules. Runtime brings provider, agent,
+persona, router, tool, and session-log dependencies. Router brings agent,
+persona, session-log, tool, process, and OS-specific dependencies. Session log
+also bundles its SQLite storage and service implementation with its protocol.
+
+**Risk:** Contract reuse pulls unrelated implementation dependencies into Cargo
+dependency, compile, link, and rebuild surfaces. It increases build cost, makes
+crate ownership and release boundaries less clear, and can encourage dependency
+cycles or mirrored types. Mirrored definitions also make serialization behavior
+and protocol versions easier to drift between processes and clients.
+
+**Required work:** Split transport-neutral request, response, event, status,
+snapshot, and shared serialization types into lightweight contract crates owned
+by each protocol boundary, including gateway, router, runtime, and session DB.
+Do not replace the current coupling with one monolithic catch-all contract
+crate. Implementation crates should depend on their contract crates; callers
+that only exchange protocol messages should not depend on the implementations.
+A contract crate must not depend on gateway, runtime execution, provider, router
+execution, tools, process management, HTTP servers, desktop code, or storage
+implementations. Preserve current JSON fixtures, serde behavior, protocol
+versioning, and wire compatibility. Add dependency-direction and cycle checks,
+then record dependency counts plus clean and incremental build times before and
+after the split.
 
 ## Runtime timing coverage is incomplete
 

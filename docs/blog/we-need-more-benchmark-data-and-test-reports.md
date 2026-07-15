@@ -30,13 +30,13 @@ Running more tasks is useful, but task count is only one axis. Coding-agent perf
 
 The comparison I want to see crosses three large dimensions.
 
-### More reasoning levels
+### More reasoning levels and models
 
-The same model can behave very differently at low, medium, and high reasoning effort. It may make fewer calls, spend more tokens inside each call, investigate more deeply, or simply take longer to reach the same answer.
+The same model can behave very differently across reasoning levels, and different models can behave differently at the same named level. They may vary in tool calls, token use, investigation depth, latency, and correctness.
 
-We should run matched tasks across reasoning levels while keeping the agent architecture, model version, provider, timeout, and evaluation fixed. Then repeat the same reasoning-level sweep for more than one agent. Otherwise we cannot tell whether a gain comes from the harness, from extra inference, or from an interaction between the two.
+We should run matched tasks across every supported reasoning level for more than one model family while keeping the agent architecture, provider protocol, timeout, task revision, and evaluation fixed. Record the exact model version and effective reasoning parameter, and do not assume that similarly named settings from different models are equivalent.
 
-A single high-versus-medium number is a clue. A repeated cross-agent matrix with variance is evidence.
+A repeated model-by-reasoning-level matrix with variance is more useful than a single high-versus-medium result.
 
 ### More model providers
 
@@ -46,7 +46,7 @@ This is not only a leaderboard question. Providers disagree in the details: stre
 
 Cost matters here too. Live matrices can become expensive quickly. A sensible sequence is protocol fixtures first, cost-bounded smoke tests second, and repeated long-horizon runs only where the earlier layers are stable.
 
-The provider gap and the evidence needed to close it are documented in [KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md#provider-benchmark-coverage-is-narrow).
+The provider gap and the evidence needed to close it are documented in [KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md#provider-and-reasoning-level-benchmark-coverage-is-narrow).
 
 ### More agent architectures
 
@@ -64,12 +64,15 @@ The project README is explicit about this: there is currently no ablation provin
 
 Useful Tura ablations include:
 
-- macro `command_run` batching versus equivalent commands executed through single-action model turns;
+- Tura with `command_run` enabled versus Tura with it disabled and equivalent commands executed through single-action model turns;
+- the original mini-swe-agent versus a mini-swe-agent fork with the same `command_run` contract, permissions, and command set;
 - task-specific operation manuals versus the same agent without those runtime instructions;
 - backward-reasoning guidance versus a matched general engineering prompt;
 - structured compact-context checkpoints versus ordinary transcript summarization on long sessions;
 - explicit durable task state versus chat-only continuation after interruption;
 - Direct and Balanced components separated one at a time, rather than treating two full presets as a clean causal comparison.
+
+The two `command_run` experiments test the same feature from opposite directions: remove it from Tura, then add it to mini-swe-agent and compare the fork with the original. If both comparisons move in the same direction under matched conditions, the causal case is stronger.
 
 Each ablation should change one thing, keep the rest fixed, repeat enough times to show variance, and report correctness as well as tokens, turns, latency, and cost. If disabling a feature saves tokens but breaks more tasks, that is not a free improvement. If a feature helps only after context grows past a certain size, that boundary is more useful than one aggregate average.
 
@@ -77,20 +80,30 @@ Some of these experiments will be awkward to build. Good. If a feature cannot be
 
 ## One benchmark case I would like to see
 
-Here is a concrete example. Take a small fixed set of long-horizon repair tasks and run the same model through four cells:
+Here is a concrete example. Take a small fixed set of long-horizon repair tasks and run the same model and reasoning level through four cells:
 
-| Cell | Agent setup | Reasoning level | What it helps isolate |
-| --- | --- | --- | --- |
-| A | Tura Balanced | Medium | Tura's full reasoning-oriented configuration |
-| B | Tura Balanced | High | The effect of additional reasoning within the same architecture |
-| C | Tura Direct | Medium | The difference between Tura's two named configurations |
-| D | Another reproducible agent | Medium | An architectural comparison at a matched reasoning level |
+| Cell | Agent setup | What it helps isolate |
+| --- | --- | --- |
+| A | Tura with `command_run` enabled | Tura's full macro-execution path |
+| B | Tura with `command_run` disabled | The effect of removing macro execution from Tura |
+| C | Original mini-swe-agent | The external baseline without macro execution |
+| D | mini-swe-agent with the same `command_run` contract | The effect of adding macro execution outside Tura |
 
-Keep the task revisions, model version, provider, timeout, machine, evaluation, and run count fixed. Repeat each cell at least three times. Record verifier success, turns, input and output tokens, wall time, cost, failures, and the raw run artifacts.
+Keep the task revisions, model version, reasoning level, provider, permissions, timeout, machine, evaluation, and run count fixed. Repeat each cell at least three times. Record verifier success, turns, input and output tokens, wall time, cost, failures, and the raw run artifacts.
 
-Then run one narrower Tura ablation on the same tasks: macro `command_run` batching enabled versus equivalent single-action model turns. That does not answer every question, but it starts separating the effect of reasoning effort, preset, agent architecture, and one specific Tura feature.
+Run the same four-cell comparison across additional reasoning levels and models only after the fixed-model experiment is stable. This separates the effect of `command_run` from interactions with model capability and inference budget.
 
 This is only one useful case. A provider matrix, a GUI memory-growth report, or a Windows process-cleanup failure can be equally valuable. If you have only one cell, one task, or one failed run, send that too. Partial evidence is how a complete benchmark often begins.
+
+## Tell me your benchmark case
+
+I do not assume that I understand every area of programming. I understand even less about the full range of work in other industries. That limits the benchmark cases I can design on my own: I may know how to make a task reproducible without knowing whether it represents the difficult part of your actual work.
+
+I have used Tura to process photos and edit video, but those uses are not yet formal benchmarks. Someone who works deeply in imaging, video production, data engineering, scientific computing, security, finance, embedded systems, game development, or another domain may have a much clearer idea of which tasks would test useful capability rather than generic tool use.
+
+Tell me the benchmark case you think is missing. Describe the real task, the input materials, the constraints, what a correct result looks like, which failures matter, and what can be shared publicly. A useful case does not need to be large. It needs a stable task, a checkable outcome, and enough domain context to distinguish a correct solution from a plausible-looking one.
+
+If the task depends on private data, licensed media, specialized hardware, paid software, or professional judgment, say so. We can look for a public fixture, a smaller reproducible version, or an evaluation protocol that preserves the important constraint without publishing material that should remain private.
 
 ## Agent benchmarks do not test the whole product
 
