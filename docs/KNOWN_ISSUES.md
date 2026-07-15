@@ -8,23 +8,26 @@ coverage are satisfied. Optimism is useful. It is not a test result.
 
 ## Provider and reasoning-level benchmark coverage is narrow
 
-**Status:** Open
+**Status:** Partially covered
 
 The provider catalog configures many protocol families, and repository tests
 contain OpenAI, Google, Anthropic/Claude, Codex, and compatibility fixtures.
 However, the published long-horizon benchmark evidence is concentrated on the
-named GPT-5.6 SOL and Codex/OpenAI-style configurations. It does not include a
-matched Codex CLI run at High reasoning effort. This is a missing benchmark
-baseline, not a claim that Codex CLI has no High reasoning setting. A configured
-provider or a mocked request is not proof of production compatibility or
-comparative performance.
+named GPT-5.6 SOL and Codex/OpenAI-style configurations. The current evidence
+[record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
+now includes matched Tura and official Codex CLI runs at High reasoning effort
+on all 20 DeepSWE and 5 rewrite tasks. It does not yet provide the same crossed
+agent-by-reasoning-level matrix at Medium and High, or comparable long-horizon
+evidence for other provider families. A configured provider or a mocked request
+is not proof of production compatibility or comparative performance.
 
 **Risk:** Provider-specific streaming events, tool-call formats, usage fields,
 reasoning metadata, caching, retries, and cancellation can regress unnoticed.
 
-**Required evidence:** Add a matched Tura and Codex CLI reasoning-level matrix,
-including High, while holding the model version, provider, task revisions,
-timeout, evaluator, and run count fixed. Publish a provider matrix with protocol
+**Required evidence:** Extend the matched Tura and Codex CLI comparison into a
+crossed reasoning-level matrix, including Medium and High, while holding the
+model version, official CLI/runtime builds, provider, task revisions, timeout,
+evaluator, and run count fixed. Publish a provider matrix with protocol
 fixtures and cost-bounded live smoke tests, followed by repeated long-horizon
 runs for at least Anthropic/Claude, Google/Gemini, one OpenAI-compatible third
 party, and one local endpoint. Record exact provider/model versions, settings,
