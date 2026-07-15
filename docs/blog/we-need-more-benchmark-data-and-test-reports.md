@@ -46,7 +46,7 @@ This is not only a leaderboard question. Providers disagree in the details: stre
 
 Cost matters here too. Live matrices can become expensive quickly. A sensible sequence is protocol fixtures first, cost-bounded smoke tests second, and repeated long-horizon runs only where the earlier layers are stable.
 
-The provider gap and the evidence needed to close it are documented in [KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md#provider-benchmark-coverage-is-narrow).
+The provider gap and the evidence needed to close it are documented in [KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md#provider-and-reasoning-level-benchmark-coverage-is-narrow).
 
 ### More agent architectures
 

@@ -53,29 +53,43 @@ records and test transition parity, checkpoint/recovery, compaction, malformed
 records, and mixed-version replay. Do not remove a parser merely because two
 functions have similar names.
 
-## Communication contracts are coupled to the gateway crate
+## Cross-crate communication contracts are bundled with implementations
 
 **Status:** Open architecture issue
 
-Frontend-facing request, response, and event types live under
-`crates/gateway/src/contracts`. The same Cargo package also owns the HTTP server,
-runtime/provider/router/session integration, process management, and desktop
-dependencies. A Rust consumer that only needs the communication contract cannot
-depend on a contract-only crate; it must either take the gateway's broad
-dependency graph or maintain mirrored types elsewhere.
+Communication contracts are not isolated at either the frontend or internal
+Rust boundaries. Frontend-facing request, response, and event types live under
+`crates/gateway/src/contracts`. Router IPC request/response types live in the
+router crate; session DB commands, responses, and snapshots live in the
+`session_log` crate; and runtime status and session types live in the runtime
+crate. A caller such as gateway cannot express a dependency on only those wire
+types. It must depend on the implementation crates even where a boundary needs
+only their communication contracts.
+
+Cargo therefore places the full implementation crates in the build graph; it
+cannot compile only their protocol modules. Runtime brings provider, agent,
+persona, router, tool, and session-log dependencies. Router brings agent,
+persona, session-log, tool, process, and OS-specific dependencies. Session log
+also bundles its SQLite storage and service implementation with its protocol.
 
 **Risk:** Contract reuse pulls unrelated implementation dependencies into Cargo
-dependency and rebuild surfaces, increasing compile and link cost. Mirrored
-definitions also make serialization behavior and API versions easier to drift
-between the gateway and its clients.
+dependency, compile, link, and rebuild surfaces. It increases build cost, makes
+crate ownership and release boundaries less clear, and can encourage dependency
+cycles or mirrored types. Mirrored definitions also make serialization behavior
+and protocol versions easier to drift between processes and clients.
 
-**Required work:** Move transport-neutral request, response, event, and shared
-serialization types into a dedicated lightweight contract crate. Gateway and
-Rust clients should depend on that crate, while the contract crate must not
-depend on gateway, runtime, provider, router, process, HTTP-server, or desktop
-implementations. Preserve current JSON fixtures and wire compatibility, add a
-dependency-boundary check, and record Cargo dependency counts plus clean and
-incremental build times before and after the split.
+**Required work:** Split transport-neutral request, response, event, status,
+snapshot, and shared serialization types into lightweight contract crates owned
+by each protocol boundary, including gateway, router, runtime, and session DB.
+Do not replace the current coupling with one monolithic catch-all contract
+crate. Implementation crates should depend on their contract crates; callers
+that only exchange protocol messages should not depend on the implementations.
+A contract crate must not depend on gateway, runtime execution, provider, router
+execution, tools, process management, HTTP servers, desktop code, or storage
+implementations. Preserve current JSON fixtures, serde behavior, protocol
+versioning, and wire compatibility. Add dependency-direction and cycle checks,
+then record dependency counts plus clean and incremental build times before and
+after the split.
 
 ## Runtime timing coverage is incomplete
 
