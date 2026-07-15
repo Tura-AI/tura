@@ -90,13 +90,11 @@ I still believe Tura will change how later coding agents are architected. Not be
 
 Because I want a coding agent that feels less like supervising a very fast autocomplete and more like working with a careful engineer.
 
-It should read before editing. It should group work that belongs together. It should remember the task after context changes. It should verify claims at the layer that owns them. It should admit what it did not test. And when it says it is better, the evidence should be close enough for someone else to check.
-
-That is a slower sentence than "AI that writes your app for you."
+That is a slower sentence than "Vibe coding a 100,000 USD valued app in 2 hours."
 
 It is also the product I actually want to use.
 
-The goal is ambitious: I want to make Tura the strongest-performing open-source coding agent.
+The goal is ambitious: The best agent harness should be open-sourced.
 
 ## The formal documents
 
@@ -111,7 +109,7 @@ This post is the conversational version. These complete Markdown files are the s
 
 ## Why the name Tura?
 
-The name comes from the Sanskrit word *tura* (तुर), which can carry senses such as quick, swift, or prompt, as well as strong, powerful, or excelling. I liked the combination: an agent should move quickly, but speed is not worth much unless the work is strong. The dictionary entries are collected [here](https://kosha.sanskrit.today/word/sa/tura).
+The name comes from the Sanskrit word *tura* (तुर), which can carry senses such as quick, swift, or prompt, as well as strong, powerful, or excelling.  The dictionary entries are collected [here](https://kosha.sanskrit.today/word/sa/tura).
 
 ## Contact
 

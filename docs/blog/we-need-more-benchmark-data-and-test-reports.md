@@ -95,6 +95,16 @@ Run the same four-cell comparison across additional reasoning levels and models 
 
 This is only one useful case. A provider matrix, a GUI memory-growth report, or a Windows process-cleanup failure can be equally valuable. If you have only one cell, one task, or one failed run, send that too. Partial evidence is how a complete benchmark often begins.
 
+## Tell me your benchmark case
+
+I do not assume that I understand every area of programming. I understand even less about the full range of work in other industries. That limits the benchmark cases I can design on my own: I may know how to make a task reproducible without knowing whether it represents the difficult part of your actual work.
+
+I have used Tura to process photos and edit video, but those uses are not yet formal benchmarks. Someone who works deeply in imaging, video production, data engineering, scientific computing, security, finance, embedded systems, game development, or another domain may have a much clearer idea of which tasks would test useful capability rather than generic tool use.
+
+Tell me the benchmark case you think is missing. Describe the real task, the input materials, the constraints, what a correct result looks like, which failures matter, and what can be shared publicly. A useful case does not need to be large. It needs a stable task, a checkable outcome, and enough domain context to distinguish a correct solution from a plausible-looking one.
+
+If the task depends on private data, licensed media, specialized hardware, paid software, or professional judgment, say so. We can look for a public fixture, a smaller reproducible version, or an evaluation protocol that preserves the important constraint without publishing material that should remain private.
+
 ## Agent benchmarks do not test the whole product
 
 A coding benchmark can finish with a correct patch while the local product still leaks memory, loses a session, hangs during shutdown, or renders a transcript badly. The verifier does not care. The user does.
