@@ -36,7 +36,7 @@ Reducing model round trips naturally reduces repeated context and token use. Tha
 
 The more interesting question is what to do with the budget you save.
 
-Tura currently has two answers. Direct tries to keep the workflow lean. Balanced spends more of the saved budget on investigation, reasoning, and verification. In the published DeepSWE comparison, Direct used 77.5% fewer aggregate tokens than Codex CLI while reaching a comparable verifier success rate; Balanced used 31.1% fewer tokens and reached a higher success rate in that test set.
+Tura currently has two answers. Direct tries to keep the workflow lean. Balanced spends more of the saved budget on investigation, reasoning, and verification. In the published GPT-5.6 SOL High-to-High DeepSWE [comparison](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md), Direct used 83.5% fewer aggregate tokens than the official Codex CLI High configuration while recording a 65.0% versus 60.0% verifier success rate; Balanced used 49.6% fewer tokens and recorded an 80.0% success rate.
 
 Those numbers are evidence for named configurations on a bounded set of tasks. They are not a law of nature, and they do not prove that every provider, model, operating system, or repository behaves the same way. The project [README](https://github.com/Tura-AI/tura/blob/main/README.md) says that plainly, and the open evidence gaps live in [KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md).
 
