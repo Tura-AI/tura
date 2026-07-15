@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://turaai.net/"><img alt="Website" title="Tura official website" src="https://img.shields.io/badge/Website-turaai.net-40e0d0?style=flat-square&amp;labelColor=555555"></a>
-  <a href="https://turaai.net/benchmark"><img alt="Benchmark: 280 published runs" title="Tura benchmark: 280 published runs" src="https://img.shields.io/badge/Benchmark-280_published_runs-9b59b6?style=flat-square&amp;labelColor=555555"></a>
+  <a href="https://turaai.net/benchmark"><img alt="Benchmark: 348 sessions" title="Tura benchmark: 348 sessions" src="https://img.shields.io/badge/Benchmark-348_sessions-9b59b6?style=flat-square&amp;labelColor=555555"></a>
   <a href="https://www.npmjs.com/package/tura-ai"><img alt="npm package" title="Tura npm package" src="https://img.shields.io/npm/v/tura-ai?style=flat-square&amp;logo=npm&amp;label=npm&amp;labelColor=555555&amp;color=cb3837"></a>
 </p>
 
@@ -22,6 +22,8 @@ Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to look
 
 > The primary comparison below holds the model and reasoning label fixed: Tura Balanced High, Tura Direct High, and the official Codex CLI High configuration on 20 DeepSWE tasks and 5 rewrite tasks. The evidence record also retains Codex CLI Medium as a separate secondary configuration; the benchmark methodology keeps 2 separately reviewed design tasks outside the harness-scored population.[^test-set-record]
 
+[Full report on GitHub](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
+
 The published results do not establish equivalent quality or performance for
 every configured provider. Broader Anthropic/Claude, Google/Gemini,
 OpenAI-compatible, local-provider, UI-latency, runtime/session parsing, and
@@ -31,29 +33,7 @@ cross-OS measurements remain part of the documented
 <details>
 <summary><strong>FULL BENCHMARK REPORT</strong></summary>
 
-The High-to-High comparison contains 210 sessions: 20 DeepSWE tasks x 3
-configurations x 3 replicates, plus 5 rewrite tasks x 3 configurations x 2
-replicates. DeepSWE and rewrite results remain separate because their scoring
-denominators are different.[^test-set-record]
-
-| DeepSWE configuration | Verifier passes | Pass rate | Observed tokens | Model rounds |
-|---|---:|---:|---:|---:|
-| Tura Balanced High | 48/60 | 80.0% | 229,695,477 | 2,017 |
-| Tura Direct High | 39/60 | 65.0% | 75,108,167 | 969 |
-| Codex CLI High | 36/60 | 60.0% | 455,742,296 | 6,074 |
-
-| Rewrite configuration | Harness checks | Micro rate | Task macro | Observed tokens | Model rounds |
-|---|---:|---:|---:|---:|---:|
-| Tura Balanced High | 389/472 | 82.4% | 84.2% | 24,997,927 | 229 |
-| Tura Direct High | 353/472 | 74.8% | 77.4% | 8,368,639 | 123 |
-| Codex CLI High | 352/472 | 74.6% | 77.8% | 63,348,476 | 726 |
-
-The rewrite rows come from the two canonical manifests linked below.[^rewrite-manifest]
-
-These are complete configured-system comparisons, not estimates of the effect
-of one Tura feature. Counts, aggregation formulas, exclusions, costs, and the
-separate Codex Medium results are documented in the current evidence record and
-benchmark methodology.[^test-set-record]
+<img src="assets/data/benchmark-agent-comparison.svg" alt="High-to-High benchmark comparison" width="800">
 </details>
 
 ### Screenshots
