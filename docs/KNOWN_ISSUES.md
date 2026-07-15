@@ -6,24 +6,29 @@ not occur on every machine. Link a concrete GitHub issue when a failure can be
 reproduced, and remove an entry only after its exit criteria and regression
 coverage are satisfied. Optimism is useful. It is not a test result.
 
-## Provider benchmark coverage is narrow
+## Provider and reasoning-level benchmark coverage is narrow
 
 **Status:** Open
 
 The provider catalog configures many protocol families, and repository tests
 contain OpenAI, Google, Anthropic/Claude, Codex, and compatibility fixtures.
 However, the published long-horizon benchmark evidence is concentrated on the
-named Codex/OpenAI-style configurations. A configured provider or a mocked
-request is not proof of production compatibility or comparative performance.
+named GPT-5.6 SOL and Codex/OpenAI-style configurations. It does not include a
+matched Codex CLI run at High reasoning effort. This is a missing benchmark
+baseline, not a claim that Codex CLI has no High reasoning setting. A configured
+provider or a mocked request is not proof of production compatibility or
+comparative performance.
 
 **Risk:** Provider-specific streaming events, tool-call formats, usage fields,
 reasoning metadata, caching, retries, and cancellation can regress unnoticed.
 
-**Required evidence:** A published provider matrix with protocol fixtures and
-cost-bounded live smoke tests, followed by repeated long-horizon runs for at
-least Anthropic/Claude, Google/Gemini, one OpenAI-compatible third party, and one
-local endpoint. Record exact provider/model versions, settings, dates, raw
-artifacts, failure taxonomy, and cost.
+**Required evidence:** Add a matched Tura and Codex CLI reasoning-level matrix,
+including High, while holding the model version, provider, task revisions,
+timeout, evaluator, and run count fixed. Publish a provider matrix with protocol
+fixtures and cost-bounded live smoke tests, followed by repeated long-horizon
+runs for at least Anthropic/Claude, Google/Gemini, one OpenAI-compatible third
+party, and one local endpoint. Record exact provider/model versions, settings,
+dates, raw artifacts, failure taxonomy, and cost.
 
 ## Runtime/session parsing is not end-to-end single-source
 
@@ -47,6 +52,30 @@ contract or generated compatibility layer. Preserve fixtures for legacy/current
 records and test transition parity, checkpoint/recovery, compaction, malformed
 records, and mixed-version replay. Do not remove a parser merely because two
 functions have similar names.
+
+## Communication contracts are coupled to the gateway crate
+
+**Status:** Open architecture issue
+
+Frontend-facing request, response, and event types live under
+`crates/gateway/src/contracts`. The same Cargo package also owns the HTTP server,
+runtime/provider/router/session integration, process management, and desktop
+dependencies. A Rust consumer that only needs the communication contract cannot
+depend on a contract-only crate; it must either take the gateway's broad
+dependency graph or maintain mirrored types elsewhere.
+
+**Risk:** Contract reuse pulls unrelated implementation dependencies into Cargo
+dependency and rebuild surfaces, increasing compile and link cost. Mirrored
+definitions also make serialization behavior and API versions easier to drift
+between the gateway and its clients.
+
+**Required work:** Move transport-neutral request, response, event, and shared
+serialization types into a dedicated lightweight contract crate. Gateway and
+Rust clients should depend on that crate, while the contract crate must not
+depend on gateway, runtime, provider, router, process, HTTP-server, or desktop
+implementations. Preserve current JSON fixtures and wire compatibility, add a
+dependency-boundary check, and record Cargo dependency counts plus clean and
+incremental build times before and after the split.
 
 ## Runtime timing coverage is incomplete
 
