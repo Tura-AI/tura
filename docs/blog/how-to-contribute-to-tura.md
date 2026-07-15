@@ -1,34 +1,26 @@
 # How to Contribute to Tura
 
-Let me start with the reassuring part: you do not need to understand all of Tura before contributing to it.
+You do not need to understand the entire repository before contributing. Start with one observable problem, identify the component that owns it, and verify the change at that boundary.
 
-Honestly, trying to understand the whole repository first is a good way to spend an evening reading architecture notes and changing nothing. Tura has a runtime, router, session database, provider layer, gateway, TUI, GUI, desktop shell, tools, and enough process boundaries to make "I'll just fix this quickly" a dangerous opening line.
+## Choose the contribution type
 
-The better route is smaller: pick one observable problem, find the part that owns it, and prove that your change fixes that problem without asking the pull request to prove the entire universe.
+Before editing, search existing [issues](https://github.com/Tura-AI/tura/issues) and [pull requests](https://github.com/Tura-AI/tura/pulls).
 
-That is the contribution model in one paragraph.
-
-## First, decide what kind of change you are making
-
-Before touching code, search the existing [issues](https://github.com/Tura-AI/tura/issues) and [pull requests](https://github.com/Tura-AI/tura/pulls). You may find the same bug, a design discussion, or a half-finished fix that changes what "small" means.
-
-Then give the change one primary type:
-
-| If you are... | Bring this kind of evidence |
+| Change | Required evidence |
 | --- | --- |
-| Fixing a bug | A reproduction, the root cause, and a regression test at the smallest layer that owns the failure |
-| Adding or changing behavior | The user problem, observable acceptance criteria, and any compatibility impact |
-| Claiming a performance improvement | A controlled before/after comparison, correctness results, and sanitized raw measurements |
-| Adding provider compatibility | Protocol fixtures and narrowly scoped live evidence where fixtures cannot prove the behavior |
-| Improving documentation | An accurate source, working links, and a readable rendered result |
+| Bug fix | Reproduction, root cause, and a regression test at the smallest owning layer |
+| Behavior change | User problem, observable acceptance criteria, and compatibility impact |
+| Performance improvement | Controlled before/after comparison, correctness results, and sanitized raw measurements |
+| Provider compatibility | Protocol fixtures and focused live evidence where fixtures are insufficient |
+| Documentation | Accurate sources, working links, and a readable rendered result |
 
-Large features, state changes, migrations, compatibility breaks, new provider families, and performance claims need an issue first. A small documentation fix usually does not. Security problems are the exception: report those privately through [SECURITY.md](https://github.com/Tura-AI/tura/blob/main/.github/SECURITY.md), not in a public issue.
+Large features, migrations, compatibility breaks, new provider families, state-model changes, and performance claims need an issue first. Small documentation fixes usually do not. Report security problems privately through [SECURITY.md](https://github.com/Tura-AI/tura/blob/main/.github/SECURITY.md).
 
-The exact decision table and ready-to-use PR templates are in the complete [CONTRIBUTING.md](https://github.com/Tura-AI/tura/blob/main/.github/CONTRIBUTING.md#choose-the-contribution-type).
+The full decision table and pull-request templates are in [CONTRIBUTING.md](https://github.com/Tura-AI/tura/blob/main/.github/CONTRIBUTING.md#choose-the-contribution-type).
 
-## Set up a contributor environment, not a surprise PATH migration
+## Set up the contributor environment
 
-Clone your fork, enter the repository, and run the dependency-only setup first:
+Use the dependency-only installer so development setup does not register a new `tura` command on your user `PATH`.
 
 ```powershell
 # Windows PowerShell
@@ -40,76 +32,70 @@ Clone your fork, enter the repository, and run the dependency-only setup first:
 ./scripts/install.sh --environment-only
 ```
 
-That prepares the dependencies without registering a new `tura` command on your user `PATH`. The default installer is meant for end users: it performs a release build and registers Tura. Useful when you want it, mildly surprising when you only meant to run tests.
+The default installer performs a release build and registers Tura. Installed files, side effects, and cleanup commands are documented in [docs/start/install.md](https://github.com/Tura-AI/tura/blob/main/docs/start/install.md).
 
-The complete list of installed files, side effects, and cleanup commands is in [docs/start/install.md](https://github.com/Tura-AI/tura/blob/main/docs/start/install.md).
+## Find the owning boundary
 
-## Find the owner before finding the fix
+Tura assigns major responsibilities to specific components:
 
-Tura tries to keep one owner for each important responsibility. Runtime decides what to do with model output. Provider performs and normalizes model calls. Tools own model-visible commands and execution policy. The router dispatches workers. The session database owns durable session state. Frontends do not get to invent parallel versions of those things.
+- runtime handles model output and agent execution;
+- provider performs and normalizes model calls;
+- tools own model-visible commands and execution policy;
+- router dispatches workers and owns routing lifecycle;
+- session DB owns durable session state;
+- gateway exposes backend behavior to frontends;
+- TUI and GUI own their interaction and rendering behavior.
 
-That means a fix starts with a boundary question:
+Read the relevant section of [ARCHITECTURE.md](https://github.com/Tura-AI/tura/blob/main/ARCHITECTURE.md) before changing a system boundary. Major directories also contain local `ARCHITECTURE.md` files.
 
-- Is this parsing or state-transition logic?
-- Is it process, socket, PATH, or shutdown behavior?
-- Is it provider protocol normalization?
-- Is it a TUI or GUI interaction problem?
-- Is it persistent session state or recovery?
+A fix in the wrong layer can create a second parser, state model, retry policy, or source of truth. Change the existing owner unless the architecture explicitly requires a new boundary.
 
-Read the relevant section of [ARCHITECTURE.md](https://github.com/Tura-AI/tura/blob/main/ARCHITECTURE.md) before changing a system boundary. Most major directories also have their own `ARCHITECTURE.md` with the local contract.
+## Keep the change focused
 
-This is not paperwork for its own sake. A five-line fix in the wrong owner often creates a second parser, state model, or retry policy. It works until the two versions disagree, usually at an inconvenient hour.
+A focused diff has one primary job. Reproduce the failing behavior, modify the owning code, and add evidence that fails before the change and passes after it.
 
-## Make the smallest change that proves the requirement
-
-"Small" does not mean timid. It means the diff has one job.
-
-If a parser accepts the wrong shape, reproduce that shape and fix the parser. If an installer damages PATH resolution, test the installer behavior at the OS layer. If a button loses state after a restart, the fix probably crosses a UI and persistence boundary, so the evidence should cross it too.
-
-Try not to add an abstraction because a future feature might need it. Tura follows YAGNI: a demonstrated requirement gets code; a hypothetical requirement gets to wait outside.
-
-The same rule applies to cleanup. Please do not mix a bug fix, nearby renaming, formatting, and a small redesign into one pull request. Each extra idea makes the real behavior harder to review.
+Do not add abstractions for hypothetical features. Avoid combining a bug fix with unrelated renaming, formatting, cleanup, or redesign. If a change crosses a real boundary, test that boundary.
 
 ## Run the test that owns the behavior
 
-This part is easier than it may look. You are not expected to run every provider on every operating system through every frontend for every change.
+Start with the smallest test that can catch the regression:
 
-Start at the smallest layer that can catch the actual regression:
+- pure logic, parsing, schemas, or state transitions: owning unit or crate test;
+- deterministic workflows across modules: owning business test;
+- processes, sockets, shell behavior, PATH, permissions, or shutdown: OS test;
+- visible TUI or GUI behavior: app unit test and affected end-to-end flow;
+- latency, memory, tokens, or throughput: performance runner plus correctness check;
+- provider behavior that fixtures cannot reproduce: explicit opt-in live test.
 
-- pure logic, parsing, schemas, or state transitions: the owning unit or crate test;
-- a deterministic workflow across modules: the owning business test;
-- processes, sockets, shell behavior, PATH, permissions, or shutdown: an OS test;
-- a visible TUI or GUI interaction: the app's unit test and the affected end-to-end flow;
-- a claim about latency, memory, tokens, or throughput: the owning performance runner plus a correctness check;
-- provider behavior that fixtures cannot reproduce: an explicit opt-in live test.
-
-Common quality and test commands are listed in [CONTRIBUTING.md](https://github.com/Tura-AI/tura/blob/main/.github/CONTRIBUTING.md#choosing-tests). The full ownership table, affected matrix, and acceptable substitutes when stable automation is not possible are in [docs/contributing-guide.md](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#test-ownership).
-
-There is one useful sentence to remember:
+Common commands are listed in [CONTRIBUTING.md](https://github.com/Tura-AI/tura/blob/main/.github/CONTRIBUTING.md#choosing-tests). The complete ownership and affected-test matrix is in [docs/contributing-guide.md](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#test-ownership).
 
 > A pull request does not need to prove everything. It needs to prove the behavior it owns.
 
-If the change crosses a boundary, add the boundary check. If it does not, resist the urge to make CI reenact the whole product.
+## Support performance claims with measurements
 
-## If you say "faster," bring receipts
+An internal timer is diagnostic evidence, not proof of a user-visible improvement. A performance comparison should identify:
 
-Performance work has a slightly higher bar because performance claims are very easy to make accidentally.
+- baseline and candidate commits;
+- exact command and workload;
+- hardware, operating system, and settings;
+- warm-up policy and sample count;
+- correctness results, failures, and excluded observations;
+- the metric and threshold used to decide the result;
+- distributions such as p50 and p95 for latency claims.
 
-An internal timer going down is useful diagnostic evidence. It does not automatically mean a user-visible operation got faster. A serious comparison names the baseline and candidate commits, command, workload, hardware, operating system, settings, warm-up policy, sample count, failures, correctness, and the metric that decides pass or fail. Latency claims should include distribution information such as p50 and p95, not one especially photogenic run.
+Do not silently remove outliers or trade correctness for a faster median. If the result is lower complexity, bounded memory, or a better worst case rather than lower latency, report it that way.
 
-Do not silently delete outliers. Do not trade correctness for a faster median. And if the real improvement is lower complexity, bounded memory, or a better worst case, say that. It is a perfectly good result without dressing it up as a universal speedup.
+The full format is in [docs/contributing-guide.md](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#performance-and-efficiency-evidence).
 
-The complete evidence format is in [docs/contributing-guide.md](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md#performance-and-efficiency-evidence).
+## Submit test reports
 
-## Test reports are contributions too
+Reproducible test reports are useful contributions. Tura still needs broader coverage across reasoning levels, models, providers, agent architectures, frontends, packaged desktop behavior, and operating systems.
 
-Tura needs code, but it also needs more independent evidence. The published benchmark does not yet cover enough reasoning levels, model providers, or agent architectures, and it does not isolate every Tura feature with a clean ablation. The GUI, TUI, packaged desktop app, and OS-specific lifecycle paths also have plenty of room for failures that one development machine will never reveal.
+Include the Tura commit, agent configuration, model and provider version, reasoning level, operating system, hardware, command, workload, expected result, observed result, and sanitized artifacts. Failed and neutral results are useful when another person can reproduce them.
 
-A useful contribution can therefore be a reproducible test report: the exact Tura commit, model and provider version, reasoning setting, operating system, hardware, command, workload, expected behavior, observed result, and sanitized artifacts. A failed run is not wasted work. If someone else can reproduce it, it has already narrowed the problem.
+See [We Need More Benchmark Data and Test Reports](https://github.com/Tura-AI/tura/blob/main/docs/blog/we-need-more-benchmark-data-and-test-reports.md) for proposed comparisons and ablations. Open gaps are tracked in [Known Issues](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md).
 
-The longer version—including the comparisons, ablations, frontend cases, and cross-OS reports we need—is in [We Need More Benchmark Data and Test Reports](https://github.com/Tura-AI/tura/blob/main/docs/blog/we-need-more-benchmark-data-and-test-reports.md). Open gaps are tracked in [KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md).
-
-## Open a pull request that tells the truth
+## Open an accurate pull request
 
 Create a focused branch and commit only related files:
 
@@ -120,47 +106,37 @@ git commit -m "Fix short description"
 git push -u origin fix/short-description
 ```
 
-Then open the matching PR template. In the description, explain:
+In the matching pull-request template, explain:
 
 - the user-visible problem or requirement;
-- the root cause, when it is a bug;
-- what changed and why this layer owns the change;
-- the exact checks you ran and their summarized results;
-- affected checks you did not run, with the reason;
-- compatibility, migration, or rollback concerns, when they exist.
+- the root cause for a bug;
+- what changed and why that layer owns it;
+- exact checks and summarized results;
+- affected checks not run and the reason;
+- compatibility, migration, or rollback concerns.
 
-"Not run" is useful information. Hiding it is not.
+Review the diff for credentials, authorization headers, private prompts, session data, personal paths, provider logs, and generated local state. Evidence should be detailed enough to verify without exposing private data.
 
-Before pushing, check the diff for credentials, authorization headers, private prompts, session data, personal paths, provider logs, and generated local state. Raw evidence should be detailed enough to recompute a result, not raw enough to leak someone's account.
+You must have the right to submit all code, data, prompts, fixtures, and generated material. Tura is licensed under AGPL-3.0-or-later. AI tools may assist, but the human submitter remains responsible for correctness, licensing, provenance, verification, and the pull-request description.
 
-You also need the right to submit every piece of code, data, prompt, fixture, or generated material in the change. Tura is licensed under AGPL-3.0-or-later, and contributions may be distributed under the repository's license.
+## Start with a bounded contribution
 
-AI or other tools can help. A human still has to be the primary submitter and take responsibility for correctness, licensing, provenance, verification, and what the PR says. "The model wrote it" is an explanation of process, not a transfer of responsibility.
+Good first changes include documentation corrections, reproducible parser edge cases, clearer error messages, and removal of proven duplication. Choose one result you can observe and verify.
 
-## A good first contribution is usually boring
+If a full issue is premature, share the finding by mentioning `@tura-ai-agent` or using `#tura-ai-agent`.
 
-That is a compliment.
+The goal is to make Tura the strongest-performing open-source coding agent.
 
-A documentation link that points to the right place. A reproducible parser edge case with one durable test. A clearer error message. A cleanup that removes duplicated work and proves behavior stayed the same. These changes are easy to understand, easy to review, and surprisingly useful.
+## Reference documents
 
-You do not need to arrive with a new agent architecture. Start with one thing you can observe, fix, and verify. Once that is merged, the repository will make much more sense than it did from the doorway.
-
-If a full issue or test report feels too formal, share what you found on any social platform and mention `@tura-ai-agent` or use `#tura-ai-agent`. I watch both, and the feedback helps me find the failures, environments, and workflows I would otherwise miss.
-
-The goal is ambitious: I want to make Tura the strongest-performing open-source coding agent.
-
-## The formal documents
-
-This post is the friendly route through the process. These complete Markdown files are the source of truth:
-
-- [.github/CONTRIBUTING.md](https://github.com/Tura-AI/tura/blob/main/.github/CONTRIBUTING.md) — contribution types, setup, common tests, PR steps, licensing, and authorship.
-- [docs/contributing-guide.md](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md) — test ownership, affected matrices, performance evidence, and artifact sanitization.
-- [ARCHITECTURE.md](https://github.com/Tura-AI/tura/blob/main/ARCHITECTURE.md) — repository boundaries and implementation ownership.
-- [tests/README.md](https://github.com/Tura-AI/tura/blob/main/tests/README.md) — the complete testing reference.
-- [docs/start/install.md](https://github.com/Tura-AI/tura/blob/main/docs/start/install.md) — setup behavior, installed files, PATH effects, and cleanup.
-- [docs/KNOWN_ISSUES.md](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md) — current benchmark, frontend, runtime, and cross-OS evidence gaps.
-- [.github/CODE_OF_CONDUCT.md](https://github.com/Tura-AI/tura/blob/main/.github/CODE_OF_CONDUCT.md) — community expectations.
-- [.github/SECURITY.md](https://github.com/Tura-AI/tura/blob/main/.github/SECURITY.md) — private vulnerability reporting.
+- [CONTRIBUTING.md](https://github.com/Tura-AI/tura/blob/main/.github/CONTRIBUTING.md) - contribution types, setup, tests, and pull requests.
+- [Contributing guide](https://github.com/Tura-AI/tura/blob/main/docs/contributing-guide.md) - test ownership, performance evidence, and sanitization.
+- [ARCHITECTURE.md](https://github.com/Tura-AI/tura/blob/main/ARCHITECTURE.md) - repository boundaries and ownership.
+- [Tests README](https://github.com/Tura-AI/tura/blob/main/tests/README.md) - complete testing reference.
+- [Installation](https://github.com/Tura-AI/tura/blob/main/docs/start/install.md) - setup, PATH effects, and cleanup.
+- [Known Issues](https://github.com/Tura-AI/tura/blob/main/docs/KNOWN_ISSUES.md) - current evidence gaps.
+- [Code of Conduct](https://github.com/Tura-AI/tura/blob/main/.github/CODE_OF_CONDUCT.md) - community expectations.
+- [Security policy](https://github.com/Tura-AI/tura/blob/main/.github/SECURITY.md) - private vulnerability reporting.
 
 ## Contact
 
