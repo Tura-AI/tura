@@ -89,7 +89,7 @@ Tura is a local, open-source coding agent for developers who are tired of vague 
 
 Across 20 DeepSWE v1.1 tasks, tested 60 sessions with GPT-5.6 SOL at High reasoning effort, Tura creates a substantial token-budget advantage by reducing repeated context and model round trips. You can spend that advantage in two ways. Direct turns most of it into lower cost: 83.5% fewer aggregate tokens than the official Codex CLI High configuration, with a verifier success rate of 65.0% versus 60.0%. Balanced puts more of the saved budget back into reasoning, investigation, and verification. It reached an 80.0% success rate—20 percentage points higher than Codex CLI High—while still using 49.6% fewer tokens
 
-<img src="assets/data/benchmark-agent-comparison.svg" alt="High-to-High benchmark comparison" width="800">
+<img src="[assets/data/benchmark-agent-comparison.svg](https://raw.githubusercontent.com/Tura-AI/tura/refs/heads/main/assets/data/benchmark-agent-comparison.svg)" alt="High-to-High benchmark comparison" width="800">
 
 [BENCHMARK](https://turaai.net/benchmark)
 
