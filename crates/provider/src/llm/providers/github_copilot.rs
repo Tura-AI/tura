@@ -119,7 +119,10 @@ async fn run_session(
             .await
             .map_err(|_| TuraError::ProviderRequest {
                 provider: PROVIDER_ID.to_string(),
-                message: format!("Copilot SDK request timed out after {} seconds", timeout.as_secs()),
+                message: format!(
+                    "Copilot SDK request timed out after {} seconds",
+                    timeout.as_secs()
+                ),
             })?
             .map_err(|err| sdk_error("Copilot SDK event stream closed", err))?;
 
@@ -200,7 +203,10 @@ fn build_system_message(messages: &[Value], options: &CallOptions) -> String {
     ];
 
     for message in messages {
-        let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user");
         if matches!(role, "system" | "developer") {
             let text = content_text(message.get("content"));
             if !text.trim().is_empty() {
