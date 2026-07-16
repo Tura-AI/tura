@@ -147,6 +147,10 @@
     padding-left: var(--page-title-offset);
   }
 
+  .conversation-view > .page-head .usage-meters {
+    margin-left: var(--page-title-offset);
+  }
+
   .main-tabs button,
   .workspace-row,
   .child-row {

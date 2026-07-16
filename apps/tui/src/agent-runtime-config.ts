@@ -111,11 +111,10 @@ export function applyAgentRuntimeConfig<T extends { provider?: unknown }>(
   provider.default_model_tier = settings.defaultModelTier;
   provider.tura_llm_name = settings.defaultModelTier;
   provider.model_reasoning_effort = normalizeAgentReasoningLevel(settings.reasoningLevel);
+  provider.model_acceleration_enabled = settings.priorityEnabled;
   if (settings.priorityEnabled) {
-    provider.model_acceleration_enabled = true;
     provider.service_tier = "priority";
   } else {
-    delete provider.model_acceleration_enabled;
     delete provider.service_tier;
   }
   return { ...config, provider };

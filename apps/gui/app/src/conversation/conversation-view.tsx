@@ -27,8 +27,9 @@ import {
   agentAvatarMedia,
   type AvatarDisplayMode,
 } from "../components/avatar/agent-avatar-canvas";
-import { t } from "../i18n";
+import { currentLanguage, t } from "../i18n";
 import { classNames, formatTime } from "../state/format";
+import { providerIdFromModel } from "../utils/settings";
 import {
   type AppState,
   type ComposerImage,
@@ -136,6 +137,20 @@ export function ConversationView(props: {
     ),
   );
   const latestStickerEmoji = createMemo(() => latestSticker(props.messages));
+  const contextTokens = createMemo(() => {
+    const tokens = props.session?.context_tokens;
+    if (!tokens || !Number.isFinite(tokens.limit) || tokens.limit <= 0) {
+      return;
+    }
+    const input = Math.min(Math.max(tokens.input, 0), tokens.limit);
+    return { input, limit: tokens.limit, percent: Math.round((input / tokens.limit) * 100) };
+  });
+  const providerUsage = createMemo(() =>
+    (providerIdFromModel(props.session?.model) ??
+      providerIdFromModel(props.state.selectedModel)) === "codex"
+      ? props.state.providerUsage
+      : undefined,
+  );
   const latestMessageId = createMemo(() => groupedMessages().at(-1)?.id);
   const latestMessageLiveSignature = createMemo(() => {
     const message = groupedMessages().at(-1);
@@ -413,6 +428,36 @@ export function ConversationView(props: {
           <span>{t("conversation")}</span>
           <h1>{props.session ? sessionTitle(props.session) : t("newSession")}</h1>
         </div>
+        <Show when={!props.compact && (contextTokens() || providerUsage())}>
+          <div class="usage-meters">
+            <Show when={contextTokens()} keyed>
+              {(tokens) => (
+                <div class="usage-meter">
+                  <span>{t("contextUsage")}</span>
+                  <span>{tokens.percent}%</span>
+                  <meter
+                    min={0}
+                    max={tokens.limit}
+                    value={tokens.input}
+                    aria-label={t("contextUsage")}
+                  />
+                </div>
+              )}
+            </Show>
+            <For each={providerUsage()?.windows ?? []}>
+              {(usage) => {
+                const label = providerUsageWindowLabel(usage.window_seconds);
+                return (
+                  <div class="usage-meter">
+                    <span>{label}</span>
+                    <span>{Math.round(usage.used_percent)}%</span>
+                    <meter min={0} max={100} value={usage.used_percent} aria-label={label} />
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
       </header>
       <div class="conversation-grid page-layer-middle">
         <div
@@ -507,6 +552,23 @@ export function ConversationView(props: {
       </Show>
     </section>
   );
+}
+
+function providerUsageWindowLabel(windowSeconds?: number | null): string {
+  if (!windowSeconds || windowSeconds <= 0) return t("usageLimit");
+  const units: Array<["week" | "day" | "hour" | "minute" | "second", number]> = [
+    ["week", 604_800],
+    ["day", 86_400],
+    ["hour", 3_600],
+    ["minute", 60],
+    ["second", 1],
+  ];
+  const [unit, seconds] = units.find(([, seconds]) => windowSeconds % seconds === 0) ?? units[4];
+  return new Intl.NumberFormat(currentLanguage(), {
+    style: "unit",
+    unit,
+    unitDisplay: "long",
+  }).format(windowSeconds / seconds);
 }
 
 function Transcript(props: {

@@ -20,6 +20,7 @@ import type {
   ProviderAuthActionResponse,
   ProviderAuthMethod,
   ProviderAuthStatusResponse,
+  ProviderUsageResponse,
   ProviderListResponse,
   QuestionRequest,
   ServiceStatusResponse,
@@ -117,6 +118,7 @@ export type AppState = {
   modelConfig?: TuraConfigResponse;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   providerAuthStatus: Record<string, ProviderAuthStatusResponse>;
+  providerUsage?: ProviderUsageResponse;
   providerValidationReceipts: Record<string, ProviderAuthActionResponse>;
   agents: Agent[];
   personas: StoredPersona[];

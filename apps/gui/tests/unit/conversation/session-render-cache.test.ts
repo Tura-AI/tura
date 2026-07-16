@@ -89,4 +89,12 @@ describe("session render cache", () => {
       'data-agent-avatar-anchor={props.isLatestAssistant ? "" : undefined}',
     );
   });
+
+  test("conversation header shows live context fill from session metrics", () => {
+    expect(conversationSource).toContain("props.session?.context_tokens");
+    expect(conversationSource).toContain("<meter");
+    expect(conversationSource).toContain('aria-label={t("contextUsage")}');
+    expect(conversationSource).toContain("providerUsage()?.windows");
+    expect(conversationSource).toContain("providerUsageWindowLabel(usage.window_seconds)");
+  });
 });

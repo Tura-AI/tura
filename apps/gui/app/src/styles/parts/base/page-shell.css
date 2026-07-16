@@ -205,6 +205,45 @@
   white-space: nowrap;
 }
 
+.usage-meters {
+  display: grid;
+  gap: var(--space-2);
+  align-self: center;
+  width: 160px;
+}
+
+.usage-meter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px var(--space-2);
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-meter meter {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--wash);
+  appearance: none;
+}
+
+.usage-meter meter::-webkit-meter-bar {
+  border: 0;
+  border-radius: 999px;
+  background: var(--wash);
+}
+
+.usage-meter meter::-webkit-meter-optimum-value {
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
 .page-actions {
   display: flex;
   justify-content: flex-end;

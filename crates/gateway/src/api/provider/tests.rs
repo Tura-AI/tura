@@ -15,6 +15,33 @@ use tokio::sync::Mutex;
 static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[test]
+fn codex_usage_payload_uses_returned_window_durations() {
+    let usage = provider_usage_from_value(&serde_json::json!({
+        "rate_limit": {
+            "allowed": true,
+            "primary_window": {
+                "used_percent": 14,
+                "limit_window_seconds": 604800,
+                "reset_at": 200
+            },
+            "secondary_window": null,
+            "future_window_name": {
+                "used_percent": 25,
+                "window_minutes": 90,
+                "reset_at": 100
+            }
+        }
+    }))
+    .expect("usage windows");
+
+    assert_eq!(usage.windows.len(), 2);
+    assert_eq!(usage.windows[0].window_seconds, Some(5_400));
+    assert_eq!(usage.windows[0].used_percent, 25.0);
+    assert_eq!(usage.windows[1].window_seconds, Some(604_800));
+    assert_eq!(usage.windows[1].used_percent, 14.0);
+}
+
+#[test]
 fn catalog_default_model_has_picker_safe_capabilities_and_limits() {
     let model = default_model_for_provider("openai");
 

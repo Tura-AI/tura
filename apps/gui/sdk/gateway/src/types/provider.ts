@@ -88,6 +88,16 @@ export type ProviderAuthStatusResponse = {
   last_error_category?: string | null;
 };
 
+export type ProviderUsageWindow = {
+  used_percent: number;
+  resets_at?: number | null;
+  window_seconds?: number | null;
+};
+
+export type ProviderUsageResponse = {
+  windows: ProviderUsageWindow[];
+};
+
 export type ProviderAuthActionResponse = {
   ok: boolean;
   provider_id: string;

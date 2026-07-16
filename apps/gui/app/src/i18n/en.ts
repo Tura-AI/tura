@@ -310,6 +310,8 @@ export const en = {
   providerSettings: "Provider settings",
   providers: "Providers",
   configureProvider: "Configure providers",
+  contextUsage: "Context",
+  usageLimit: "Usage",
   providerAuthRequired: "Provider needs authentication",
   providerCredential: "Provider credential",
   providerCredentialHint: "Configure OAuth or API token for this provider",

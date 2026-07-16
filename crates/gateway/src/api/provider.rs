@@ -99,6 +99,69 @@ pub fn provider_auth_status_value(provider_id: &str) -> ProviderAuthStatusRespon
     build_provider_auth_status(provider_id)
 }
 
+pub async fn provider_usage(
+    Path(provider_id): Path<String>,
+) -> Json<Option<ProviderUsageResponse>> {
+    let _ = refresh_provider_auth_if_needed(&provider_id, false).await;
+    Json(fetch_provider_usage(&provider_id).await)
+}
+
+async fn fetch_provider_usage(provider_id: &str) -> Option<ProviderUsageResponse> {
+    if provider_id != "codex" {
+        return None;
+    }
+    let status = build_provider_auth_status(provider_id);
+    if status.login.as_deref() != Some("oauth") {
+        return None;
+    }
+    let token = status.token_env.as_deref().and_then(config_value)?;
+    let mut request = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?
+        .get("https://chatgpt.com/backend-api/wham/usage")
+        .bearer_auth(token);
+    if let Some(account_id) = status.account_id {
+        request = request.header("ChatGPT-Account-Id", account_id);
+    }
+    let response = request.send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    provider_usage_from_value(&response.json().await.ok()?)
+}
+
+fn provider_usage_from_value(value: &serde_json::Value) -> Option<ProviderUsageResponse> {
+    fn window(value: Option<&serde_json::Value>) -> Option<ProviderUsageWindow> {
+        let value = value?;
+        let window_seconds = value
+            .get("limit_window_seconds")
+            .or_else(|| value.get("window_seconds"))
+            .and_then(serde_json::Value::as_i64)
+            .or_else(|| {
+                value
+                    .get("limit_window_minutes")
+                    .or_else(|| value.get("window_minutes"))
+                    .and_then(serde_json::Value::as_i64)
+                    .and_then(|minutes| minutes.checked_mul(60))
+            });
+        Some(ProviderUsageWindow {
+            used_percent: value.get("used_percent")?.as_f64()?.clamp(0.0, 100.0),
+            resets_at: value.get("reset_at").and_then(serde_json::Value::as_i64),
+            window_seconds,
+        })
+    }
+
+    let mut windows = value
+        .get("rate_limit")?
+        .as_object()?
+        .values()
+        .filter_map(|value| window(Some(value)))
+        .collect::<Vec<_>>();
+    windows.sort_by_key(|window| window.window_seconds.unwrap_or(i64::MAX));
+    (!windows.is_empty()).then_some(ProviderUsageResponse { windows })
+}
+
 pub async fn provider_auth_validate(
     Path(provider_id): Path<String>,
     Json(payload): Json<ProviderAuthValidationRequest>,

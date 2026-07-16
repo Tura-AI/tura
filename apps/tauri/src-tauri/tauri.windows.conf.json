@@ -1,0 +1,23 @@
+{
+  "bundle": {
+    "resources": {
+      "../../../target/release/tura_exec.exe": "tura_exec.exe",
+      "../../../target/release/tura_gateway.exe": "tura_gateway.exe",
+      "../../../target/release/tura_router.exe": "tura_router.exe",
+      "../../../target/release/tura_session_db.exe": "tura_session_db.exe",
+      "../../../target/release/tura_runtime.exe": "tura_runtime.exe",
+      "../../../target/release/tura-command-generate-media.exe": "tura-command-generate-media.exe",
+      "../../../target/release/tura-command-read-media.exe": "tura-command-read-media.exe",
+      "../../../target/release/tura-command-web-discover.exe": "tura-command-web-discover.exe",
+      "../../../target/release/config/": "config/",
+      "../../../target/release/agents/src/": "agents/src/",
+      "../../../target/release/personas/src/": "personas/src/",
+      "../../../target/release/crates/runtime/src/runtime_prompt/": "crates/runtime/src/runtime_prompt/",
+      "../../../target/release/crates/tools/src/commands/": "crates/tools/src/commands/",
+      "../../../target/release/crates/tools/src/command_run/schema.json": "crates/tools/src/command_run/schema.json",
+      "../../../target/release/commands/generate_media/": "commands/generate_media/",
+      "../../../target/release/commands/read_media/": "commands/read_media/",
+      "../../../target/release/commands/web_discover/": "commands/web_discover/"
+    }
+  }
+}

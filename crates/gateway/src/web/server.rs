@@ -144,6 +144,10 @@ pub fn build_router() -> Router {
             get(api::provider::provider_auth_status),
         )
         .route(
+            "/provider/{providerID}/usage",
+            get(api::provider::provider_usage),
+        )
+        .route(
             "/provider/{providerID}/auth/validate",
             post(api::provider::provider_auth_validate),
         )

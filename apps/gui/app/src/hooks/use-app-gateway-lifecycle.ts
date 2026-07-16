@@ -41,6 +41,7 @@ function gatewayArray<T>(value: T[] | unknown): T[] {
 }
 
 const BOOTSTRAP_REQUEST_TIMEOUT_MS = 20_000;
+const PROVIDER_USAGE_REFRESH_MS = 60_000;
 
 export function useAppGatewayLifecycle(options: {
   state: Accessor<AppState>;
@@ -110,6 +111,21 @@ export function useAppGatewayLifecycle(options: {
     onCleanup(() => stream.close());
   });
 
+  createEffect(() => {
+    if (e2eFixture || connection() !== "connected") {
+      return;
+    }
+    const refresh = async () => {
+      const usage = await safe(() => rootClient().providerUsage("codex"), undefined);
+      if (usage) {
+        setState((previous) => ({ ...previous, providerUsage: usage }));
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, PROVIDER_USAGE_REFRESH_MS);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
   onMount(() => {
     if (!e2eFixture) {
       void hydrate();
@@ -125,15 +141,15 @@ export function useAppGatewayLifecycle(options: {
       error: undefined,
       gatewayStartupNotice: previous.gatewayStartupNotice,
     }));
-    if (!disableGatewayAutostart) {
-      const connected = await tryStartGateway(gatewayUrl(), gatewayUrlExplicit, setState);
-      if (!connected) {
-        throw new DOMException("Gateway is not running.", "TimeoutError");
-      }
-      await waitForGatewayHealth(gatewayUrl(), GATEWAY_HEALTH_TIMEOUT_MS, setState);
-    }
-    const client = rootClient();
     try {
+      if (!disableGatewayAutostart) {
+        const connected = await tryStartGateway(gatewayUrl(), gatewayUrlExplicit, setState);
+        if (!connected) {
+          throw new DOMException("Gateway is not running.", "TimeoutError");
+        }
+        await waitForGatewayHealth(gatewayUrl(), GATEWAY_HEALTH_TIMEOUT_MS, setState);
+      }
+      const client = rootClient();
       const fallbackPaths: NonNullable<AppState["paths"]> = {
         home: "",
         state: "",

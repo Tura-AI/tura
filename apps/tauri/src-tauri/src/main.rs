@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
@@ -35,9 +35,11 @@ struct NativeInputFile {
 }
 
 static PENDING_MAIN_WINDOW_ARGS: OnceLock<Mutex<Option<Vec<String>>>> = OnceLock::new();
+static MANAGED_GATEWAY_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+static GATEWAY_START_LOCK: Mutex<()> = Mutex::new(());
 
 fn main() {
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             remember_gateway_url_from_args(&args);
             restore_main_window_from_args(app, args);
@@ -53,6 +55,10 @@ fn main() {
             remember_active_gateway_url_if_unset();
             queue_main_window_restore(args.clone());
             restore_main_window_from_args(app.handle(), args);
+            std::thread::spawn(|| {
+                let endpoint = default_gateway_endpoint();
+                let _ = start_gateway_with_launcher(&endpoint.url(), false, launch_gateway_process);
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -61,8 +67,9 @@ fn main() {
             read_input_file,
             read_clipboard_image
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run tura_gui");
+        .run(tauri::generate_context!());
+    shutdown_managed_gateway_process();
+    result.expect("failed to run tura_gui");
 }
 
 fn restore_main_window_from_args(app: &tauri::AppHandle, args: Vec<String>) {
@@ -231,6 +238,9 @@ fn start_gateway_with_launcher(
     gateway_url_explicit: bool,
     launcher: impl Fn(&GatewayEndpoint, &Path, &Path) -> Result<GatewayEndpoint, String>,
 ) -> Result<StartGatewayResponse, String> {
+    let _start_guard = GATEWAY_START_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let my_root = current_project_root();
     let instance_home = instance_home_for_runtime_root(&my_root);
     let endpoint =
@@ -351,7 +361,7 @@ fn launch_gateway_process(
     configure_gateway_runtime_command(&mut command, my_root, instance_home, target)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .stdin(Stdio::null());
+        .stdin(Stdio::piped());
     tura_path::process_hardening::hide_child_console_window(&mut command);
     let mut child = command
         .spawn()
@@ -371,6 +381,9 @@ fn launch_gateway_process(
             .map(|url| GatewayEndpoint::parse(&url))
             .unwrap_or_else(|| target.clone());
         if endpoint_is_usable(&candidate, false, my_root, instance_home) {
+            *managed_gateway_child()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(child);
             return Ok(candidate);
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -380,6 +393,33 @@ fn launch_gateway_process(
         "gateway did not become healthy after startup at {}",
         target.url()
     ))
+}
+
+fn managed_gateway_child() -> &'static Mutex<Option<Child>> {
+    MANAGED_GATEWAY_CHILD.get_or_init(|| Mutex::new(None))
+}
+
+fn shutdown_managed_gateway_process() {
+    let _start_guard = GATEWAY_START_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let child = managed_gateway_child()
+        .lock()
+        .ok()
+        .and_then(|mut child| child.take());
+    let Some(mut child) = child else {
+        return;
+    };
+    drop(child.stdin.take());
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn configure_gateway_runtime_command<'a>(
@@ -392,6 +432,7 @@ fn configure_gateway_runtime_command<'a>(
         .current_dir(runtime_root)
         .env("TURA_HOME", instance_home)
         .env("TURA_PROJECT_ROOT", runtime_root)
+        .env("TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF", "1")
         .env(tura_path::TURA_GATEWAY_PORT_ENV, target.port.to_string());
     if let Some(provider_config) = provider_config_for_runtime_root(runtime_root) {
         command.env("TURA_PROVIDER_CONFIG", provider_config);
@@ -1238,6 +1279,10 @@ mod tests {
         assert_eq!(command.get_current_dir(), Some(runtime_root.as_path()));
         assert_eq!(envs.get("TURA_HOME"), Some(&home));
         assert_eq!(envs.get("TURA_PROJECT_ROOT"), Some(&runtime_root));
+        assert_eq!(
+            envs.get("TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF"),
+            Some(&PathBuf::from("1"))
+        );
         assert_eq!(envs.get("TURA_PROVIDER_CONFIG"), Some(&provider_config));
         assert_eq!(envs.get("TURA_ENV_PATH"), Some(&env_path));
 

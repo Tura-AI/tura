@@ -74,9 +74,18 @@ fn default_op_manual() -> bool {
 
 pub fn discover_agents(project_root: &Path) -> Vec<StoredAgent> {
     let mut agents = BTreeMap::<String, StoredAgent>::new();
+    discover_agents_at(project_root, &mut agents);
+    let writable_root = writable_project_root(project_root);
+    if writable_root != project_root {
+        discover_agents_at(&writable_root, &mut agents);
+    }
+    agents.into_values().collect()
+}
+
+fn discover_agents_at(project_root: &Path, agents: &mut BTreeMap<String, StoredAgent>) {
     let root = project_root.join(AGENTS_DIR);
     let Ok(entries) = fs::read_dir(&root) else {
-        return Vec::new();
+        return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -85,10 +94,9 @@ pub fn discover_agents(project_root: &Path) -> Vec<StoredAgent> {
         }
         if let Some(agent) = load_agent_at(project_root, &path) {
             let key = agent.summary.id.to_ascii_lowercase();
-            agents.entry(key).or_insert(agent);
+            agents.insert(key, agent);
         }
     }
-    agents.into_values().collect()
 }
 
 pub fn load_agent(project_root: &Path, agent_id: &str) -> Option<StoredAgent> {
@@ -124,7 +132,8 @@ pub fn save_dynamic_agent(
     config: &AgentConfig,
     prompt: Option<&str>,
 ) -> Result<StoredAgent, String> {
-    let agent_dir = dynamic_agent_path(project_root, &config.agent_name)?;
+    let project_root = writable_project_root(project_root);
+    let agent_dir = dynamic_agent_path(&project_root, &config.agent_name)?;
     fs::create_dir_all(&agent_dir).map_err(|err| {
         format!(
             "failed to create agent directory {}: {err}",
@@ -133,7 +142,7 @@ pub fn save_dynamic_agent(
     })?;
 
     let mut config = config.clone();
-    config.agent_directory = path_relative_to(project_root, &agent_dir);
+    config.agent_directory = path_relative_to(&project_root, &agent_dir);
     if config.agent_prompt.is_empty() {
         config.agent_prompt.push(serde_json::json!({
             "agent_prompt": config.agent_name,
@@ -157,7 +166,7 @@ pub fn save_dynamic_agent(
             )
         })?;
     }
-    load_agent_at(project_root, &agent_dir)
+    load_agent_at(&project_root, &agent_dir)
         .ok_or_else(|| format!("failed to reload agent {}", config.agent_name))
 }
 
@@ -178,13 +187,23 @@ pub fn delete_dynamic_agent(project_root: &Path, agent_id: &str) -> Result<bool,
         }
         canonical_id = Some(agent.summary.id);
     }
-    let agent_dir = dynamic_agent_path(project_root, canonical_id.as_deref().unwrap_or(agent_id))?;
+    let writable_root = writable_project_root(project_root);
+    let agent_dir =
+        dynamic_agent_path(&writable_root, canonical_id.as_deref().unwrap_or(agent_id))?;
     if !agent_dir.exists() {
         return Ok(false);
     }
     fs::remove_dir_all(&agent_dir)
         .map_err(|err| format!("failed to delete agent {}: {err}", agent_dir.display()))?;
     Ok(true)
+}
+
+fn writable_project_root(project_root: &Path) -> PathBuf {
+    if tura_path::build_kind() == "release" {
+        tura_path::home_runtime_dir()
+    } else {
+        project_root.to_path_buf()
+    }
 }
 
 pub fn default_agent_config(project_root: &Path, agent_id: &str) -> Result<AgentConfig, String> {

@@ -130,6 +130,7 @@ test("shared agent runtime config round-trips the same GUI and TUI provider shap
     default_model_tier: "thinking",
     tura_llm_name: "thinking",
     model_reasoning_effort: "medium",
+    model_acceleration_enabled: false,
   });
   assert.deepEqual(agentRuntimeConfig(undefined, { config }), {
     defaultModelTier: "thinking",

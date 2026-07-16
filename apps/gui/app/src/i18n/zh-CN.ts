@@ -326,6 +326,8 @@ export const zhCN = {
   providerSettings: "服务商配置",
   providers: "服务商",
   configureProvider: "配置服务商",
+  contextUsage: "上下文",
+  usageLimit: "用量",
   providerAuthRequired: "服务商需要重新认证",
   providerCredential: "服务商凭据",
   providerCredentialHint: "为当前服务商配置 OAuth 或 API Token",

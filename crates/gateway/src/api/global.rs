@@ -5,6 +5,7 @@ use crate::mock::global_store;
 use crate::session::session_store;
 use axum::{
     extract::Path as AxumPath,
+    http::StatusCode,
     response::sse::{Event as SseEvent, KeepAlive, Sse},
     Json,
 };
@@ -104,11 +105,55 @@ pub fn strip_verbatim_prefix(path: &str) -> String {
 // ============================================================================
 
 pub async fn get_config() -> Json<Config> {
+    load_persisted_gui_config();
     Json(global_store().get_config())
 }
 
-pub async fn patch_config(Json(payload): Json<ConfigPatch>) -> Json<Config> {
-    Json(global_store().update_config(payload))
+pub async fn patch_config(
+    Json(payload): Json<ConfigPatch>,
+) -> Result<Json<Config>, (StatusCode, Json<BadRequestError>)> {
+    load_persisted_gui_config();
+    let config = global_store().update_config(payload);
+    write_gui_config(&gui_config_path(), &config).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(BadRequestError { error }),
+        )
+    })?;
+    Ok(Json(config))
+}
+
+fn gui_config_path() -> PathBuf {
+    tura_path::home_runtime_dir().join("gui-config.json")
+}
+
+fn load_persisted_gui_config() {
+    let Ok(config) = read_gui_config(&gui_config_path()) else {
+        return;
+    };
+    *global_store().config.write() = config;
+}
+
+fn read_gui_config(path: &Path) -> Result<Config, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|error| format!("failed to read GUI config {}: {error}", path.display()))?;
+    serde_json::from_str(&content)
+        .map_err(|error| format!("failed to parse GUI config {}: {error}", path.display()))
+}
+
+fn write_gui_config(path: &Path, config: &Config) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create GUI config directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let content = serde_json::to_string_pretty(config)
+        .map_err(|error| format!("failed to serialize GUI config: {error}"))?;
+    std::fs::write(path, format!("{content}\n"))
+        .map_err(|error| format!("failed to write GUI config {}: {error}", path.display()))
 }
 
 pub async fn get_tura_config() -> Json<TuraConfigResponse> {
@@ -523,12 +568,32 @@ pub async fn upgrade(Json(_payload): Json<UpgradeRequest>) -> Json<UpgradeRespon
 #[cfg(test)]
 mod tests {
     use super::{
-        event_matches_session_filter, event_visible_to_frontend, read_json_config,
-        tura_config_tiers, update_tura_config_tier, TuraConfigUpdate,
+        event_matches_session_filter, event_visible_to_frontend, read_gui_config, read_json_config,
+        tura_config_tiers, update_tura_config_tier, write_gui_config, TuraConfigUpdate,
     };
     use crate::contracts::{
-        GlobalEvent, Message, MessageRole, MessageUpdatedProperties, SessionStatusProperties,
+        Config, GlobalEvent, Message, MessageRole, MessageUpdatedProperties,
+        SessionStatusProperties,
     };
+
+    #[test]
+    fn gui_config_round_trip_preserves_visual_settings() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("nested").join("gui-config.json");
+        let config = Config {
+            theme: Some("dark".to_string()),
+            corner_radius: Some("sharp".to_string()),
+            main_font_size: Some(15),
+            ..Config::default()
+        };
+
+        write_gui_config(&path, &config).expect("write GUI config");
+        let loaded = read_gui_config(&path).expect("read GUI config");
+
+        assert_eq!(loaded.theme.as_deref(), Some("dark"));
+        assert_eq!(loaded.corner_radius.as_deref(), Some("sharp"));
+        assert_eq!(loaded.main_font_size, Some(15));
+    }
 
     #[test]
     fn read_json_config_reports_missing_path_context() {

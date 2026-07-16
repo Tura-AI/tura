@@ -88,6 +88,7 @@ describe("GUI/TUI runtime model config sync", () => {
       default_model_tier: "thinking",
       tura_llm_name: "thinking",
       model_reasoning_effort: "medium",
+      model_acceleration_enabled: false,
     });
     expect(agentRuntimeConfig(undefined, { config })).toEqual({
       defaultModelTier: "thinking",

@@ -107,6 +107,18 @@ pub struct ProviderAuthStatusResponse {
     pub last_error_category: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ProviderUsageWindow {
+    pub used_percent: f64,
+    pub resets_at: Option<i64>,
+    pub window_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ProviderUsageResponse {
+    pub windows: Vec<ProviderUsageWindow>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ProviderAuthActionResponse {
     pub ok: bool,

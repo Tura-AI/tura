@@ -27,6 +27,7 @@ import type {
   ProviderAuthValidationInput,
   ProviderAuthMethod,
   ProviderAuthStatusResponse,
+  ProviderUsageResponse,
   ProductConfig,
   ProductAgent,
   ProductIssue,
@@ -319,6 +320,10 @@ export class GatewayClient {
 
   providerAuthStatus(providerId: string): Promise<ProviderAuthStatusResponse> {
     return this.get(`/provider/${encodeURIComponent(providerId)}/auth/status`);
+  }
+
+  providerUsage(providerId: string): Promise<ProviderUsageResponse | null> {
+    return this.get(`/provider/${encodeURIComponent(providerId)}/usage`);
   }
 
   setProviderAuth(providerId: string, payload: ProviderAuthInput): Promise<boolean> {
