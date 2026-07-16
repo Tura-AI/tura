@@ -104,24 +104,22 @@ async fn run_session(
     let mut saw_text_delta = false;
 
     loop {
-        let remaining = timeout.checked_sub(started.elapsed()).ok_or_else(|| {
-            TuraError::ProviderRequest {
-                provider: PROVIDER_ID.to_string(),
-                message: format!(
-                    "Copilot SDK request timed out after {} seconds",
-                    timeout.as_secs()
-                ),
-            }
-        })?;
+        let remaining =
+            timeout
+                .checked_sub(started.elapsed())
+                .ok_or_else(|| TuraError::ProviderRequest {
+                    provider: PROVIDER_ID.to_string(),
+                    message: format!(
+                        "Copilot SDK request timed out after {} seconds",
+                        timeout.as_secs()
+                    ),
+                })?;
 
         let event = tokio::time::timeout(remaining, events.recv())
             .await
             .map_err(|_| TuraError::ProviderRequest {
                 provider: PROVIDER_ID.to_string(),
-                message: format!(
-                    "Copilot SDK request timed out after {} seconds",
-                    timeout.as_secs()
-                ),
+                message: format!("Copilot SDK request timed out after {} seconds", timeout.as_secs()),
             })?
             .map_err(|err| sdk_error("Copilot SDK event stream closed", err))?;
 
@@ -202,10 +200,7 @@ fn build_system_message(messages: &[Value], options: &CallOptions) -> String {
     ];
 
     for message in messages {
-        let role = message
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("user");
+        let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
         if matches!(role, "system" | "developer") {
             let text = content_text(message.get("content"));
             if !text.trim().is_empty() {
@@ -219,7 +214,8 @@ fn build_system_message(messages: &[Value], options: &CallOptions) -> String {
     }
     if let Some(response_format) = options.response_format.as_ref() {
         sections.push(format!(
-            "Honor this structured response format exactly:\n{response_format}"
+            "Honor this structured response format exactly:\n{}",
+            response_format
         ));
     }
 
@@ -522,10 +518,7 @@ mod tests {
         }));
 
         assert_eq!(content["tool_calls"][0]["id"], "call-1");
-        assert_eq!(
-            content["tool_calls"][0]["function"]["name"],
-            "lookup_order"
-        );
+        assert_eq!(content["tool_calls"][0]["function"]["name"], "lookup_order");
         assert_eq!(
             content["tool_calls"][0]["function"]["arguments"]["id"],
             "123"
@@ -558,10 +551,8 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(
-            sdk_tools(&options)
-                .expect("tool conversion should succeed")
-                .is_empty()
-        );
+        assert!(sdk_tools(&options)
+            .expect("tool conversion should succeed")
+            .is_empty());
     }
 }
