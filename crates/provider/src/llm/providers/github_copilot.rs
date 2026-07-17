@@ -396,9 +396,9 @@ fn has_tura_tool_requests(message: &Value) -> bool {
         .get("toolRequests")
         .and_then(Value::as_array)
         .is_some_and(|calls| {
-            calls.iter().any(|call| {
-                call.get("name").and_then(Value::as_str) != Some(NO_TOOLS_TOOL_NAME)
-            })
+            calls
+                .iter()
+                .any(|call| call.get("name").and_then(Value::as_str) != Some(NO_TOOLS_TOOL_NAME))
         })
 }
 
@@ -598,13 +598,8 @@ mod tests {
 
     #[test]
     fn no_tool_session_uses_internal_compatibility_tool() {
-        let config = build_session_config(
-            "gpt-4.1",
-            "token",
-            &[],
-            &CallOptions::default(),
-        )
-        .expect("session config should build");
+        let config = build_session_config("gpt-4.1", "token", &[], &CallOptions::default())
+            .expect("session config should build");
 
         assert_eq!(config.available_tools, Some(vec!["custom:*".to_string()]));
         let tools = config.tools.expect("compatibility tool should be present");
