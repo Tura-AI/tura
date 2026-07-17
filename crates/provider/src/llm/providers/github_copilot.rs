@@ -1,7 +1,11 @@
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use github_copilot_sdk::{
-    Client, ClientMode, ClientOptions, SessionConfig, SystemMessageConfig, Tool, ToolSet,
+    tool::ToolHandler, Client, ClientMode, ClientOptions, Error as CopilotSdkError, SessionConfig,
+    SystemMessageConfig, Tool, ToolInvocation, ToolResult, ToolSet,
 };
 use serde_json::{json, Value};
 
@@ -12,6 +16,20 @@ use crate::tura_llm::{
 
 const PROVIDER_ID: &str = "github-copilot";
 const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
+const COPILOT_HOME_ENV: &str = "TURA_GITHUB_COPILOT_HOME";
+const NO_TOOLS_TOOL_NAME: &str = "tura_no_tools_available";
+
+struct NoToolsAvailable;
+
+#[async_trait]
+impl ToolHandler for NoToolsAvailable {
+    async fn call(&self, _invocation: ToolInvocation) -> Result<ToolResult, CopilotSdkError> {
+        Ok(ToolResult::Text(
+            "No Tura tools are available for this turn. Continue by answering without tools."
+                .to_string(),
+        ))
+    }
+}
 
 pub async fn call_with_stream_events(
     model: &str,
@@ -20,10 +38,16 @@ pub async fn call_with_stream_events(
     options: &CallOptions,
     stream_events: Option<ProviderStreamEventSink>,
 ) -> Result<ProviderResponse, TuraError> {
+    let base_directory = copilot_base_directory();
+    tokio::fs::create_dir_all(&base_directory)
+        .await
+        .map_err(TuraError::io)?;
+
     let mut client_options = ClientOptions::default();
     client_options.github_token = Some(access_token.to_string());
     client_options.use_logged_in_user = Some(false);
     client_options.mode = ClientMode::Empty;
+    client_options.base_directory = Some(base_directory);
 
     let client = Client::start(client_options)
         .await
@@ -69,16 +93,17 @@ fn build_session_config(
             .with_content(build_system_message(messages, options)),
     );
 
-    let tools = sdk_tools(options)?;
-    if !tools.is_empty() {
-        config.available_tools = Some(
-            ToolSet::new()
-                .add_custom("*")
-                .map_err(|err| sdk_error("failed to allow Tura tools", err))?
-                .into_vec(),
-        );
-        config.tools = Some(tools);
+    let mut tools = sdk_tools(options)?;
+    if tools.is_empty() {
+        tools.push(no_tools_compatibility_tool());
     }
+    config.available_tools = Some(
+        ToolSet::new()
+            .add_custom("*")
+            .map_err(|err| sdk_error("failed to allow Tura tools", err))?
+            .into_vec(),
+    );
+    config.tools = Some(tools);
 
     Ok(config)
 }
@@ -143,11 +168,7 @@ async fn run_session(
                 }
             }
             "assistant.message" => {
-                tool_requests_pending = event
-                    .data
-                    .get("toolRequests")
-                    .and_then(Value::as_array)
-                    .is_some_and(|calls| !calls.is_empty());
+                tool_requests_pending = has_tura_tool_requests(&event.data);
                 final_message = Some(event.data.clone());
             }
             "external_tool.requested" if tool_requests_pending => {
@@ -201,6 +222,13 @@ fn build_system_message(messages: &[Value], options: &CallOptions) -> String {
         "You are the model runtime used by Tura. Continue the supplied conversation and respond as the assistant. Do not mention this transport envelope or claim access to the Copilot CLI. Use only the custom tools declared for this session. When a tool is needed, request it and wait for Tura to execute it; never invent a tool result."
             .to_string(),
     ];
+
+    if !has_tura_tools(options) {
+        sections.push(
+            "No Tura tools are available for this turn. Do not request any tool; answer directly."
+                .to_string(),
+        );
+    }
 
     for message in messages {
         let role = message
@@ -299,6 +327,20 @@ fn sdk_tool(value: &Value) -> Result<Tool, TuraError> {
         .with_skip_permission(true))
 }
 
+fn no_tools_compatibility_tool() -> Tool {
+    Tool::new(NO_TOOLS_TOOL_NAME)
+        .with_description(
+            "Internal compatibility tool used only when no Tura tools are available. Never call it.",
+        )
+        .with_parameters(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .with_handler(Arc::new(NoToolsAvailable))
+        .with_skip_permission(true)
+}
+
 fn normalize_assistant_message(message: &Value) -> Value {
     let text = message
         .get("content")
@@ -327,6 +369,9 @@ fn normalize_assistant_message(message: &Value) -> Value {
 
 fn canonical_tool_call(request: &Value) -> Option<Value> {
     let name = request.get("name").and_then(Value::as_str)?;
+    if name == NO_TOOLS_TOOL_NAME {
+        return None;
+    }
     let id = request
         .get("toolCallId")
         .and_then(Value::as_str)
@@ -344,6 +389,17 @@ fn canonical_tool_call(request: &Value) -> Option<Value> {
             "arguments": arguments,
         }
     }))
+}
+
+fn has_tura_tool_requests(message: &Value) -> bool {
+    message
+        .get("toolRequests")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| {
+            calls.iter().any(|call| {
+                call.get("name").and_then(Value::as_str) != Some(NO_TOOLS_TOOL_NAME)
+            })
+        })
 }
 
 fn build_metrics(
@@ -366,7 +422,14 @@ fn build_metrics(
     let tool_call_count = final_message
         .get("toolRequests")
         .and_then(Value::as_array)
-        .map_or(0, Vec::len);
+        .map_or(0, |requests| {
+            requests
+                .iter()
+                .filter(|request| {
+                    request.get("name").and_then(Value::as_str) != Some(NO_TOOLS_TOOL_NAME)
+                })
+                .count()
+        });
     let context_utilization_ratio = context_window
         .filter(|window| *window > 0)
         .and_then(|window| total_tokens.map(|used| used as f64 / window as f64));
@@ -449,6 +512,14 @@ fn content_text(content: Option<&Value>) -> String {
     }
 }
 
+fn has_tura_tools(options: &CallOptions) -> bool {
+    !tool_choice_is_none(options.tool_choice.as_ref())
+        && options
+            .tools
+            .as_ref()
+            .is_some_and(|tools| !tools.is_empty())
+}
+
 fn tool_choice_is_none(tool_choice: Option<&Value>) -> bool {
     tool_choice.and_then(Value::as_str) == Some("none")
 }
@@ -466,6 +537,19 @@ fn tool_choice_instruction(tool_choice: Option<&Value>) -> Option<String> {
             .map(|name| format!("You must request the '{name}' tool before answering.")),
         _ => None,
     }
+}
+
+fn default_copilot_base_directory() -> PathBuf {
+    tura_path::home_runtime_dir()
+        .join("provider")
+        .join(PROVIDER_ID)
+}
+
+fn copilot_base_directory() -> PathBuf {
+    std::env::var_os(COPILOT_HOME_ENV)
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(default_copilot_base_directory)
 }
 
 fn request_timeout() -> Duration {
@@ -513,6 +597,32 @@ mod tests {
     }
 
     #[test]
+    fn no_tool_session_uses_internal_compatibility_tool() {
+        let config = build_session_config(
+            "gpt-4.1",
+            "token",
+            &[],
+            &CallOptions::default(),
+        )
+        .expect("session config should build");
+
+        assert_eq!(config.available_tools, Some(vec!["custom:*".to_string()]));
+        let tools = config.tools.expect("compatibility tool should be present");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, NO_TOOLS_TOOL_NAME);
+    }
+
+    #[test]
+    fn default_copilot_home_is_instance_scoped() {
+        let path = default_copilot_base_directory();
+        assert!(path.ends_with(
+            PathBuf::from(tura_path::RUNTIME_DIR_NAME)
+                .join("provider")
+                .join(PROVIDER_ID)
+        ));
+    }
+
+    #[test]
     fn normalizes_copilot_tool_requests_to_tura_tool_calls() {
         let content = normalize_assistant_message(&json!({
             "content": "",
@@ -529,6 +639,20 @@ mod tests {
             content["tool_calls"][0]["function"]["arguments"]["id"],
             "123"
         );
+    }
+
+    #[test]
+    fn internal_compatibility_tool_is_not_returned_to_tura() {
+        let content = normalize_assistant_message(&json!({
+            "content": "Answer directly",
+            "toolRequests": [{
+                "toolCallId": "internal-1",
+                "name": NO_TOOLS_TOOL_NAME,
+                "arguments": {}
+            }]
+        }));
+
+        assert_eq!(content, json!("Answer directly"));
     }
 
     #[test]
