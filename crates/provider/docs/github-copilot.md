@@ -16,6 +16,14 @@ Tura resolves the existing Copilot CLI credential through its auth registry and 
 
 The adapter starts the SDK in `ClientMode::Empty`. This disables Copilot CLI's ambient coding-agent tools, configuration discovery, host integration, and default environment context. Only tools declared by Tura for the current model call are exposed.
 
+The SDK runtime state is isolated under the current Tura instance at `.tura/provider/github-copilot`. Override that directory when needed with:
+
+```text
+TURA_GITHUB_COPILOT_HOME
+```
+
+When a model call has no Tura tools, the adapter installs an internally handled compatibility tool because the Copilot runtime expects an available tool declaration in empty mode. The system prompt tells the model that no tools are available, and the compatibility tool is filtered from Tura tool calls and metrics.
+
 Tura remains responsible for the agent loop. Each provider call creates a temporary SDK session and supplies the ordered Tura message history as a transport envelope:
 
 - Copilot `assistant.message_delta` events become Tura text stream events.
