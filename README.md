@@ -6,23 +6,21 @@
 
 <p align="center">
   <a href="https://turaai.net/"><img alt="Website" title="Tura official website" src="https://img.shields.io/badge/Website-turaai.net-40e0d0?style=flat-square&amp;labelColor=555555"></a>
-  <a href="https://turaai.net/benchmark"><img alt="Benchmark: 348 sessions" title="Tura benchmark: 348 sessions" src="https://img.shields.io/badge/Benchmark-348_sessions-9b59b6?style=flat-square&amp;labelColor=555555"></a>
+  <a href="https://turaai.net/benchmark"><img alt="Benchmark: 8,243 turns" title="Tura benchmark: 8,243 agent turns" src="https://img.shields.io/badge/Benchmark-8%2C243_turns-9b59b6?style=flat-square&amp;labelColor=555555"></a>
   <a href="https://www.npmjs.com/package/tura-ai"><img alt="npm package" title="Tura npm package" src="https://img.shields.io/npm/v/tura-ai?style=flat-square&amp;logo=npm&amp;label=npm&amp;labelColor=555555&amp;color=cb3837"></a>
 </p>
 
-<h1 align="center">Tura: 83.1% fewer turns; 16.7 percentage points higher success.</h1>
+<h1 align="center">Tura: 16.7% better performance, 77.5% fewer rounds.</h1>
 
-Tura is a local, open-source coding agent for developers who are tired of vague skill claims, token-saving extensions with no evidence, and agents without judgment wreck their repos.
+Tura is a local, open-source coding agent for developers who are tired of vague skill claims, token-saving extensions with no evidence, and agents that change a repository before understanding it.
 
-Across 20 DeepSWE v1.1 tasks, tested 60 sessions with GPT-5.6 SOL at High reasoning effort, Tura creates a substantial token-budget advantage by reducing repeated context and model round trips. You can spend that advantage in two ways. Direct turns most of it into lower cost: 83.5% fewer aggregate tokens than the official Codex CLI High configuration, with a verifier success rate of 65.0% versus 60.0%. Balanced puts more of the saved budget back into reasoning, investigation, and verification. It reached an 80.0% success rate—20 percentage points higher than Codex CLI High—while still using 49.6% fewer tokens.[^test-set-record][^debug-manifests]
+Across 20 DeepSWE v1.1 tasks, each run three times per agent, Tura creates a substantial token-budget advantage by reducing repeated context and model round trips. You can spend that advantage in two ways. Direct turns most of it into lower cost: 77.5% fewer aggregate tokens than Codex CLI, with a comparable verifier success rate of 65.0% versus 63.3%. Balanced puts more of the saved budget back into reasoning, investigation, and verification. It reached an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
 
 ### Benchmark
 
 Long-horizon task [benchmarks](https://turaai.net/benchmark) are one way to look past a polished isolated prompt and see how an agent handles real work. The published comparison uses harness-based development tasks with archived prompts, per-round tool calls, token usage, patches, and verifier results.
 
-> The primary comparison below holds the model and reasoning label fixed: Tura Balanced High, Tura Direct High, and the official Codex CLI High configuration on 20 DeepSWE tasks and 5 rewrite tasks. The evidence record also retains Codex CLI Medium as a separate secondary configuration; the benchmark methodology keeps 2 separately reviewed design tasks outside the harness-scored population.[^test-set-record]
-
-[Full report on GitHub](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
+> The published artifacts compare the named Tura Balanced, Tura Direct, and Codex CLI configurations on 20 DeepSWE tasks, 5 rewrite tasks, and 2 separately reviewed design tasks. [^debug-figure]. [current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md). [^test-set-record]
 
 The published results do not establish equivalent quality or performance for
 every configured provider. Broader Anthropic/Claude, Google/Gemini,
@@ -33,7 +31,11 @@ cross-OS measurements remain part of the documented
 <details>
 <summary><strong>FULL BENCHMARK REPORT</strong></summary>
 
-<img src="assets/data/benchmark-agent-comparison.svg" alt="High-to-High benchmark comparison" width="800">
+<p align="center">
+  <img src="assets/data/benchmark-agent-comparison.svg" alt="DeepSWE Debug and Rewrite Repo benchmark comparison" width="800">
+</p>
+
+<p align="center"><em>Harness success and aggregate token usage across 25 high-difficulty tasks, 6 agent-and-model configurations, and 270 sessions. Source and calculation notes are linked below.</em></p>
 </details>
 
 ### Screenshots
@@ -140,7 +142,7 @@ _**Tura macro CLI command:**_
 }
 ```
 
-There is no ablation test proving that `command_run` alone causes Tura's lower turn and token usage. In the matched-High DeepSWE comparison, however, Balanced used 66.8% fewer model rounds and 49.6% fewer tokens than Codex CLI High, while Direct used 84.0% fewer rounds and 83.5% fewer tokens.[^test-set-record][^debug-manifests]
+There is no ablation test proving that `command_run` alone causes Tura's lower turn and token usage. Across the full DeepSWE comparison, however, Balanced used 35.8% fewer turns and 31.1% fewer tokens than Codex CLI, while Direct used 69.1% fewer turns and 77.5% fewer tokens.[^debug-figure][^debug-manifests]
 
 ## Backward Reasoning
 
@@ -173,9 +175,9 @@ In the example below, the LLM can derive the optimal strategy for playing rock-p
 > Then map rock, paper, or scissors to the number.
 ```
 
-In programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is guided to reason through the full execution path, reconstruct the failure state, and identify the root cause before writing code. In the matched-High DeepSWE comparison, Tura Balanced passed 12 more of 60 binary task verifiers than Codex CLI High.
+In programming tasks, this means that when an agent sees a goal like fixing a frontend bug, it is guided to reason through the full execution path, reconstruct the failure state, and identify the root cause before writing code. In the published DeepSWE comparison, Tura Balanced passed 10 more of 60 binary task verifiers than Codex CLI.
 
-Both configurations in that contrast use GPT-5.6 SOL with the High reasoning label, so a High-versus-Medium effort mismatch does not explain the 20-point pass-rate difference. The result is still a system-level association, not a causal estimate for backward reasoning or any other individual feature.[^test-set-record][^debug-manifests]
+On the same 20-task subset, DeepSWE’s official mini-swe-agent results show an 8% gap between GPT-5.6 SOL High and Medium reasoning, while Tura Balanced leads Codex CLI by 16.7%. This indicates that higher reasoning effort alone does not explain Tura’s advantage.[^debug-manifests][^rewrite-manifest]
 
 ## Runtime Context and Prompt Manager
 
@@ -350,11 +352,13 @@ Tura is licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE).
 - [Current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
 - [Benchmark artifacts](https://github.com/Tura-AI/benchmark/tree/main/results)
 
-[^test-set-record]: [`tura-benchmark` current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md), which defines the 280-run published population, the 278-run relationship-analysis population, configuration provenance, aggregation formulas, exclusions, and identification limits. The README's primary High-to-High tables select the 210 Tura Balanced High, Tura Direct High, and Codex CLI High sessions from that published population.
+[^debug-figure]: [DeepSWE and Rewrite Repo comparison figure](assets/data/benchmark-agent-comparison.svg). The figure states the task, session, verifier, turn, token, and aggregation scopes used by the README.
 
-[^debug-manifests]: Tura's DeepSWE observations are in [`tura-benchmark` replicate 1](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/manifest.json), [replicate 2](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/manifest.json), and [replicate 3](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/manifest.json). The matched Codex CLI High observations are in [High replicate 1](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-codex-cli-high-r01/manifest.json), [High replicate 2](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-codex-cli-high-r02/manifest.json), and [High replicate 3](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-codex-cli-high-r03/manifest.json). Each configuration contributes 60 sessions on the same 20 task IDs.
+[^test-set-record]: [`tura-benchmark` current test-set record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md), including direct links to all eight published design HTML artifacts and their run contracts.
 
-[^rewrite-manifest]: Tura's Rewrite observations are in the [`tura-benchmark` GPT-5.6 Rewrite Repo canonical manifest](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/canonical-manifest.json); the official Codex CLI High observations are in the [Codex High canonical manifest](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260714-codex-cli-0.144.1-gpt56-sol-high/canonical-manifest.json). Each High configuration contributes 10 sessions and 472 harness checks.
+[^debug-manifests]: [`tura-benchmark` DeepSWE replicate 1](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/manifest.json), [replicate 2](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/manifest.json), and [replicate 3](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/manifest.json). Each manifest contains 20 tasks across the same three agent configurations; together they contain 180 sessions.
+
+[^rewrite-manifest]: [`tura-benchmark` GPT-5.6 Rewrite Repo canonical manifest](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/canonical-manifest.json). The cited totals are Tura Balanced 389/472 and Codex CLI 351/472 across 10 sessions each.
 
 [^compact-dynamodb]: [`tura-benchmark` DynamoDB round 107 compact](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/dynamodb-toolbox-conditional-attribute-requirements/tura-balanced/dynamodb-toolbox-conditional-attribute-requirements-tura-balanced-run-01/metadata/contracts/rounds/round-0107.json) and [round 114 first later patch](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/dynamodb-toolbox-conditional-attribute-requirements/tura-balanced/dynamodb-toolbox-conditional-attribute-requirements-tura-balanced-run-01/metadata/contracts/rounds/round-0114.json).
 
