@@ -5,6 +5,7 @@ pub mod codex;
 pub mod google;
 pub mod minimax;
 pub mod openai;
+pub mod opencode_zen;
 pub mod qwen;
 pub mod xai;
 
@@ -81,6 +82,16 @@ pub(crate) fn parameter_policy(provider: &str) -> ProviderParameterPolicy {
             ignored_parameters: &["service_tier", "prompt_cache_key"],
         },
         "qwen" | "qwen_cn" | "qwen-cn" => ProviderParameterPolicy {
+            api_style: ProviderApiStyle::CodexResponses,
+            metrics_style: ProviderApiStyle::OpenApi,
+            supports_forced_tool_choice: true,
+            supports_stream_usage: true,
+            supports_reasoning_effort: true,
+            supports_service_tier: false,
+            supports_prompt_cache_key: false,
+            ignored_parameters: &["service_tier", "prompt_cache_key"],
+        },
+        "opencode-zen" => ProviderParameterPolicy {
             api_style: ProviderApiStyle::CodexResponses,
             metrics_style: ProviderApiStyle::OpenApi,
             supports_forced_tool_choice: true,

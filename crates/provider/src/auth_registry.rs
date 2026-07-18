@@ -214,6 +214,47 @@ const OPENROUTER_MODELS: &[&str] = &[
     "text-embedding-3-large",
     "text-embedding-3-small",
 ];
+const OPENCODE_ZEN_MODELS: &[&str] = &[
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.5-pro",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+    "gemini-3.5-flash",
+    "gemini-3.1-pro",
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "kimi-k2.6",
+    "qwen3.7-max",
+];
+const OPENCODE_GO_MODELS: &[&str] = &[
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "kimi-k2.6",
+    "kimi-k2.5",
+    "glm-5.2",
+    "glm-5",
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "minimax-m2.5",
+    "mimo-v2.5",
+];
+const CLINEPASS_MODELS: &[&str] = &[
+    "cline-pass/deepseek-v4-pro",
+    "cline-pass/deepseek-v4-flash",
+    "cline-pass/qwen3.7-max",
+    "cline-pass/qwen3.7-plus",
+    "cline-pass/kimi-k2.6",
+    "cline-pass/kimi-k2.7-code",
+    "cline-pass/glm-5.2",
+    "cline-pass/minimax-m3",
+    "cline-pass/mimo-v2.5",
+    "cline-pass/mimo-v2.5-pro",
+];
 const EMPTY_MODELS: &[&str] = &[];
 
 const fn openai_subscription_capabilities() -> ProviderCapabilityFlags {
@@ -554,6 +595,27 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         TOGETHER_MODELS,
         "https://api.together.xyz/v1",
     ),
+    simple_openai_compatible(
+        "opencode-zen",
+        "OpenCode Zen",
+        "OPENCODE_API_KEY",
+        OPENCODE_ZEN_MODELS,
+        "https://opencode.ai/zen/v1",
+    ),
+    simple_openai_compatible(
+        "opencode-go",
+        "OpenCode Go",
+        "OPENCODE_API_KEY",
+        OPENCODE_GO_MODELS,
+        "https://opencode.ai/zen/go/v1",
+    ),
+    simple_openai_compatible(
+        "clinepass",
+        "ClinePass",
+        "CLINE_API_KEY",
+        CLINEPASS_MODELS,
+        "https://api.cline.bot/api/v1",
+    ),
     ProviderAuthRegistryEntry {
         provider_id: "github-copilot",
         runtime_provider_id: "github-copilot",
@@ -726,6 +788,9 @@ mod tests {
             "replicate",
             "github-copilot",
             "bedrock",
+            "opencode-zen",
+            "opencode-go",
+            "clinepass",
         ] {
             assert!(
                 provider_auth_registry_entry(provider_id).is_some(),

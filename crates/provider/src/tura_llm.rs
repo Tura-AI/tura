@@ -365,6 +365,17 @@ impl ProviderConfig {
                     )
                     .await
                 }
+                "opencode-zen" => {
+                    providers::opencode_zen::call_with_stream_events(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                        stream_events.clone(),
+                    )
+                    .await
+                }
                 other => {
                     crate::llm::openapi::call_with_stream_events(
                         &self.base_url,

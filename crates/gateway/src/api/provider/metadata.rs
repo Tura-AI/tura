@@ -63,6 +63,8 @@ pub(super) fn provider_api_key_url(provider_id: &str) -> Option<String> {
         "huggingface" => "https://huggingface.co/settings/tokens",
         "azure" => "https://portal.azure.com/",
         "replicate" => "https://replicate.com/account/api-tokens",
+        "opencode-zen" | "opencode-go" => "https://opencode.ai/auth",
+        "clinepass" => "https://app.cline.bot/settings/api-keys",
         "github-copilot" => "https://github.com/settings/personal-access-tokens",
         "bedrock" => "https://console.aws.amazon.com/iam/home#/security_credentials",
         _ => return None,
@@ -77,6 +79,8 @@ pub(super) fn provider_auth_docs_url(provider_id: &str) -> Option<String> {
         "claude-code" => "https://code.claude.com/docs/en/iam",
         "google" => "https://ai.google.dev/gemini-api/docs/oauth",
         "openrouter" => "https://openrouter.ai/docs/api-keys",
+        "opencode-zen" | "opencode-go" => "https://opencode.ai/docs/zen/",
+        "clinepass" => "https://docs.cline.bot/getting-started/clinepass",
         "mistral" => "https://docs.mistral.ai/admin/security-access/api-keys",
         "github-copilot" => {
             "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli"

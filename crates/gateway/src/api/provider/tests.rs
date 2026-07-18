@@ -369,6 +369,12 @@ fn catalog_provider_model_catalog_filters_hidden_claude_models() {
 fn catalog_model_supported_by_provider_matches_registry_exactly() {
     assert!(model_supported_by_provider("codex", "gpt-5.6-sol"));
     assert!(!model_supported_by_provider("codex", "missing-model"));
+    assert!(model_supported_by_provider("opencode-zen", "gpt-5.6-sol"));
+    assert!(model_supported_by_provider("opencode-go", "deepseek-v4-pro"));
+    assert!(model_supported_by_provider(
+        "clinepass",
+        "cline-pass/deepseek-v4-pro"
+    ));
     assert!(!model_supported_by_provider(
         "missing-provider",
         "gpt-5.6-sol"
@@ -498,6 +504,20 @@ fn provider_auth_methods_are_projected_from_registry() {
     assert_eq!(
         openrouter[0].token_env.as_deref(),
         Some("OPENROUTER_API_KEY")
+    );
+
+    let opencode_zen = provider_auth_methods("opencode-zen");
+    assert_eq!(opencode_zen[0].kind, AuthMethodKind::ApiKey);
+    assert_eq!(
+        opencode_zen[0].token_env.as_deref(),
+        Some("OPENCODE_API_KEY")
+    );
+
+    let clinepass = provider_auth_methods("clinepass");
+    assert_eq!(clinepass[0].kind, AuthMethodKind::ApiKey);
+    assert_eq!(
+        clinepass[0].token_env.as_deref(),
+        Some("CLINE_API_KEY")
     );
 }
 
