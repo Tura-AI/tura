@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - "codex/**"
+    paths-ignore:
+      - "docs/**"
+      - "outreach/**"
   workflow_dispatch:
     inputs:
       suite:

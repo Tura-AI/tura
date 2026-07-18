@@ -11,6 +11,11 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
 $ScriptStartedAt = Get-Date
 
+if (($IsWindows -or $env:OS -eq "Windows_NT") -and $Parallelism -gt 1) {
+  Write-Host "Windows backend business tests use parallelism 1 to avoid locking shared target executables."
+  $Parallelism = 1
+}
+
 Set-Location $RepoRoot
 
 function Read-PackageName {

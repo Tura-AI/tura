@@ -2,6 +2,9 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "outreach/**"
   push:
     branches:
       - main
@@ -9,6 +12,9 @@ on:
     tags:
       - "release*"
       - "release-v*"
+    paths-ignore:
+      - "docs/**"
+      - "outreach/**"
   workflow_dispatch:
 
 env:

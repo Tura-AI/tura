@@ -57,7 +57,7 @@ for package in metadata["packages"]:
 }
 
 if [ -z "$CRATES" ]; then
-  CRATES=$(default_crates | tr '\n' ' ')
+  CRATES=$(default_crates | tr -d '\r' | tr '\n' ' ')
 fi
 
 if [ "$LIST" -eq 1 ]; then

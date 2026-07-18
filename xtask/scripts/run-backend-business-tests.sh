@@ -43,6 +43,15 @@ EOF
   shift
 done
 
+case "$(uname -s 2>/dev/null || true)" in
+  MINGW*|MSYS*|CYGWIN*)
+    if [ "$JOBS" -gt 1 ]; then
+      echo "Windows backend business tests use parallelism 1 to avoid locking shared target executables."
+      JOBS=1
+    fi
+    ;;
+esac
+
 cd "$REPO_ROOT"
 
 cases=$(mktemp)
