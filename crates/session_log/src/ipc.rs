@@ -357,6 +357,10 @@ fn publish_addr(addr: &SocketAddr) -> Result<()> {
 }
 
 fn handle_connection(store: SessionLogStore, stream: TcpStream) -> Result<()> {
+    // BSD/macOS accepted sockets inherit O_NONBLOCK from the listener. Restore
+    // blocking I/O so large NDJSON requests and responses are not truncated at
+    // the socket-buffer boundary when read_line/write_all returns WouldBlock.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let mut writer = stream.try_clone()?;
     let reader = BufReader::new(stream);
@@ -444,6 +448,62 @@ mod tests {
         let error =
             ensure_version_compatible(&mismatched).expect_err("a different build must be refused");
         assert!(error.to_string().contains("different build"));
+    }
+
+    #[test]
+    fn nonblocking_listener_serves_responses_larger_than_the_socket_buffer() {
+        let root = tempfile::tempdir().expect("temp db root");
+        let store = SessionLogStore::open(root.path()).expect("open session store");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback listener");
+        listener
+            .set_nonblocking(true)
+            .expect("set listener nonblocking");
+        let addr = listener.local_addr().expect("listener address");
+        let mut client = TcpStream::connect(addr).expect("connect client");
+        client
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("set client read timeout");
+        client
+            .set_write_timeout(Some(Duration::from_secs(10)))
+            .expect("set client write timeout");
+
+        let (server_stream, _) = listener.accept().expect("accept queued client");
+        let server = std::thread::spawn(move || handle_connection(store, server_stream));
+
+        let oversized_variant = "x".repeat(1_000_000);
+        let request = serde_json::json!({ "command": oversized_variant }).to_string();
+        client
+            .write_all(request.as_bytes())
+            .expect("write oversized request");
+        client.write_all(b"\n").expect("terminate request");
+        client.flush().expect("flush request");
+
+        let mut response_line = String::new();
+        BufReader::new(client.try_clone().expect("clone client"))
+            .read_line(&mut response_line)
+            .expect("read oversized response");
+        assert!(
+            response_line.ends_with('\n'),
+            "oversized response must end with the NDJSON delimiter"
+        );
+        assert!(
+            response_line.len() > 1_000_000,
+            "test response must exceed the platform socket buffer"
+        );
+        assert!(
+            matches!(
+                serde_json::from_str::<SessionLogResponse>(response_line.trim())
+                    .expect("decode complete oversized response"),
+                SessionLogResponse::Error { .. }
+            ),
+            "invalid oversized request should receive a structured error"
+        );
+
+        drop(client);
+        server
+            .join()
+            .expect("session_db connection thread")
+            .expect("serve oversized response");
     }
 
     #[test]
