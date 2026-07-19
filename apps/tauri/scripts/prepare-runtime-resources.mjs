@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,7 +29,7 @@ if (missing.length > 0) {
 
 rmSync(destination, { recursive: true, force: true });
 mkdirSync(destination, { recursive: true });
+writeFileSync(join(destination, ".gitignore"), "*\n!.gitignore\n");
 for (const entry of required) {
   cpSync(join(releaseRoot, entry), join(destination, entry), { recursive: true });
 }
-
