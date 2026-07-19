@@ -19,10 +19,9 @@ use crate::provider_flow::streamed_command_run::{
     streamed_command_result_record, StreamedCommandEvent, StreamedCommandRunUpdate,
 };
 use crate::router_command_run::execute_command_value_results;
-use crate::state_machine::runtime_management::{
-    RuntimeManagement, RuntimeSessionSyncStatus, ToolCallRecord,
-};
+use crate::state_machine::runtime_management::{RuntimeManagement, ToolCallRecord};
 use crate::tool_callback_sanitizer::sanitize_tool_callback_result;
+use lifecycle::RuntimeProjection;
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
 
@@ -121,7 +120,7 @@ pub(crate) struct SpawnStreamedCommandRunTask {
     pub(crate) call_id: String,
     pub(crate) started_at: DateTime<Utc>,
     pub(crate) state: StreamedCommandRunState,
-    pub(crate) runtime_status: RuntimeSessionSyncStatus,
+    pub(crate) runtime_status: RuntimeProjection,
     pub(crate) require_startup_task_state: bool,
 }
 
@@ -919,10 +918,9 @@ mod tests {
         SpawnStreamedCommandRunTask, StreamedCommandRunState,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{
-        RuntimeManagement, RuntimeProviderConfig, RuntimeState,
-    };
+    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
     use chrono::Utc;
+    use lifecycle::RuntimeState;
     use serde_json::json;
     use serde_json::Value;
     use std::sync::{
@@ -1095,7 +1093,7 @@ mod tests {
             call_id: "stream-call".to_string(),
             started_at: Utc::now(),
             state,
-            runtime_status: runtime().session_sync_status(),
+            runtime_status: runtime().lifecycle_projection(),
             require_startup_task_state: false,
         });
 
@@ -1165,7 +1163,7 @@ mod tests {
             call_id: "stream-call-late-lower".to_string(),
             started_at: Utc::now(),
             state,
-            runtime_status: runtime().session_sync_status(),
+            runtime_status: runtime().lifecycle_projection(),
             require_startup_task_state: false,
         });
 
@@ -1251,7 +1249,7 @@ mod tests {
             call_id: "stream-call-callback".to_string(),
             started_at: Utc::now(),
             state,
-            runtime_status: runtime().session_sync_status(),
+            runtime_status: runtime().lifecycle_projection(),
             require_startup_task_state: false,
         });
 
@@ -1289,7 +1287,7 @@ mod tests {
             call_id: "stream-call-startup-discard".to_string(),
             started_at: Utc::now(),
             state,
-            runtime_status: runtime().session_sync_status(),
+            runtime_status: runtime().lifecycle_projection(),
             require_startup_task_state: true,
         });
 

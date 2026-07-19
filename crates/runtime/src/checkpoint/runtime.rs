@@ -101,9 +101,7 @@ pub fn checkpoint_turn_interrupted(runtime: &RuntimeManagement) -> Result<(), St
 mod tests {
     use super::*;
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{
-        RuntimeProviderConfig, RuntimeState, UsageReport,
-    };
+    use crate::state_machine::runtime_management::{RuntimeProviderConfig, UsageReport};
     use chrono::Utc;
 
     #[test]
@@ -124,7 +122,15 @@ mod tests {
     #[test]
     fn runtime_state_payload_uses_canonical_pascal_case_states_and_statuses() {
         let mut runtime = runtime_fixture();
-        runtime.state = RuntimeState::Streaming;
+        runtime
+            .mark_called(runtime.created_at)
+            .expect("mark called");
+        runtime
+            .mark_waiting_first_token()
+            .expect("mark waiting first token");
+        runtime
+            .mark_first_token(runtime.created_at)
+            .expect("mark first token");
 
         let payload = runtime_state_checkpoint_payload(&runtime, "provider_call_started");
 
@@ -137,7 +143,15 @@ mod tests {
     #[test]
     fn terminal_runtime_state_payload_includes_usage_snapshot_or_null() {
         let mut runtime = runtime_fixture();
-        runtime.state = RuntimeState::Finished;
+        runtime
+            .mark_called(runtime.created_at)
+            .expect("mark called");
+        runtime
+            .mark_waiting_first_token()
+            .expect("mark waiting first token");
+        runtime
+            .finish_success(runtime.created_at, None)
+            .expect("finish runtime");
         runtime.usage = Some(UsageReport {
             input_tokens: 10,
             output_tokens: 5,

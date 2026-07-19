@@ -1,5 +1,5 @@
 use super::*;
-use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
+use lifecycle::RuntimeProjection;
 pub async fn list_messages(
     Path(session_id): Path<String>,
     Query(params): Query<MessageListParams>,
@@ -321,7 +321,7 @@ fn runtime_final_message(
     session_id: &str,
     payload: &SendAgentMessageRequest,
     content: &str,
-    status: &RuntimeSessionSyncStatus,
+    status: &RuntimeProjection,
 ) -> Option<crate::session::Message> {
     let (created_at, updated_at) = runtime_message_times(payload);
     if !content.trim().is_empty() {
@@ -359,7 +359,7 @@ fn runtime_final_message(
 fn runtime_live_tool_message_response(
     session_id: &str,
     payload: &SendAgentMessageRequest,
-    status: &RuntimeSessionSyncStatus,
+    status: &RuntimeProjection,
 ) -> Option<SendAgentMessageResponse> {
     let tool_call = payload.tool_call.as_ref()?;
     if !tool_call_visible_to_frontend(tool_call) {
@@ -1097,12 +1097,10 @@ mod tests {
                     state: json!({ "output": {"reply_message": "done"} }),
                     metadata: None,
                 }),
-                runtime_status: Some(
-                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus::new(
-                        "runtime-usage-event".to_string(),
-                        runtime::state_machine::runtime_management::RuntimeState::Finished,
-                    ),
-                ),
+                runtime_status: Some(lifecycle::RuntimeProjection::new(
+                    "runtime-usage-event".to_string(),
+                    lifecycle::RuntimeState::Finished,
+                )),
                 context_tokens: None,
                 usage: Some(usage),
                 command_updates: Vec::new(),
@@ -1165,12 +1163,10 @@ mod tests {
                 media: Vec::new(),
                 runtime_id: Some("runtime-live-metrics".to_string()),
                 tool_call: None,
-                runtime_status: Some(
-                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus::new(
-                        "runtime-live-metrics".to_string(),
-                        runtime::state_machine::runtime_management::RuntimeState::Streaming,
-                    ),
-                ),
+                runtime_status: Some(lifecycle::RuntimeProjection::new(
+                    "runtime-live-metrics".to_string(),
+                    lifecycle::RuntimeState::Streaming,
+                )),
                 context_tokens: Some(crate::contracts::SessionContextTokens {
                     input: 64_000,
                     limit: 128_000,
@@ -1349,12 +1345,10 @@ mod tests {
                     }),
                     metadata: None,
                 }),
-                runtime_status: Some(
-                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus::new(
-                        "runtime-command-update".to_string(),
-                        runtime::state_machine::runtime_management::RuntimeState::Streaming,
-                    ),
-                ),
+                runtime_status: Some(lifecycle::RuntimeProjection::new(
+                    "runtime-command-update".to_string(),
+                    lifecycle::RuntimeState::Streaming,
+                )),
                 context_tokens: None,
                 usage: None,
                 command_updates: vec![CommandUpdatePayload {

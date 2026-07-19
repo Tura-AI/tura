@@ -7,10 +7,9 @@ use tracing::warn;
 use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::final_response::summarize_tool_results_for_user;
 use crate::manas::tool_catalog::env_flag;
-use crate::state_machine::runtime_management::{
-    RuntimeManagement, RuntimeSessionSyncStatus, UsageReport,
-};
+use crate::state_machine::runtime_management::{RuntimeManagement, UsageReport};
 use crate::state_machine::session_management::ContextTokenStats;
+use lifecycle::RuntimeProjection;
 
 pub(crate) fn publish_runtime_failure_message(
     session: &SessionManagement,
@@ -127,7 +126,7 @@ pub(crate) fn publish_gateway_agent_message_from_runtime(
         runtime_id: &runtime.runtime_id,
         reply_message,
         new_learning,
-        runtime_status: Some(runtime.session_sync_status()),
+        runtime_status: Some(runtime.lifecycle_projection()),
         context_tokens: Some(runtime.context_tokens),
         usage: runtime.usage.clone(),
         created_at,
@@ -140,7 +139,7 @@ struct GatewayAgentMessageSync<'a> {
     runtime_id: &'a str,
     reply_message: String,
     new_learning: String,
-    runtime_status: Option<RuntimeSessionSyncStatus>,
+    runtime_status: Option<RuntimeProjection>,
     context_tokens: Option<ContextTokenStats>,
     usage: Option<UsageReport>,
     created_at: i64,

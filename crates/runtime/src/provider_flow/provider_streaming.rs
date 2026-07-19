@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use lifecycle::RuntimeState;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -21,7 +22,7 @@ use crate::provider_flow::streamed_command_run::{
     command_run_stream_events_from_provider_content, streamed_command_run_call_id,
 };
 use crate::provider_flow::usage::usage_report_from_metrics;
-use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeState};
+use crate::state_machine::runtime_management::RuntimeManagement;
 
 pub(crate) struct RuntimeStreamingInput {
     pub(crate) messages: Vec<serde_json::Value>,
@@ -101,7 +102,7 @@ pub(crate) async fn call_runtime_streaming(
         call_id: gateway_call_id,
         started_at,
         state: command_state.clone(),
-        runtime_status: runtime.session_sync_status(),
+        runtime_status: runtime.lifecycle_projection(),
         require_startup_task_state: input.require_startup_task_state,
     });
 

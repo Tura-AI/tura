@@ -6,7 +6,7 @@ use gateway::api::session::{
 };
 use gateway::contracts::{GlobalEvent, Message, MessagePart};
 use gateway::session_store;
-use runtime::state_machine::runtime_management::{RuntimeSessionSyncStatus, RuntimeState};
+use lifecycle::{RuntimeProjection, RuntimeState};
 use runtime::state_machine::session_management::PlanStatus;
 use serde_json::{json, Value};
 use session_log::SessionLogStore;
@@ -809,8 +809,8 @@ fn create_business_session(directory: String) -> String {
         .id
 }
 
-fn runtime_sync_status(runtime_id: &str, live: bool) -> RuntimeSessionSyncStatus {
-    RuntimeSessionSyncStatus::new(
+fn runtime_sync_status(runtime_id: &str, live: bool) -> RuntimeProjection {
+    RuntimeProjection::new(
         runtime_id.to_string(),
         if live {
             RuntimeState::Streaming

@@ -1,0 +1,948 @@
+{
+  "context": {
+    "after_compact": [
+      {
+        "content": "<WORKSPACE_SNAPSHOT>\nfixed\n</WORKSPACE_SNAPSHOT>",
+        "role": "developer"
+      },
+      {
+        "content": "<environment_context>fixed</environment_context>",
+        "role": "developer"
+      },
+      {
+        "content": "fixed compact summary",
+        "role": "user"
+      },
+      {
+        "content": "{\n  \"results\": [\n    {\n      \"output\": {\n        \"task_status\": {\n          \"status\": \"doing\"\n        }\n      },\n      \"success\": true\n    },\n    {\n      \"error\": \"fixed failure\",\n      \"success\": false\n    }\n  ]\n}",
+        "role": "user"
+      }
+    ],
+    "before_compact": [
+      {
+        "content": [
+          {
+            "text": "Inspect ",
+            "type": "input_text"
+          },
+          {
+            "image_url": "data:image/png;base64,QUJD",
+            "type": "input_image"
+          },
+          {
+            "text": " now.",
+            "type": "input_text"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": "fixed-system",
+        "role": "system"
+      },
+      {
+        "content": "ordinary assistant text",
+        "role": "assistant"
+      },
+      {
+        "content": "{\n  \"results\": [\n    {\n      \"output\": {\n        \"task_status\": {\n          \"status\": \"doing\"\n        }\n      },\n      \"success\": true\n    },\n    {\n      \"error\": \"fixed failure\",\n      \"success\": false\n    }\n  ]\n}",
+        "role": "user"
+      }
+    ],
+    "media_input": [
+      {
+        "text": "Inspect ",
+        "type": "input_text"
+      },
+      {
+        "image_url": "data:image/png;base64,QUJD",
+        "type": "input_image"
+      },
+      {
+        "text": " now.",
+        "type": "input_text"
+      }
+    ],
+    "tool_result_count": 1
+  },
+  "gateway_busy_input": {
+    "empty_after_take": [],
+    "first": [
+      "first queued input"
+    ],
+    "second": [
+      "first queued input",
+      "second queued input"
+    ],
+    "state_while_busy": "running",
+    "taken": [
+      "first queued input",
+      "second queued input"
+    ]
+  },
+  "runtime_transitions": [
+    {
+      "allowed": true,
+      "from": "Created",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Created"
+    },
+    {
+      "allowed": true,
+      "from": "Created",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Dispatching"
+    },
+    {
+      "allowed": false,
+      "from": "Created",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "WaitingFirstToken"
+    },
+    {
+      "allowed": false,
+      "from": "Created",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Streaming"
+    },
+    {
+      "allowed": false,
+      "from": "Created",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Finished"
+    },
+    {
+      "allowed": true,
+      "from": "Created",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Failed"
+    },
+    {
+      "allowed": true,
+      "from": "Created",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "TimedOut"
+    },
+    {
+      "allowed": true,
+      "from": "Created",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Cancelled"
+    },
+    {
+      "allowed": false,
+      "from": "Dispatching",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Created"
+    },
+    {
+      "allowed": true,
+      "from": "Dispatching",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Dispatching"
+    },
+    {
+      "allowed": true,
+      "from": "Dispatching",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "WaitingFirstToken"
+    },
+    {
+      "allowed": false,
+      "from": "Dispatching",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Streaming"
+    },
+    {
+      "allowed": false,
+      "from": "Dispatching",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Finished"
+    },
+    {
+      "allowed": true,
+      "from": "Dispatching",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Failed"
+    },
+    {
+      "allowed": true,
+      "from": "Dispatching",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "TimedOut"
+    },
+    {
+      "allowed": true,
+      "from": "Dispatching",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Cancelled"
+    },
+    {
+      "allowed": false,
+      "from": "WaitingFirstToken",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Created"
+    },
+    {
+      "allowed": false,
+      "from": "WaitingFirstToken",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Dispatching"
+    },
+    {
+      "allowed": true,
+      "from": "WaitingFirstToken",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "WaitingFirstToken"
+    },
+    {
+      "allowed": true,
+      "from": "WaitingFirstToken",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Streaming"
+    },
+    {
+      "allowed": true,
+      "from": "WaitingFirstToken",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Finished"
+    },
+    {
+      "allowed": true,
+      "from": "WaitingFirstToken",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Failed"
+    },
+    {
+      "allowed": true,
+      "from": "WaitingFirstToken",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "TimedOut"
+    },
+    {
+      "allowed": true,
+      "from": "WaitingFirstToken",
+      "from_live": true,
+      "from_status": "Pending",
+      "to": "Cancelled"
+    },
+    {
+      "allowed": false,
+      "from": "Streaming",
+      "from_live": true,
+      "from_status": "Streaming",
+      "to": "Created"
+    },
+    {
+      "allowed": false,
+      "from": "Streaming",
+      "from_live": true,
+      "from_status": "Streaming",
+      "to": "Dispatching"
+    },
+    {
+      "allowed": false,
+      "from": "Streaming",
+      "from_live": true,
+      "from_status": "Streaming",
+      "to": "WaitingFirstToken"
+    },
+    {
+      "allowed": true,
+      "from": "Streaming",
+      "from_live": true,
+      "from_status": "Streaming",
+      "to": "Streaming"
+    },
+    {
+      "allowed": true,
+      "from": "Streaming",
+      "from_live": true,
+      "from_status": "Streaming",
+      "to": "Finished"
+    },
+    {
+      "allowed": true,
+      "from": "Streaming",
+      "from_live": true,
+      "from_status": "Streaming",
+      "to": "Failed"
+    },
+    {
+      "allowed": true,
+      "from": "Streaming",
+      "from_live": true,
+      "from_status": "Streaming",
+      "to": "TimedOut"
+    },
+    {
+      "allowed": true,
+      "from": "Streaming",
+      "from_live": true,
+      "from_status": "Streaming",
+      "to": "Cancelled"
+    },
+    {
+      "allowed": false,
+      "from": "Finished",
+      "from_live": false,
+      "from_status": "Succeeded",
+      "to": "Created"
+    },
+    {
+      "allowed": false,
+      "from": "Finished",
+      "from_live": false,
+      "from_status": "Succeeded",
+      "to": "Dispatching"
+    },
+    {
+      "allowed": false,
+      "from": "Finished",
+      "from_live": false,
+      "from_status": "Succeeded",
+      "to": "WaitingFirstToken"
+    },
+    {
+      "allowed": false,
+      "from": "Finished",
+      "from_live": false,
+      "from_status": "Succeeded",
+      "to": "Streaming"
+    },
+    {
+      "allowed": false,
+      "from": "Finished",
+      "from_live": false,
+      "from_status": "Succeeded",
+      "to": "Finished"
+    },
+    {
+      "allowed": false,
+      "from": "Finished",
+      "from_live": false,
+      "from_status": "Succeeded",
+      "to": "Failed"
+    },
+    {
+      "allowed": false,
+      "from": "Finished",
+      "from_live": false,
+      "from_status": "Succeeded",
+      "to": "TimedOut"
+    },
+    {
+      "allowed": false,
+      "from": "Finished",
+      "from_live": false,
+      "from_status": "Succeeded",
+      "to": "Cancelled"
+    },
+    {
+      "allowed": false,
+      "from": "Failed",
+      "from_live": false,
+      "from_status": "Failed",
+      "to": "Created"
+    },
+    {
+      "allowed": false,
+      "from": "Failed",
+      "from_live": false,
+      "from_status": "Failed",
+      "to": "Dispatching"
+    },
+    {
+      "allowed": false,
+      "from": "Failed",
+      "from_live": false,
+      "from_status": "Failed",
+      "to": "WaitingFirstToken"
+    },
+    {
+      "allowed": false,
+      "from": "Failed",
+      "from_live": false,
+      "from_status": "Failed",
+      "to": "Streaming"
+    },
+    {
+      "allowed": false,
+      "from": "Failed",
+      "from_live": false,
+      "from_status": "Failed",
+      "to": "Finished"
+    },
+    {
+      "allowed": false,
+      "from": "Failed",
+      "from_live": false,
+      "from_status": "Failed",
+      "to": "Failed"
+    },
+    {
+      "allowed": false,
+      "from": "Failed",
+      "from_live": false,
+      "from_status": "Failed",
+      "to": "TimedOut"
+    },
+    {
+      "allowed": false,
+      "from": "Failed",
+      "from_live": false,
+      "from_status": "Failed",
+      "to": "Cancelled"
+    },
+    {
+      "allowed": false,
+      "from": "TimedOut",
+      "from_live": false,
+      "from_status": "TimedOut",
+      "to": "Created"
+    },
+    {
+      "allowed": false,
+      "from": "TimedOut",
+      "from_live": false,
+      "from_status": "TimedOut",
+      "to": "Dispatching"
+    },
+    {
+      "allowed": false,
+      "from": "TimedOut",
+      "from_live": false,
+      "from_status": "TimedOut",
+      "to": "WaitingFirstToken"
+    },
+    {
+      "allowed": false,
+      "from": "TimedOut",
+      "from_live": false,
+      "from_status": "TimedOut",
+      "to": "Streaming"
+    },
+    {
+      "allowed": false,
+      "from": "TimedOut",
+      "from_live": false,
+      "from_status": "TimedOut",
+      "to": "Finished"
+    },
+    {
+      "allowed": false,
+      "from": "TimedOut",
+      "from_live": false,
+      "from_status": "TimedOut",
+      "to": "Failed"
+    },
+    {
+      "allowed": false,
+      "from": "TimedOut",
+      "from_live": false,
+      "from_status": "TimedOut",
+      "to": "TimedOut"
+    },
+    {
+      "allowed": false,
+      "from": "TimedOut",
+      "from_live": false,
+      "from_status": "TimedOut",
+      "to": "Cancelled"
+    },
+    {
+      "allowed": false,
+      "from": "Cancelled",
+      "from_live": false,
+      "from_status": "Cancelled",
+      "to": "Created"
+    },
+    {
+      "allowed": false,
+      "from": "Cancelled",
+      "from_live": false,
+      "from_status": "Cancelled",
+      "to": "Dispatching"
+    },
+    {
+      "allowed": false,
+      "from": "Cancelled",
+      "from_live": false,
+      "from_status": "Cancelled",
+      "to": "WaitingFirstToken"
+    },
+    {
+      "allowed": false,
+      "from": "Cancelled",
+      "from_live": false,
+      "from_status": "Cancelled",
+      "to": "Streaming"
+    },
+    {
+      "allowed": false,
+      "from": "Cancelled",
+      "from_live": false,
+      "from_status": "Cancelled",
+      "to": "Finished"
+    },
+    {
+      "allowed": false,
+      "from": "Cancelled",
+      "from_live": false,
+      "from_status": "Cancelled",
+      "to": "Failed"
+    },
+    {
+      "allowed": false,
+      "from": "Cancelled",
+      "from_live": false,
+      "from_status": "Cancelled",
+      "to": "TimedOut"
+    },
+    {
+      "allowed": false,
+      "from": "Cancelled",
+      "from_live": false,
+      "from_status": "Cancelled",
+      "to": "Cancelled"
+    }
+  ],
+  "schema": "tura.runtime-session-equivalence.v1",
+  "session_transitions": [
+    {
+      "allowed": true,
+      "from": "created",
+      "recoverable_running": false,
+      "to": "created",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": true,
+      "from": "created",
+      "recoverable_running": false,
+      "to": "running",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "created",
+      "recoverable_running": false,
+      "to": "paused",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "created",
+      "recoverable_running": false,
+      "to": "completed",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "created",
+      "recoverable_running": false,
+      "to": "failed",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": true,
+      "from": "created",
+      "recoverable_running": false,
+      "to": "cancelled",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "created",
+      "recoverable_running": false,
+      "to": "interrupted",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "running",
+      "recoverable_running": true,
+      "to": "created",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "running",
+      "recoverable_running": true,
+      "to": "running",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "running",
+      "recoverable_running": true,
+      "to": "paused",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "running",
+      "recoverable_running": true,
+      "to": "completed",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "running",
+      "recoverable_running": true,
+      "to": "failed",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "running",
+      "recoverable_running": true,
+      "to": "cancelled",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "running",
+      "recoverable_running": true,
+      "to": "interrupted",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": false,
+      "from": "paused",
+      "recoverable_running": true,
+      "to": "created",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "paused",
+      "recoverable_running": true,
+      "to": "running",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "paused",
+      "recoverable_running": true,
+      "to": "paused",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": false,
+      "from": "paused",
+      "recoverable_running": true,
+      "to": "completed",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "paused",
+      "recoverable_running": true,
+      "to": "failed",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "paused",
+      "recoverable_running": true,
+      "to": "cancelled",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "paused",
+      "recoverable_running": true,
+      "to": "interrupted",
+      "ui_status": "busy"
+    },
+    {
+      "allowed": true,
+      "from": "completed",
+      "recoverable_running": false,
+      "to": "created",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": true,
+      "from": "completed",
+      "recoverable_running": false,
+      "to": "running",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "completed",
+      "recoverable_running": false,
+      "to": "paused",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": true,
+      "from": "completed",
+      "recoverable_running": false,
+      "to": "completed",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "completed",
+      "recoverable_running": false,
+      "to": "failed",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "completed",
+      "recoverable_running": false,
+      "to": "cancelled",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "completed",
+      "recoverable_running": false,
+      "to": "interrupted",
+      "ui_status": "idle"
+    },
+    {
+      "allowed": false,
+      "from": "failed",
+      "recoverable_running": false,
+      "to": "created",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "failed",
+      "recoverable_running": false,
+      "to": "running",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "failed",
+      "recoverable_running": false,
+      "to": "paused",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "failed",
+      "recoverable_running": false,
+      "to": "completed",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "failed",
+      "recoverable_running": false,
+      "to": "failed",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "failed",
+      "recoverable_running": false,
+      "to": "cancelled",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "failed",
+      "recoverable_running": false,
+      "to": "interrupted",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "cancelled",
+      "recoverable_running": false,
+      "to": "created",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "cancelled",
+      "recoverable_running": false,
+      "to": "running",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "cancelled",
+      "recoverable_running": false,
+      "to": "paused",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "cancelled",
+      "recoverable_running": false,
+      "to": "completed",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "cancelled",
+      "recoverable_running": false,
+      "to": "failed",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "cancelled",
+      "recoverable_running": false,
+      "to": "cancelled",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "cancelled",
+      "recoverable_running": false,
+      "to": "interrupted",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "interrupted",
+      "recoverable_running": false,
+      "to": "created",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "interrupted",
+      "recoverable_running": false,
+      "to": "running",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "interrupted",
+      "recoverable_running": false,
+      "to": "paused",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "interrupted",
+      "recoverable_running": false,
+      "to": "completed",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "interrupted",
+      "recoverable_running": false,
+      "to": "failed",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "interrupted",
+      "recoverable_running": false,
+      "to": "cancelled",
+      "ui_status": "error"
+    },
+    {
+      "allowed": false,
+      "from": "interrupted",
+      "recoverable_running": false,
+      "to": "interrupted",
+      "ui_status": "error"
+    }
+  ],
+  "store": {
+    "list": {
+      "page": {
+        "page": 0,
+        "page_size": 10,
+        "total": 1
+      },
+      "session_ids": [
+        "session-store-fixed"
+      ]
+    },
+    "records": {
+      "items": [
+        {
+          "message_id": "message-user-fixed",
+          "record": {
+            "created_at": 11,
+            "id": "message-user-fixed",
+            "parts": [
+              {
+                "text": "fixed input",
+                "type": "text"
+              }
+            ],
+            "role": "user",
+            "updated_at": 11
+          },
+          "role": "user"
+        },
+        {
+          "message_id": "message-assistant-fixed",
+          "record": {
+            "created_at": 12,
+            "id": "message-assistant-fixed",
+            "parts": [
+              {
+                "text": "fixed output",
+                "type": "text"
+              }
+            ],
+            "role": "assistant",
+            "updated_at": 12
+          },
+          "role": "assistant"
+        }
+      ],
+      "page": {
+        "page": 0,
+        "page_size": 10,
+        "total": 2
+      }
+    },
+    "snapshot": {
+      "message_count": 2,
+      "name": "Fixed Store Session",
+      "session_id": "session-store-fixed",
+      "state": "interrupted",
+      "status": "error",
+      "task_management": {
+        "status": "doing"
+      },
+      "todos": [
+        {
+          "id": "todo-fixed",
+          "status": "doing"
+        }
+      ]
+    }
+  }
+}

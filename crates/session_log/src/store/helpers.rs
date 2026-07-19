@@ -1,5 +1,5 @@
-use crate::SessionState;
 use anyhow::{Context, Result};
+use lifecycle::SessionState;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::path::{Path, PathBuf};

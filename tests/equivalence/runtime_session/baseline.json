@@ -1,0 +1,31 @@
+{
+  "schema": "tura.runtime-session-phase0-baseline.v1",
+  "reference_commit": "cdfe91bce2ed4fb62b4dcf276e6ee8ace40264df",
+  "profile_environment": [
+    "TURA_PROFILE_TURN_TIMINGS",
+    "TURA_PROFILE_TIMINGS"
+  ],
+  "workloads": {
+    "messages": [10, 1000, 10000],
+    "tool_events": [0, 10, 100]
+  },
+  "metrics": [
+    "runtime_cpu_time",
+    "process_cpu_delta",
+    "allocated_bytes",
+    "peak_rss",
+    "large_clone_bytes",
+    "json_encode_decode_count_and_bytes",
+    "context_scan_records_and_bytes",
+    "db_transactions_rows_and_bytes",
+    "ipc_frames_and_bytes",
+    "event_fanout_copies",
+    "log_lines_and_bytes",
+    "short_session_p95_ms",
+    "first_token_p95_ms",
+    "tool_start_p95_ms"
+  ],
+  "status": "phase0_reference_frozen; numeric_performance_instrumentation_required_before_phase4_cutover",
+  "execution": ".github/workflows/ci.yml Backend Business runs the candidate capture twice, compares it with the committed reference using exact JSON/raw bytes, generates the AST inventory, and uploads phase0-runtime-session-evidence",
+  "reason": "Current production exposes timing and message byte counters but does not expose allocator, IPC, DB byte or log-rate counters at one stable boundary. Phase 0 records this as an explicit instrumentation gap; Phase 4 cannot pass without numeric reference captures."
+}

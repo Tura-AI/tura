@@ -1,10 +1,10 @@
 //! Streamed command_run handling for provider responses.
 
 use chrono::{DateTime, Utc};
+use lifecycle::RuntimeProjection;
 use serde_json::Value;
 
 use crate::gateway_events::{runtime_message_id, runtime_tool_part_id};
-use crate::state_machine::runtime_management::RuntimeSessionSyncStatus;
 use crate::tool_callback_sanitizer::{
     sanitize_tool_callback_output, sanitize_tool_callback_result,
 };
@@ -177,7 +177,7 @@ pub struct StreamedCommandRunUpdate<'a> {
     pub status: &'a str,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
-    pub runtime_status: RuntimeSessionSyncStatus,
+    pub runtime_status: RuntimeProjection,
 }
 
 pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>) {

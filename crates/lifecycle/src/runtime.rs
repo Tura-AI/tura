@@ -1,6 +1,11 @@
-use serde::{Deserialize, Serialize};
+use crate::session::SessionId;
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::fmt;
 
-/// Compatibility projection used by the existing runtime wire payloads.
+pub type RuntimeId = String;
+
+/// Canonical runtime lifecycle projection used by the existing wire payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeCallResultStatus {
     Pending,
@@ -21,6 +26,152 @@ pub enum RuntimeState {
     Failed,
     TimedOut,
     Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeAggregate {
+    pub runtime_id: RuntimeId,
+    pub session_id: SessionId,
+    pub state: RuntimeState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeCommand {
+    Transition { next: RuntimeState },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeEvent {
+    StateChanged { state: RuntimeState },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "query", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeQuery {
+    Lifecycle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeProjection {
+    pub runtime_id: RuntimeId,
+    pub state: RuntimeState,
+    pub call_result_status: RuntimeCallResultStatus,
+    pub live: bool,
+    pub session_db_refresh_required: bool,
+}
+
+impl RuntimeProjection {
+    pub fn new(runtime_id: RuntimeId, state: RuntimeState) -> Self {
+        Self {
+            runtime_id,
+            state,
+            call_result_status: state.call_result_status(),
+            live: state.is_live(),
+            session_db_refresh_required: !state.is_live(),
+        }
+    }
+
+    pub fn call_result_status(&self) -> RuntimeCallResultStatus {
+        self.call_result_status
+    }
+
+    pub fn live_overlay_active(&self) -> bool {
+        self.live
+    }
+
+    pub fn should_refresh_session_db(&self) -> bool {
+        self.session_db_refresh_required
+    }
+}
+
+impl<'de> Deserialize<'de> for RuntimeProjection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            runtime_id: RuntimeId,
+            state: RuntimeState,
+            call_result_status: RuntimeCallResultStatus,
+            live: bool,
+            session_db_refresh_required: bool,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let projection = RuntimeProjection::new(wire.runtime_id, wire.state);
+        if wire.call_result_status != projection.call_result_status
+            || wire.live != projection.live
+            || wire.session_db_refresh_required != projection.session_db_refresh_required
+        {
+            return Err(D::Error::custom(
+                "runtime lifecycle projection contradicts runtime state",
+            ));
+        }
+        Ok(projection)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeTransitionError {
+    pub previous: RuntimeState,
+    pub next: RuntimeState,
+}
+
+impl fmt::Display for RuntimeTransitionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "invalid runtime state transition: {:?} -> {:?}",
+            self.previous, self.next
+        )
+    }
+}
+
+impl std::error::Error for RuntimeTransitionError {}
+
+impl RuntimeAggregate {
+    pub fn new(runtime_id: RuntimeId, session_id: SessionId) -> Self {
+        Self {
+            runtime_id,
+            session_id,
+            state: RuntimeState::Created,
+        }
+    }
+
+    pub fn execute(
+        &mut self,
+        command: RuntimeCommand,
+    ) -> Result<RuntimeEvent, RuntimeTransitionError> {
+        let event = self.decide(command)?;
+        self.apply(&event);
+        Ok(event)
+    }
+
+    pub fn decide(&self, command: RuntimeCommand) -> Result<RuntimeEvent, RuntimeTransitionError> {
+        let RuntimeCommand::Transition { next } = command;
+        let previous = self.state;
+        if !previous.can_transition_to(next) {
+            return Err(RuntimeTransitionError { previous, next });
+        }
+        Ok(RuntimeEvent::StateChanged { state: next })
+    }
+
+    pub fn apply(&mut self, event: &RuntimeEvent) {
+        let RuntimeEvent::StateChanged { state } = event;
+        self.state = *state;
+    }
+
+    pub fn query(&self, query: RuntimeQuery) -> RuntimeProjection {
+        match query {
+            RuntimeQuery::Lifecycle => RuntimeProjection::new(self.runtime_id.clone(), self.state),
+        }
+    }
 }
 
 impl RuntimeState {
@@ -61,7 +212,10 @@ impl RuntimeState {
 
 #[cfg(test)]
 mod tests {
-    use super::{RuntimeCallResultStatus, RuntimeState};
+    use super::{
+        RuntimeAggregate, RuntimeCallResultStatus, RuntimeCommand, RuntimeEvent, RuntimeProjection,
+        RuntimeQuery, RuntimeState,
+    };
 
     #[test]
     fn transition_matrix_matches_the_reference_runtime() {
@@ -177,5 +331,66 @@ mod tests {
         ] {
             assert!(!state.is_live(), "{state:?} should be terminal");
         }
+    }
+
+    #[test]
+    fn aggregate_command_covers_the_complete_transition_table() {
+        use RuntimeState::*;
+
+        let states = [
+            Created,
+            Dispatching,
+            WaitingFirstToken,
+            Streaming,
+            Finished,
+            Failed,
+            TimedOut,
+            Cancelled,
+        ];
+        for previous in states {
+            for next in states {
+                let mut aggregate = RuntimeAggregate {
+                    runtime_id: "runtime-fixed".to_string(),
+                    session_id: "session-fixed".to_string(),
+                    state: previous,
+                };
+                let result = aggregate.execute(RuntimeCommand::Transition { next });
+                assert_eq!(result.is_ok(), previous.can_transition_to(next));
+                if previous.can_transition_to(next) {
+                    assert_eq!(aggregate.state, next);
+                    assert_eq!(
+                        result.expect("valid transition event"),
+                        RuntimeEvent::StateChanged { state: next }
+                    );
+                } else {
+                    assert_eq!(aggregate.state, previous);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_protocol_is_strict_and_projection_is_derived() {
+        let aggregate =
+            RuntimeAggregate::new("runtime-fixed".to_string(), "session-fixed".to_string());
+        let projection = aggregate.query(RuntimeQuery::Lifecycle);
+        assert_eq!(
+            projection,
+            RuntimeProjection {
+                runtime_id: "runtime-fixed".to_string(),
+                state: RuntimeState::Created,
+                call_result_status: RuntimeCallResultStatus::Pending,
+                live: true,
+                session_db_refresh_required: false,
+            }
+        );
+        assert!(serde_json::from_str::<RuntimeCommand>(
+            r#"{"command":"transition","next":"Dispatching","extra":true}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<RuntimeProjection>(
+            r#"{"runtime_id":"runtime-fixed","state":"Created","call_result_status":"Pending","live":true,"session_db_refresh_required":false,"extra":true}"#
+        )
+        .is_err());
     }
 }

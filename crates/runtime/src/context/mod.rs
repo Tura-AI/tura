@@ -61,7 +61,7 @@ pub trait ContextualUserFragment {
 }
 
 pub mod types {
-    use crate::state_machine::session_management::SessionId;
+    use lifecycle::SessionId;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize)]

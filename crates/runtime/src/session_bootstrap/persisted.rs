@@ -158,8 +158,9 @@ fn router_health_check(addr: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{decode_persisted_management, router_addr_from_file, router_health_check};
-    use crate::state_machine::session_management::{SessionInput, SessionManagement, SessionState};
+    use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
+    use lifecycle::SessionState;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::path::PathBuf;

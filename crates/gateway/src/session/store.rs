@@ -14,10 +14,10 @@ use crate::session::manager::{
 };
 use crate::session_db_client::SessionDbClient;
 use chrono::{DateTime, Utc};
+use lifecycle::{RuntimeProjection, SessionState};
 use parking_lot::RwLock;
-use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
 use runtime::state_machine::session_management::{
-    PlanStatus, PollInterval, SessionState, StartCondition, TaskStep,
+    PlanStatus, PollInterval, StartCondition, TaskStep,
 };
 use session_log_contract::{SessionRecord, SessionSnapshot, UpsertSessionRequest};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -517,7 +517,8 @@ impl SessionStore {
             name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
         info.created_at = now;
         info.updated_at = now;
-        info.management.session_id = child_session_id.to_string();
+        info.management
+            .rebind_session_id(child_session_id.to_string());
         let _ = info.transition(SessionState::Running);
         info.status = SessionStatusMano::from_state(info.management.state);
         if let Some(parent) = self.sessions.read().get(parent_session_id) {
@@ -882,8 +883,7 @@ impl SessionStore {
                 }
             }
             SessionState::Created | SessionState::Completed => {
-                info.management.state = SessionState::Interrupted;
-                info.management.session_last_update_at = now;
+                info.management.interrupt(now);
             }
             SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {}
         }
@@ -1325,7 +1325,7 @@ fn persisted_record_from_session_log(
 
 fn apply_session_log_snapshot_lifecycle(info: &mut SessionInfo, snapshot: &SessionSnapshot) {
     if let Some(state) = snapshot.state.as_deref().and_then(session_state_from_text) {
-        info.management.state = state;
+        info.management.restore_state(state);
         info.status = SessionStatusMano::from_state(state);
     } else if let Some(status) = snapshot
         .status
@@ -1333,7 +1333,11 @@ fn apply_session_log_snapshot_lifecycle(info: &mut SessionInfo, snapshot: &Sessi
         .and_then(session_status_from_text)
     {
         info.status = status;
-        info.management.state = representative_state_for_status(status, info.management.state);
+        info.management
+            .restore_state(representative_state_for_status(
+                status,
+                info.management.state,
+            ));
     } else {
         info.status = SessionStatusMano::from_state(info.management.state);
     }

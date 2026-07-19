@@ -1,6 +1,5 @@
 use crate::state_machine::agent_management::AgentId;
-use crate::state_machine::runtime_management::RuntimeId;
-use crate::state_machine::session_management::SessionId;
+use lifecycle::{RuntimeId, SessionId};
 use std::path::PathBuf;
 
 use super::types::{StreamChunkType, ToolCallData};

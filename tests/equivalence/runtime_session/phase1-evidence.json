@@ -1,0 +1,206 @@
+{
+  "schema": "tura.runtime-session-phase1-evidence.v1",
+  "phase": 1,
+  "scope": "shared lifecycle domain and protocol without production-flow cutover",
+  "reference": {
+    "commit": "cdfe91bce2ed4fb62b4dcf276e6ee8ace40264df",
+    "capture": "tests/equivalence/runtime_session/reference/runtime-session.json",
+    "inventory": "tests/equivalence/runtime_session/reference/inventory.json"
+  },
+  "entities": [
+    {
+      "name": "RuntimeAggregate",
+      "fields": {
+        "runtime_id": {
+          "producer": "crates/runtime/src/state_machine/runtime_management.rs:RuntimeManagement::new",
+          "consumer": "crates/lifecycle/src/runtime.rs:RuntimeAggregate::query and runtime callback/checkpoint call sites",
+          "assertion": "crates/lifecycle/src/runtime.rs:runtime_protocol_is_strict_and_projection_is_derived"
+        },
+        "session_id": {
+          "producer": "crates/runtime/src/state_machine/runtime_management.rs:RuntimeManagement::new",
+          "consumer": "crates/runtime/src/provider_flow/provider_streaming.rs and gateway event producers",
+          "assertion": "crates/runtime/tests/business/create_runtime_flow.rs"
+        },
+        "state": {
+          "producer": "RuntimeCommand::Transition via RuntimeAggregate::execute",
+          "consumer": "RuntimeAggregate::decide/query and RuntimeManagement projections",
+          "assertion": "crates/lifecycle/src/runtime.rs:aggregate_command_covers_the_complete_transition_table"
+        }
+      }
+    },
+    {
+      "name": "RuntimeCommand::Transition",
+      "fields": {
+        "next": {
+          "producer": "crates/runtime/src/state_machine/runtime_management.rs:RuntimeManagement::transition",
+          "consumer": "crates/lifecycle/src/runtime.rs:RuntimeAggregate::decide",
+          "assertion": "crates/lifecycle/src/runtime.rs:aggregate_command_covers_the_complete_transition_table"
+        }
+      }
+    },
+    {
+      "name": "RuntimeEvent::StateChanged",
+      "fields": {
+        "state": {
+          "producer": "crates/lifecycle/src/runtime.rs:RuntimeAggregate::decide",
+          "consumer": "crates/lifecycle/src/runtime.rs:RuntimeAggregate::apply",
+          "assertion": "crates/lifecycle/src/runtime.rs:aggregate_command_covers_the_complete_transition_table"
+        }
+      }
+    },
+    {
+      "name": "RuntimeQuery::Lifecycle",
+      "fields": {},
+      "producer": "crates/runtime/src/state_machine/runtime_management.rs:RuntimeManagement::lifecycle_projection",
+      "consumer": "crates/lifecycle/src/runtime.rs:RuntimeAggregate::query",
+      "assertion": "crates/lifecycle/src/runtime.rs:runtime_protocol_is_strict_and_projection_is_derived"
+    },
+    {
+      "name": "RuntimeProjection",
+      "fields": {
+        "runtime_id": {
+          "producer": "crates/lifecycle/src/runtime.rs:RuntimeProjection::new",
+          "consumer": "crates/gateway/src/api/session_messages.rs and crates/gateway/src/session/store_messages.rs",
+          "assertion": "crates/gateway/tests/business/session_messages_flow.rs"
+        },
+        "state": {
+          "producer": "crates/lifecycle/src/runtime.rs:RuntimeProjection::new",
+          "consumer": "RuntimeProjection strict consistency validation and runtime/gateway behavior assertions",
+          "assertion": "crates/runtime/src/state_machine/runtime_management.rs:runtime_wire_projection_preserves_existing_json_shape"
+        },
+        "call_result_status": {
+          "producer": "RuntimeState::call_result_status",
+          "consumer": "runtime and gateway callback projection consumers",
+          "assertion": "crates/lifecycle/src/runtime.rs:call_result_status_is_derived_from_runtime_state"
+        },
+        "live": {
+          "producer": "RuntimeState::is_live",
+          "consumer": "crates/gateway/src/session/store_messages.rs:apply_runtime_sync_status",
+          "assertion": "crates/runtime/src/state_machine/runtime_management.rs:runtime_session_sync_status_is_derived_from_runtime_state_machine"
+        },
+        "session_db_refresh_required": {
+          "producer": "inverse of RuntimeState::is_live",
+          "consumer": "crates/gateway/src/session/store_messages.rs:apply_runtime_sync_status",
+          "assertion": "crates/runtime/src/state_machine/runtime_management.rs:runtime_session_sync_status_is_derived_from_runtime_state_machine"
+        }
+      }
+    },
+    {
+      "name": "SessionAggregate",
+      "fields": {
+        "session_id": {
+          "producer": "crates/runtime/src/state_machine/session_management.rs:SessionManagement::new/rebind_session_id",
+          "consumer": "SessionAggregate::query and runtime/gateway session call sites",
+          "assertion": "crates/lifecycle/src/session.rs:interrupt_and_restore_cover_the_existing_recovery_boundaries"
+        },
+        "state": {
+          "producer": "typed SessionCommand variants via SessionAggregate::execute",
+          "consumer": "SessionAggregate::decide/query and SessionManagement readers",
+          "assertion": "crates/lifecycle/src/session.rs:aggregate_command_covers_the_complete_transition_table"
+        }
+      }
+    },
+    {
+      "name": "SessionCommand::Transition",
+      "fields": {
+        "next": {
+          "producer": "crates/runtime/src/state_machine/session_management.rs:SessionManagement::transition",
+          "consumer": "crates/lifecycle/src/session.rs:SessionAggregate::decide",
+          "assertion": "crates/lifecycle/src/session.rs:aggregate_command_covers_the_complete_transition_table"
+        }
+      }
+    },
+    {
+      "name": "SessionCommand::PrepareUserTurn",
+      "fields": {},
+      "producer": "crates/runtime/src/state_machine/session_management.rs:SessionManagement::prepare_for_new_user_turn",
+      "consumer": "crates/lifecycle/src/session.rs:SessionAggregate::decide",
+      "assertion": "crates/lifecycle/src/session.rs:prepare_user_turn_preserves_live_states_and_reopens_terminal_states"
+    },
+    {
+      "name": "SessionCommand::Interrupt",
+      "fields": {},
+      "producer": "crates/runtime/src/state_machine/session_management.rs:SessionManagement::interrupt",
+      "consumer": "crates/lifecycle/src/session.rs:SessionAggregate::decide",
+      "assertion": "crates/lifecycle/src/session.rs:interrupt_and_restore_cover_the_existing_recovery_boundaries"
+    },
+    {
+      "name": "SessionCommand::Restore",
+      "fields": {
+        "state": {
+          "producer": "crates/gateway/src/session/store.rs:apply_session_log_snapshot_lifecycle",
+          "consumer": "crates/lifecycle/src/session.rs:SessionAggregate::decide",
+          "assertion": "crates/lifecycle/src/session.rs:interrupt_and_restore_cover_the_existing_recovery_boundaries"
+        }
+      }
+    },
+    {
+      "name": "SessionCommand::RebindIdentity",
+      "fields": {
+        "session_id": {
+          "producer": "crates/runtime/src/session_bootstrap/prepare_turn.rs and crates/gateway/src/session/store.rs child-session creation",
+          "consumer": "crates/lifecycle/src/session.rs:SessionAggregate::decide/apply",
+          "assertion": "crates/lifecycle/src/session.rs:interrupt_and_restore_cover_the_existing_recovery_boundaries"
+        }
+      }
+    },
+    {
+      "name": "SessionEvent state variants",
+      "variants": [
+        "StateChanged",
+        "UserTurnPrepared",
+        "Interrupted",
+        "Restored"
+      ],
+      "fields": {
+        "state": {
+          "producer": "crates/lifecycle/src/session.rs:SessionAggregate::decide",
+          "consumer": "crates/lifecycle/src/session.rs:SessionAggregate::apply",
+          "assertion": "crates/lifecycle/src/session.rs command-specific behavior tests"
+        }
+      }
+    },
+    {
+      "name": "SessionEvent::IdentityRebound",
+      "fields": {
+        "session_id": {
+          "producer": "crates/lifecycle/src/session.rs:SessionAggregate::decide",
+          "consumer": "crates/lifecycle/src/session.rs:SessionAggregate::apply",
+          "assertion": "crates/lifecycle/src/session.rs:interrupt_and_restore_cover_the_existing_recovery_boundaries"
+        }
+      }
+    },
+    {
+      "name": "SessionQuery::Lifecycle",
+      "fields": {},
+      "producer": "crates/runtime/src/state_machine/session_management.rs:SessionManagement::lifecycle_projection",
+      "consumer": "crates/lifecycle/src/session.rs:SessionAggregate::query",
+      "assertion": "crates/lifecycle/src/session.rs:session_protocol_is_strict_and_projection_is_derived"
+    },
+    {
+      "name": "SessionProjection",
+      "fields": {
+        "session_id": {
+          "producer": "crates/lifecycle/src/session.rs:SessionAggregate::query",
+          "consumer": "crates/gateway/src/session/manager.rs:SessionInfo::from_management",
+          "assertion": "crates/lifecycle/src/session.rs:session_protocol_is_strict_and_projection_is_derived"
+        },
+        "state": {
+          "producer": "crates/lifecycle/src/session.rs:SessionAggregate::query",
+          "consumer": "crates/gateway/src/session/manager.rs:SessionInfo::from_management",
+          "assertion": "crates/lifecycle/src/session.rs:session_protocol_is_strict_and_projection_is_derived"
+        }
+      }
+    }
+  ],
+  "negative_evidence": {
+    "legacy_type_aliases": "static repository search must find no RuntimeSessionSyncStatus and no lifecycle type re-export from service modules",
+    "arbitrary_domain_json": "crates/lifecycle contains no serde_json::Value",
+    "placeholder_protocol_fields": "no version, reserved/unknown variant, metadata, revision, event_seq, idempotency_key, or deadline field exists in lifecycle protocol",
+    "dependency_direction": "crates/lifecycle depends only on serde; gateway/runtime/session_log use lifecycle directly after the duplicate session_log state module was removed"
+  },
+  "remote_gates": [
+    ".github/workflows/ci.yml: CI",
+    ".github/workflows/os-worker-tests.yml: OS Worker Tests"
+  ]
+}

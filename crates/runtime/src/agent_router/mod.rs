@@ -423,25 +423,25 @@ pub fn initialize_agent_state_machine(
 
     for agent in agents.iter_mut() {
         match session.state {
-            crate::state_machine::session_management::SessionState::Created => {
+            lifecycle::SessionState::Created => {
                 agent.state = AgentState::Idle;
             }
-            crate::state_machine::session_management::SessionState::Running => {
+            lifecycle::SessionState::Running => {
                 agent.state = AgentState::Idle;
             }
-            crate::state_machine::session_management::SessionState::Paused => {
+            lifecycle::SessionState::Paused => {
                 agent.state = AgentState::Waiting;
             }
-            crate::state_machine::session_management::SessionState::Completed => {
+            lifecycle::SessionState::Completed => {
                 agent.state = AgentState::Completed;
             }
-            crate::state_machine::session_management::SessionState::Failed => {
+            lifecycle::SessionState::Failed => {
                 agent.state = AgentState::Failed;
             }
-            crate::state_machine::session_management::SessionState::Cancelled => {
+            lifecycle::SessionState::Cancelled => {
                 agent.state = AgentState::Failed;
             }
-            crate::state_machine::session_management::SessionState::Interrupted => {
+            lifecycle::SessionState::Interrupted => {
                 agent.state = AgentState::Failed;
             }
         }
@@ -461,8 +461,9 @@ mod tests {
         AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ProviderConfig,
         ToolChoice, ValidatorConfig,
     };
-    use crate::state_machine::session_management::{SessionInput, SessionManagement, SessionState};
+    use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
+    use lifecycle::SessionState;
     use std::path::{Path, PathBuf};
     use tura_agents::coding_agent::{CodingAgentProviderConfig, CodingAgentToolChoice};
 
@@ -521,7 +522,7 @@ mod tests {
             "goal".to_string(),
             now,
         );
-        session.state = state;
+        session.restore_state(state);
         session
     }
 

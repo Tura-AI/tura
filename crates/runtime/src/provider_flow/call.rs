@@ -20,8 +20,8 @@ use crate::provider_flow::request_options::{
 };
 use crate::provider_flow::usage::usage_report_from_metrics;
 use crate::runtime::types::RuntimeQueueItem;
-use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeState};
-use crate::state_machine::session_management::SessionId;
+use crate::state_machine::runtime_management::RuntimeManagement;
+use lifecycle::{RuntimeState, SessionId};
 
 pub struct CallRuntimeInput {
     pub runtime: RuntimeManagement,
@@ -412,13 +412,10 @@ mod tests {
         .await
         .expect("provider config failure should be captured on the runtime");
 
-        assert_eq!(
-            runtime.state,
-            crate::state_machine::runtime_management::RuntimeState::Failed
-        );
+        assert_eq!(runtime.state, lifecycle::RuntimeState::Failed);
         assert_eq!(
             runtime.call_result_status(),
-            crate::state_machine::runtime_management::RuntimeCallResultStatus::Failed
+            lifecycle::RuntimeCallResultStatus::Failed
         );
         let output = runtime.output.expect("failure output should be persisted");
         let error = output

@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashSet;
+use std::ops::Deref;
 use std::path::PathBuf;
 
 use super::agent_management::AgentName;
@@ -12,8 +13,9 @@ use super::agent_management::AgentName;
 /// `2026-04-08T12:34:56.789Z`.
 pub type UtcDateTimeMs = DateTime<Utc>;
 
-/// Runtime-scoped hexadecimal identifier.
-pub type SessionId = String;
+use lifecycle::{
+    SessionAggregate, SessionCommand, SessionId, SessionProjection, SessionQuery, SessionState,
+};
 
 /// Natural-language session name.
 pub type SessionName = String;
@@ -227,13 +229,12 @@ pub struct TaskPlan {
     pub detailed_tasks: Vec<TaskStep>,
 }
 
-pub use lifecycle::SessionState;
-
 /// Root session state object.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionManagement {
-    /// Runtime-scoped session identifier.
-    pub session_id: SessionId,
+    /// Canonical session identity and lifecycle state.
+    #[serde(flatten)]
+    lifecycle: SessionAggregate,
     /// Natural-language session name.
     pub session_name: SessionName,
     /// Whether the session name should follow the latest task summary.
@@ -275,8 +276,6 @@ pub struct SessionManagement {
     /// Planned subtasks.
     #[serde(default, deserialize_with = "deserialize_task_plan")]
     pub task_plan: TaskPlan,
-    /// Current lifecycle state.
-    pub state: SessionState,
     /// Whether runtime context should inject the previous tool response verbatim.
     #[serde(default = "default_use_last_tool_call_response")]
     pub use_last_tool_call_response: bool,
@@ -313,6 +312,109 @@ pub struct SessionManagement {
     pub runtime_usage: serde_json::Value,
 }
 
+impl<'de> Deserialize<'de> for SessionManagement {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            session_id: SessionId,
+            session_name: SessionName,
+            #[serde(default = "default_auto_session_name")]
+            auto_session_name: bool,
+            session_directory: PathBuf,
+            session_uses_docker: bool,
+            #[serde(default, deserialize_with = "deserialize_task_type")]
+            task_type: SessionTaskType,
+            #[serde(default, deserialize_with = "deserialize_session_capabilities")]
+            session_capabilities: SessionCapabilities,
+            session_current_turn: u64,
+            session_log: Vec<SessionLogEntry>,
+            #[serde(default)]
+            session_log_retention: SessionLogRetention,
+            session_created_at: UtcDateTimeMs,
+            session_last_update_at: UtcDateTimeMs,
+            #[serde(default = "Utc::now")]
+            session_last_user_message_at: UtcDateTimeMs,
+            session_started_at: UtcDateTimeMs,
+            input: SessionInput,
+            user_goal: UserGoal,
+            #[serde(default)]
+            current_objective: String,
+            #[serde(default, deserialize_with = "deserialize_task_plan")]
+            task_plan: TaskPlan,
+            state: SessionState,
+            #[serde(default = "default_use_last_tool_call_response")]
+            use_last_tool_call_response: bool,
+            #[serde(default)]
+            is_child_session: bool,
+            #[serde(default)]
+            disable_permission_restrictions: bool,
+            #[serde(default)]
+            planning_enabled: bool,
+            #[serde(default)]
+            reflection_enabled: bool,
+            #[serde(default = "default_op_manual_enabled")]
+            op_manual_enabled: bool,
+            #[serde(default)]
+            no_op_manual: bool,
+            #[serde(default)]
+            goal_mode: bool,
+            #[serde(default)]
+            last_goal_user_input: String,
+            #[serde(default)]
+            context_tokens: ContextTokenStats,
+            #[serde(default)]
+            runtime_usage: serde_json::Value,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            lifecycle: SessionAggregate {
+                session_id: wire.session_id,
+                state: wire.state,
+            },
+            session_name: wire.session_name,
+            auto_session_name: wire.auto_session_name,
+            session_directory: wire.session_directory,
+            session_uses_docker: wire.session_uses_docker,
+            task_type: wire.task_type,
+            session_capabilities: wire.session_capabilities,
+            session_current_turn: wire.session_current_turn,
+            session_log: wire.session_log,
+            session_log_retention: wire.session_log_retention,
+            session_created_at: wire.session_created_at,
+            session_last_update_at: wire.session_last_update_at,
+            session_last_user_message_at: wire.session_last_user_message_at,
+            session_started_at: wire.session_started_at,
+            input: wire.input,
+            user_goal: wire.user_goal,
+            current_objective: wire.current_objective,
+            task_plan: wire.task_plan,
+            use_last_tool_call_response: wire.use_last_tool_call_response,
+            is_child_session: wire.is_child_session,
+            disable_permission_restrictions: wire.disable_permission_restrictions,
+            planning_enabled: wire.planning_enabled,
+            reflection_enabled: wire.reflection_enabled,
+            op_manual_enabled: wire.op_manual_enabled,
+            no_op_manual: wire.no_op_manual,
+            goal_mode: wire.goal_mode,
+            last_goal_user_input: wire.last_goal_user_input,
+            context_tokens: wire.context_tokens,
+            runtime_usage: wire.runtime_usage,
+        })
+    }
+}
+
+impl Deref for SessionManagement {
+    type Target = SessionAggregate;
+
+    fn deref(&self) -> &Self::Target {
+        &self.lifecycle
+    }
+}
+
 fn default_use_last_tool_call_response() -> bool {
     true
 }
@@ -332,6 +434,29 @@ fn no_op_manual_enabled_from_env() -> bool {
 }
 
 impl SessionManagement {
+    pub fn lifecycle_projection(&self) -> SessionProjection {
+        self.lifecycle.query(SessionQuery::Lifecycle)
+    }
+
+    pub fn rebind_session_id(&mut self, session_id: SessionId) {
+        self.lifecycle
+            .execute(SessionCommand::RebindIdentity { session_id })
+            .expect("rebinding a canonical session identity is always valid");
+    }
+
+    pub fn restore_state(&mut self, state: SessionState) {
+        self.lifecycle
+            .execute(SessionCommand::Restore { state })
+            .expect("restoring a canonical session state is always valid");
+    }
+
+    pub fn interrupt(&mut self, now: UtcDateTimeMs) {
+        self.lifecycle
+            .execute(SessionCommand::Interrupt)
+            .expect("interrupting a session is always valid");
+        self.session_last_update_at = now;
+    }
+
     /// Creates a new session in `Created` state.
     #[expect(
         clippy::too_many_arguments,
@@ -356,7 +481,7 @@ impl SessionManagement {
             String::new()
         };
         Self {
-            session_id,
+            lifecycle: SessionAggregate::new(session_id),
             session_name,
             auto_session_name: true,
             session_directory,
@@ -374,7 +499,6 @@ impl SessionManagement {
             input,
             user_goal,
             task_plan: TaskPlan::default(),
-            state: SessionState::Created,
             use_last_tool_call_response: true,
             is_child_session: false,
             disable_permission_restrictions: false,
@@ -391,14 +515,9 @@ impl SessionManagement {
 
     /// Applies a validated state transition and refreshes `session_last_update_at`.
     pub fn transition(&mut self, next: SessionState, now: UtcDateTimeMs) -> Result<(), String> {
-        if !self.state.can_transition_to(next) {
-            return Err(format!(
-                "invalid session state transition: {:?} -> {:?}",
-                self.state, next
-            ));
-        }
-
-        self.state = next;
+        self.lifecycle
+            .execute(SessionCommand::Transition { next })
+            .map_err(|error| error.to_string())?;
         self.session_last_update_at = now;
         Ok(())
     }
@@ -418,14 +537,11 @@ impl SessionManagement {
         self.no_op_manual = no_op_manual_enabled_from_env();
         self.input = input;
         self.session_last_user_message_at = now;
-        if matches!(
-            self.state,
-            SessionState::Completed
-                | SessionState::Failed
-                | SessionState::Cancelled
-                | SessionState::Interrupted
-        ) {
-            self.state = SessionState::Created;
+        let previous = self.state;
+        self.lifecycle
+            .execute(SessionCommand::PrepareUserTurn)
+            .expect("preparing a user turn is always valid");
+        if previous != self.state {
             self.session_started_at = now;
         }
         self.session_last_update_at = now;
@@ -711,8 +827,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{PlanStatus, SessionInput, SessionManagement, SessionState, TaskStep};
+    use super::{PlanStatus, SessionInput, SessionManagement, TaskStep};
     use chrono::Utc;
+    use lifecycle::SessionState;
     use std::ffi::OsString;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -745,7 +862,7 @@ mod tests {
             "goal".to_string(),
             now,
         );
-        session.state = state;
+        session.restore_state(state);
         session
     }
 

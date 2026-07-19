@@ -2,17 +2,18 @@ use chrono::{DateTime, Utc};
 use serde::de::Error as _;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::ops::Deref;
 
-pub use lifecycle::{RuntimeCallResultStatus, RuntimeState};
+use lifecycle::{
+    RuntimeAggregate, RuntimeCallResultStatus, RuntimeCommand, RuntimeId, RuntimeProjection,
+    RuntimeQuery, RuntimeState, SessionId,
+};
 
 use super::agent_management::{AgentId, ProviderConfig};
-use super::session_management::{ContextTokenStats, SessionId};
+use super::session_management::ContextTokenStats;
 
 /// UTC timestamp with millisecond precision.
 pub type UtcDateTimeMs = DateTime<Utc>;
-
-/// Runtime-scoped hexadecimal identifier.
-pub type RuntimeId = String;
 
 /// Free-form reasoning text.
 pub type ReasoningText = String;
@@ -104,87 +105,11 @@ pub struct UsageReport {
     pub token_per_second: f64,
 }
 
-/// Runtime-owned session sync status for one provider call.
-///
-/// Gateway uses this payload to decide whether a callback belongs in the live
-/// overlay or should trigger one session DB refresh. The decision stays tied to
-/// the runtime state machine instead of individual tool/message status fields.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeSessionSyncStatus {
-    pub runtime_id: RuntimeId,
-    pub state: RuntimeState,
-}
-
-impl RuntimeSessionSyncStatus {
-    pub fn new(runtime_id: RuntimeId, state: RuntimeState) -> Self {
-        Self { runtime_id, state }
-    }
-
-    pub fn call_result_status(&self) -> RuntimeCallResultStatus {
-        self.state.call_result_status()
-    }
-
-    pub fn live_overlay_active(&self) -> bool {
-        self.state.is_live()
-    }
-
-    pub fn should_refresh_session_db(&self) -> bool {
-        !self.live_overlay_active()
-    }
-}
-
-impl Serialize for RuntimeSessionSyncStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut wire = serializer.serialize_struct("RuntimeSessionSyncStatus", 5)?;
-        wire.serialize_field("runtime_id", &self.runtime_id)?;
-        wire.serialize_field("state", &self.state)?;
-        wire.serialize_field("call_result_status", &self.call_result_status())?;
-        wire.serialize_field("live", &self.live_overlay_active())?;
-        wire.serialize_field(
-            "session_db_refresh_required",
-            &self.should_refresh_session_db(),
-        )?;
-        wire.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for RuntimeSessionSyncStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            runtime_id: RuntimeId,
-            state: RuntimeState,
-            call_result_status: RuntimeCallResultStatus,
-            live: bool,
-            session_db_refresh_required: bool,
-        }
-
-        let wire = Wire::deserialize(deserializer)?;
-        let status = Self::new(wire.runtime_id, wire.state);
-        if wire.call_result_status != status.call_result_status()
-            || wire.live != status.live_overlay_active()
-            || wire.session_db_refresh_required != status.should_refresh_session_db()
-        {
-            return Err(D::Error::custom(
-                "runtime session sync projection contradicts runtime state",
-            ));
-        }
-        Ok(status)
-    }
-}
-
 /// Full runtime record for one LLM call.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeManagement {
-    /// Runtime identifier.
-    pub runtime_id: RuntimeId,
+    /// Canonical runtime identity and lifecycle state.
+    lifecycle: RuntimeAggregate,
     /// Runtime creation timestamp.
     pub created_at: UtcDateTimeMs,
     /// Time the call started consuming provider resources.
@@ -195,8 +120,6 @@ pub struct RuntimeManagement {
     pub call_finished_at: Option<UtcDateTimeMs>,
     /// If this runtime is a fallback, reference the failed runtime identifier.
     pub fallback_from_id: Option<RuntimeId>,
-    /// Direct session identifier.
-    pub session_id: SessionId,
     /// Direct agent identifier.
     pub agent_id: AgentId,
     /// Provider configuration captured at runtime.
@@ -219,8 +142,14 @@ pub struct RuntimeManagement {
     pub context_tokens: ContextTokenStats,
     /// Usage and billing report.
     pub usage: Option<UsageReport>,
-    /// Current runtime state.
-    pub state: RuntimeState,
+}
+
+impl Deref for RuntimeManagement {
+    type Target = RuntimeAggregate;
+
+    fn deref(&self) -> &Self::Target {
+        &self.lifecycle
+    }
 }
 
 impl Serialize for RuntimeManagement {
@@ -298,13 +227,16 @@ impl<'de> Deserialize<'de> for RuntimeManagement {
             ));
         }
         Ok(Self {
-            runtime_id: wire.runtime_id,
+            lifecycle: RuntimeAggregate {
+                runtime_id: wire.runtime_id,
+                session_id: wire.session_id,
+                state: wire.state,
+            },
             created_at: wire.created_at,
             called_at: wire.called_at,
             first_token_at: wire.first_token_at,
             call_finished_at: wire.call_finished_at,
             fallback_from_id: wire.fallback_from_id,
-            session_id: wire.session_id,
             agent_id: wire.agent_id,
             provider: wire.provider,
             error: wire.error,
@@ -316,7 +248,6 @@ impl<'de> Deserialize<'de> for RuntimeManagement {
             tool_call: wire.tool_call,
             context_tokens: wire.context_tokens,
             usage: wire.usage,
-            state: wire.state,
         })
     }
 }
@@ -331,13 +262,12 @@ impl RuntimeManagement {
         created_at: UtcDateTimeMs,
     ) -> Self {
         Self {
-            runtime_id,
+            lifecycle: RuntimeAggregate::new(runtime_id, session_id),
             created_at,
             called_at: None,
             first_token_at: None,
             call_finished_at: None,
             fallback_from_id: None,
-            session_id,
             agent_id,
             provider,
             error: None,
@@ -349,21 +279,15 @@ impl RuntimeManagement {
             tool_call: Vec::new(),
             context_tokens: ContextTokenStats::default(),
             usage: None,
-            state: RuntimeState::Created,
         }
     }
 
     /// Applies a validated runtime state transition.
     pub fn transition(&mut self, next: RuntimeState) -> Result<(), String> {
-        if !self.state.can_transition_to(next) {
-            return Err(format!(
-                "invalid runtime state transition: {:?} -> {:?}",
-                self.state, next
-            ));
-        }
-
-        self.state = next;
-        Ok(())
+        self.lifecycle
+            .execute(RuntimeCommand::Transition { next })
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     /// Marks the runtime as dispatched to the provider.
@@ -417,8 +341,8 @@ impl RuntimeManagement {
         !self.live_overlay_active()
     }
 
-    pub fn session_sync_status(&self) -> RuntimeSessionSyncStatus {
-        RuntimeSessionSyncStatus::new(self.runtime_id.clone(), self.state)
+    pub fn lifecycle_projection(&self) -> RuntimeProjection {
+        self.lifecycle.query(RuntimeQuery::Lifecycle)
     }
 
     /// Runtime-owned assistant message timestamps shared by gateway callbacks
@@ -474,12 +398,10 @@ impl RuntimeManagement {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        RuntimeCallResultStatus, RuntimeError, RuntimeManagement, RuntimeProviderConfig,
-        RuntimeSessionSyncStatus, RuntimeState, UsageReport,
-    };
+    use super::{RuntimeError, RuntimeManagement, RuntimeProviderConfig, UsageReport};
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use chrono::{Duration, Utc};
+    use lifecycle::{RuntimeCallResultStatus, RuntimeProjection, RuntimeState};
 
     fn provider_config() -> RuntimeProviderConfig {
         RuntimeProviderConfig {
@@ -583,7 +505,7 @@ mod tests {
     #[test]
     fn runtime_session_sync_status_is_derived_from_runtime_state_machine() {
         let mut runtime = runtime();
-        let created_status = runtime.session_sync_status();
+        let created_status = runtime.lifecycle_projection();
         assert!(created_status.live_overlay_active());
         assert!(!created_status.should_refresh_session_db());
         assert_eq!(created_status.state, RuntimeState::Created);
@@ -593,7 +515,7 @@ mod tests {
         runtime
             .mark_waiting_first_token()
             .expect("mark waiting first token");
-        let waiting_status = runtime.session_sync_status();
+        let waiting_status = runtime.lifecycle_projection();
         assert!(waiting_status.live_overlay_active());
         assert!(!waiting_status.should_refresh_session_db());
 
@@ -601,7 +523,7 @@ mod tests {
         runtime
             .mark_first_token(first_token_at)
             .expect("mark first token");
-        let streaming_status = runtime.session_sync_status();
+        let streaming_status = runtime.lifecycle_projection();
         assert!(streaming_status.live_overlay_active());
         assert_eq!(
             streaming_status.call_result_status(),
@@ -612,7 +534,7 @@ mod tests {
         runtime
             .finish_success(finished_at, None)
             .expect("finish success");
-        let finished_status = runtime.session_sync_status();
+        let finished_status = runtime.lifecycle_projection();
         assert!(!finished_status.live_overlay_active());
         assert!(finished_status.should_refresh_session_db());
         assert_eq!(finished_status.state, RuntimeState::Finished);
@@ -632,7 +554,7 @@ mod tests {
             "session_db_refresh_required": false
         });
 
-        assert!(serde_json::from_value::<RuntimeSessionSyncStatus>(contradictory).is_err());
+        assert!(serde_json::from_value::<RuntimeProjection>(contradictory).is_err());
     }
 
     #[test]
@@ -657,7 +579,7 @@ mod tests {
             .mark_first_token(runtime.created_at)
             .expect("mark first token");
 
-        let sync = serde_json::to_value(runtime.session_sync_status()).expect("serialize sync");
+        let sync = serde_json::to_value(runtime.lifecycle_projection()).expect("serialize sync");
         assert_eq!(
             sync,
             serde_json::json!({

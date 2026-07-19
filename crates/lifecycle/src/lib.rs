@@ -4,5 +4,11 @@
 mod runtime;
 mod session;
 
-pub use runtime::{RuntimeCallResultStatus, RuntimeState};
-pub use session::SessionState;
+pub use runtime::{
+    RuntimeAggregate, RuntimeCallResultStatus, RuntimeCommand, RuntimeEvent, RuntimeId,
+    RuntimeProjection, RuntimeQuery, RuntimeState, RuntimeTransitionError,
+};
+pub use session::{
+    SessionAggregate, SessionCommand, SessionEvent, SessionId, SessionProjection, SessionQuery,
+    SessionState, SessionTransitionError,
+};

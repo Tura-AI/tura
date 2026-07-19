@@ -2,7 +2,7 @@
 
 > 文档性质：架构基线、当前行为等价约束与实施计划
 > 目标范围：Runtime、Session、Gateway、Router、Session DB、GUI/TUI 生命周期链路
-> 当前阶段：仅制定计划；不得修改业务实现
+> 当前阶段：Phase 1 共享 lifecycle domain/protocol 实施；生产流量尚未切换
 > 核心原则：先锁定当前行为，再替换所有权；只保留当前需要的数据，不为旧版本或未来设想留字段
 
 ### 当前实施步范围：四个服务 crate 的依赖解耦与状态机统一
@@ -943,6 +943,13 @@ replacement test
 
 ### Phase 0：冻结基线并补测试
 
+执行门禁位于 `tests/equivalence/runtime_session`，由 `.github/workflows/ci.yml`
+的 `Backend Business` job 运行并上传 `phase0-runtime-session-evidence`。该门禁
+对固定 ID/clock 的逻辑 capture 连续执行两次并逐字节比较，同时生成 AST test/
+field/DB inventory；进程级随机字段继续由对应 OS E2E 在真实边界断言，不在事后
+归一化。`core-e2e.json` 是正常、tool、cancel、timeout、compact、restart 和 busy
+input 的机器可读映射，`failure-injection.json` 记录故障点与现有可执行测试。
+
 交付物：
 
 - 本 `architect.md` 评审通过；
@@ -963,6 +970,8 @@ replacement test
 - 不修改业务实现。
 
 ### Phase 1：引入共享 domain/protocol，不切流量
+
+实施记录：`crates/lifecycle` 已成为 Runtime/Session state、aggregate、command、event、query 与 projection 的直接类型所有者。Runtime、Gateway 与 Session DB 调用点直接引用 lifecycle 类型，不保留服务模块 alias；原 `RuntimeSessionSyncStatus` 和 Session DB 重复 `session_state` 模块已删除。`RuntimeManagement`/`SessionManagement` 组合私有 aggregate，既有 JSON 字段形状保持不变，状态与身份写入经 typed command/event 收口。字段级 producer/consumer/assertion 证据见 `tests/equivalence/runtime_session/phase1-evidence.json`；本阶段只由 GitHub Actions 的 CI 与 OS Worker Tests 执行编译、测试、Clippy 和 equivalence gate。
 
 工作：
 

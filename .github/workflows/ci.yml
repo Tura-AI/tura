@@ -173,6 +173,22 @@ jobs:
         run: sh commands/read_media/install.sh
       - name: Run backend business tests
         run: sh xtask/scripts/run-backend-business-tests.sh --jobs 4 --timeout-seconds 300
+      - name: Run Phase 0 Runtime Session equivalence gate
+        shell: pwsh
+        run: |
+          & ./tests/equivalence/runtime_session/run.ps1 -Mode gate -Repo $PWD
+      - name: Upload Phase 0 Runtime Session evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-runtime-session-evidence
+          path: |
+            tests/equivalence/runtime_session/reference/*.json
+            target/runtime-session-equivalence/*.json
+            tests/equivalence/runtime_session/baseline.json
+            tests/equivalence/runtime_session/core-e2e.json
+            tests/equivalence/runtime_session/failure-injection.json
+          if-no-files-found: warn
 
   tui-tests:
     name: TUI Unit And E2E

@@ -7,8 +7,8 @@ use super::helpers::{
 use super::payload::mark_workspace_session_interrupted;
 use super::SessionLogStore;
 use crate::path::{normalize_workspace, workspace_session_log_db};
-use crate::SessionState;
 use anyhow::{Context, Result};
+use lifecycle::SessionState;
 use rusqlite::{params, params_from_iter, OptionalExtension};
 use session_log_contract::{
     CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, MarkSessionInterruptedRequest,

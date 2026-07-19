@@ -5,7 +5,7 @@ use super::helpers::{
     transition_management_to_interrupted,
 };
 use super::payload::{load_workspace_session_payload, mark_workspace_session_interrupted};
-use crate::SessionState;
+use lifecycle::SessionState;
 use rusqlite::params;
 use serde_json::{json, Value};
 use std::path::Path;

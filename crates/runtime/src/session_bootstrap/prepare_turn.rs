@@ -21,13 +21,13 @@ pub(crate) fn bootstrap_orchestration_session(
                 if let Some(directory) = session_directory {
                     persisted.session_directory = directory;
                 }
-                persisted.session_id = session_id;
+                persisted.rebind_session_id(session_id);
                 return Ok(persisted);
             }
         }
 
         let mut session = create_session_with_topic(input, session_directory)?;
-        session.session_id = session_id;
+        session.rebind_session_id(session_id);
         return Ok(session);
     }
 

@@ -13,7 +13,7 @@ use gateway::contracts::{
 };
 use gateway::session::MessageRole;
 use gateway::session_store;
-use runtime::state_machine::runtime_management::{RuntimeSessionSyncStatus, RuntimeState};
+use lifecycle::{RuntimeProjection, RuntimeState};
 use serde_json::{json, Value};
 use session_log::SessionLogStore;
 use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
@@ -425,8 +425,8 @@ console.log(workspace, task, record);\n\
     )
 }
 
-fn finished_runtime_status(runtime_id: &str) -> RuntimeSessionSyncStatus {
-    RuntimeSessionSyncStatus::new(runtime_id.to_string(), RuntimeState::Finished)
+fn finished_runtime_status(runtime_id: &str) -> RuntimeProjection {
+    RuntimeProjection::new(runtime_id.to_string(), RuntimeState::Finished)
 }
 
 async fn wait_until_async<F, Fut>(timeout: Duration, mut condition: F) -> Result<()>

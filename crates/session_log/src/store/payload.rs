@@ -3,8 +3,8 @@ use super::helpers::{
     parse_json_field, session_state_text, set_object_i64, set_object_string,
     transition_management_to_interrupted,
 };
-use crate::SessionState;
 use anyhow::Result;
+use lifecycle::SessionState;
 use rusqlite::{params, OptionalExtension, Row};
 use serde_json::Value;
 use std::path::{Path, PathBuf};

@@ -1,4 +1,5 @@
 use chrono::Utc;
+use lifecycle::SessionState;
 use runtime::context::{
     accumulate_message, accumulate_tool_result, accumulate_tool_result_with_provider_metadata,
     build_context, build_messages_from_session, user_input_content_matches,
@@ -6,7 +7,7 @@ use runtime::context::{
 };
 use runtime::state_machine::agent_management::{ProviderConfig, ToolChoice};
 use runtime::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
-use runtime::state_machine::session_management::{SessionInput, SessionManagement, SessionState};
+use runtime::state_machine::session_management::{SessionInput, SessionManagement};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 

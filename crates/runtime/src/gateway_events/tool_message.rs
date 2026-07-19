@@ -1,4 +1,5 @@
 use chrono::Utc;
+use lifecycle::RuntimeProjection;
 use std::time::Instant;
 use tracing::warn;
 
@@ -7,9 +8,7 @@ use crate::manas::tool_catalog::env_flag;
 use crate::profile_timings;
 use crate::prompt_style::{runtime_fallback, tool_progress};
 use crate::runtime::types::ToolCallData;
-use crate::state_machine::runtime_management::{
-    RuntimeManagement, RuntimeSessionSyncStatus, UsageReport,
-};
+use crate::state_machine::runtime_management::{RuntimeManagement, UsageReport};
 use crate::state_machine::session_management::{ContextTokenStats, SessionManagement};
 use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
 
@@ -199,7 +198,7 @@ pub(crate) fn publish_runtime_usage_record(
         call_id: runtime.runtime_id.clone(),
         state,
         metadata,
-        runtime_status: Some(runtime.session_sync_status()),
+        runtime_status: Some(runtime.lifecycle_projection()),
         context_tokens: Some(session.context_tokens),
         usage: runtime.usage.clone(),
         created_at,
@@ -491,7 +490,7 @@ struct GatewayToolMessage<'a> {
     call_id: String,
     state: serde_json::Value,
     metadata: serde_json::Value,
-    runtime_status: Option<RuntimeSessionSyncStatus>,
+    runtime_status: Option<RuntimeProjection>,
     context_tokens: Option<ContextTokenStats>,
     usage: Option<UsageReport>,
     created_at: i64,

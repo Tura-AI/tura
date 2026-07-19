@@ -19,8 +19,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use lifecycle::SessionState;
 use runtime::mano;
-use runtime::state_machine::session_management::{SessionInput, SessionState};
+use runtime::state_machine::session_management::SessionInput;
 use serde_json::{json, Value};
 
 const ROUTES: &[&str] = &["thinking", "fast", "embedding_high", "embedding_low"];

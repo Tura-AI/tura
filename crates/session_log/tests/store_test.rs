@@ -306,9 +306,9 @@ fn running_sessions_are_marked_interrupted_with_one_canonical_state_source() {
     assert_eq!(loaded.management["state"], "interrupted");
     assert_eq!(loaded.session["status"], "error");
     assert_eq!(
-        serde_json::from_value::<session_log::SessionState>(loaded.management["state"].clone())
+        serde_json::from_value::<lifecycle::SessionState>(loaded.management["state"].clone())
             .expect("persisted interrupted state should deserialize"),
-        session_log::SessionState::Interrupted
+        lifecycle::SessionState::Interrupted
     );
 }
 

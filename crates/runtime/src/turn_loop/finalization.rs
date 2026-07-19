@@ -1,6 +1,7 @@
 use chrono::Utc;
+use lifecycle::RuntimeId;
 
-use crate::state_machine::runtime_management::{RuntimeId, RuntimeManagement};
+use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
 pub(crate) fn create_dummy_runtime(
@@ -46,9 +47,9 @@ pub(crate) fn create_dummy_runtime(
 #[cfg(test)]
 mod tests {
     use super::create_dummy_runtime;
-    use crate::state_machine::runtime_management::{RuntimeCallResultStatus, RuntimeState};
     use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
+    use lifecycle::{RuntimeCallResultStatus, RuntimeState};
     use std::path::PathBuf;
 
     #[test]

@@ -9,12 +9,11 @@ pub use runtime_receive::runtime_receive;
 pub mod types {
     pub use crate::state_machine::agent_management::AgentId;
     pub use crate::state_machine::runtime_management::{
-        RuntimeCallResultStatus, RuntimeError, RuntimeId, RuntimeManagement, RuntimeProviderConfig,
-        RuntimeSessionSyncStatus, RuntimeState, ToolCallRecord, UsageReport,
+        RuntimeError, RuntimeManagement, RuntimeProviderConfig, ToolCallRecord, UsageReport,
     };
-    pub use crate::state_machine::session_management::SessionId;
 
     use chrono::{DateTime, Utc};
+    use lifecycle::{RuntimeId, SessionId};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,11 +1,10 @@
 //! Provider failure helpers.
 
 use chrono::{DateTime, Utc};
+use lifecycle::RuntimeState;
 use std::time::Duration;
 
-use crate::state_machine::runtime_management::{
-    RuntimeError, RuntimeManagement, RuntimeState, UsageReport,
-};
+use crate::state_machine::runtime_management::{RuntimeError, RuntimeManagement, UsageReport};
 
 pub(crate) fn runtime_timeout(runtime: &RuntimeManagement) -> std::time::Duration {
     std::time::Duration::from_millis(runtime.provider.base.time_out_ms.max(1_000))
@@ -151,9 +150,10 @@ pub(crate) fn runtime_failure_text(runtime: &RuntimeManagement) -> Option<String
 mod tests {
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{
-        RuntimeError, RuntimeManagement, RuntimeProviderConfig, RuntimeState,
+        RuntimeError, RuntimeManagement, RuntimeProviderConfig,
     };
     use chrono::Utc;
+    use lifecycle::RuntimeState;
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -236,7 +236,9 @@ mod tests {
     #[test]
     fn retry_allowed_failed_runtime_uses_provider_retry_path() {
         let mut runtime = runtime_for_retry_test("retryable-runtime");
-        runtime.state = RuntimeState::Failed;
+        runtime
+            .transition(RuntimeState::Failed)
+            .expect("mark runtime failed");
         runtime.error = Some(RuntimeError {
             error_code: Some("CALL_FAILED".to_string()),
             error_text: Some(
@@ -258,7 +260,9 @@ mod tests {
     #[test]
     fn non_retryable_failed_runtime_does_not_use_provider_retry_path() {
         let mut runtime = runtime_for_retry_test("non-retryable-runtime");
-        runtime.state = RuntimeState::Failed;
+        runtime
+            .transition(RuntimeState::Failed)
+            .expect("mark runtime failed");
         runtime.error = Some(RuntimeError {
             error_code: Some("CALL_FAILED".to_string()),
             error_text: Some("provider rejected invalid request".to_string()),

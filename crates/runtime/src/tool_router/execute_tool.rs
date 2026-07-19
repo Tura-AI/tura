@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::state_machine::session_management::SessionId;
+use lifecycle::SessionId;
 
 use super::types::ToolRouterQueueItem;
 

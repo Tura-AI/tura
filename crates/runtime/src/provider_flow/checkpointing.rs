@@ -2,7 +2,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::checkpoint::StreamedCommandCheckpoint;
-use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeState};
+use crate::state_machine::runtime_management::RuntimeManagement;
+use lifecycle::RuntimeState;
 
 pub(crate) fn turn_started(runtime: &RuntimeManagement) -> Result<(), String> {
     crate::checkpoint::checkpoint_turn_started(runtime)
