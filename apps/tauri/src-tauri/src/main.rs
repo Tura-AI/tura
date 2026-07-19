@@ -446,7 +446,11 @@ fn configure_gateway_runtime_command<'a>(
     target: &GatewayEndpoint,
 ) -> &'a mut Command {
     command
-        .current_dir(runtime_root)
+        // The gateway uses its working directory as the fallback location for
+        // sessions created without an explicit workspace. Packaged resources
+        // are read-only (and code-signed on macOS), so runtime state belongs
+        // under the instance home instead.
+        .current_dir(instance_home)
         .env("TURA_HOME", instance_home)
         .env("TURA_PROJECT_ROOT", runtime_root)
         .env(tura_path::TURA_GATEWAY_PORT_ENV, target.port.to_string());
@@ -1408,7 +1412,7 @@ mod tests {
                 value.map(|value| (key.to_string_lossy().to_string(), PathBuf::from(value)))
             })
             .collect::<std::collections::HashMap<_, _>>();
-        assert_eq!(command.get_current_dir(), Some(runtime_root.as_path()));
+        assert_eq!(command.get_current_dir(), Some(home.as_path()));
         assert_eq!(envs.get("TURA_HOME"), Some(&home));
         assert_eq!(envs.get("TURA_PROJECT_ROOT"), Some(&runtime_root));
         assert_eq!(envs.get("TURA_PROVIDER_CONFIG"), Some(&provider_config));
