@@ -165,6 +165,10 @@ pub struct ProviderConfig {
 }
 
 impl ProviderConfig {
+    fn runtime_provider(&self) -> &str {
+        crate::auth_registry::runtime_provider_id(&self.provider)
+    }
+
     pub fn validate(&self) -> Result<(), TuraError> {
         if self.provider.trim().is_empty() {
             return Err(TuraError::Validation {
@@ -202,13 +206,14 @@ impl ProviderConfig {
 
     pub async fn embed(&self, text: &str, conf: &TuraConfig) -> Result<Vec<f32>, TuraError> {
         self.validate()?;
-        let _parameter_policy = providers::parameter_policy(&self.provider);
+        let runtime_provider = self.runtime_provider();
+        let _parameter_policy = providers::parameter_policy(runtime_provider);
         let api_key = if should_use_openai_oauth(&self.provider, &self.base_url, conf) {
             refresh_openai_access_token_if_needed(conf).await?
         } else {
             self.get_api_key(conf)?
         };
-        match self.provider.to_lowercase().as_str() {
+        match runtime_provider.to_ascii_lowercase().as_str() {
             "codex" if self.model.starts_with("text-embedding-") => {
                 providers::openai::embed("https://api.openai.com/v1", &self.model, &api_key, text)
                     .await
@@ -252,7 +257,8 @@ impl ProviderConfig {
         stream_events: Option<ProviderStreamEventSink>,
     ) -> Result<ProviderResponse, TuraError> {
         self.validate()?;
-        let _parameter_policy = providers::parameter_policy(&self.provider);
+        let runtime_provider = self.runtime_provider().to_ascii_lowercase();
+        let _parameter_policy = providers::parameter_policy(&runtime_provider);
         let mut api_key = if should_use_openai_oauth(&self.provider, &self.base_url, conf) {
             refresh_openai_access_token_if_needed(conf).await?
         } else {
@@ -267,7 +273,7 @@ impl ProviderConfig {
         // OAuth access token using its registered refresh token and retry once.
         let mut refreshed = false;
         let result = loop {
-            let attempt = match self.provider.to_lowercase().as_str() {
+            let attempt = match runtime_provider.as_str() {
                 "google" => {
                     providers::google::call(
                         &self.base_url,

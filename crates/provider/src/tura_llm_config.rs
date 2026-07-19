@@ -529,12 +529,23 @@ impl Settings {
     }
 
     pub fn provider_base_url(&self, provider: &str) -> Option<String> {
-        self.provider_base_url.get(provider).cloned().or_else(|| {
-            self.routes()
-                .flat_map(|route| route.providers.iter())
-                .find(|item| item.provider == provider)
-                .map(|item| item.base_url.clone())
-        })
+        let runtime_provider = crate::auth_registry::runtime_provider_id(provider);
+        self.provider_base_url
+            .get(provider)
+            .or_else(|| self.provider_base_url.get(runtime_provider))
+            .cloned()
+            .or_else(|| {
+                self.routes()
+                    .flat_map(|route| route.providers.iter())
+                    .find(|item| item.provider == provider || item.provider == runtime_provider)
+                    .map(|item| item.base_url.clone())
+            })
+            .or_else(|| {
+                crate::auth_registry::provider_auth_registry_entry(provider)
+                    .map(|entry| entry.default_base_url.trim())
+                    .filter(|base_url| !base_url.is_empty())
+                    .map(ToString::to_string)
+            })
     }
 
     pub fn configured_model_catalog(&self) -> HashMap<String, Vec<String>> {
@@ -956,11 +967,15 @@ mod tests {
     }
 
     #[test]
-    fn provider_base_url_prefers_explicit_map_then_route_provider_url() {
+    fn provider_base_url_prefers_config_then_route_then_registry_defaults() {
         let mut settings = settings_with_catalog_and_routes();
         assert_eq!(
             settings.provider_base_url("openai").as_deref(),
             Some("https://api.openai.test/v1")
+        );
+        assert_eq!(
+            settings.provider_base_url("gemini-api").as_deref(),
+            Some("https://google.test/v1")
         );
 
         settings.provider_base_url.remove("google");
@@ -968,7 +983,11 @@ mod tests {
             settings.provider_base_url("google").as_deref(),
             Some("https://google.test/v1")
         );
-        assert_eq!(settings.provider_base_url("anthropic"), None);
+        assert_eq!(
+            settings.provider_base_url("mistral").as_deref(),
+            Some("https://api.mistral.ai/v1")
+        );
+        assert_eq!(settings.provider_base_url("missing"), None);
     }
 
     #[test]
