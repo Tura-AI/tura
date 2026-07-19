@@ -138,7 +138,9 @@ fn gui_startup_url_from_args(mut base_url: Url, args: Vec<String>) -> Option<Url
     {
         let mut query = base_url.query_pairs_mut();
         query.clear();
-        query.append_pair("gatewayUrl", &params.gateway_url);
+        if let Some(gateway_url) = params.gateway_url.as_deref() {
+            query.append_pair("gatewayUrl", gateway_url);
+        }
         query.append_pair("tab", "conversation");
         if let Some(workspace) = params.workspace.as_deref() {
             query.append_pair("workspace", workspace);
@@ -152,7 +154,9 @@ fn gui_startup_url_from_args(mut base_url: Url, args: Vec<String>) -> Option<Url
 
 fn remember_gateway_url_from_args(args: &[String]) {
     if let Some(params) = GuiStartupParams::parse(args.to_vec()) {
-        remember_gateway_url(&params.gateway_url);
+        if let Some(gateway_url) = params.gateway_url.as_deref() {
+            remember_gateway_url(gateway_url);
+        }
     }
 }
 
@@ -186,7 +190,7 @@ fn is_gui_startup_base_url(url: &Url) -> bool {
 
 #[derive(Debug, PartialEq, Eq)]
 struct GuiStartupParams {
-    gateway_url: String,
+    gateway_url: Option<String>,
     workspace: Option<String>,
     session_id: Option<String>,
 }
@@ -205,8 +209,8 @@ impl GuiStartupParams {
                 _ => {}
             }
         }
-        Some(Self {
-            gateway_url: gateway_url?,
+        (gateway_url.is_some() || workspace.is_some() || session_id.is_some()).then_some(Self {
+            gateway_url,
             workspace,
             session_id,
         })
@@ -230,16 +234,6 @@ fn startup_args_with_saved_workspace(mut args: Vec<String>, instance_home: &Path
     }
     if let Some(workspace) = workspace {
         let _ = write_saved_workspace(instance_home, &workspace);
-    }
-    if !has_option(&args, &["--gateway-url"]) {
-        let gateway = std::env::var(tura_path::TURA_GATEWAY_URL_ENV)
-            .ok()
-            .and_then(|value| non_empty_gateway_url(&value))
-            .or_else(|| tura_path::read_active_gateway_url_for_home(instance_home));
-        if let Some(gateway) = gateway {
-            args.push("--gateway-url".to_string());
-            args.push(gateway);
-        }
     }
     args
 }
@@ -1288,7 +1282,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_uses_default_workspace_and_active_gateway() {
+    fn startup_uses_default_workspace_without_forcing_a_gateway() {
         let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
         let home = test_temp_dir("startup-default-workspace-home");
         let workspace = test_temp_dir("startup-default-workspace");
@@ -1297,8 +1291,6 @@ mod tests {
             format!("{}\n", workspace.display()),
         )
         .expect("write default workspace");
-        tura_path::write_active_gateway_url_for_home(&home, "http://127.0.0.1:4999")
-            .expect("write active gateway");
         let env = TestEnv::set([(tura_path::TURA_GATEWAY_URL_ENV, "")]);
 
         let args = startup_args_with_saved_workspace(Vec::new(), &home);
@@ -1307,10 +1299,7 @@ mod tests {
             option_value(&args, &["--workspace"]),
             Some(workspace.display().to_string())
         );
-        assert_eq!(
-            option_value(&args, &["--gateway-url"]),
-            Some("http://127.0.0.1:4999".to_string())
-        );
+        assert_eq!(option_value(&args, &["--gateway-url"]), None);
         assert_eq!(
             fs::read_to_string(home.join("last-workspace")).expect("last workspace"),
             format!("{}\n", normalize_path(&workspace).display())
@@ -1437,12 +1426,20 @@ mod tests {
     }
 
     #[test]
-    fn gui_startup_args_require_gateway_url() {
-        assert!(gui_startup_url_from_args(
+    fn gui_startup_args_allow_workspace_without_explicit_gateway_url() {
+        let url = gui_startup_url_from_args(
             Url::parse("http://127.0.0.1:5174/").expect("base url"),
             vec!["--workspace".to_string(), "C:\\repo".to_string()],
         )
-        .is_none());
+        .expect("workspace url");
+        let pairs = url
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            pairs.get("workspace").map(|value| value.as_ref()),
+            Some("C:\\repo")
+        );
+        assert!(!pairs.contains_key("gatewayUrl"));
     }
 
     #[test]
@@ -1493,14 +1490,12 @@ mod tests {
     }
 
     #[test]
-    fn page_load_restore_queue_ignores_launches_without_gateway_url() {
+    fn page_load_restore_queue_accepts_workspace_without_gateway_url() {
         let _guard = TEST_ENV_LOCK.lock().expect("test env lock");
         let _ = take_pending_main_window_args();
-        assert!(!queue_main_window_restore(vec![
-            "--workspace".to_string(),
-            "C:\\repo".to_string(),
-        ]));
-        assert_eq!(take_pending_main_window_args(), None);
+        let args = vec!["--workspace".to_string(), "C:\\repo".to_string()];
+        assert!(queue_main_window_restore(args.clone()));
+        assert_eq!(take_pending_main_window_args(), Some(args));
     }
 
     #[test]
