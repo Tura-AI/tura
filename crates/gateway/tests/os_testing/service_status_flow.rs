@@ -115,6 +115,8 @@ impl FakeRouterEndpoint {
     fn start(home: &Path) -> Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).context("bind fake router")?;
         let addr = listener.local_addr()?.to_string();
+        let process_start_time =
+            wait_for_current_process_start_time(std::process::id(), Duration::from_secs(2))?;
         let path = home.join("db").join("session_log").join("router.addr");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -125,7 +127,7 @@ impl FakeRouterEndpoint {
                 "addr": addr,
                 "version": tura_path::instance_version(),
                 "pid": std::process::id(),
-                "process_start_time": current_process_start_time(std::process::id()),
+                "process_start_time": process_start_time,
             })
             .to_string(),
         )?;
@@ -156,7 +158,7 @@ impl FakeRouterEndpoint {
                                 "request_id": request.get("request_id").cloned().unwrap_or(serde_json::Value::Null),
                                 "payload": {
                                     "pid": std::process::id(),
-                                    "process_start_time": current_process_start_time(std::process::id()),
+                                    "process_start_time": process_start_time,
                                 }
                             })
                             .to_string()
@@ -187,6 +189,21 @@ fn current_process_start_time(pid: u32) -> Option<u64> {
     system
         .process(sysinfo::Pid::from_u32(pid))
         .map(sysinfo::Process::start_time)
+}
+
+fn wait_for_current_process_start_time(pid: u32, timeout: Duration) -> Result<u64> {
+    let started = Instant::now();
+    loop {
+        if let Some(start_time) = current_process_start_time(pid) {
+            return Ok(start_time);
+        }
+        if started.elapsed() >= timeout {
+            return Err(anyhow!(
+                "fake router process {pid} was absent from the process snapshot"
+            ));
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 impl Drop for FakeRouterEndpoint {
