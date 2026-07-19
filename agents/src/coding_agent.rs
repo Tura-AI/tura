@@ -32,7 +32,7 @@ impl CodingAgent {
             stream: true,
             temperature: 0.2,
             max_tokens: 0,
-            tool_choice: CodingAgentToolChoice::Auto,
+            tool_choice: CodingAgentToolChoice::Strict,
             time_out_ms: 120_000,
         }
     }
