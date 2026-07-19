@@ -39,6 +39,9 @@ static PENDING_MAIN_WINDOW_ARGS: OnceLock<Mutex<Option<Vec<String>>>> = OnceLock
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let root = current_project_root();
+            let home = instance_home_for_runtime_root(&root);
+            let args = startup_args_with_saved_workspace(args, &home);
             remember_gateway_url_from_args(&args);
             restore_main_window_from_args(app, args);
         }))
@@ -49,9 +52,14 @@ fn main() {
         })
         .setup(|app| {
             configure_installed_app_home(app.handle());
-            let args = std::env::args().skip(1).collect::<Vec<_>>();
-            remember_gateway_url_from_args(&args);
             remember_active_gateway_url_if_unset();
+            let root = current_project_root();
+            let home = instance_home_for_runtime_root(&root);
+            let args = startup_args_with_saved_workspace(
+                std::env::args().skip(1).collect::<Vec<_>>(),
+                &home,
+            );
+            remember_gateway_url_from_args(&args);
             queue_main_window_restore(args.clone());
             restore_main_window_from_args(app.handle(), args);
             Ok(())
@@ -207,6 +215,60 @@ impl GuiStartupParams {
 
 fn next_non_empty(iter: &mut impl Iterator<Item = String>) -> Option<String> {
     iter.next().filter(|value| !value.trim().is_empty())
+}
+
+fn startup_args_with_saved_workspace(mut args: Vec<String>, instance_home: &Path) -> Vec<String> {
+    let explicit_workspace = option_value(&args, &["--workspace", "--directory", "--cwd"])
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir());
+    let workspace = explicit_workspace.or_else(|| saved_workspace(instance_home));
+    if !has_option(&args, &["--workspace", "--directory", "--cwd"]) {
+        if let Some(workspace) = workspace.as_ref() {
+            args.push("--workspace".to_string());
+            args.push(workspace.display().to_string());
+        }
+    }
+    if let Some(workspace) = workspace {
+        let _ = write_saved_workspace(instance_home, &workspace);
+    }
+    if !has_option(&args, &["--gateway-url"]) {
+        let gateway = std::env::var(tura_path::TURA_GATEWAY_URL_ENV)
+            .ok()
+            .and_then(|value| non_empty_gateway_url(&value))
+            .or_else(|| tura_path::read_active_gateway_url_for_home(instance_home));
+        if let Some(gateway) = gateway {
+            args.push("--gateway-url".to_string());
+            args.push(gateway);
+        }
+    }
+    args
+}
+
+fn has_option(args: &[String], names: &[&str]) -> bool {
+    args.iter().any(|arg| names.contains(&arg.as_str()))
+}
+
+fn option_value(args: &[String], names: &[&str]) -> Option<String> {
+    args.windows(2)
+        .find(|pair| names.contains(&pair[0].as_str()))
+        .map(|pair| pair[1].clone())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn saved_workspace(instance_home: &Path) -> Option<PathBuf> {
+    ["last-workspace", "default-workspace"]
+        .into_iter()
+        .filter_map(|name| std::fs::read_to_string(instance_home.join(name)).ok())
+        .map(|value| PathBuf::from(value.trim()))
+        .find(|path| path.is_dir())
+}
+
+fn write_saved_workspace(instance_home: &Path, workspace: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(instance_home)?;
+    std::fs::write(
+        instance_home.join("last-workspace"),
+        format!("{}\n", normalize_path(workspace).display()),
+    )
 }
 
 #[tauri::command]
@@ -1223,6 +1285,58 @@ mod tests {
             default_macos_app_home(Path::new("/Users/tester")),
             PathBuf::from("/Users/tester/Library/Application Support/Tura")
         );
+    }
+
+    #[test]
+    fn startup_uses_default_workspace_and_active_gateway() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let home = test_temp_dir("startup-default-workspace-home");
+        let workspace = test_temp_dir("startup-default-workspace");
+        fs::write(
+            home.join("default-workspace"),
+            format!("{}\n", workspace.display()),
+        )
+        .expect("write default workspace");
+        tura_path::write_active_gateway_url_for_home(&home, "http://127.0.0.1:4999")
+            .expect("write active gateway");
+        let env = TestEnv::set([(tura_path::TURA_GATEWAY_URL_ENV, "")]);
+
+        let args = startup_args_with_saved_workspace(Vec::new(), &home);
+
+        assert_eq!(
+            option_value(&args, &["--workspace"]),
+            Some(workspace.display().to_string())
+        );
+        assert_eq!(
+            option_value(&args, &["--gateway-url"]),
+            Some("http://127.0.0.1:4999".to_string())
+        );
+        assert_eq!(
+            fs::read_to_string(home.join("last-workspace")).expect("last workspace"),
+            format!("{}\n", normalize_path(&workspace).display())
+        );
+        drop(env);
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn startup_prefers_last_workspace_over_default() {
+        let home = test_temp_dir("startup-last-workspace-home");
+        let last = test_temp_dir("startup-last-workspace");
+        let fallback = test_temp_dir("startup-fallback-workspace");
+        fs::write(home.join("last-workspace"), last.display().to_string())
+            .expect("write last workspace");
+        fs::write(
+            home.join("default-workspace"),
+            fallback.display().to_string(),
+        )
+        .expect("write default workspace");
+
+        assert_eq!(saved_workspace(&home), Some(last));
+
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(fallback);
     }
 
     #[test]
