@@ -698,6 +698,9 @@ fn is_openai_compatible_provider(provider_id: &str) -> bool {
             | "perplexity"
             | "volcengine"
             | "baidu_qianfan"
+            | "opencode-zen"
+            | "opencode-go"
+            | "clinepass"
     )
 }
 

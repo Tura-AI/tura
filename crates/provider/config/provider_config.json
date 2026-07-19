@@ -907,6 +907,161 @@
         "status": "configured",
         "token_env": "CLAUDE_CODE_OAUTH_TOKEN"
       },
+      "clinepass": {
+        "api_docs": "https://docs.cline.bot/getting-started/clinepass",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.cline.bot/api/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.tool_call"
+        ],
+        "display_name": "ClinePass",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "CLINE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "clinepass",
+              "id": "cline-pass/deepseek-v4-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek-v4-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "clinepass",
+              "id": "cline-pass/deepseek-v4-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek-v4-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "clinepass",
+              "id": "cline-pass/qwen3.7-max",
+              "limit": {
+                "context": 262144,
+                "input": 262144,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "qwen3.7-max",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "clinepass",
+              "id": "cline-pass/kimi-k2.6",
+              "limit": {
+                "context": 262144,
+                "input": 262144,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "kimi-k2.6",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "clinepass",
+              "id": "cline-pass/glm-5.2",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "glm-5.2",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "clinepass",
+        "status": "configured",
+        "token_env": "CLINE_API_KEY"
+      },
       "codex": {
         "api_docs": null,
         "api_style": "codex",
@@ -3039,6 +3194,401 @@
         "status": "configured",
         "token_env": "OPENROUTER_API_KEY"
       },
+      "opencode-go": {
+        "api_docs": "https://opencode.ai/docs/zen/",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://opencode.ai/zen/go/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.tool_call"
+        ],
+        "display_name": "OpenCode Go",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "OPENCODE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "opencode-go",
+              "id": "deepseek-v4-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek-v4-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "opencode-go",
+              "id": "glm-5.2",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "glm-5.2",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "opencode-go",
+              "id": "deepseek-v4-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek-v4-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "opencode-go",
+              "id": "qwen3.7-max",
+              "limit": {
+                "context": 262144,
+                "input": 262144,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "qwen3.7-max",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "opencode-go",
+              "id": "kimi-k2.6",
+              "limit": {
+                "context": 262144,
+                "input": 262144,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "kimi-k2.6",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "opencode-go",
+        "status": "configured",
+        "token_env": "OPENCODE_API_KEY"
+      },
+      "opencode-zen": {
+        "api_docs": "https://opencode.ai/docs/zen/",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://opencode.ai/zen/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.tool_call"
+        ],
+        "display_name": "OpenCode Zen",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "OPENCODE_API_KEY",
+          "OPENCODE_ZEN_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "gpt-5.6",
+              "id": "gpt-5.6-luna",
+              "limit": {
+                "context": 1050000,
+                "input": 1050000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.6-luna",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-3.5-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image",
+                  "video"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-3.5-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "deepseek",
+              "id": "deepseek-v4-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek-v4-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "gpt-5.6",
+              "id": "gpt-5.6-sol",
+              "limit": {
+                "context": 1050000,
+                "input": 1050000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.6-sol",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "gpt-5.6",
+              "id": "gpt-5.6-terra",
+              "limit": {
+                "context": 1050000,
+                "input": 1050000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.6-terra",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "claude",
+              "id": "claude-opus-4-8",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "claude-opus-4-8",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true,
+              "visible": false
+            },
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-3.1-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image",
+                  "video"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-3.1-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "deepseek",
+              "id": "deepseek-v4-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek-v4-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-07-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "opencode-zen",
+        "status": "configured",
+        "token_env": "OPENCODE_API_KEY"
+      },
       "perplexity": {
         "api_docs": "https://docs.perplexity.ai/",
         "api_style": "openapi",
@@ -4070,6 +4620,7 @@
     "bitbucket": "https://api.bitbucket.org/2.0",
     "brave_search": "https://api.search.brave.com/res/v1",
     "claude-code": "https://api.anthropic.com/v1",
+    "clinepass": "https://api.cline.bot/api/v1",
     "codex": "https://chatgpt.com/backend-api/codex/responses",
     "cohere": "https://api.cohere.com/v2",
     "deepseek": "https://api.deepseek.com",
@@ -4101,6 +4652,8 @@
     "ollama": "http://localhost:11434",
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    "opencode-go": "https://opencode.ai/zen/go/v1",
+    "opencode-zen": "https://opencode.ai/zen/v1",
     "perplexity": "https://api.perplexity.ai",
     "qiniu": "https://rs.qiniu.com",
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",

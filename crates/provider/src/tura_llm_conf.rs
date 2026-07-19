@@ -79,6 +79,15 @@ mod tests {
         assert!(settings
             .configured_model_catalog()
             .contains_key("openrouter"));
+        assert!(settings
+            .configured_model_catalog()
+            .contains_key("opencode-zen"));
+        assert!(settings
+            .configured_model_catalog()
+            .contains_key("opencode-go"));
+        assert!(settings
+            .configured_model_catalog()
+            .contains_key("clinepass"));
 
         match previous_provider {
             Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
