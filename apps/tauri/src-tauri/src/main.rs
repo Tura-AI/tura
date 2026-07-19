@@ -48,6 +48,7 @@ fn main() {
             }
         })
         .setup(|app| {
+            configure_installed_app_home(app.handle());
             let args = std::env::args().skip(1).collect::<Vec<_>>();
             remember_gateway_url_from_args(&args);
             remember_active_gateway_url_if_unset();
@@ -614,6 +615,41 @@ fn is_source_checkout_root(candidate: &Path) -> bool {
     candidate.join("Cargo.toml").exists() && candidate.join("crates").join("gateway").is_dir()
 }
 
+fn configure_installed_app_home(app: &tauri::AppHandle) {
+    if std::env::var_os("TURA_HOME")
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        return;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    if !is_macos_app_bundle_executable(&executable) {
+        return;
+    }
+    if let Ok(home) = app.path().home_dir() {
+        std::env::set_var("TURA_HOME", default_macos_app_home(&home));
+    }
+}
+
+fn is_macos_app_bundle_executable(executable: &Path) -> bool {
+    cfg!(target_os = "macos")
+        && executable
+            .parent()
+            .is_some_and(|parent| parent.file_name().is_some_and(|name| name == "MacOS"))
+        && executable
+            .parent()
+            .and_then(Path::parent)
+            .is_some_and(|parent| parent.file_name().is_some_and(|name| name == "Contents"))
+}
+
+fn default_macos_app_home(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Application Support")
+        .join("Tura")
+}
+
 fn instance_home_for_runtime_root(runtime_root: &Path) -> PathBuf {
     std::env::var_os("TURA_HOME")
         .map(PathBuf::from)
@@ -630,6 +666,15 @@ fn current_runtime_root() -> PathBuf {
 }
 
 fn runtime_root_from_start(start: &Path) -> PathBuf {
+    if let Some(contents) = start.parent().filter(|parent| {
+        start.file_name().is_some_and(|name| name == "MacOS")
+            && parent.file_name().is_some_and(|name| name == "Contents")
+    }) {
+        let bundled = contents.join("Resources").join("tura-runtime");
+        if is_runtime_root(&bundled) {
+            return normalize_path(&bundled);
+        }
+    }
     if let Some(source_root) = start
         .ancestors()
         .find(|candidate| is_source_checkout_root(candidate))
@@ -1153,6 +1198,31 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_root_resolves_packaged_macos_resources() {
+        let root = test_temp_dir("runtime-root-macos-bundle");
+        let macos = root.join("Tura.app").join("Contents").join("MacOS");
+        let runtime = root
+            .join("Tura.app")
+            .join("Contents")
+            .join("Resources")
+            .join("tura-runtime");
+        fs::create_dir_all(&macos).expect("create macOS executable directory");
+        create_release_runtime_root(&runtime);
+
+        assert_eq!(runtime_root_from_start(&macos), normalize_path(&runtime));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn packaged_macos_home_uses_application_support() {
+        assert_eq!(
+            default_macos_app_home(Path::new("/Users/tester")),
+            PathBuf::from("/Users/tester/Library/Application Support/Tura")
+        );
     }
 
     #[test]

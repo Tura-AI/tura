@@ -1,5 +1,7 @@
 # Native macOS application packaging
 
+**Status:** Implemented by this change; signing and notarization credentials remain a release-pipeline responsibility.
+
 ## Problem
 
 A copied or installed native `.app` must reliably locate the gateway, runtime assets, and its writable application home. Development-only paths and Finder-driven DMG steps make the result fragile.
@@ -17,4 +19,3 @@ A copied or installed native `.app` must reliably locate the gateway, runtime as
 - The `.app` launches after being copied to `/Applications` on a clean Mac account.
 - Chat, tools, restart, and session restoration work without a source checkout.
 - Packaging is non-interactive and produces a signed, reproducible artifact.
-

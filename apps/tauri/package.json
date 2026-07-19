@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build",
+    "build": "bun run prepare:bundle && tauri build",
+    "prepare:bundle": "bun scripts/prepare-runtime-resources.mjs",
     "build:frontend": "bun --cwd ../gui build",
     "test": "bun run test:unit",
     "test:unit": "cargo test --manifest-path src-tauri/Cargo.toml",
