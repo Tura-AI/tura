@@ -1,5 +1,7 @@
 # Native MCP integration
 
+**Status:** Implemented for configurable stdio servers through the `mcp` macro command.
+
 ## Problem
 
 Tura has MCP-oriented architecture but the current installed release does not provide a complete user-facing MCP client path. A local command bridge can prove a server works, but hardcoded executable and repository paths are not portable or maintainable.
@@ -18,4 +20,3 @@ Tura has MCP-oriented architecture but the current installed release does not pr
 - Configuration contains no machine-specific paths and survives app restarts.
 - Unavailable servers fail visibly without breaking ordinary chat.
 - Tests cover handshake, discovery, invocation, timeout, cancellation, and denied permissions.
-

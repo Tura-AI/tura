@@ -123,6 +123,7 @@ function Copy-ReleaseRuntimeFiles {
     @{ Source = "crates\tools\src\commands"; Destination = "crates\tools\src\commands" },
     @{ Source = "crates\tools\src\command_run\schema.json"; Destination = "crates\tools\src\command_run\schema.json" },
     @{ Source = "commands\generate_media"; Destination = "commands\generate_media" },
+    @{ Source = "commands\mcp"; Destination = "commands\mcp" },
     @{ Source = "commands\read_media"; Destination = "commands\read_media" },
     @{ Source = "commands\web_discover"; Destination = "commands\web_discover" },
     @{ Source = "README.md"; Destination = "README.md" },
@@ -231,7 +232,7 @@ try {
   Invoke-Checked "cargo" @("build", "--release", "-p", "router", "--bin", "tura_router")
   Invoke-Checked "cargo" @("build", "--release", "-p", "session_log", "--bin", "tura_session_db")
   Invoke-Checked "cargo" @("build", "--release", "-p", "runtime", "--bin", "tura_runtime")
-  Invoke-Checked "cargo" @("build", "--release", "-p", "generate_media", "-p", "read_media", "-p", "web_discover")
+  Invoke-Checked "cargo" @("build", "--release", "-p", "generate_media", "-p", "mcp", "-p", "read_media", "-p", "web_discover")
 } finally {
   $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
 }

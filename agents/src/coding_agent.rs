@@ -42,6 +42,7 @@ impl CodingAgent {
             "apply_patch".to_string(),
             "shells".to_string(),
             "web_discover".to_string(),
+            "mcp".to_string(),
             "task_status".to_string(),
         ]
     }

@@ -43,6 +43,9 @@
       "capability_name": "web_discover"
     },
     {
+      "capability_name": "mcp"
+    },
+    {
       "capability_name": "task_status"
     }
   ],

@@ -1,0 +1,25 @@
+id = "mcp"
+name = "Model Context Protocol"
+description = "Discover and invoke tools from explicitly configured stdio MCP servers."
+core = false
+category = "integration"
+execution = "one_shot"
+state_machine = "default_command"
+supports_macro_command = true
+mutating = true
+network = true
+
+[runtime]
+binary = "tura-command-mcp"
+entry = ""
+language = "rust"
+
+[limits]
+default_timeout_ms = 30000
+max_timeout_ms = 300000
+
+[paths]
+prompt = "prompt.md"
+schema = "schema.json"
+policy = "policy.toml"
+
