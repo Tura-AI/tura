@@ -6,12 +6,11 @@ use gateway::api::session::{
 };
 use gateway::contracts::{GlobalEvent, Message, MessagePart};
 use gateway::session_store;
-use runtime::state_machine::runtime_management::{
-    RuntimeCallResultStatus, RuntimeSessionSyncStatus, RuntimeState,
-};
+use runtime::state_machine::runtime_management::{RuntimeSessionSyncStatus, RuntimeState};
 use runtime::state_machine::session_management::PlanStatus;
 use serde_json::{json, Value};
-use session_log::{SessionLogCommand, SessionLogStore};
+use session_log::SessionLogStore;
+use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
 use std::collections::BTreeSet;
 use std::path::Path as FsPath;
 use std::time::{Duration, Instant};
@@ -811,21 +810,14 @@ fn create_business_session(directory: String) -> String {
 }
 
 fn runtime_sync_status(runtime_id: &str, live: bool) -> RuntimeSessionSyncStatus {
-    RuntimeSessionSyncStatus {
-        runtime_id: runtime_id.to_string(),
-        state: if live {
+    RuntimeSessionSyncStatus::new(
+        runtime_id.to_string(),
+        if live {
             RuntimeState::Streaming
         } else {
             RuntimeState::Finished
         },
-        call_result_status: if live {
-            RuntimeCallResultStatus::Streaming
-        } else {
-            RuntimeCallResultStatus::Succeeded
-        },
-        live,
-        session_db_refresh_required: !live,
-    }
+    )
 }
 
 fn upsert_canonical_session(
@@ -853,17 +845,16 @@ fn upsert_canonical_session_with_info(
         .max()
         .unwrap_or(info.updated_at);
     mutate_info(&mut info);
-    let response = session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-        session_log::UpsertSessionRequest {
+    let response =
+        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
             session: serde_json::to_value(info)?,
             parent_id: None,
             messages,
             todos: Vec::new(),
-        },
-    ))?;
+        }))?;
     match response {
-        session_log::SessionLogResponse::Ok => Ok(()),
-        session_log::SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
+        SessionLogResponse::Ok => Ok(()),
+        SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
         other => anyhow::bail!("unexpected session_log response: {other:?}"),
     }
 }

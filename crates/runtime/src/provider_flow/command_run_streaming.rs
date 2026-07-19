@@ -1239,7 +1239,6 @@ mod tests {
         let router = MockStreamingRouter::start();
         let _router_env = EnvGuard::set("TURA_ROUTER_ADDR", &router.addr);
         let _gateway_enabled = EnvGuard::set("TURA_GATEWAY_CALLBACKS", "1");
-        let _gateway_transport = EnvGuard::set("TURA_GATEWAY_CALLBACK_TRANSPORT", "off");
         let (stream_tx, stream_rx) = mpsc::channel();
         let state = StreamedCommandRunState::new();
         let handle = spawn_streamed_command_run_task(SpawnStreamedCommandRunTask {

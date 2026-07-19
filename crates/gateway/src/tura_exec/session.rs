@@ -4,6 +4,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+use session_log_contract::SessionSnapshot;
 
 use super::output::emit_jsonl;
 
@@ -75,7 +76,7 @@ pub(crate) fn ensure_session_db_owner() {
 /// Extract the latest assistant message text for a session from the single
 /// session_db owner (the worker has already persisted it).
 pub(crate) fn final_text_from_session_db(session_id: &str) -> String {
-    use session_log::{ListSessionRecordsRequest, SessionLogCommand, SessionLogResponse};
+    use session_log_contract::{ListSessionRecordsRequest, SessionLogCommand, SessionLogResponse};
     let response = session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
         ListSessionRecordsRequest {
             session_id: session_id.to_string(),
@@ -159,7 +160,7 @@ pub(crate) fn reject_busy_session(session_id: &str, json_output: bool) -> Result
     Err(busy_session_message(session_id))
 }
 
-fn session_is_busy(session: &runtime::session_log_client::SessionSnapshot) -> bool {
+fn session_is_busy(session: &SessionSnapshot) -> bool {
     fn busy_text(value: Option<&String>) -> bool {
         value
             .map(|value| value.trim())
@@ -224,8 +225,8 @@ mod tests {
         assert!(message.contains("curl -X POST"));
     }
 
-    fn test_snapshot() -> runtime::session_log_client::SessionSnapshot {
-        runtime::session_log_client::SessionSnapshot {
+    fn test_snapshot() -> SessionSnapshot {
+        SessionSnapshot {
             session_id: "session-123".to_string(),
             workspace: "C:/workspace".to_string(),
             name: None,

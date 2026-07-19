@@ -78,7 +78,7 @@ mod tests {
         assert_eq!(runtime.agent_id, session.session_id);
         assert_eq!(runtime.state, RuntimeState::Finished);
         assert_eq!(
-            runtime.call_result_status,
+            runtime.call_result_status(),
             RuntimeCallResultStatus::Succeeded
         );
         assert!(

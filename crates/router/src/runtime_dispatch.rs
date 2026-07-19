@@ -1,50 +1,17 @@
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::process_info::current_process_start_time;
 use crate::services::managed_process::repo_root;
 use crate::services::manager::{ServiceManager, WorkerAlreadyRunning};
-use crate::services::models::{CallContext, WorkerSpec};
+use crate::services::models::WorkerSpec;
 use crate::services::runtime_workers::MAX_ACTIVE_RUNTIME_WORKERS;
-use crate::{app::AppState, ipc};
+use crate::{app::AppState, IpcNotificationSender};
+use router_contract::RunAgentRequest;
+use runtime_contract::CallContext;
 use tura_router::registry::{binary_target_diagnostics, resolve_binary_target};
 
 /// Maximum recursion depth for child sub-sessions (fork-bomb guard, T5.4).
 const MAX_PLANNING_DEPTH: usize = 3;
-#[derive(Debug, Deserialize)]
-pub(crate) struct RunAgentRequest {
-    #[serde(default)]
-    pub(crate) session_id: Option<String>,
-    #[serde(default)]
-    pub(crate) directory: Option<String>,
-    #[serde(default)]
-    pub(crate) model: Option<String>,
-    #[serde(default)]
-    pub(crate) agent: Option<String>,
-    #[serde(default)]
-    pub(crate) session_type: Option<String>,
-    #[serde(default)]
-    pub(crate) prompt: Option<String>,
-    #[serde(default)]
-    pub(crate) message: Option<String>,
-    #[serde(default)]
-    pub(crate) input: Option<Value>,
-    #[serde(default)]
-    pub(crate) parent_session_id: Option<String>,
-    #[serde(default)]
-    pub(crate) depth: Option<usize>,
-    #[serde(default)]
-    pub(crate) runtime_context: Option<String>,
-    #[serde(default)]
-    pub(crate) planning_mode_override: Option<bool>,
-    #[serde(default)]
-    pub(crate) return_log: bool,
-    /// Worker env contract computed by the gateway (model / planning /
-    /// stall-guard / ...). The router injects it into the subprocess as-is.
-    #[serde(default)]
-    pub(crate) worker_env: std::collections::HashMap<String, String>,
-}
-
 /// Pure-logic core of run_agent: resolve agent spec, spawn the runtime-
 /// worker subprocess (CLI/NDJSON), forward the call, and stream the result
 /// back. Gateway and child runtime dispatch use the `run-agent` CLI
@@ -53,7 +20,7 @@ pub(crate) async fn dispatch_run_agent(
     state: &AppState,
     req: RunAgentRequest,
     ipc_request_id: String,
-    notifications: Option<ipc::IpcNotificationSender>,
+    notifications: Option<IpcNotificationSender>,
 ) -> (u16, Value) {
     dispatch_run_agent_inner(state, req, ipc_request_id, notifications, false).await
 }
@@ -62,7 +29,7 @@ pub(crate) async fn dispatch_run_agent_with_runtime_slot(
     state: &AppState,
     req: RunAgentRequest,
     ipc_request_id: String,
-    notifications: Option<ipc::IpcNotificationSender>,
+    notifications: Option<IpcNotificationSender>,
 ) -> (u16, Value) {
     dispatch_run_agent_inner(state, req, ipc_request_id, notifications, true).await
 }
@@ -71,7 +38,7 @@ async fn dispatch_run_agent_inner(
     state: &AppState,
     req: RunAgentRequest,
     ipc_request_id: String,
-    notifications: Option<ipc::IpcNotificationSender>,
+    notifications: Option<IpcNotificationSender>,
     runtime_slot_acquired: bool,
 ) -> (u16, Value) {
     let session_id = req
@@ -181,15 +148,7 @@ async fn dispatch_run_agent_inner(
         ("TURA_ROLE".to_string(), "runtime_worker".to_string()),
         ("TURA_RUNTIME_WORKER".to_string(), "1".to_string()),
         ("TURA_WORKER_MODE".to_string(), "one-shot".to_string()),
-        (
-            "TURA_WORKER_ONESHOT_PROTOCOL".to_string(),
-            "envelope".to_string(),
-        ),
         ("TURA_RUNTIME_ONESHOT".to_string(), "1".to_string()),
-        (
-            "TURA_GATEWAY_CALLBACK_TRANSPORT".to_string(),
-            "ipc".to_string(),
-        ),
         ("TURA_ROUTER_PARENT_PID".to_string(), router_pid.to_string()),
     ];
     if let Some(start_time) = current_process_start_time(router_pid) {
@@ -423,7 +382,10 @@ mod tests {
                             "definitely-missing-runtime-worker-for-limit-test",
                         ),
                         args: vec!["--serve".to_string()],
-                        env: vec![("TURA_DEBUG_RUNTIME".to_string(), "0".to_string())],
+                        env: vec![
+                            ("TURA_WORKER_MODE".to_string(), "one-shot".to_string()),
+                            ("TURA_DEBUG_RUNTIME".to_string(), "0".to_string()),
+                        ],
                     })
                     .await?;
             }

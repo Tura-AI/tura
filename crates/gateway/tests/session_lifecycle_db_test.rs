@@ -3,7 +3,11 @@ use gateway::api::session::{delete_session, fork_session};
 use gateway::contracts::ForkSessionRequest;
 use gateway::session::MessageRole;
 use gateway::session_store;
-use session_log::{SessionLogCommand, SessionLogStore};
+use session_log::SessionLogStore;
+use session_log_contract::{
+    GetSessionRequest, ListSessionRecordsRequest, SessionLogCommand, SessionLogResponse,
+    SessionRecord, SessionSnapshot,
+};
 use std::path::Path as FsPath;
 use std::time::{Duration, Instant};
 
@@ -77,32 +81,29 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_persisted_session(
-    session_id: &str,
-) -> anyhow::Result<Option<Box<session_log::SessionSnapshot>>> {
-    let response = session_log::ipc::call_service(&SessionLogCommand::GetSession(
-        session_log::GetSessionRequest {
+fn get_persisted_session(session_id: &str) -> anyhow::Result<Option<Box<SessionSnapshot>>> {
+    let response =
+        session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
             session_id: session_id.to_string(),
-        },
-    ))?;
+        }))?;
     match response {
-        session_log::SessionLogResponse::Session { session } => Ok(session),
-        session_log::SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
+        SessionLogResponse::Session { session } => Ok(session),
+        SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
         other => anyhow::bail!("unexpected session_log get session response: {other:?}"),
     }
 }
 
-fn list_persisted_records(session_id: &str) -> anyhow::Result<Vec<session_log::SessionRecord>> {
+fn list_persisted_records(session_id: &str) -> anyhow::Result<Vec<SessionRecord>> {
     let response = session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
-        session_log::ListSessionRecordsRequest {
+        ListSessionRecordsRequest {
             session_id: session_id.to_string(),
             page: 0,
             page_size: 50,
         },
     ))?;
     match response {
-        session_log::SessionLogResponse::Records { records, .. } => Ok(records),
-        session_log::SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
+        SessionLogResponse::Records { records, .. } => Ok(records),
+        SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
         other => anyhow::bail!("unexpected session_log records response: {other:?}"),
     }
 }

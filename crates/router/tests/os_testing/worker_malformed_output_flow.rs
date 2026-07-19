@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Context, Result};
+use runtime_contract::CallContext;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use tura_router::manager::ServiceManager;
-use tura_router::models::{CallContext, WorkerSpec};
+use tura_router::models::WorkerSpec;
 
 #[tokio::test]
 async fn router_persistent_worker_business_flow_rejects_malformed_json_and_cleans_up() -> Result<()>
@@ -101,9 +102,7 @@ fn python_executable() -> Result<PathBuf> {
 
 fn write_malformed_worker_script(dir: &Path) -> Result<PathBuf> {
     let script = dir.join("router_worker_malformed_business.py");
-    std::fs::write(
-        &script,
-        r#"
+    let source = r#"
 import json
 import sys
 
@@ -113,11 +112,12 @@ for raw in sys.stdin:
         continue
     message = json.loads(raw)
     if message.get("kind") == "health_check":
-        print(json.dumps({"ok": True}), flush=True)
+        print(json.dumps({"ok": True, "version": "__TURA_WORKER_VERSION__"}), flush=True)
         continue
     print("{ this is not valid json", flush=True)
-"#,
-    )
-    .with_context(|| format!("write malformed worker script {}", script.display()))?;
+"#
+    .replace("__TURA_WORKER_VERSION__", &tura_path::instance_version());
+    std::fs::write(&script, source)
+        .with_context(|| format!("write malformed worker script {}", script.display()))?;
     Ok(script)
 }

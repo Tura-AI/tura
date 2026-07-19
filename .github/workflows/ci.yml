@@ -2,13 +2,20 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "outreach/**"
   push:
     branches:
       - main
       - "fix/**"
+      - "staging/runtime_session_refactor"
     tags:
       - "release*"
       - "release-v*"
+    paths-ignore:
+      - "docs/**"
+      - "outreach/**"
   workflow_dispatch:
 
 env:
@@ -18,6 +25,7 @@ jobs:
   quality:
     name: Quality Smell Gate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Rust toolchain
@@ -75,6 +83,7 @@ jobs:
   crate-tests:
     name: Crate ${{ matrix.crate }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: quality
     strategy:
       fail-fast: false
@@ -82,13 +91,17 @@ jobs:
         crate:
           - tura_workspace
           - router
+          - router_contract
           - agents
           - personas
+          - lifecycle
           - session_log
+          - session_log_contract
           - tura_path
           - tools
           - provider
           - runtime
+          - runtime_contract
           - read_media
           - web_discover
           - gateway
@@ -117,10 +130,18 @@ jobs:
             pkg-config
       - name: Run crate clippy and tests
         run: sh xtask/scripts/run-ci-crate-tests.sh --crate "${{ matrix.crate }}" --jobs 1 --timeout-seconds 600
+      - name: Upload crate failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crate-${{ matrix.crate }}-failure-logs
+          path: target/test-logs/ci-crates/${{ matrix.crate }}.*.txt
+          if-no-files-found: error
 
   backend-business:
     name: Backend Business
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: quality
     steps:
       - uses: actions/checkout@v4
@@ -131,6 +152,11 @@ jobs:
         with:
           key: backend-business
           cache-on-failure: true
+      - name: uv setup
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: commands/read_media/requirements.txt
       - name: Install Linux desktop build dependencies
         run: |
           sudo apt-get update
@@ -143,12 +169,15 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             pkg-config
+      - name: Install read_media Python dependencies
+        run: sh commands/read_media/install.sh
       - name: Run backend business tests
         run: sh xtask/scripts/run-backend-business-tests.sh --jobs 4 --timeout-seconds 300
 
   tui-tests:
     name: TUI Unit And E2E
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: quality
     steps:
       - uses: actions/checkout@v4
@@ -190,6 +219,7 @@ jobs:
   gui-tests:
     name: GUI Unit
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: quality
     steps:
       - uses: actions/checkout@v4
@@ -267,6 +297,7 @@ jobs:
   ci-complete:
     name: CI Complete
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs:
       - crate-tests
       - backend-business
@@ -279,6 +310,7 @@ jobs:
   release-dry-run:
     name: Release Dry Run
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     if: startsWith(github.ref, 'refs/tags/release')
     needs: ci-complete
     steps:

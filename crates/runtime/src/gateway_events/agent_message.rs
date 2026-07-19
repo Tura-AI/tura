@@ -1,5 +1,6 @@
 use crate::prompt_style::{runtime_fallback, tool_progress};
 use crate::state_machine::session_management::SessionManagement;
+use runtime_contract::GatewayCallbackFrame;
 use std::io::Write;
 use tracing::warn;
 
@@ -91,13 +92,7 @@ pub(crate) async fn publish_streamed_agent_text(
         "context_tokens": runtime.context_tokens,
         "usage": runtime.usage.clone(),
     });
-    if !publish_gateway_callback_ipc("session.agent_stream", &target_session_id, payload) {
-        warn!(
-            session_id = %session_id,
-            runtime_id = %runtime.runtime_id,
-            "dropping streamed agent text delta because gateway callback IPC is not enabled"
-        );
-    }
+    publish_gateway_callback_ipc("session.agent_stream", &target_session_id, payload);
 }
 
 pub(crate) fn publish_gateway_agent_message(
@@ -171,10 +166,8 @@ fn publish_gateway_agent_message_with_sync(
         "created_at": message.created_at,
         "updated_at": message.updated_at,
     });
-    if publish_gateway_callback_ipc("session.agent_message", &target_session_id, payload) {
-        return Ok(());
-    }
-    Err("gateway callback IPC transport is not enabled".to_string())
+    publish_gateway_callback_ipc("session.agent_message", &target_session_id, payload);
+    Ok(())
 }
 
 pub(crate) fn post_gateway_callback_detached(
@@ -184,61 +177,31 @@ pub(crate) fn post_gateway_callback_detached(
     runtime_id: String,
     context: &'static str,
 ) {
-    if publish_gateway_callback_ipc(method, &session_id, payload) {
-        return;
-    }
-    warn!(
-        session_id = %session_id,
-        runtime_id = %runtime_id,
-        context = context,
-        method,
-        "dropping gateway callback because IPC transport is not enabled"
-    );
+    let _ = (runtime_id, context);
+    publish_gateway_callback_ipc(method, &session_id, payload);
 }
 
 pub(crate) fn publish_gateway_callback_ipc(
     method: &str,
     session_id: &str,
     body: serde_json::Value,
-) -> bool {
-    if !gateway_callback_ipc_enabled() {
-        return false;
-    }
-    let frame = serde_json::json!({
-        "kind": "gateway.callback",
-        "method": method,
-        "payload": {
-            "session_id": session_id,
-            "body": body,
-        },
-    });
+) {
+    let frame = GatewayCallbackFrame::new(method, session_id, body);
     let encoded = match serde_json::to_string(&frame) {
         Ok(encoded) => encoded,
         Err(error) => {
             warn!(method, session_id, error = %error, "failed to encode gateway callback IPC frame");
-            return true;
+            return;
         }
     };
     let mut stdout = std::io::stdout().lock();
     if let Err(error) = stdout.write_all(encoded.as_bytes()) {
         warn!(method, session_id, error = %error, "failed to write gateway callback IPC frame");
-        return true;
+        return;
     }
     if let Err(error) = stdout.write_all(b"\n").and_then(|_| stdout.flush()) {
         warn!(method, session_id, error = %error, "failed to flush gateway callback IPC frame");
     }
-    true
-}
-
-pub(crate) fn gateway_callback_ipc_enabled() -> bool {
-    std::env::var("TURA_GATEWAY_CALLBACK_TRANSPORT")
-        .ok()
-        .is_some_and(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "ipc" | "router-ipc" | "stdout"
-            )
-        })
 }
 
 pub(super) fn gateway_callback_session_id(session_id: &str) -> String {
@@ -256,7 +219,6 @@ pub(super) fn gateway_callback_session_id(session_id: &str) -> String {
 
 fn planning_child_depth_from_env() -> usize {
     std::env::var("TURA_PLANNING_DEPTH")
-        .or_else(|_| std::env::var("TURA_EXECUTE_TOOLS_DEPTH"))
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0)
@@ -277,23 +239,6 @@ mod tests {
             runtime_message_id("runtime-123"),
             runtime_message_id("runtime-456")
         );
-    }
-
-    #[test]
-    fn gateway_callback_ipc_enabled_accepts_known_transports() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        clear_gateway_env();
-
-        assert!(!gateway_callback_ipc_enabled());
-
-        std::env::set_var("TURA_GATEWAY_CALLBACK_TRANSPORT", "ipc");
-        assert!(gateway_callback_ipc_enabled());
-
-        std::env::set_var("TURA_GATEWAY_CALLBACK_TRANSPORT", "router-ipc");
-        assert!(gateway_callback_ipc_enabled());
-
-        std::env::set_var("TURA_GATEWAY_CALLBACK_TRANSPORT", "http");
-        assert!(!gateway_callback_ipc_enabled());
     }
 
     #[test]
@@ -319,15 +264,14 @@ mod tests {
             "child-session"
         );
 
-        std::env::remove_var("TURA_PLANNING_DEPTH");
-        std::env::set_var("TURA_EXECUTE_TOOLS_DEPTH", "2");
+        std::env::set_var("TURA_PLANNING_DEPTH", "2");
         std::env::set_var("TURA_PARENT_SESSION_ID", "execute-parent");
         assert_eq!(
             gateway_callback_session_id("child-session"),
             "execute-parent"
         );
 
-        std::env::set_var("TURA_EXECUTE_TOOLS_DEPTH", "not-a-number");
+        std::env::set_var("TURA_PLANNING_DEPTH", "not-a-number");
         assert_eq!(
             gateway_callback_session_id("child-session"),
             "child-session"
@@ -351,27 +295,24 @@ mod tests {
     }
 
     #[test]
-    fn publish_gateway_agent_message_requires_ipc_transport_when_callbacks_enabled() {
+    fn publish_gateway_agent_message_uses_the_worker_callback_contract() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_gateway_env();
 
-        let error = publish_gateway_agent_message(
+        let result = publish_gateway_agent_message(
             "session-1",
             "runtime-42",
             "visible reply".to_string(),
             "new learning".to_string(),
-        )
-        .expect_err("gateway callbacks require router IPC");
-        assert!(error.contains("IPC transport is not enabled"));
+        );
+        assert_eq!(result, Ok(()));
     }
 
     fn clear_gateway_env() {
         for key in [
             "TURA_PARENT_SESSION_ID",
             "TURA_PLANNING_DEPTH",
-            "TURA_EXECUTE_TOOLS_DEPTH",
             "TURA_GATEWAY_CALLBACKS",
-            "TURA_GATEWAY_CALLBACK_TRANSPORT",
             "TURA_CLI_LIVE_JSONL",
         ] {
             std::env::remove_var(key);

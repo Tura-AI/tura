@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use gateway::session_db_client::SessionDbClient;
 use serde_json::json;
-use session_log::{SessionLogCommand, SessionLogResponse, SessionLogStore};
+use session_log::SessionLogStore;
+use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
@@ -107,16 +108,12 @@ fn gateway_session_db_client_rejects_mutating_write_while_service_is_down() -> R
     let client = SessionDbClient::discover()?;
     let session_id = format!("gateway-offline-queue-{}", uuid::Uuid::new_v4());
     let write_error = client
-        .call(SessionLogCommand::UpsertSession(
-            session_log::UpsertSessionRequest {
-                session: session_payload(&session_id, &workspace, 1),
-                parent_id: None,
-                messages: vec![message_payload(&session_id, "offline-m-1", "user", 1)],
-                todos: vec![
-                    json!({ "id": "offline-todo", "content": "queued while owner is down" }),
-                ],
-            },
-        ))
+        .call(SessionLogCommand::UpsertSession(UpsertSessionRequest {
+            session: session_payload(&session_id, &workspace, 1),
+            parent_id: None,
+            messages: vec![message_payload(&session_id, "offline-m-1", "user", 1)],
+            todos: vec![json!({ "id": "offline-todo", "content": "queued while owner is down" })],
+        }))
         .expect_err("gateway session_db client must reject write commands");
     assert!(
         write_error.to_string().contains("read-only"),
@@ -320,14 +317,12 @@ fn upsert_session_direct(
     messages: Vec<serde_json::Value>,
     todos: Vec<serde_json::Value>,
 ) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-        session_log::UpsertSessionRequest {
-            session,
-            parent_id,
-            messages,
-            todos,
-        },
-    ))? {
+    match session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
+        session,
+        parent_id,
+        messages,
+        todos,
+    }))? {
         SessionLogResponse::Ok => Ok(()),
         SessionLogResponse::Error { error } => Err(anyhow!(error)),
         other => Err(anyhow!("unexpected session_db response: {other:?}")),
@@ -429,9 +424,9 @@ impl ServiceThread {
             }
             std::thread::sleep(Duration::from_millis(25));
         }
-        return Err(anyhow!(
+        Err(anyhow!(
             "session_db service did not become reachable within 10000ms"
-        ));
+        ))
     }
 }
 

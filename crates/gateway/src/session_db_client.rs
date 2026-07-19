@@ -4,7 +4,7 @@
 //! responsible for session DB writes.
 
 use anyhow::{anyhow, Result};
-use session_log::{
+use session_log_contract::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionLogCommand,
     SessionLogResponse, SessionRecord, SessionSnapshot, SessionSummary, WorkspaceSummary,
 };
@@ -163,7 +163,7 @@ mod tests {
         is_read_command, records_response, session_response, sessions_response, workspaces_response,
     };
     use serde_json::json;
-    use session_log::{
+    use session_log_contract::{
         CommandCheckpoint, DeleteSessionRequest, MarkSessionInterruptedRequest, Page,
         SessionLogCommand, SessionLogResponse, SessionSnapshot, WorkspaceSummary,
     };

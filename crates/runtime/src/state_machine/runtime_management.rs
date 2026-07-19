@@ -1,5 +1,9 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+pub use lifecycle::{RuntimeCallResultStatus, RuntimeState};
 
 use super::agent_management::{AgentId, ProviderConfig};
 use super::session_management::{ContextTokenStats, SessionId};
@@ -100,71 +104,84 @@ pub struct UsageReport {
     pub token_per_second: f64,
 }
 
-/// Final result of a runtime call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RuntimeCallResultStatus {
-    Pending,
-    Streaming,
-    Succeeded,
-    Failed,
-    TimedOut,
-    Cancelled,
-}
-
-/// Runtime state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RuntimeState {
-    Created,
-    Dispatching,
-    WaitingFirstToken,
-    Streaming,
-    Finished,
-    Failed,
-}
-
-impl RuntimeState {
-    /// Returns true if transitioning from `self` to `next` is allowed.
-    pub fn can_transition_to(self, next: RuntimeState) -> bool {
-        use RuntimeState::*;
-
-        match (self, next) {
-            (Created, Dispatching | Failed) => true,
-            (Dispatching, WaitingFirstToken | Failed) => true,
-            (WaitingFirstToken, Streaming | Finished | Failed) => true,
-            (Streaming, Finished | Failed) => true,
-            (Finished | Failed, _) => false,
-            _ if self == next => true,
-            _ => false,
-        }
-    }
-}
-
 /// Runtime-owned session sync status for one provider call.
 ///
 /// Gateway uses this payload to decide whether a callback belongs in the live
 /// overlay or should trigger one session DB refresh. The decision stays tied to
 /// the runtime state machine instead of individual tool/message status fields.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSessionSyncStatus {
     pub runtime_id: RuntimeId,
     pub state: RuntimeState,
-    pub call_result_status: RuntimeCallResultStatus,
-    pub live: bool,
-    pub session_db_refresh_required: bool,
 }
 
 impl RuntimeSessionSyncStatus {
+    pub fn new(runtime_id: RuntimeId, state: RuntimeState) -> Self {
+        Self { runtime_id, state }
+    }
+
+    pub fn call_result_status(&self) -> RuntimeCallResultStatus {
+        self.state.call_result_status()
+    }
+
     pub fn live_overlay_active(&self) -> bool {
-        self.live && !self.session_db_refresh_required
+        self.state.is_live()
     }
 
     pub fn should_refresh_session_db(&self) -> bool {
-        self.session_db_refresh_required || !self.live
+        !self.live_overlay_active()
+    }
+}
+
+impl Serialize for RuntimeSessionSyncStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut wire = serializer.serialize_struct("RuntimeSessionSyncStatus", 5)?;
+        wire.serialize_field("runtime_id", &self.runtime_id)?;
+        wire.serialize_field("state", &self.state)?;
+        wire.serialize_field("call_result_status", &self.call_result_status())?;
+        wire.serialize_field("live", &self.live_overlay_active())?;
+        wire.serialize_field(
+            "session_db_refresh_required",
+            &self.should_refresh_session_db(),
+        )?;
+        wire.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for RuntimeSessionSyncStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            runtime_id: RuntimeId,
+            state: RuntimeState,
+            call_result_status: RuntimeCallResultStatus,
+            live: bool,
+            session_db_refresh_required: bool,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let status = Self::new(wire.runtime_id, wire.state);
+        if wire.call_result_status != status.call_result_status()
+            || wire.live != status.live_overlay_active()
+            || wire.session_db_refresh_required != status.should_refresh_session_db()
+        {
+            return Err(D::Error::custom(
+                "runtime session sync projection contradicts runtime state",
+            ));
+        }
+        Ok(status)
     }
 }
 
 /// Full runtime record for one LLM call.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeManagement {
     /// Runtime identifier.
     pub runtime_id: RuntimeId,
@@ -176,8 +193,6 @@ pub struct RuntimeManagement {
     pub first_token_at: Option<UtcDateTimeMs>,
     /// Time the full callback finished.
     pub call_finished_at: Option<UtcDateTimeMs>,
-    /// Final provider callback result status.
-    pub call_result_status: RuntimeCallResultStatus,
     /// If this runtime is a fallback, reference the failed runtime identifier.
     pub fallback_from_id: Option<RuntimeId>,
     /// Direct session identifier.
@@ -193,22 +208,117 @@ pub struct RuntimeManagement {
     /// Hash for the reasoning field.
     pub reasoning_hash: Option<ReasoningHash>,
     /// Full request payload sent to the provider for this runtime call.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<serde_json::Value>,
     /// Full provider response payload received for this runtime call.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<serde_json::Value>,
     /// Assistant text output.
     pub text: OutputText,
     /// Tool call reports.
     pub tool_call: Vec<ToolCallRecord>,
     /// Latest provider-reported input token count for this runtime.
-    #[serde(default)]
     pub context_tokens: ContextTokenStats,
     /// Usage and billing report.
     pub usage: Option<UsageReport>,
     /// Current runtime state.
     pub state: RuntimeState,
+}
+
+impl Serialize for RuntimeManagement {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let field_count =
+            18 + usize::from(self.input.is_some()) + usize::from(self.output.is_some());
+        let mut wire = serializer.serialize_struct("RuntimeManagement", field_count)?;
+        wire.serialize_field("runtime_id", &self.runtime_id)?;
+        wire.serialize_field("created_at", &self.created_at)?;
+        wire.serialize_field("called_at", &self.called_at)?;
+        wire.serialize_field("first_token_at", &self.first_token_at)?;
+        wire.serialize_field("call_finished_at", &self.call_finished_at)?;
+        wire.serialize_field("call_result_status", &self.call_result_status())?;
+        wire.serialize_field("fallback_from_id", &self.fallback_from_id)?;
+        wire.serialize_field("session_id", &self.session_id)?;
+        wire.serialize_field("agent_id", &self.agent_id)?;
+        wire.serialize_field("provider", &self.provider)?;
+        wire.serialize_field("error", &self.error)?;
+        wire.serialize_field("reasoning", &self.reasoning)?;
+        wire.serialize_field("reasoning_hash", &self.reasoning_hash)?;
+        if let Some(input) = &self.input {
+            wire.serialize_field("input", input)?;
+        }
+        if let Some(output) = &self.output {
+            wire.serialize_field("output", output)?;
+        }
+        wire.serialize_field("text", &self.text)?;
+        wire.serialize_field("tool_call", &self.tool_call)?;
+        wire.serialize_field("context_tokens", &self.context_tokens)?;
+        wire.serialize_field("usage", &self.usage)?;
+        wire.serialize_field("state", &self.state)?;
+        wire.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for RuntimeManagement {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            runtime_id: RuntimeId,
+            created_at: UtcDateTimeMs,
+            called_at: Option<UtcDateTimeMs>,
+            first_token_at: Option<UtcDateTimeMs>,
+            call_finished_at: Option<UtcDateTimeMs>,
+            call_result_status: RuntimeCallResultStatus,
+            fallback_from_id: Option<RuntimeId>,
+            session_id: SessionId,
+            agent_id: AgentId,
+            provider: RuntimeProviderConfig,
+            error: Option<RuntimeError>,
+            reasoning: Option<ReasoningText>,
+            reasoning_hash: Option<ReasoningHash>,
+            #[serde(default)]
+            input: Option<serde_json::Value>,
+            #[serde(default)]
+            output: Option<serde_json::Value>,
+            text: OutputText,
+            tool_call: Vec<ToolCallRecord>,
+            #[serde(default)]
+            context_tokens: ContextTokenStats,
+            usage: Option<UsageReport>,
+            state: RuntimeState,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        if wire.call_result_status != wire.state.call_result_status() {
+            return Err(D::Error::custom(
+                "runtime call result projection contradicts runtime state",
+            ));
+        }
+        Ok(Self {
+            runtime_id: wire.runtime_id,
+            created_at: wire.created_at,
+            called_at: wire.called_at,
+            first_token_at: wire.first_token_at,
+            call_finished_at: wire.call_finished_at,
+            fallback_from_id: wire.fallback_from_id,
+            session_id: wire.session_id,
+            agent_id: wire.agent_id,
+            provider: wire.provider,
+            error: wire.error,
+            reasoning: wire.reasoning,
+            reasoning_hash: wire.reasoning_hash,
+            input: wire.input,
+            output: wire.output,
+            text: wire.text,
+            tool_call: wire.tool_call,
+            context_tokens: wire.context_tokens,
+            usage: wire.usage,
+            state: wire.state,
+        })
+    }
 }
 
 impl RuntimeManagement {
@@ -226,7 +336,6 @@ impl RuntimeManagement {
             called_at: None,
             first_token_at: None,
             call_finished_at: None,
-            call_result_status: RuntimeCallResultStatus::Pending,
             fallback_from_id: None,
             session_id,
             agent_id,
@@ -273,7 +382,6 @@ impl RuntimeManagement {
     pub fn mark_first_token(&mut self, first_token_at: UtcDateTimeMs) -> Result<(), String> {
         self.transition(RuntimeState::Streaming)?;
         self.first_token_at = Some(first_token_at);
-        self.call_result_status = RuntimeCallResultStatus::Streaming;
         Ok(())
     }
 
@@ -300,16 +408,7 @@ impl RuntimeManagement {
     /// True while gateway should keep callback payloads in the active live
     /// overlay for this runtime call.
     pub fn live_overlay_active(&self) -> bool {
-        matches!(
-            self.state,
-            RuntimeState::Created
-                | RuntimeState::Dispatching
-                | RuntimeState::WaitingFirstToken
-                | RuntimeState::Streaming
-        ) && matches!(
-            self.call_result_status,
-            RuntimeCallResultStatus::Pending | RuntimeCallResultStatus::Streaming
-        )
+        self.state.is_live()
     }
 
     /// True once gateway should drop this runtime's live overlay and refresh
@@ -319,13 +418,7 @@ impl RuntimeManagement {
     }
 
     pub fn session_sync_status(&self) -> RuntimeSessionSyncStatus {
-        RuntimeSessionSyncStatus {
-            runtime_id: self.runtime_id.clone(),
-            state: self.state,
-            call_result_status: self.call_result_status,
-            live: self.live_overlay_active(),
-            session_db_refresh_required: self.session_db_refresh_required(),
-        }
+        RuntimeSessionSyncStatus::new(self.runtime_id.clone(), self.state)
     }
 
     /// Runtime-owned assistant message timestamps shared by gateway callbacks
@@ -347,7 +440,6 @@ impl RuntimeManagement {
     ) -> Result<(), String> {
         self.transition(RuntimeState::Finished)?;
         self.call_finished_at = Some(finished_at);
-        self.call_result_status = RuntimeCallResultStatus::Succeeded;
         self.usage = usage;
         Ok(())
     }
@@ -357,15 +449,26 @@ impl RuntimeManagement {
         &mut self,
         finished_at: UtcDateTimeMs,
         error: RuntimeError,
-        status: RuntimeCallResultStatus,
+        terminal_state: RuntimeState,
         usage: Option<UsageReport>,
     ) -> Result<(), String> {
-        self.transition(RuntimeState::Failed)?;
+        if !matches!(
+            terminal_state,
+            RuntimeState::Failed | RuntimeState::TimedOut | RuntimeState::Cancelled
+        ) {
+            return Err(format!(
+                "runtime failure requires a failure terminal state, got {terminal_state:?}"
+            ));
+        }
+        self.transition(terminal_state)?;
         self.call_finished_at = Some(finished_at);
-        self.call_result_status = status;
         self.error = Some(error);
         self.usage = usage;
         Ok(())
+    }
+
+    pub fn call_result_status(&self) -> RuntimeCallResultStatus {
+        self.state.call_result_status()
     }
 }
 
@@ -373,7 +476,7 @@ impl RuntimeManagement {
 mod tests {
     use super::{
         RuntimeCallResultStatus, RuntimeError, RuntimeManagement, RuntimeProviderConfig,
-        RuntimeState, UsageReport,
+        RuntimeSessionSyncStatus, RuntimeState, UsageReport,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use chrono::{Duration, Utc};
@@ -419,18 +522,26 @@ mod tests {
             Streaming,
             Finished,
             Failed,
+            TimedOut,
+            Cancelled,
         ];
         for from in states {
             for to in states {
                 let expected = matches!(
                     (from, to),
-                    (Created, Created | Dispatching | Failed)
-                        | (Dispatching, Dispatching | WaitingFirstToken | Failed)
-                        | (
-                            WaitingFirstToken,
-                            WaitingFirstToken | Streaming | Finished | Failed
-                        )
-                        | (Streaming, Streaming | Finished | Failed)
+                    (
+                        Created,
+                        Created | Dispatching | Failed | TimedOut | Cancelled
+                    ) | (
+                        Dispatching,
+                        Dispatching | WaitingFirstToken | Failed | TimedOut | Cancelled
+                    ) | (
+                        WaitingFirstToken,
+                        WaitingFirstToken | Streaming | Finished | Failed | TimedOut | Cancelled
+                    ) | (
+                        Streaming,
+                        Streaming | Finished | Failed | TimedOut | Cancelled
+                    )
                 );
                 assert_eq!(
                     from.can_transition_to(to),
@@ -464,7 +575,7 @@ mod tests {
         assert_eq!(runtime.state, RuntimeState::Streaming);
         assert_eq!(runtime.first_token_at, Some(first_token_at));
         assert_eq!(
-            runtime.call_result_status,
+            runtime.call_result_status(),
             RuntimeCallResultStatus::Streaming
         );
     }
@@ -484,7 +595,7 @@ mod tests {
             .expect("mark waiting first token");
         let waiting_status = runtime.session_sync_status();
         assert!(waiting_status.live_overlay_active());
-        assert!(!waiting_status.session_db_refresh_required);
+        assert!(!waiting_status.should_refresh_session_db());
 
         let first_token_at = called_at + Duration::milliseconds(25);
         runtime
@@ -493,7 +604,7 @@ mod tests {
         let streaming_status = runtime.session_sync_status();
         assert!(streaming_status.live_overlay_active());
         assert_eq!(
-            streaming_status.call_result_status,
+            streaming_status.call_result_status(),
             RuntimeCallResultStatus::Streaming
         );
 
@@ -506,8 +617,66 @@ mod tests {
         assert!(finished_status.should_refresh_session_db());
         assert_eq!(finished_status.state, RuntimeState::Finished);
         assert_eq!(
-            finished_status.call_result_status,
+            finished_status.call_result_status(),
             RuntimeCallResultStatus::Succeeded
+        );
+    }
+
+    #[test]
+    fn runtime_session_sync_status_rejects_contradictory_wire_projection() {
+        let contradictory = serde_json::json!({
+            "runtime_id": "runtime-contradictory",
+            "state": "Finished",
+            "call_result_status": "Streaming",
+            "live": true,
+            "session_db_refresh_required": false
+        });
+
+        assert!(serde_json::from_value::<RuntimeSessionSyncStatus>(contradictory).is_err());
+    }
+
+    #[test]
+    fn runtime_management_rejects_contradictory_wire_projection() {
+        let mut contradictory = serde_json::to_value(runtime()).expect("serialize runtime");
+        contradictory["state"] = serde_json::json!("Finished");
+        contradictory["call_result_status"] = serde_json::json!("Streaming");
+
+        assert!(serde_json::from_value::<RuntimeManagement>(contradictory).is_err());
+    }
+
+    #[test]
+    fn runtime_wire_projection_preserves_existing_json_shape() {
+        let mut runtime = runtime();
+        runtime
+            .mark_called(runtime.created_at)
+            .expect("mark runtime called");
+        runtime
+            .mark_waiting_first_token()
+            .expect("mark waiting first token");
+        runtime
+            .mark_first_token(runtime.created_at)
+            .expect("mark first token");
+
+        let sync = serde_json::to_value(runtime.session_sync_status()).expect("serialize sync");
+        assert_eq!(
+            sync,
+            serde_json::json!({
+                "runtime_id": "runtime-test",
+                "state": "Streaming",
+                "call_result_status": "Streaming",
+                "live": true,
+                "session_db_refresh_required": false
+            })
+        );
+
+        let encoded = serde_json::to_value(&runtime).expect("serialize runtime");
+        assert_eq!(encoded["state"], "Streaming");
+        assert_eq!(encoded["call_result_status"], "Streaming");
+        assert!(encoded.get("input").is_none());
+        assert!(encoded.get("output").is_none());
+        assert_eq!(
+            serde_json::from_value::<RuntimeManagement>(encoded).expect("round trip runtime"),
+            runtime
         );
     }
 
@@ -599,7 +768,7 @@ mod tests {
             .expect("Streaming -> Finished should succeed");
         assert_eq!(runtime.state, RuntimeState::Finished);
         assert_eq!(
-            runtime.call_result_status,
+            runtime.call_result_status(),
             RuntimeCallResultStatus::Succeeded
         );
         assert_eq!(runtime.usage, Some(usage));
@@ -642,13 +811,13 @@ mod tests {
             .finish_failure(
                 runtime.created_at,
                 error.clone(),
-                RuntimeCallResultStatus::TimedOut,
+                RuntimeState::TimedOut,
                 Some(usage.clone()),
             )
-            .expect("Created -> Failed is the allowed failure shortcut");
-        assert_eq!(runtime.state, RuntimeState::Failed);
+            .expect("Created -> TimedOut is the allowed failure shortcut");
+        assert_eq!(runtime.state, RuntimeState::TimedOut);
         assert_eq!(
-            runtime.call_result_status,
+            runtime.call_result_status(),
             RuntimeCallResultStatus::TimedOut
         );
         assert_eq!(runtime.error, Some(error));
@@ -656,7 +825,34 @@ mod tests {
 
         let terminal_error = runtime
             .mark_called(runtime.created_at)
-            .expect_err("Failed should be terminal");
-        assert!(terminal_error.contains("Failed -> Dispatching"));
+            .expect_err("TimedOut should be terminal");
+        assert!(terminal_error.contains("TimedOut -> Dispatching"));
+    }
+
+    #[test]
+    fn runtime_cancelled_terminal_state_drives_status_and_wire_projection() {
+        let mut runtime = runtime();
+        let error = RuntimeError {
+            error_code: Some("COMMAND_RUN_CANCELLED".to_string()),
+            error_text: Some("command run cancelled".to_string()),
+            retry_allowed: false,
+            fallback_allowed: false,
+            fallback_to_id: None,
+        };
+
+        runtime
+            .finish_failure(runtime.created_at, error, RuntimeState::Cancelled, None)
+            .expect("Created -> Cancelled should be allowed");
+
+        assert_eq!(runtime.state, RuntimeState::Cancelled);
+        assert_eq!(
+            runtime.call_result_status(),
+            RuntimeCallResultStatus::Cancelled
+        );
+        assert!(!runtime.live_overlay_active());
+        assert!(runtime.session_db_refresh_required());
+        let encoded = serde_json::to_value(&runtime).expect("serialize cancelled runtime");
+        assert_eq!(encoded["state"], "Cancelled");
+        assert_eq!(encoded["call_result_status"], "Cancelled");
     }
 }

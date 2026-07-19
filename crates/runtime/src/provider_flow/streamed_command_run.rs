@@ -413,7 +413,6 @@ fn gateway_callback_session_id(session_id: &str) -> String {
 
 fn planning_child_depth_from_env() -> usize {
     std::env::var("TURA_PLANNING_DEPTH")
-        .or_else(|_| std::env::var("TURA_EXECUTE_TOOLS_DEPTH"))
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0)

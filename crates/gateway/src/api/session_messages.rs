@@ -1098,13 +1098,10 @@ mod tests {
                     metadata: None,
                 }),
                 runtime_status: Some(
-                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
-                        runtime_id: "runtime-usage-event".to_string(),
-                        state: runtime::state_machine::runtime_management::RuntimeState::Finished,
-                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Succeeded,
-                        live: false,
-                        session_db_refresh_required: true,
-                    },
+                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus::new(
+                        "runtime-usage-event".to_string(),
+                        runtime::state_machine::runtime_management::RuntimeState::Finished,
+                    ),
                 ),
                 context_tokens: None,
                 usage: Some(usage),
@@ -1169,13 +1166,10 @@ mod tests {
                 runtime_id: Some("runtime-live-metrics".to_string()),
                 tool_call: None,
                 runtime_status: Some(
-                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
-                        runtime_id: "runtime-live-metrics".to_string(),
-                        state: runtime::state_machine::runtime_management::RuntimeState::Streaming,
-                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Streaming,
-                        live: true,
-                        session_db_refresh_required: false,
-                    },
+                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus::new(
+                        "runtime-live-metrics".to_string(),
+                        runtime::state_machine::runtime_management::RuntimeState::Streaming,
+                    ),
                 ),
                 context_tokens: Some(crate::contracts::SessionContextTokens {
                     input: 64_000,
@@ -1356,13 +1350,10 @@ mod tests {
                     metadata: None,
                 }),
                 runtime_status: Some(
-                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
-                        runtime_id: "runtime-command-update".to_string(),
-                        state: runtime::state_machine::runtime_management::RuntimeState::Streaming,
-                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Streaming,
-                        live: true,
-                        session_db_refresh_required: false,
-                    },
+                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus::new(
+                        "runtime-command-update".to_string(),
+                        runtime::state_machine::runtime_management::RuntimeState::Streaming,
+                    ),
                 ),
                 context_tokens: None,
                 usage: None,

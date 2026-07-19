@@ -1,7 +1,8 @@
-use session_log::{
-    file_queue, CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
+use session_log::{file_queue, SessionLogStore};
+use session_log_contract::{
+    CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
     ListSessionRecordsRequest, ListSessionsRequest, MarkSessionInterruptedRequest,
-    SessionLogCommand, SessionLogStore, UpsertSessionRequest,
+    SessionLogCommand, UpsertSessionRequest,
 };
 use std::path::Path;
 use std::process::Command;

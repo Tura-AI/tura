@@ -170,7 +170,9 @@ async fn gateway_prompt_business_flow_reports_runtime_stop_without_mano_failure(
         &home,
         vec![RouterReply::RawLine(
             json!({
+                "request_id": "runtime-stop-error",
                 "ok": false,
+                "payload": null,
                 "error": "router execution enqueue failed: runtime worker invocation failed: one-shot worker cancelled"
             })
             .to_string(),

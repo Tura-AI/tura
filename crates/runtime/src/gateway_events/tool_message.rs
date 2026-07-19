@@ -175,7 +175,7 @@ pub(crate) fn publish_runtime_usage_record(
         "target_session_id": target_session_id,
         "provider": runtime.provider,
         "usage": runtime.usage,
-        "status": format!("{:?}", runtime.call_result_status),
+        "status": format!("{:?}", runtime.call_result_status()),
     });
     let state = serde_json::json!({
         "status": "completed",

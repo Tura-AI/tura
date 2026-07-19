@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 
-use crate::{path::default_db_dir, SessionLogCommand, SessionLogStore};
+use crate::{path::default_db_dir, SessionLogStore};
+use session_log_contract::SessionLogCommand;
 
 const QUEUE_DIR: &str = "message_queue";
 const PENDING_DIR: &str = "pending";
@@ -197,12 +198,12 @@ fn queue_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{is_async_write, queue_item_name};
-    use crate::{
+    use serde_json::json;
+    use session_log_contract::{
         CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
         ListSessionRecordsRequest, ListSessionsRequest, MarkSessionInterruptedRequest,
         SessionLogCommand, UpsertSessionRequest,
     };
-    use serde_json::json;
 
     fn upsert() -> UpsertSessionRequest {
         UpsertSessionRequest {

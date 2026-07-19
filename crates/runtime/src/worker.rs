@@ -13,6 +13,7 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
+use runtime_contract::{WorkerEnvelope, WORKER_KIND_CALL, WORKER_KIND_HEALTH_CHECK};
 use serde_json::{json, Value};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
@@ -39,13 +40,10 @@ pub fn run() -> std::io::Result<()> {
             continue;
         }
 
-        let parsed = serde_json::from_str::<Value>(trimmed);
+        let parsed = serde_json::from_str::<WorkerEnvelope>(trimmed);
         let is_call = parsed
             .as_ref()
-            .ok()
-            .and_then(|envelope| envelope.get("kind"))
-            .and_then(Value::as_str)
-            == Some("call");
+            .is_ok_and(|envelope| envelope.kind == WORKER_KIND_CALL);
         let response = match parsed {
             Ok(envelope) => handle_envelope(&envelope),
             Err(error) => json!({ "ok": false, "error": format!("invalid envelope: {error}") }),
@@ -125,16 +123,15 @@ fn no_op_manual_enabled_from_env() -> bool {
         .is_some_and(|value| env_flag(&value))
 }
 
-fn handle_envelope(envelope: &Value) -> Value {
-    match envelope.get("kind").and_then(Value::as_str) {
-        Some("health_check") => json!({
+fn handle_envelope(envelope: &WorkerEnvelope) -> Value {
+    match envelope.kind.as_str() {
+        WORKER_KIND_HEALTH_CHECK => json!({
             "ok": true,
             "role": "runtime_worker",
             "version": tura_path::instance_version(),
         }),
-        Some("call") => handle_call(envelope.get("payload").unwrap_or(&Value::Null)),
-        Some(other) => json!({ "ok": false, "error": format!("unsupported kind: {other}") }),
-        None => json!({ "ok": false, "error": "missing kind" }),
+        WORKER_KIND_CALL => handle_call(&envelope.payload),
+        other => json!({ "ok": false, "error": format!("unsupported kind: {other}") }),
     }
 }
 
@@ -326,7 +323,7 @@ mod tests {
 
     #[test]
     fn health_check_reports_role_and_version() {
-        let reply = handle_envelope(&json!({ "kind": "health_check" }));
+        let reply = handle_envelope(&WorkerEnvelope::health_check());
         assert_eq!(reply["ok"], true);
         assert_eq!(reply["role"], "runtime_worker");
         assert_eq!(reply["version"], tura_path::instance_version());
@@ -342,7 +339,10 @@ mod tests {
 
     #[test]
     fn unknown_kind_is_reported() {
-        let reply = handle_envelope(&json!({ "kind": "bogus" }));
+        let reply = handle_envelope(&WorkerEnvelope {
+            kind: "bogus".to_string(),
+            payload: Value::Null,
+        });
         assert_eq!(reply["ok"], false);
         assert!(reply["error"]
             .as_str()

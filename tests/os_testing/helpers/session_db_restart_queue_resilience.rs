@@ -9,9 +9,10 @@
 pub(crate) use anyhow::{anyhow, bail, Context, Result};
 pub(crate) use rusqlite::Connection;
 pub(crate) use serde_json::json;
-pub(crate) use session_log::{
-    file_queue, CommandCheckpoint, GetSessionRequest, ListSessionRecordsRequest,
-    ListSessionsRequest, SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
+pub(crate) use session_log::file_queue;
+pub(crate) use session_log_contract::{
+    CommandCheckpoint, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
+    SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
 };
 pub(crate) use std::{
     path::{Path, PathBuf},
@@ -296,7 +297,7 @@ pub(crate) fn assert_index_state_matches_workspace_state(
 
 pub(crate) fn get_session_snapshot(
     session_id: &str,
-) -> Result<Option<Box<session_log::SessionSnapshot>>> {
+) -> Result<Option<Box<session_log_contract::SessionSnapshot>>> {
     match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
         session_id: session_id.to_string(),
     }))? {

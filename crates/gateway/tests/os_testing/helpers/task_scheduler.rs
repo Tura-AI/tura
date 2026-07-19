@@ -10,9 +10,10 @@ pub(crate) use gateway::contracts::{
 pub(crate) use gateway::session::MessageRole;
 pub(crate) use gateway::{session_store, SessionStatus as StoreSessionStatus, SessionStore};
 pub(crate) use serde_json::json;
-pub(crate) use session_log::{SessionLogCommand, SessionLogStore};
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
+pub(crate) use session_log::SessionLogStore;
+pub(crate) use session_log_contract::{
+    SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
+};
 pub(crate) use std::path::Path as StdPath;
 pub(crate) use std::sync::Arc;
 pub(crate) use std::time::{Duration, Instant};
@@ -211,8 +212,8 @@ pub(crate) fn upsert_runtime_owned_scheduler_snapshot(
         .unwrap_or_else(|| panic!("session {session_id} should exist before runtime DB upsert"));
     info.directory = Some(workspace.to_string_lossy().to_string());
     info.message_count = store.get_messages(session_id).len();
-    let response = session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-        session_log::UpsertSessionRequest {
+    let response =
+        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
             session: serde_json::to_value(info)?,
             parent_id: None,
             messages: store
@@ -221,11 +222,10 @@ pub(crate) fn upsert_runtime_owned_scheduler_snapshot(
                 .map(serde_json::to_value)
                 .collect::<Result<Vec<_>, _>>()?,
             todos: store.get_todos(session_id),
-        },
-    ))?;
+        }))?;
     match response {
-        session_log::SessionLogResponse::Ok => Ok(()),
-        session_log::SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
+        SessionLogResponse::Ok => Ok(()),
+        SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
         other => anyhow::bail!("unexpected session_log upsert response: {other:?}"),
     }
 }
@@ -267,7 +267,6 @@ impl Drop for SchedulerEnvGuard {
 
 pub(crate) struct SchedulerServiceThread {
     handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
-    endpoint: session_log::ipc::ServiceEndpoint,
 }
 
 impl SchedulerServiceThread {
@@ -278,10 +277,8 @@ impl SchedulerServiceThread {
             Duration::from_secs(10),
             session_log::ipc::service_is_running,
         )?;
-        let endpoint = read_scheduler_service_endpoint()?;
         Ok(Self {
             handle: Some(handle),
-            endpoint,
         })
     }
 
@@ -293,8 +290,7 @@ impl SchedulerServiceThread {
         if self.handle.is_none() {
             return Ok(());
         }
-        let shutdown_error =
-            request_session_db_shutdown_with_timeout(timeout, Some(&self.endpoint.addr)).err();
+        let shutdown_error = request_session_db_shutdown_with_timeout(timeout).err();
         let handle = self
             .handle
             .take()
@@ -334,27 +330,14 @@ impl Drop for SchedulerServiceThread {
     }
 }
 
-fn request_session_db_shutdown_with_timeout(
-    timeout: Duration,
-    fallback_addr: Option<&str>,
-) -> anyhow::Result<()> {
+fn request_session_db_shutdown_with_timeout(timeout: Duration) -> anyhow::Result<()> {
     let (sender, receiver) = std::sync::mpsc::channel();
-    let fallback_addr = fallback_addr.map(ToString::to_string);
     std::thread::spawn(move || {
-        let result = session_log::ipc::call_service(&SessionLogCommand::Shutdown).or_else(|error| {
-            let Some(addr) = fallback_addr.as_deref() else {
-                return Err(error);
-            };
-            send_shutdown_to_addr(addr, timeout).map_err(|fallback_error| {
-                anyhow::anyhow!(
-                    "session_db shutdown via addr file failed: {error:#}; fallback addr {addr} failed: {fallback_error:#}"
-                )
-            })
-        });
+        let result = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
         let _ = sender.send(result);
     });
     match receiver.recv_timeout(timeout) {
-        Ok(Ok(session_log::SessionLogResponse::Ok)) => Ok(()),
+        Ok(Ok(SessionLogResponse::Ok)) => Ok(()),
         Ok(Ok(response)) => anyhow::bail!("unexpected session_db shutdown response: {response:?}"),
         Ok(Err(error)) => Err(error),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => anyhow::bail!(
@@ -365,38 +348,6 @@ fn request_session_db_shutdown_with_timeout(
             anyhow::bail!("session_db shutdown request waiter disconnected")
         }
     }
-}
-
-fn read_scheduler_service_endpoint() -> anyhow::Result<session_log::ipc::ServiceEndpoint> {
-    let path = session_log::ipc::service_addr_path();
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|error| anyhow::anyhow!("failed to read {}: {error}", path.display()))?;
-    serde_json::from_str(raw.trim()).map_err(|error| {
-        anyhow::anyhow!(
-            "failed to parse scheduler session_db endpoint {}: {error}",
-            path.display()
-        )
-    })
-}
-
-fn send_shutdown_to_addr(
-    addr: &str,
-    timeout: Duration,
-) -> anyhow::Result<session_log::SessionLogResponse> {
-    let mut stream = TcpStream::connect(addr)
-        .map_err(|error| anyhow::anyhow!("failed to connect to {addr}: {error}"))?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
-    let line = serde_json::to_string(&SessionLogCommand::Shutdown)?;
-    stream.write_all(line.as_bytes())?;
-    stream.write_all(b"\n")?;
-    stream.flush()?;
-
-    let mut response = String::new();
-    BufReader::new(stream).read_line(&mut response)?;
-    serde_json::from_str(response.trim()).map_err(|error| {
-        anyhow::anyhow!("invalid session_db shutdown response from {addr}: {error}")
-    })
 }
 
 pub(crate) fn wait_for_scheduler_condition(

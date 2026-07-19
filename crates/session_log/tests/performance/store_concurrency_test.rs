@@ -1,4 +1,5 @@
-use session_log::{ListSessionsRequest, SessionLogStore, UpsertSessionRequest};
+use session_log::SessionLogStore;
+use session_log_contract::{ListSessionsRequest, UpsertSessionRequest};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus};
 use std::thread::JoinHandle;

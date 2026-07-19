@@ -7,7 +7,7 @@
 //! or third-party services.
 
 use anyhow::{anyhow, bail, Result};
-use session_log::{
+use session_log_contract::{
     DeleteSessionRequest, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
     SessionLogCommand, SessionLogResponse,
 };
@@ -234,7 +234,7 @@ fn session_db_handles_concurrent_short_lived_clients_after_restart_with_workspac
         let session_id = env.session_id(&format!("concurrent-{index}"));
         handles.push(thread::spawn(move || -> Result<(String, String)> {
             barrier.wait();
-            let messages = vec![
+            let messages = [
                 format!("m-{index}-0"),
                 format!("m-{index}-1"),
                 format!("m-{index}-2"),
@@ -483,10 +483,7 @@ fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Re
     assert_pending_queue_empty(&env.home)?;
     assert_workspace_page(&workspace_a_key, 0, 500, expected_a, expected_a as usize)?;
     assert_workspace_page(&workspace_b_key, 0, 500, expected_b, expected_b as usize)?;
-    assert_workspace_summaries(&[
-        (workspace_a_key.clone(), expected_a),
-        (workspace_b_key.clone(), expected_b),
-    ])?;
+    assert_workspace_summaries(&[(workspace_a_key, expected_a), (workspace_b_key, expected_b)])?;
     for (session_id, _workspace, expected_records) in &expected_sessions {
         assert!(
             session_visible(session_id),

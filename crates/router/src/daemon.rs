@@ -2,7 +2,6 @@ use serde_json::json;
 use std::sync::{atomic::Ordering, Arc};
 
 use crate::app::build_state;
-use crate::ipc;
 use crate::ipc_handlers::{
     enqueue_turn_session_id, handle_ipc_request, handle_ipc_request_with_notifications,
 };
@@ -11,6 +10,7 @@ use crate::services::{
     recovery::recover_after_start, runtime_orphans::cleanup_orphan_runtime_workers,
 };
 use crate::shutdown::start_idle_shutdown_monitor;
+use router_contract::{IpcNotification, IpcRequest, IpcResponse, RouterEndpoint};
 
 pub(crate) async fn serve_stdio() -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -33,10 +33,10 @@ pub(crate) async fn serve_stdio() -> anyhow::Result<()> {
         let state = state.clone();
         let stdout = Arc::clone(&stdout);
         tokio::spawn(async move {
-            let response = match serde_json::from_str::<ipc::IpcRequest>(&trimmed) {
+            let response = match serde_json::from_str::<IpcRequest>(&trimmed) {
                 Ok(request) => handle_ipc_request(&state, request).await,
                 Err(error) => {
-                    ipc::IpcResponse::error("invalid", format!("invalid ipc request: {error}"))
+                    IpcResponse::error("invalid", format!("invalid ipc request: {error}"))
                 }
             };
             if let Ok(encoded) = serde_json::to_string(&response) {
@@ -61,12 +61,12 @@ fn publish_router_addr(addr: &std::net::SocketAddr) -> anyhow::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let pid = std::process::id();
-    let record = json!({
-        "addr": addr.to_string(),
-        "version": tura_path::instance_version(),
-        "pid": pid,
-        "process_start_time": current_process_start_time(pid),
-    });
+    let record = RouterEndpoint {
+        addr: addr.to_string(),
+        version: tura_path::instance_version(),
+        pid: Some(pid),
+        process_start_time: current_process_start_time(pid),
+    };
     let tmp = path.with_extension("addr.tmp");
     std::fs::write(&tmp, serde_json::to_string(&record)?)?;
     std::fs::rename(&tmp, &path)?;
@@ -136,11 +136,11 @@ async fn handle_socket_connection(
         if trimmed.is_empty() {
             continue;
         }
-        let parsed = match serde_json::from_str::<ipc::IpcRequest>(&trimmed) {
+        let parsed = match serde_json::from_str::<IpcRequest>(&trimmed) {
             Ok(request) => request,
             Err(error) => {
                 let response =
-                    ipc::IpcResponse::error("invalid", format!("invalid ipc request: {error}"));
+                    IpcResponse::error("invalid", format!("invalid ipc request: {error}"));
                 if let Ok(encoded) = serde_json::to_string(&response) {
                     let mut writer = write.lock().await;
                     let _ = writer.write_all(format!("{encoded}\n").as_bytes()).await;
@@ -160,7 +160,7 @@ async fn handle_socket_connection(
         let active_sessions_for_task = Arc::clone(&active_sessions);
         let handle = tokio::spawn(async move {
             let (notification_tx, mut notification_rx) =
-                tokio::sync::mpsc::unbounded_channel::<ipc::IpcNotification>();
+                tokio::sync::mpsc::unbounded_channel::<IpcNotification>();
             let notification_writer = {
                 let write = Arc::clone(&write_for_task);
                 tokio::spawn(async move {
@@ -213,7 +213,7 @@ async fn handle_socket_connection(
     Ok(())
 }
 
-fn should_abort_request_on_connection_close(request: &ipc::IpcRequest) -> bool {
+fn should_abort_request_on_connection_close(request: &IpcRequest) -> bool {
     request.method != "execution.command_run"
 }
 
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn command_run_requests_are_detached_from_runtime_socket_disconnect() {
-        let request = ipc::IpcRequest {
+        let request = IpcRequest {
             request_id: "command-run".to_string(),
             kind: "call".to_string(),
             method: "execution.command_run".to_string(),
@@ -298,7 +298,7 @@ mod tests {
         };
         assert!(!should_abort_request_on_connection_close(&request));
 
-        let request = ipc::IpcRequest {
+        let request = IpcRequest {
             method: "execution.enqueue_turn".to_string(),
             ..request
         };
@@ -325,7 +325,7 @@ mod tests {
         });
 
         let mut client = tokio::net::TcpStream::connect(addr).await?;
-        let request = ipc::IpcRequest {
+        let request = IpcRequest {
             request_id: "disconnect-command-run".to_string(),
             kind: "call".to_string(),
             method: "execution.command_run".to_string(),

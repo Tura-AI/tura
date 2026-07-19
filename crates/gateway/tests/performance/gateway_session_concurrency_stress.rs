@@ -13,11 +13,10 @@ use gateway::contracts::{
 };
 use gateway::session::MessageRole;
 use gateway::session_store;
-use runtime::state_machine::runtime_management::{
-    RuntimeCallResultStatus, RuntimeSessionSyncStatus, RuntimeState,
-};
+use runtime::state_machine::runtime_management::{RuntimeSessionSyncStatus, RuntimeState};
 use serde_json::{json, Value};
-use session_log::{SessionLogCommand, SessionLogStore};
+use session_log::SessionLogStore;
+use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -360,18 +359,17 @@ fn upsert_runtime_snapshot_for_test(
         .filter_map(|message| message.get("updated_at").and_then(Value::as_i64))
         .max()
         .unwrap_or(info.updated_at);
-    let response = session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-        session_log::UpsertSessionRequest {
+    let response =
+        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
             session: serde_json::to_value(info).context("session info json")?,
             parent_id: None,
             messages,
             todos: Vec::new(),
-        },
-    ))
-    .context("upsert runtime-owned stress snapshot")?;
+        }))
+        .context("upsert runtime-owned stress snapshot")?;
     match response {
-        session_log::SessionLogResponse::Ok => Ok(()),
-        session_log::SessionLogResponse::Error { error } => Err(anyhow!(error)),
+        SessionLogResponse::Ok => Ok(()),
+        SessionLogResponse::Error { error } => Err(anyhow!(error)),
         other => Err(anyhow!("unexpected session_log upsert response: {other:?}")),
     }
 }
@@ -428,13 +426,7 @@ console.log(workspace, task, record);\n\
 }
 
 fn finished_runtime_status(runtime_id: &str) -> RuntimeSessionSyncStatus {
-    RuntimeSessionSyncStatus {
-        runtime_id: runtime_id.to_string(),
-        state: RuntimeState::Finished,
-        call_result_status: RuntimeCallResultStatus::Succeeded,
-        live: false,
-        session_db_refresh_required: true,
-    }
+    RuntimeSessionSyncStatus::new(runtime_id.to_string(), RuntimeState::Finished)
 }
 
 async fn wait_until_async<F, Fut>(timeout: Duration, mut condition: F) -> Result<()>

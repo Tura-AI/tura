@@ -6,15 +6,14 @@ use super::helpers::{
 };
 use super::payload::mark_workspace_session_interrupted;
 use super::SessionLogStore;
-use crate::checkpoint::CommandCheckpoint;
 use crate::path::{normalize_workspace, workspace_session_log_db};
-use crate::protocol::{
-    DeleteSessionRequest, DeleteWorkspaceRequest, MarkSessionInterruptedRequest,
-    UpsertSessionRequest,
-};
 use crate::SessionState;
 use anyhow::{Context, Result};
 use rusqlite::{params, params_from_iter, OptionalExtension};
+use session_log_contract::{
+    CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, MarkSessionInterruptedRequest,
+    UpsertSessionRequest,
+};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};

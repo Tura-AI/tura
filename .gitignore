@@ -8,6 +8,7 @@
 .tura-router-debug/
 /tura_workspace/
 /workspace/
+/outreach/
 
 # Rust build output
 target/

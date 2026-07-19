@@ -32,9 +32,7 @@ use crate::provider_flow::errors::{
     provider_timeout_retry_wait, runtime_failure_allows_retry, runtime_failure_text,
 };
 use crate::state_machine::agent_management::{AgentManagement, AgentState};
-use crate::state_machine::runtime_management::{
-    RuntimeCallResultStatus, RuntimeId, RuntimeManagement,
-};
+use crate::state_machine::runtime_management::{RuntimeId, RuntimeManagement, RuntimeState};
 use crate::state_machine::session_management::{PlanStatus, SessionManagement, SessionState};
 use crate::turn_loop::finalization::create_dummy_runtime;
 use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
@@ -182,9 +180,7 @@ pub fn process_manas_internal(
         persist_session_checkpoint(session, "runtime");
         publish_runtime_usage_record(session, &runtime);
 
-        if runtime.call_result_status == RuntimeCallResultStatus::TimedOut
-            || runtime_failure_allows_retry(&runtime)
-        {
+        if runtime.state == RuntimeState::TimedOut || runtime_failure_allows_retry(&runtime) {
             let error_text = runtime_failure_text(&runtime)
                 .unwrap_or_else(|| "Provider runtime failed before producing output.".to_string());
             if let Some(wait_duration) = provider_timeout_retry_wait(provider_timeout_retries) {
@@ -222,7 +218,7 @@ pub fn process_manas_internal(
                     session_id = %session.session_id,
                     turn = turn,
                     runtime_id = %runtime.runtime_id,
-                    status = ?runtime.call_result_status,
+                    status = ?runtime.call_result_status(),
                     error = %error_text,
                     retry = provider_timeout_retries,
                     wait_ms = wait_duration.as_millis(),
@@ -253,7 +249,7 @@ pub fn process_manas_internal(
                 session_id = %session.session_id,
                 turn = turn,
                 runtime_id = %runtime.runtime_id,
-                status = ?runtime.call_result_status,
+                status = ?runtime.call_result_status(),
                 error = %error_text,
                 retries = provider_timeout_retries,
                 "provider runtime failed transiently after retries; publishing visible failure"
@@ -266,7 +262,7 @@ pub fn process_manas_internal(
             final_session_state = SessionState::Failed;
             break;
         }
-        if runtime.call_result_status == RuntimeCallResultStatus::Failed {
+        if runtime.state == RuntimeState::Failed {
             let error_text = runtime_failure_text(&runtime)
                 .unwrap_or_else(|| "Provider runtime failed before producing output.".to_string());
             warn!(

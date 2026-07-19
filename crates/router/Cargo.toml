@@ -26,6 +26,9 @@ anyhow.workspace = true
 agents = { workspace = true }
 personas = { workspace = true }
 session_log = { workspace = true }
+session_log_contract.workspace = true
+router_contract.workspace = true
+runtime_contract.workspace = true
 tura_path = { workspace = true }
 tools = { workspace = true }
 fs2.workspace = true
@@ -47,8 +50,8 @@ path = "tests/os_testing/worker_lifecycle_flow.rs"
 required-features = ["os-tests"]
 
 [[test]]
-name = "worker_oneshot_fallback_flow"
-path = "tests/os_testing/worker_oneshot_fallback_flow.rs"
+name = "worker_oneshot_flow"
+path = "tests/os_testing/worker_oneshot_flow.rs"
 required-features = ["os-tests"]
 
 [[test]]

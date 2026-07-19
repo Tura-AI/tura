@@ -20,9 +20,7 @@ use crate::provider_flow::request_options::{
 };
 use crate::provider_flow::usage::usage_report_from_metrics;
 use crate::runtime::types::RuntimeQueueItem;
-use crate::state_machine::runtime_management::{
-    RuntimeCallResultStatus, RuntimeManagement, RuntimeState,
-};
+use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeState};
 use crate::state_machine::session_management::SessionId;
 
 pub struct CallRuntimeInput {
@@ -267,7 +265,7 @@ async fn call_runtime_non_streaming(
                 finished_at,
                 "CALL_TIMED_OUT",
                 message,
-                RuntimeCallResultStatus::TimedOut,
+                RuntimeState::TimedOut,
             )?;
         }
         Ok(Ok(response)) => {
@@ -292,12 +290,7 @@ async fn call_runtime_non_streaming(
             runtime.set_output(serde_json::json!({
                 "error": e.to_string()
             }));
-            finish_provider_call_failure(
-                runtime,
-                finished_at,
-                &e,
-                RuntimeCallResultStatus::Failed,
-            )?;
+            finish_provider_call_failure(runtime, finished_at, &e, RuntimeState::Failed)?;
         }
     }
 
@@ -424,7 +417,7 @@ mod tests {
             crate::state_machine::runtime_management::RuntimeState::Failed
         );
         assert_eq!(
-            runtime.call_result_status,
+            runtime.call_result_status(),
             crate::state_machine::runtime_management::RuntimeCallResultStatus::Failed
         );
         let output = runtime.output.expect("failure output should be persisted");

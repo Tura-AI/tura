@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use session_log::CommandCheckpoint;
+use session_log_contract::CommandCheckpoint;
 
 use super::client::CheckpointClient;
 

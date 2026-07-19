@@ -44,7 +44,7 @@ fn runtime_state_checkpoint_payload(
     let mut payload = serde_json::json!({
         "event_type": event_type,
         "runtime_state": runtime.state,
-        "call_result_status": runtime.call_result_status,
+        "call_result_status": runtime.call_result_status(),
     });
     if event_includes_usage(event_type) {
         payload["usage"] = serde_json::to_value(&runtime.usage).unwrap_or(serde_json::Value::Null);
@@ -102,7 +102,7 @@ mod tests {
     use super::*;
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{
-        RuntimeCallResultStatus, RuntimeProviderConfig, RuntimeState, UsageReport,
+        RuntimeProviderConfig, RuntimeState, UsageReport,
     };
     use chrono::Utc;
 
@@ -125,7 +125,6 @@ mod tests {
     fn runtime_state_payload_uses_canonical_pascal_case_states_and_statuses() {
         let mut runtime = runtime_fixture();
         runtime.state = RuntimeState::Streaming;
-        runtime.call_result_status = RuntimeCallResultStatus::Streaming;
 
         let payload = runtime_state_checkpoint_payload(&runtime, "provider_call_started");
 
@@ -139,7 +138,6 @@ mod tests {
     fn terminal_runtime_state_payload_includes_usage_snapshot_or_null() {
         let mut runtime = runtime_fixture();
         runtime.state = RuntimeState::Finished;
-        runtime.call_result_status = RuntimeCallResultStatus::Succeeded;
         runtime.usage = Some(UsageReport {
             input_tokens: 10,
             output_tokens: 5,

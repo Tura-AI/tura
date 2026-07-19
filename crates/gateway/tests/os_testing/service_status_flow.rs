@@ -148,9 +148,12 @@ impl FakeRouterEndpoint {
                         if request_line.trim().is_empty() {
                             continue;
                         }
+                        let request: serde_json::Value = serde_json::from_str(request_line.trim())
+                            .context("decode fake router health request")?;
                         stream.write_all(
                             serde_json::json!({
                                 "ok": true,
+                                "request_id": request.get("request_id").cloned().unwrap_or(serde_json::Value::Null),
                                 "payload": {
                                     "pid": std::process::id(),
                                     "process_start_time": current_process_start_time(std::process::id()),

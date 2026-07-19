@@ -188,7 +188,9 @@ Runtime state is more detailed because it tracks a single provider call.
 | `waiting_first_token` | Provider request is accepted; no first token yet. |
 | `streaming` | First token arrived and output/tool calls may stream. |
 | `finished` | Runtime call succeeded. |
-| `failed` | Runtime call failed, timed out, or was cancelled. |
+| `failed` | Runtime call failed. |
+| `timed_out` | Runtime call exceeded its provider timeout. |
+| `cancelled` | Runtime call was cancelled. |
 
 | Runtime property | Role |
 | --- | --- |
@@ -197,7 +199,7 @@ Runtime state is more detailed because it tracks a single provider call.
 | `agent_id` | Agent used for this runtime call. |
 | `provider` | Captured provider/model config for reproducibility and diagnostics. |
 | `called_at`, `first_token_at`, `call_finished_at` | Timing milestones. |
-| `call_result_status` | `pending`, `streaming`, `succeeded`, `failed`, `timed_out`, or `cancelled`. |
+| `call_result_status` | Compatibility projection derived from runtime state: `pending`, `streaming`, `succeeded`, `failed`, `timed_out`, or `cancelled`. |
 | `fallback_from_id` | Links a fallback runtime to the failed runtime it replaced. |
 | `input` / `output` | Exact provider request and response payloads when retained. |
 | `text` | Assistant output text accumulated for this runtime call. |
@@ -208,8 +210,9 @@ Runtime state is more detailed because it tracks a single provider call.
 The runtime also publishes a session sync status with `runtime_id`, runtime
 state, call result status, `live`, and `session_db_refresh_required`. While the
 runtime is active, the GUI/TUI can show live overlay updates. Once the runtime is
-finished or failed, the frontend should refresh canonical session history from
-the session DB.
+finished, failed, timed out, or cancelled, the frontend should refresh canonical
+session history from the session DB. Call result status, `live`, and the refresh
+flag are projections of runtime state rather than independently writable state.
 
 ## Interruption and liveness
 

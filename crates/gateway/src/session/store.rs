@@ -19,7 +19,7 @@ use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
 use runtime::state_machine::session_management::{
     PlanStatus, PollInterval, SessionState, StartCondition, TaskStep,
 };
-use session_log::{SessionRecord, SessionSnapshot, UpsertSessionRequest};
+use session_log_contract::{SessionRecord, SessionSnapshot, UpsertSessionRequest};
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use std::path::PathBuf;

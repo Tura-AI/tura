@@ -25,7 +25,7 @@ pub(crate) fn accumulate_session_from_runtime(
                 "type": "runtime_usage",
                 "runtime_id": runtime.runtime_id,
                 "usage": usage,
-                "status": format!("{:?}", runtime.call_result_status),
+                "status": format!("{:?}", runtime.call_result_status()),
                 "cache_diagnostics": runtime_cache_diagnostics(runtime),
                 "timestamp": now.to_rfc3339(),
             })

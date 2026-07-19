@@ -4,9 +4,9 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::json;
-use session_log::{
-    file_queue, GetSessionRequest, SessionLogCommand, SessionLogResponse, SessionLogStore,
-    UpsertSessionRequest,
+use session_log::{file_queue, SessionLogStore};
+use session_log_contract::{
+    GetSessionRequest, SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
 };
 use std::{
     ffi::OsString,

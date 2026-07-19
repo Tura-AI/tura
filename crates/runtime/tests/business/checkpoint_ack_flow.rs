@@ -6,7 +6,7 @@ use runtime::checkpoint::{
 };
 use rusqlite::Connection;
 use serde_json::json;
-use session_log::SessionLogCommand;
+use session_log_contract::SessionLogCommand;
 use std::path::Path;
 use std::time::{Duration, Instant};
 

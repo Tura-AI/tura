@@ -1,9 +1,9 @@
 use std::io::Read;
 
-use crate::{
-    file_queue, ipc, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
-    ListSessionRecordsRequest, ListSessionsRequest, MarkSessionInterruptedRequest,
-    SessionLogCommand, SessionLogResponse, SessionLogStore,
+use crate::{file_queue, ipc, SessionLogStore};
+use session_log_contract::{
+    DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionRecordsRequest,
+    ListSessionsRequest, MarkSessionInterruptedRequest, SessionLogCommand, SessionLogResponse,
 };
 
 /// Developer query CLI for the session DB.

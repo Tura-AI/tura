@@ -19,8 +19,10 @@ use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
-use ::session_log::{DeleteSessionRequest, MarkSessionInterruptedRequest, SessionLogCommand};
 use runtime::state_machine::session_management::StartCondition;
+use session_log_contract::{
+    DeleteSessionRequest, MarkSessionInterruptedRequest, SessionLogCommand,
+};
 
 // ============================================================================
 // Session List & Create

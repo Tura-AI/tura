@@ -1,4 +1,5 @@
 use super::*;
+use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
 
 struct EnvRestore {
     keys: Vec<(&'static str, Option<std::ffi::OsString>)>,
@@ -74,7 +75,7 @@ impl SessionDbTestService {
 
 impl Drop for SessionDbTestService {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&session_log::SessionLogCommand::Shutdown);
+        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -478,18 +479,17 @@ fn upsert_runtime_owned_session_for_test(
         .into_iter()
         .map(|message| serde_json::to_value(message).expect("message json"))
         .collect::<Vec<_>>();
-    let response = session_log::ipc::call_service(&session_log::SessionLogCommand::UpsertSession(
-        session_log::UpsertSessionRequest {
+    let response =
+        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
             session: serde_json::to_value(info).expect("session json"),
             parent_id,
             messages,
             todos: store.get_todos(session_id),
-        },
-    ))
-    .expect("session_log upsert should reach test service");
+        }))
+        .expect("session_log upsert should reach test service");
     match response {
-        session_log::SessionLogResponse::Ok => {}
-        session_log::SessionLogResponse::Error { error } => {
+        SessionLogResponse::Ok => {}
+        SessionLogResponse::Error { error } => {
             panic!("session_log upsert failed: {error}")
         }
         other => panic!("unexpected session_log upsert response: {other:?}"),
@@ -505,18 +505,17 @@ fn upsert_session_messages_for_test(
     let info = store
         .get_session_info(session_id)
         .unwrap_or_else(|| panic!("session {session_id} should exist before test DB upsert"));
-    let response = session_log::ipc::call_service(&session_log::SessionLogCommand::UpsertSession(
-        session_log::UpsertSessionRequest {
+    let response =
+        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
             session: serde_json::to_value(info).expect("session json"),
             parent_id,
             messages,
             todos: store.get_todos(session_id),
-        },
-    ))
-    .expect("session_log upsert should reach test service");
+        }))
+        .expect("session_log upsert should reach test service");
     match response {
-        session_log::SessionLogResponse::Ok => {}
-        session_log::SessionLogResponse::Error { error } => {
+        SessionLogResponse::Ok => {}
+        SessionLogResponse::Error { error } => {
             panic!("session_log upsert failed: {error}")
         }
         other => panic!("unexpected session_log upsert response: {other:?}"),

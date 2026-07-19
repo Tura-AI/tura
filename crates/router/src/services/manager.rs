@@ -5,10 +5,11 @@ use parking_lot::RwLock;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::ipc;
+use crate::IpcNotificationSender;
+use runtime_contract::CallContext;
 
 use super::{
-    models::{CallContext, WorkerHandle, WorkerSpec},
+    models::{WorkerHandle, WorkerSpec},
     worker_process::WorkerProcess,
 };
 
@@ -193,7 +194,7 @@ impl ServiceManager {
         &self,
         worker_id: &str,
         ctx: CallContext,
-        notifications: Option<ipc::IpcNotificationSender>,
+        notifications: Option<IpcNotificationSender>,
     ) -> Result<serde_json::Value> {
         let worker = {
             let workers = self.workers.read();
@@ -269,8 +270,9 @@ impl Default for ServiceManager {
 
 #[cfg(test)]
 mod tests {
-    use super::super::models::{CallContext, WorkerSpec};
+    use super::super::models::WorkerSpec;
     use super::ServiceManager;
+    use runtime_contract::CallContext;
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -280,7 +282,7 @@ mod tests {
             service_name: "runtime".to_string(),
             executable: PathBuf::from("definitely-missing-runtime-worker-for-manager-test"),
             args: vec!["--serve".to_string()],
-            env: vec![("TURA_DEBUG_RUNTIME".to_string(), "0".to_string())],
+            env: vec![("TURA_WORKER_MODE".to_string(), "one-shot".to_string())],
         }
     }
 
@@ -290,7 +292,7 @@ mod tests {
         let first = manager
             .ensure_worker(missing_worker_spec("runtime_worker:session-a"))
             .await
-            .expect("missing executable should still create one-shot worker handle");
+            .expect("explicit one-shot worker should create a reusable handle");
         let second = manager
             .ensure_worker(missing_worker_spec("runtime_worker:session-a"))
             .await

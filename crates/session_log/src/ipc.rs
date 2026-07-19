@@ -19,11 +19,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
-
 use crate::path::default_db_dir;
-use crate::{SessionLogCommand, SessionLogResponse, SessionLogStore};
+use crate::SessionLogStore;
+use anyhow::{anyhow, Context, Result};
+use session_log_contract::{ServiceEndpoint, SessionLogCommand, SessionLogResponse};
 
 const ADDR_FILE: &str = "service.addr";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -34,14 +33,6 @@ const PROBE_RETRY_DELAY: Duration = Duration::from_millis(50);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 const EMPTY_RESPONSE_RETRIES: usize = 3;
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
-
-/// The published endpoint record for a running session_db service: where to
-/// reach it, plus the build version used for the connection handshake.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceEndpoint {
-    pub addr: String,
-    pub version: String,
-}
 
 /// Path to the file that records the running service's endpoint.
 pub fn service_addr_path() -> PathBuf {
@@ -56,16 +47,8 @@ fn read_endpoint() -> Result<ServiceEndpoint> {
             path.display()
         )
     })?;
-    let trimmed = raw.trim();
-    // Current format is a JSON endpoint record; accept an unversioned bare
-    // `host:port` form long enough to probe or replace it during startup.
-    if let Ok(endpoint) = serde_json::from_str::<ServiceEndpoint>(trimmed) {
-        return Ok(endpoint);
-    }
-    Ok(ServiceEndpoint {
-        addr: trimmed.to_string(),
-        version: String::new(),
-    })
+    serde_json::from_str::<ServiceEndpoint>(raw.trim())
+        .with_context(|| format!("invalid session_db endpoint record {}", path.display()))
 }
 
 fn parse_addr(endpoint: &ServiceEndpoint) -> Result<SocketAddr> {
@@ -75,13 +58,8 @@ fn parse_addr(endpoint: &ServiceEndpoint) -> Result<SocketAddr> {
         .with_context(|| format!("invalid session_db service address {:?}", endpoint.addr))
 }
 
-/// Refuse to use a service from a different build (codex-style version
-/// handshake). An empty published version comes from an unversioned endpoint
-/// file and is treated as compatible for startup cleanup.
+/// Refuse to use a service from a different build.
 fn ensure_version_compatible(endpoint: &ServiceEndpoint) -> Result<()> {
-    if endpoint.version.is_empty() {
-        return Ok(());
-    }
     let expected = tura_path::instance_version();
     if endpoint.version != expected {
         return Err(anyhow!(
@@ -134,32 +112,6 @@ fn probe_session_db(addr: &SocketAddr) -> bool {
             probe_response_timeout(),
         ) {
             Ok(SessionLogResponse::Ok) => return true,
-            Ok(SessionLogResponse::Error { error }) if is_legacy_health_error(&error) => {
-                return probe_legacy_session_db(addr);
-            }
-            Ok(_) => return false,
-            Err(error) if is_retryable_probe_error(&error) => {
-                if attempt + 1 < PROBE_RESPONSE_ATTEMPTS {
-                    std::thread::sleep(PROBE_RETRY_DELAY);
-                    continue;
-                }
-                return false;
-            }
-            Err(_) => return false,
-        }
-    }
-    false
-}
-
-fn probe_legacy_session_db(addr: &SocketAddr) -> bool {
-    for attempt in 0..PROBE_RESPONSE_ATTEMPTS {
-        match call_service_addr(
-            addr,
-            &SessionLogCommand::ListWorkspaces,
-            probe_connect_timeout(),
-            probe_response_timeout(),
-        ) {
-            Ok(SessionLogResponse::Workspaces { .. }) => return true,
             Ok(_) => return false,
             Err(error) if is_retryable_probe_error(&error) => {
                 if attempt + 1 < PROBE_RESPONSE_ATTEMPTS {
@@ -279,12 +231,6 @@ fn is_retryable_probe_error(error: &anyhow::Error) -> bool {
                 )
             })
     })
-}
-
-fn is_legacy_health_error(error: &str) -> bool {
-    error.contains("invalid session_db request")
-        && error.contains("unknown variant")
-        && error.contains("health")
 }
 
 /// Execute a command against an owned store. Shared by the socket server and the
@@ -486,13 +432,6 @@ mod tests {
         let error =
             ensure_version_compatible(&mismatched).expect_err("a different build must be refused");
         assert!(error.to_string().contains("different build"));
-
-        // An unversioned endpoint remains compatible for startup cleanup.
-        let unversioned = ServiceEndpoint {
-            addr: "127.0.0.1:1234".to_string(),
-            version: String::new(),
-        };
-        assert!(ensure_version_compatible(&unversioned).is_ok());
     }
 
     #[test]
@@ -624,66 +563,6 @@ mod tests {
             "endpoint should be kept after a successful retry"
         );
         server.join().expect("flaky endpoint thread");
-    }
-
-    #[test]
-    fn service_probe_adopts_legacy_endpoint_that_answers_existing_protocol() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-        let root = tempfile::tempdir().expect("temp db root");
-        let _env = EnvGuard::set(&[
-            ("SESSION_LOG_DB_ROOT", Some(root.path())),
-            ("TURA_DB_ROOT", None),
-        ]);
-
-        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind legacy endpoint");
-        let addr = listener.local_addr().expect("legacy endpoint addr");
-        let server = std::thread::spawn(move || {
-            for response in [
-                SessionLogResponse::Error {
-                    error:
-                        "invalid session_db request: unknown variant `health`, expected old commands"
-                            .to_string(),
-                },
-                SessionLogResponse::Workspaces {
-                    workspaces: Vec::new(),
-                },
-            ] {
-                let (mut stream, _) = listener.accept().expect("accept legacy probe");
-                let mut request = String::new();
-                let _ = BufReader::new(stream.try_clone().expect("clone legacy stream"))
-                    .read_line(&mut request)
-                    .expect("read legacy probe");
-                assert!(!request.trim().is_empty());
-                stream
-                    .write_all(
-                        serde_json::to_string(&response)
-                            .expect("legacy response json")
-                            .as_bytes(),
-                    )
-                    .expect("write legacy response");
-                stream.write_all(b"\n").expect("write legacy newline");
-                stream.flush().expect("flush legacy response");
-            }
-        });
-
-        let path = service_addr_path();
-        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
-        std::fs::write(
-            &path,
-            serde_json::to_string(&ServiceEndpoint {
-                addr: addr.to_string(),
-                version: tura_path::instance_version(),
-            })
-            .expect("endpoint json"),
-        )
-        .expect("write legacy addr");
-
-        assert!(
-            service_is_running(),
-            "a same-version legacy session_db that answers old read protocol should still be adopted"
-        );
-        assert!(path.exists(), "legacy-compatible addr should be preserved");
-        server.join().expect("legacy endpoint thread");
     }
 
     #[test]

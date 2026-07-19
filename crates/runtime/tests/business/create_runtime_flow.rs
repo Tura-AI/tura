@@ -74,7 +74,10 @@ async fn create_runtime_business_flow_builds_runtime_queue_and_provider_config_f
 
     assert_runtime_and_queue_are_consistent(&runtime, &queue_item, &messages, &tools);
     assert_eq!(runtime.state, RuntimeState::Created);
-    assert_eq!(runtime.call_result_status, RuntimeCallResultStatus::Pending);
+    assert_eq!(
+        runtime.call_result_status(),
+        RuntimeCallResultStatus::Pending
+    );
     assert!(runtime.runtime_id.starts_with("runtime-"));
     assert_eq!(runtime.session_id, "session-create-runtime-business");
     assert_eq!(runtime.agent_id, "agent-create-runtime-business");

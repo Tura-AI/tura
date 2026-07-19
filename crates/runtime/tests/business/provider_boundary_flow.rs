@@ -1,9 +1,13 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use runtime::context::{
+    accumulate_tool_result_with_provider_metadata, build_messages_from_session,
+};
 use runtime::runtime::call_runtime::{call_runtime, CallRuntimeInput};
 use runtime::state_machine::agent_management::{ProviderConfig, ToolChoice};
 use runtime::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeManagement, RuntimeProviderConfig, RuntimeState,
 };
+use runtime::state_machine::session_management::{SessionInput, SessionManagement};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
@@ -143,10 +147,14 @@ async fn runtime_google_business_flow_extracts_text_tool_metadata_usage_and_requ
     );
     assert_eq!(captured.body["generationConfig"]["maxOutputTokens"], 77);
     assert_eq!(captured.body["generationConfig"]["temperature"], 0.0);
+    assert_llm_boundary_fixture(
+        captured,
+        include_bytes!("../fixtures/llm_boundary/google_multimodal_request.json"),
+    );
 
     assert_eq!(result.state, RuntimeState::Finished);
     assert_eq!(
-        result.call_result_status,
+        result.call_result_status(),
         RuntimeCallResultStatus::Succeeded
     );
     assert_eq!(result.text, "Runtime sees Google text.");
@@ -282,7 +290,7 @@ async fn runtime_openai_business_flow_replays_final_command_run_once_and_records
         marker.exists(),
         "marker file should be written; runtime state={:?}, status={:?}, output={:#?}, tool_call={:#?}",
         result.state,
-        result.call_result_status,
+        result.call_result_status(),
         result.output,
         result.tool_call
     );
@@ -307,10 +315,14 @@ async fn runtime_openai_business_flow_replays_final_command_run_once_and_records
         Value::Null,
         "local OpenAI-compatible routes should not get a prompt cache key"
     );
+    assert_llm_boundary_fixture(
+        captured,
+        include_bytes!("../fixtures/llm_boundary/openai_command_run_request.json"),
+    );
 
     assert_eq!(result.state, RuntimeState::Finished);
     assert_eq!(
-        result.call_result_status,
+        result.call_result_status(),
         RuntimeCallResultStatus::Succeeded
     );
     assert_eq!(result.text, "I need one final command.");
@@ -355,6 +367,107 @@ async fn runtime_openai_business_flow_replays_final_command_run_once_and_records
         runtime_input["options"]["prompt_cache_key"],
         Value::Null,
         "runtime diagnostics should agree with the outgoing provider payload"
+    );
+}
+
+#[tokio::test]
+async fn runtime_openai_followup_request_matches_canonical_command_run_refill() {
+    let _guard = ASYNC_ENV_LOCK.lock().await;
+    let _session_db = session_db_support::SessionDbTestService::start(&ENV_LOCK);
+    let provider = LocalProvider::start(vec![ProviderReply::Json {
+        status: "200 OK",
+        request_id: Some("req-runtime-openai-followup"),
+        body: openai_chat_response("Follow-up complete."),
+    }]);
+    let _env = EnvGuard::set(&[
+        ("LOCALRUNTIME_API_KEY", "runtime-openai-key"),
+        ("TURA_GATEWAY_CALLBACKS", "0"),
+        ("TURA_PARALLEL_TOOL_CALLS", "true"),
+        ("TURA_DISABLE_PROMPT_CACHE", "0"),
+        ("TURA_SESSION_MAX_TOKENS", "65"),
+    ]);
+    let settings = settings_for_route(
+        "openai-runtime-route",
+        "localruntime",
+        &provider.endpoint,
+        "gpt-runtime-local",
+    );
+    let fixed_now = DateTime::parse_from_rfc3339("2026-07-19T00:00:00Z")
+        .expect("fixed phase 0 timestamp")
+        .with_timezone(&Utc);
+    let mut session = SessionManagement::new(
+        "session-openai-followup".to_string(),
+        "Phase 0 follow-up".to_string(),
+        PathBuf::from("phase0-workspace"),
+        false,
+        Vec::<String>::new(),
+        SessionInput {
+            user_input: "Run the fixed Phase 0 command.".to_string(),
+            file_input: Vec::new(),
+            agent: Some("direct".to_string()),
+            runtime_context: None,
+            planning_mode_override: None,
+        },
+        "Run the fixed Phase 0 command.".to_string(),
+        fixed_now,
+    );
+    accumulate_tool_result_with_provider_metadata(
+        &mut session,
+        "command_run",
+        json!({
+            "commands": [{
+                "step": 1,
+                "command": "shell_command",
+                "command_line": "printf phase0"
+            }]
+        }),
+        json!({
+            "results": [{
+                "step": 1,
+                "command_type": "shell_command",
+                "success": true,
+                "output": {"exit_code": 0, "stdout": "phase0", "stderr": ""}
+            }]
+        }),
+        true,
+        None,
+        Some("runtime-phase0-first"),
+        Some(json!({"id": "call_phase0_refill"})),
+    )
+    .expect("append canonical command_run refill");
+
+    let result = call_runtime(
+        CallRuntimeInput {
+            runtime: runtime_for_provider(
+                "runtime-phase0-followup",
+                "session-openai-followup",
+                "openai-runtime-route",
+                "localruntime",
+                "gpt-runtime-local",
+                false,
+            ),
+            messages: build_messages_from_session(&session),
+            tools: vec![command_run_tool_schema()],
+            provider_name: "openai-runtime-route".to_string(),
+            stream: false,
+            max_tokens: 128,
+            tool_choice: Some(json!("auto")),
+            session_directory: PathBuf::from("phase0-workspace"),
+            allowed_command_run_commands: Some(BTreeSet::from(["shell_command".to_string()])),
+            require_startup_task_state: false,
+        },
+        Arc::new(settings),
+        Arc::new(TuraConfig::new(".env.runtime-openai-followup-missing")),
+    )
+    .await
+    .expect("follow-up runtime call should succeed");
+
+    assert_eq!(result.text, "Follow-up complete.");
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 1);
+    assert_llm_boundary_fixture(
+        &requests[0],
+        include_bytes!("../fixtures/llm_boundary/openai_command_run_followup_request.json"),
     );
 }
 
@@ -407,7 +520,7 @@ async fn runtime_http_auth_failure_is_not_retryable() {
     .expect("runtime auth failure should be captured on the runtime");
 
     assert_eq!(result.state, RuntimeState::Failed);
-    assert_eq!(result.call_result_status, RuntimeCallResultStatus::Failed);
+    assert_eq!(result.call_result_status(), RuntimeCallResultStatus::Failed);
     let runtime_error = result.error.as_ref().expect("runtime error");
     assert_eq!(runtime_error.error_code.as_deref(), Some("CALL_FAILED"));
     assert!(!runtime_error.retry_allowed);
@@ -848,6 +961,7 @@ struct CapturedHttpRequest {
     query: String,
     headers: String,
     body: Value,
+    raw_body: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -941,15 +1055,82 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> CapturedHttpRequest {
         .map(|(path, query)| (path.to_string(), query.to_string()))
         .unwrap_or_else(|| (target, String::new()));
     let headers_lower = headers.to_ascii_lowercase();
-    let body_text = String::from_utf8(buffer[body_start..body_start + content_length].to_vec())
-        .expect("utf8 request body");
-    let body = serde_json::from_str(&body_text).expect("json request body");
+    let raw_body = buffer[body_start..body_start + content_length].to_vec();
+    let body = serde_json::from_slice(&raw_body).expect("json request body");
 
     CapturedHttpRequest {
         path,
         query,
         headers: headers_lower,
         body,
+        raw_body,
+    }
+}
+
+fn assert_llm_boundary_fixture(actual: &CapturedHttpRequest, expected_raw: &[u8]) {
+    let expected_raw = expected_raw
+        .strip_suffix(b"\n")
+        .expect("boundary fixture must end with one LF framing byte");
+    assert_ne!(
+        expected_raw.last(),
+        Some(&b'\r'),
+        "boundary fixture must use LF framing, not CRLF"
+    );
+    let expected: Value =
+        serde_json::from_slice(expected_raw).expect("valid boundary fixture JSON");
+    if actual.body != expected {
+        panic!(
+            "LLM request value differs at {}; expected={expected}; actual={}",
+            first_json_difference(&expected, &actual.body, ""),
+            actual.body
+        );
+    }
+    if actual.raw_body != expected_raw {
+        let offset = actual
+            .raw_body
+            .iter()
+            .zip(expected_raw)
+            .position(|(actual, expected)| actual != expected)
+            .unwrap_or_else(|| actual.raw_body.len().min(expected_raw.len()));
+        panic!(
+            "LLM request raw bytes differ at offset {offset}; expected_len={}; actual_len={}; expected={}; actual={}",
+            expected_raw.len(),
+            actual.raw_body.len(),
+            String::from_utf8_lossy(expected_raw),
+            String::from_utf8_lossy(&actual.raw_body)
+        );
+    }
+}
+
+fn first_json_difference(expected: &Value, actual: &Value, pointer: &str) -> String {
+    match (expected, actual) {
+        (Value::Object(expected), Value::Object(actual)) => {
+            for key in expected.keys().chain(actual.keys()) {
+                let child = format!("{pointer}/{}", key.replace('~', "~0").replace('/', "~1"));
+                match (expected.get(key), actual.get(key)) {
+                    (Some(expected), Some(actual)) if expected != actual => {
+                        return first_json_difference(expected, actual, &child);
+                    }
+                    (None, Some(_)) | (Some(_), None) => return child,
+                    _ => {}
+                }
+            }
+            pointer.to_string()
+        }
+        (Value::Array(expected), Value::Array(actual)) => {
+            for index in 0..expected.len().max(actual.len()) {
+                let child = format!("{pointer}/{index}");
+                match (expected.get(index), actual.get(index)) {
+                    (Some(expected), Some(actual)) if expected != actual => {
+                        return first_json_difference(expected, actual, &child);
+                    }
+                    (None, Some(_)) | (Some(_), None) => return child,
+                    _ => {}
+                }
+            }
+            pointer.to_string()
+        }
+        _ => pointer.to_string(),
     }
 }
 

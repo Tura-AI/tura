@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::checkpoint::StreamedCommandCheckpoint;
-use crate::state_machine::runtime_management::{RuntimeCallResultStatus, RuntimeManagement};
+use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeState};
 
 pub(crate) fn turn_started(runtime: &RuntimeManagement) -> Result<(), String> {
     crate::checkpoint::checkpoint_turn_started(runtime)
@@ -17,13 +17,11 @@ pub(crate) fn provider_call_finished(runtime: &RuntimeManagement) -> Result<(), 
 }
 
 pub(crate) fn terminal_turn(runtime: &RuntimeManagement) -> Result<(), String> {
-    match runtime.call_result_status {
-        RuntimeCallResultStatus::Failed | RuntimeCallResultStatus::TimedOut => {
+    match runtime.state {
+        RuntimeState::Failed | RuntimeState::TimedOut => {
             crate::checkpoint::checkpoint_turn_failed(runtime)
         }
-        RuntimeCallResultStatus::Cancelled => {
-            crate::checkpoint::checkpoint_turn_interrupted(runtime)
-        }
+        RuntimeState::Cancelled => crate::checkpoint::checkpoint_turn_interrupted(runtime),
         _ => crate::checkpoint::checkpoint_turn_finished(runtime),
     }
 }

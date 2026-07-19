@@ -3,12 +3,11 @@ use std::time::Instant;
 
 use crate::profile_timings;
 use serde_json::Value;
-use session_log::{
-    CommandCheckpoint, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
-    SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
+use session_log_contract::{
+    CommandCheckpoint, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page,
+    SessionLogCommand, SessionLogResponse, SessionRecord, SessionSnapshot, UpsertSessionRequest,
+    WorkspaceSummary,
 };
-
-pub use session_log::{Page, SessionRecord, SessionSnapshot, WorkspaceSummary};
 
 #[derive(Debug, Clone, Default)]
 pub struct SessionLogClient;

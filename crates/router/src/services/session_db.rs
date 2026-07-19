@@ -80,7 +80,8 @@ impl SessionDbService {
     pub fn stop(&self) {
         let child = self.child.lock().ok().and_then(|mut guard| guard.take());
         if session_log::ipc::service_is_running() {
-            let _ = session_log::ipc::call_service(&session_log::SessionLogCommand::Shutdown);
+            let _ =
+                session_log::ipc::call_service(&session_log_contract::SessionLogCommand::Shutdown);
         }
         if let Some(mut child) = child {
             if !wait_for_child_exit(&mut child, std::time::Duration::from_secs(10)) {
@@ -250,7 +251,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().expect("service addr parent"))?;
         std::fs::write(
             &path,
-            serde_json::to_string(&session_log::ipc::ServiceEndpoint {
+            serde_json::to_string(&session_log_contract::ServiceEndpoint {
                 addr: addr.to_string(),
                 version: tura_path::instance_version(),
             })?,
@@ -286,7 +287,7 @@ mod tests {
             std::io::BufReader::new(stream.try_clone()?).read_line(&mut request)?;
             assert!(request.contains("\"health\""));
             stream.write_all(
-                serde_json::to_string(&session_log::SessionLogResponse::Ok)?.as_bytes(),
+                serde_json::to_string(&session_log_contract::SessionLogResponse::Ok)?.as_bytes(),
             )?;
             stream.write_all(b"\n")?;
             stream.flush()?;
@@ -297,7 +298,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().expect("service addr parent"))?;
         std::fs::write(
             &path,
-            serde_json::to_string(&session_log::ipc::ServiceEndpoint {
+            serde_json::to_string(&session_log_contract::ServiceEndpoint {
                 addr: addr.to_string(),
                 version: tura_path::instance_version(),
             })?,

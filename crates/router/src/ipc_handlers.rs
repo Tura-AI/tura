@@ -3,26 +3,24 @@ use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 
 use crate::app::AppState;
-use crate::ipc;
 use crate::process_info::current_process_start_time;
 use crate::services;
 use crate::shutdown::mark_router_shutting_down;
+use crate::IpcNotificationSender;
+use router_contract::{IpcRequest, IpcResponse, METHOD_ENQUEUE_TURN, METHOD_HEALTH_CHECK};
 
-pub(crate) async fn handle_ipc_request(
-    state: &AppState,
-    request: ipc::IpcRequest,
-) -> ipc::IpcResponse {
+pub(crate) async fn handle_ipc_request(state: &AppState, request: IpcRequest) -> IpcResponse {
     handle_ipc_request_with_notifications(state, request, None).await
 }
 
 pub(crate) async fn handle_ipc_request_with_notifications(
     state: &AppState,
-    request: ipc::IpcRequest,
-    notifications: Option<ipc::IpcNotificationSender>,
-) -> ipc::IpcResponse {
+    request: IpcRequest,
+    notifications: Option<IpcNotificationSender>,
+) -> IpcResponse {
     let result = match request.method.as_str() {
-        "" | "health_check"
-            if request.kind == "health_check" || request.method == "health_check" =>
+        "" | METHOD_HEALTH_CHECK
+            if request.kind == "health_check" || request.method == METHOD_HEALTH_CHECK =>
         {
             let session_db = state.session_db.start().unwrap_or_else(|error| {
                 json!({
@@ -47,7 +45,7 @@ pub(crate) async fn handle_ipc_request_with_notifications(
         "session_db.lifecycle.restart" => state.session_db.restart(),
         "lifecycle.front_heartbeat" => state.lifecycle.heartbeat(&request.payload),
         "lifecycle.status" => Ok(state.lifecycle.snapshot()),
-        "execution.enqueue_turn" => {
+        METHOD_ENQUEUE_TURN => {
             state
                 .execution
                 .enqueue_turn_with_notifications(
@@ -85,13 +83,13 @@ pub(crate) async fn handle_ipc_request_with_notifications(
         other => Err(anyhow::anyhow!("unknown router method: {other}")),
     };
     match result {
-        Ok(payload) => ipc::IpcResponse::ok(request.request_id, payload),
-        Err(error) => ipc::IpcResponse::error(request.request_id, error.to_string()),
+        Ok(payload) => IpcResponse::ok(request.request_id, payload),
+        Err(error) => IpcResponse::error(request.request_id, error.to_string()),
     }
 }
 
-pub(crate) fn enqueue_turn_session_id(request: &ipc::IpcRequest) -> Option<String> {
-    if request.method != "execution.enqueue_turn" {
+pub(crate) fn enqueue_turn_session_id(request: &IpcRequest) -> Option<String> {
+    if request.method != METHOD_ENQUEUE_TURN {
         return None;
     }
     request
@@ -112,7 +110,7 @@ mod tests {
         let state = build_state();
         let response = tokio_runtime()?.block_on(handle_ipc_request(
             &state,
-            ipc::IpcRequest {
+            IpcRequest {
                 request_id: "shutdown-test".to_string(),
                 kind: "call".to_string(),
                 method: "execution.shutdown".to_string(),
@@ -133,7 +131,7 @@ mod tests {
 
     #[test]
     fn enqueue_turn_session_id_tracks_only_turn_requests() {
-        let turn = ipc::IpcRequest {
+        let turn = IpcRequest {
             request_id: "turn".to_string(),
             kind: "call".to_string(),
             method: "execution.enqueue_turn".to_string(),
@@ -146,14 +144,14 @@ mod tests {
         };
         assert_eq!(enqueue_turn_session_id(&turn).as_deref(), Some("session-1"));
 
-        let command_run = ipc::IpcRequest {
+        let command_run = IpcRequest {
             method: "execution.command_run".to_string(),
             payload: json!({ "session_id": "session-1" }),
             ..turn
         };
         assert_eq!(enqueue_turn_session_id(&command_run), None);
 
-        let blank_session = ipc::IpcRequest {
+        let blank_session = IpcRequest {
             method: "execution.enqueue_turn".to_string(),
             payload: json!({ "session_id": "   " }),
             ..command_run
@@ -170,7 +168,7 @@ mod tests {
 
         let response = tokio_runtime()?.block_on(handle_ipc_request(
             &state,
-            ipc::IpcRequest {
+            IpcRequest {
                 request_id: "kill-session-workers-test".to_string(),
                 kind: "call".to_string(),
                 method: "execution.kill_session_workers".to_string(),
@@ -186,7 +184,7 @@ mod tests {
 
         let probe = tokio_runtime()?.block_on(handle_ipc_request(
             &state,
-            ipc::IpcRequest {
+            IpcRequest {
                 request_id: "probe-after-kill".to_string(),
                 kind: "call".to_string(),
                 method: "execution.probe_sessions".to_string(),

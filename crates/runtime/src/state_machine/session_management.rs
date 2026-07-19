@@ -227,7 +227,7 @@ pub struct TaskPlan {
     pub detailed_tasks: Vec<TaskStep>,
 }
 
-pub use session_log::SessionState;
+pub use lifecycle::SessionState;
 
 /// Root session state object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

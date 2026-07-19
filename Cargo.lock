@@ -1668,11 +1668,14 @@ dependencies = [
  "provider",
  "reqwest 0.12.28",
  "router",
+ "router_contract",
  "runtime",
+ "runtime_contract",
  "semver",
  "serde",
  "serde_json",
  "session_log",
+ "session_log_contract",
  "sha2",
  "sysinfo",
  "tao",
@@ -2784,6 +2787,14 @@ checksum = "db23b9e7e2b7831bbd8aac0bbeeeb7b68cbebc162b227e7052e8e55829a09212"
 dependencies = [
  "libc",
  "x11",
+]
+
+[[package]]
+name = "lifecycle"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4185,9 +4196,12 @@ dependencies = [
  "fs2",
  "parking_lot",
  "personas",
+ "router_contract",
+ "runtime_contract",
  "serde",
  "serde_json",
  "session_log",
+ "session_log_contract",
  "sysinfo",
  "tempfile",
  "tokio",
@@ -4200,21 +4214,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "router_contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "runtime"
 version = "0.1.0"
 dependencies = [
  "agents",
  "anyhow",
  "chrono",
+ "lifecycle",
  "personas",
  "provider",
  "redis",
  "reqwest 0.12.28",
  "router",
+ "router_contract",
+ "runtime_contract",
  "rusqlite",
  "serde",
  "serde_json",
  "session_log",
+ "session_log_contract",
  "sysinfo",
  "tempfile",
  "tokio",
@@ -4222,6 +4248,15 @@ dependencies = [
  "tools",
  "tracing",
  "tura_path",
+ "uuid",
+]
+
+[[package]]
+name = "runtime_contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
  "uuid",
 ]
 
@@ -4646,14 +4681,24 @@ dependencies = [
  "anyhow",
  "chrono",
  "fs2",
+ "lifecycle",
  "rusqlite",
  "serde",
  "serde_json",
+ "session_log_contract",
  "sysinfo",
  "tempfile",
  "tracing",
  "tura_path",
  "uuid",
+]
+
+[[package]]
+name = "session_log_contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5815,10 +5860,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "router",
+ "router_contract",
  "runtime",
+ "runtime_contract",
  "rusqlite",
  "serde_json",
  "session_log",
+ "session_log_contract",
  "sysinfo",
  "tempfile",
  "tokio",

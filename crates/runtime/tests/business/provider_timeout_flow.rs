@@ -71,8 +71,11 @@ async fn runtime_provider_timeout_business_flow_marks_runtime_timed_out_without_
         started.elapsed() < Duration::from_secs(2),
         "runtime timeout should bound a hanging provider call"
     );
-    assert_eq!(result.state, RuntimeState::Failed);
-    assert_eq!(result.call_result_status, RuntimeCallResultStatus::TimedOut);
+    assert_eq!(result.state, RuntimeState::TimedOut);
+    assert_eq!(
+        result.call_result_status(),
+        RuntimeCallResultStatus::TimedOut
+    );
     assert!(result.called_at.is_some());
     assert!(result.call_finished_at.is_some());
     assert!(result.first_token_at.is_none());
@@ -167,26 +170,26 @@ async fn streamed_command_run_waits_for_commands_after_provider_stream_completes
         elapsed >= Duration::from_millis(300),
         "completed provider stream returned before the streamed command finished; elapsed={elapsed:?}, state={:?}, status={:?}, output={:?}",
         result.state,
-        result.call_result_status,
+        result.call_result_status(),
         result.output
     );
     assert!(
         elapsed < Duration::from_secs(5),
         "completed provider stream should only wait for command completion; elapsed={elapsed:?}, state={:?}, status={:?}, output={:?}",
         result.state,
-        result.call_result_status,
+        result.call_result_status(),
         result.output
     );
     assert_eq!(
         result.state,
         RuntimeState::Finished,
         "runtime should finish successfully; status={:?}, error={:?}, output={:?}",
-        result.call_result_status,
+        result.call_result_status(),
         result.error,
         result.output
     );
     assert_eq!(
-        result.call_result_status,
+        result.call_result_status(),
         RuntimeCallResultStatus::Succeeded,
         "runtime should report success; state={:?}, error={:?}, output={:?}",
         result.state,
@@ -290,12 +293,12 @@ async fn streamed_command_run_gateway_callbacks_do_not_gate_command_execution_bu
         result.state,
         RuntimeState::Finished,
         "runtime should finish successfully; status={:?}, error={:?}, output={:?}",
-        result.call_result_status,
+        result.call_result_status(),
         result.error,
         result.output
     );
     assert_eq!(
-        result.call_result_status,
+        result.call_result_status(),
         RuntimeCallResultStatus::Succeeded
     );
     assert_eq!(

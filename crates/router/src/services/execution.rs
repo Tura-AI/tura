@@ -5,26 +5,13 @@
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::services::runtime_workers::{MAX_ACTIVE_RUNTIME_WORKERS, MAX_QUEUED_RUNTIME_TURNS};
-use crate::{dispatch_run_agent_with_runtime_slot, ipc, AppState, RunAgentRequest};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnqueueTurnRequest {
-    pub turn_id: String,
-    pub session_id: String,
-    pub payload: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProbeSessionsRequest {
-    #[serde(default)]
-    pub session_ids: Vec<String>,
-}
+use crate::{dispatch_run_agent_with_runtime_slot, AppState, IpcNotificationSender};
+use router_contract::{EnqueueTurnRequest, ProbeSessionsRequest, RunAgentRequest};
 
 #[derive(Clone)]
 pub struct ExecutionService {
@@ -57,7 +44,7 @@ impl ExecutionService {
         state: &AppState,
         input: Value,
         request_id: &str,
-        notifications: Option<ipc::IpcNotificationSender>,
+        notifications: Option<IpcNotificationSender>,
     ) -> Result<Value> {
         let request: EnqueueTurnRequest = serde_json::from_value(input)?;
         if debug_runtime_enabled() {

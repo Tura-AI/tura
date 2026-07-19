@@ -231,7 +231,7 @@ fn session_db_service_replays_durable_queue_on_startup() {
 
 #[test]
 fn runtime_acks_streamed_command_checkpoints_through_session_db() {
-    let protocol = read("crates/session_log/src/protocol.rs");
+    let protocol = read("crates/session_log_contract/src/protocol.rs");
     let runtime_client = read("crates/runtime/src/session_log_client.rs");
     let checkpointing = read("crates/runtime/src/provider_flow/checkpointing.rs");
     let command_streaming = read("crates/runtime/src/provider_flow/command_run_streaming.rs");

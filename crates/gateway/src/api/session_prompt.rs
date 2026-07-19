@@ -614,7 +614,7 @@ fn forward_run_agent_to_router(
     body: &serde_json::Value,
 ) -> Result<ForwardRunAgentResult, String> {
     let value = crate::router_client::RouterClient::global()
-        .enqueue_turn(crate::router_client::EnqueueTurnRequest {
+        .enqueue_turn(router_contract::EnqueueTurnRequest {
             turn_id: turn_id.to_string(),
             session_id: session_id.to_string(),
             payload: body.clone(),

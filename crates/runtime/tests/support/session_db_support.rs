@@ -48,7 +48,7 @@ impl SessionDbTestService {
 
 impl Drop for SessionDbTestService {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&session_log::SessionLogCommand::Shutdown);
+        let _ = session_log::ipc::call_service(&session_log_contract::SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

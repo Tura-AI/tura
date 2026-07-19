@@ -5,7 +5,6 @@
 
 pub mod client;
 pub mod command_run;
-pub mod event;
 pub mod runtime;
 pub mod session_snapshot;
 

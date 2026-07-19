@@ -6,12 +6,12 @@ use super::payload::{
 };
 use super::SessionLogStore;
 use crate::path::normalize_workspace;
-use crate::protocol::{
+use anyhow::Result;
+use rusqlite::{params, OptionalExtension};
+use session_log_contract::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionRecord,
     SessionSnapshot, SessionSummary, WorkspaceSummary,
 };
-use anyhow::Result;
-use rusqlite::{params, OptionalExtension};
 use std::path::Path;
 use std::time::Duration;
 

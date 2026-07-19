@@ -1,7 +1,7 @@
 //! Typed runtime checkpoint client.
 
 use anyhow::Result;
-use session_log::CommandCheckpoint;
+use session_log_contract::CommandCheckpoint;
 
 #[derive(Debug, Clone, Default)]
 pub struct CheckpointClient {

@@ -1764,7 +1764,17 @@ pub(crate) fn write_stale_router_endpoint(home: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&path, serde_json::to_string(&json!({ "addr": addr }))?)?;
+    let endpoint = router_contract::RouterEndpoint {
+        addr,
+        version: format!(
+            "{}+{}",
+            env!("CARGO_PKG_VERSION"),
+            option_env!("TURA_BUILD_KIND").unwrap_or("dev")
+        ),
+        pid: None,
+        process_start_time: None,
+    };
+    std::fs::write(&path, serde_json::to_string(&endpoint)?)?;
     Ok(())
 }
 
@@ -2049,45 +2059,6 @@ pub(crate) fn service_addr_path(home: &Path) -> PathBuf {
     home.join("db").join("session_log").join("service.addr")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn http_get_returns_complete_content_length_response_without_waiting_for_close() -> Result<()> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        let port = listener.local_addr()?.port();
-        let handle = thread::spawn(move || -> Result<()> {
-            let (mut stream, _) = listener.accept()?;
-            stream.set_read_timeout(Some(Duration::from_secs(1)))?;
-            let mut request_line = String::new();
-            BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
-            assert!(
-                request_line.starts_with("GET /service/status HTTP/1.1"),
-                "unexpected request line: {request_line}"
-            );
-            let body = r#"{"router":{"status":"running"}}"#;
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
-                body.len(),
-                body
-            )?;
-            stream.flush()?;
-            thread::sleep(Duration::from_secs(1));
-            Ok(())
-        });
-
-        let response = http_get(port, "/service/status", Duration::from_millis(200))?;
-        assert!(response.starts_with("HTTP/1.1 200"));
-        assert!(response.ends_with(r#"{"router":{"status":"running"}}"#));
-        handle
-            .join()
-            .map_err(|_| anyhow!("HTTP fixture thread panicked"))??;
-        Ok(())
-    }
-}
-
 pub(crate) fn temp_root(prefix: &str) -> Result<PathBuf> {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let path = std::env::temp_dir().join(format!("{prefix}-{}-{nonce}", std::process::id()));
@@ -2137,4 +2108,43 @@ pub(crate) fn read_pipe(pipe: Option<impl Read>) -> String {
     let mut output = String::new();
     let _ = pipe.read_to_string(&mut output);
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_get_returns_complete_content_length_response_without_waiting_for_close() -> Result<()> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = listener.local_addr()?.port();
+        let handle = thread::spawn(move || -> Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+            let mut request_line = String::new();
+            BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+            assert!(
+                request_line.starts_with("GET /service/status HTTP/1.1"),
+                "unexpected request line: {request_line}"
+            );
+            let body = r#"{"router":{"status":"running"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+                body.len(),
+                body
+            )?;
+            stream.flush()?;
+            thread::sleep(Duration::from_secs(1));
+            Ok(())
+        });
+
+        let response = http_get(port, "/service/status", Duration::from_millis(200))?;
+        assert!(response.starts_with("HTTP/1.1 200"));
+        assert!(response.ends_with(r#"{"router":{"status":"running"}}"#));
+        handle
+            .join()
+            .map_err(|_| anyhow!("HTTP fixture thread panicked"))??;
+        Ok(())
+    }
 }
