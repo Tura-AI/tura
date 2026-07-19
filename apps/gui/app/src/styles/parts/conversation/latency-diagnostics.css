@@ -1,0 +1,53 @@
+.latency-diagnostics {
+  position: relative;
+  margin-left: auto;
+}
+.latency-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.latency-trigger strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.latency-popover {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: 0 14px 36px rgb(0 0 0 / 18%);
+}
+.latency-title {
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-weight: 650;
+}
+.latency-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0;
+  color: var(--text-secondary);
+}
+.latency-row strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.latency-popover p {
+  margin: 8px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}

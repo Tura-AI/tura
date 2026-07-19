@@ -290,8 +290,13 @@ pub(crate) async fn call_runtime_streaming(
         .mark_first_token(first_token_at)
         .map_err(|e| format!("failed to mark first token: {e}"))?;
 
-    let usage =
-        usage_report_from_metrics(response.metrics, started_at, finished_at, first_token_at);
+    let usage = usage_report_from_metrics(
+        runtime,
+        response.metrics,
+        started_at,
+        finished_at,
+        first_token_at,
+    );
 
     runtime
         .finish_success(finished_at, usage)
