@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const TURA_DIR: &str = ".tura";
 const CONFIG_FILE: &str = "config.conf";
 
 pub const DEFAULT_SESSION_MODEL: &str = "codex/gpt-5.6-sol";
@@ -223,7 +222,7 @@ impl CommandRunStallGuardConfig {
 }
 
 pub fn tura_dir(directory: impl AsRef<Path>) -> PathBuf {
-    directory.as_ref().join(TURA_DIR)
+    tura_path::workspace_runtime_dir(directory)
 }
 
 pub fn config_path(directory: impl AsRef<Path>) -> PathBuf {

@@ -1103,8 +1103,7 @@ fn apply_single_change(record: &SessionChangeRecord, revert: bool) -> Result<boo
 }
 
 fn session_change_tracker_path(directory: &str, session_id: &str) -> PathBuf {
-    PathBuf::from(directory)
-        .join(".tura")
+    crate::session::config::tura_dir(directory)
         .join("session_changes")
         .join(format!("{session_id}.json"))
 }
