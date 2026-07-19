@@ -1,7 +1,8 @@
 use super::{
     apply_codex_auth_env, load_codex_auth_tokens, normalize_response_content,
     openai_login_is_oauth, provider_latency_timeouts, refresh_openai_access_token_if_needed,
-    set_provider_latency_timeouts, ProviderLatencyConfig, ProviderLatencyTimeouts,
+    ProviderConfig, ProviderLatencyConfig, ProviderLatencyTimeouts,
+    set_provider_latency_timeouts,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -38,6 +39,26 @@ fn unique_temp_dir(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("tura-provider-{name}-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&path).expect("temp dir");
     path
+}
+
+#[test]
+fn provider_alias_preserves_auth_identity_and_resolves_runtime_protocol() {
+    let gemini = ProviderConfig {
+        provider: "gemini-api".to_string(),
+        base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
+        model: "gemini-3.5-flash".to_string(),
+        temperature: 0.2,
+    };
+    let mistral = ProviderConfig {
+        provider: "mistral".to_string(),
+        base_url: "https://api.mistral.ai/v1".to_string(),
+        model: "mistral-medium-3.5".to_string(),
+        temperature: 0.2,
+    };
+
+    assert_eq!(gemini.provider, "gemini-api");
+    assert_eq!(gemini.runtime_provider(), "google");
+    assert_eq!(mistral.runtime_provider(), "mistral");
 }
 
 #[test]
