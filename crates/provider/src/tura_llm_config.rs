@@ -540,12 +540,6 @@ impl Settings {
                     .find(|item| item.provider == provider || item.provider == runtime_provider)
                     .map(|item| item.base_url.clone())
             })
-            .or_else(|| {
-                crate::auth_registry::provider_auth_registry_entry(provider)
-                    .map(|entry| entry.default_base_url.trim())
-                    .filter(|base_url| !base_url.is_empty())
-                    .map(ToString::to_string)
-            })
     }
 
     pub fn configured_model_catalog(&self) -> HashMap<String, Vec<String>> {
@@ -967,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_base_url_prefers_config_then_route_then_registry_defaults() {
+    fn provider_base_url_prefers_config_then_canonical_alias_then_route() {
         let mut settings = settings_with_catalog_and_routes();
         assert_eq!(
             settings.provider_base_url("openai").as_deref(),
@@ -983,11 +977,18 @@ mod tests {
             settings.provider_base_url("google").as_deref(),
             Some("https://google.test/v1")
         );
-        assert_eq!(
-            settings.provider_base_url("mistral").as_deref(),
-            Some("https://api.mistral.ai/v1")
-        );
         assert_eq!(settings.provider_base_url("missing"), None);
+
+        let minimal_settings = Settings {
+            provider_base_url: HashMap::from([(
+                "openai".to_string(),
+                "https://openai.test/v1".to_string(),
+            )]),
+            routes: HashMap::new(),
+            model_catalog: ModelCatalog::default(),
+            provider_enums: ProviderEnumCatalog::default(),
+        };
+        assert_eq!(minimal_settings.provider_base_url("codex"), None);
     }
 
     #[test]

@@ -443,12 +443,18 @@ mod tests {
     }
 
     #[test]
-    fn model_override_resolves_registry_provider_and_runtime_alias_base_urls() {
+    fn model_override_resolves_configured_provider_and_runtime_alias_base_urls() {
         let settings = Settings {
-            provider_base_url: HashMap::from([(
-                "google".to_string(),
-                "https://google.test/v1beta".to_string(),
-            )]),
+            provider_base_url: HashMap::from([
+                (
+                    "google".to_string(),
+                    "https://google.test/v1beta".to_string(),
+                ),
+                (
+                    "mistral".to_string(),
+                    "https://api.mistral.ai/v1".to_string(),
+                ),
+            ]),
             routes: HashMap::new(),
             model_catalog: ModelCatalog::default(),
             provider_enums: ProviderEnumCatalog::default(),
@@ -460,7 +466,7 @@ mod tests {
             Some("mistral/mistral-medium-3.5"),
             || {
                 let route = session_model_override_route(&settings, &fallback)
-                    .expect("Mistral registry provider should resolve");
+                    .expect("configured Mistral provider should resolve");
                 let provider = &route.providers[0];
                 assert_eq!(provider.provider, "mistral");
                 assert_eq!(provider.base_url, "https://api.mistral.ai/v1");
