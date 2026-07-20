@@ -830,6 +830,53 @@ mod tests {
     }
 
     #[test]
+    fn command_run_refill_records_match_value_and_raw_byte_fixture() {
+        let messages = immutable_tool_result_context_messages(&json!({
+            "tool_name": "command_run",
+            "provider_metadata": { "id": "call_phase0_refill" },
+            "input": {
+                "commands": [{
+                    "step": 1,
+                    "command": "shell_command",
+                    "command_line": "printf phase0"
+                }]
+            },
+            "output": {
+                "results": [{
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "success": true,
+                    "output": {
+                        "exit_code": 0,
+                        "stdout": "phase0",
+                        "stderr": ""
+                    }
+                }]
+            }
+        }));
+        let actual_raw = serde_json::to_vec(&messages).expect("serialize refill records");
+        let expected_fixture =
+            include_bytes!("../../tests/fixtures/llm_boundary/command_run_refill_records.json");
+        let expected_raw = expected_fixture
+            .strip_suffix(b"\n")
+            .expect("refill fixture must end with one LF framing byte");
+        assert_ne!(
+            expected_raw.last(),
+            Some(&b'\r'),
+            "refill fixture must use LF framing, not CRLF"
+        );
+        let expected: Value =
+            serde_json::from_slice(expected_raw).expect("valid refill fixture JSON");
+
+        assert_eq!(
+            Value::Array(messages),
+            expected,
+            "refill record value changed"
+        );
+        assert_eq!(actual_raw, expected_raw, "refill record raw bytes changed");
+    }
+
+    #[test]
     fn command_run_shell_failure_keeps_actionable_error_text() {
         let text = command_run_function_output_for_context(&json!({
             "tool_name": "command_run",

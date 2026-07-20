@@ -164,7 +164,7 @@ if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TUI" -eq 0 ]; then
   require_path "$TARGET_DIR/tura" "Missing release TUI executable."
 fi
 if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_GUI" -eq 0 ]; then
-  require_path "$TARGET_DIR/tura_gui/index.html" "Missing release GUI dist."
+  require_path "$TARGET_DIR/tura_gui_dist/index.html" "Missing release GUI dist."
 fi
 if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TAURI" -eq 0 ]; then
   require_any_path "Missing Tauri release bundle directory." "$TARGET_DIR/bundle" "$TARGET_DIR/release/bundle"

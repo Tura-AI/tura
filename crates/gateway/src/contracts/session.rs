@@ -1,4 +1,4 @@
-use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
+use lifecycle::RuntimeProjection;
 use serde::{Deserialize, Serialize};
 
 use super::{GlobalEvent, Message};
@@ -222,7 +222,7 @@ pub struct SendAgentMessageRequest {
     pub media: Vec<SendAgentMedia>,
     pub runtime_id: Option<String>,
     pub tool_call: Option<SendAgentToolCall>,
-    pub runtime_status: Option<RuntimeSessionSyncStatus>,
+    pub runtime_status: Option<RuntimeProjection>,
     #[serde(default)]
     pub context_tokens: Option<SessionContextTokens>,
     #[serde(default)]

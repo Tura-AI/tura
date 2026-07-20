@@ -20,7 +20,7 @@ async fn gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_betw
         }))],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         Some("openai/gpt-5.5".to_string()),
         None,
@@ -111,7 +111,7 @@ async fn gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_betw
             .count(),
         0
     );
-    assert_gateway_did_not_prewrite_session_db(&session.id)?;
+    assert_gateway_kept_canonical_session(&session.id)?;
 
     drop(second_router);
     drop(service);
@@ -141,7 +141,7 @@ async fn gateway_prompt_business_flow_cancel_after_router_enqueue_preserves_user
         )],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         None,
         None,
@@ -172,15 +172,19 @@ async fn gateway_prompt_business_flow_cancel_after_router_enqueue_preserves_user
 
     let request = router.next_request(Duration::from_secs(10))?;
     assert_eq!(request["payload"]["turn_id"], "cancel-race-turn");
-    session_store().mark_cancelled(&session.id);
+    execute_canonical_test_command(&session.id, SessionCommand::CancelSession);
 
     wait_until(Duration::from_secs(10), || {
-        session_store()
-            .get_session(&session.id)
-            .is_some_and(|session| session.status == SessionStatus::Idle)
+        let todos = session_store().get_todos(&session.id);
+        !todos.is_empty()
+            && todos
+                .iter()
+                .all(|todo| todo.get("status").and_then(Value::as_str) == Some("cancelled"))
     })?;
     assert!(
-        session_store().is_cancelled(&session.id),
+        session_store()
+            .session_lifecycle_projection(&session.id)
+            .is_some_and(|projection| projection.cancelled),
         "cancellation marker should survive until the next prompt clears it"
     );
     let messages = session_store().get_messages(&session.id);
@@ -203,7 +207,7 @@ async fn gateway_prompt_business_flow_cancel_after_router_enqueue_preserves_user
             .all(|todo| todo.get("status").and_then(Value::as_str) == Some("cancelled")),
         "cancelled prompt should mark in-progress todos cancelled: {todos:?}"
     );
-    assert_gateway_did_not_prewrite_session_db(&session.id)?;
+    assert_gateway_kept_canonical_session(&session.id)?;
 
     drop(router);
     drop(service);

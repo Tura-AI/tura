@@ -59,7 +59,7 @@ async fn gateway_prompt_business_flow_enqueues_router_turn_without_session_db_pr
         }))],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         None,
         Some("codex/gpt-5.5".to_string()),
@@ -149,7 +149,7 @@ async fn gateway_prompt_business_flow_enqueues_router_turn_without_session_db_pr
             .any(|message| message.role == MessageRole::Assistant),
         "successful router enqueue without a runtime callback must not synthesize an assistant fallback from the user prompt"
     );
-    assert_gateway_did_not_prewrite_session_db(&session.id)?;
+    assert_gateway_kept_canonical_session(&session.id)?;
 
     drop(router);
     drop(service);
@@ -176,7 +176,7 @@ async fn gateway_prompt_business_flow_injects_generated_frontend_ids_when_client
         }))],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         Some("openai/gpt-5.5".to_string()),
         None,
@@ -232,7 +232,7 @@ async fn gateway_prompt_business_flow_injects_generated_frontend_ids_when_client
             .get_session(&session.id)
             .is_some_and(|session| session.status == SessionStatus::Idle)
     })?;
-    assert_gateway_did_not_prewrite_session_db(&session.id)?;
+    assert_gateway_kept_canonical_session(&session.id)?;
 
     drop(router);
     drop(service);
@@ -259,7 +259,7 @@ async fn gateway_prompt_business_flow_routes_only_text_parts_and_keeps_first_tex
         }))],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         Some("openai/gpt-5.5".to_string()),
         None,
@@ -346,7 +346,7 @@ async fn gateway_prompt_business_flow_routes_only_text_parts_and_keeps_first_tex
         user_message.parts[1].text.as_deref(),
         Some("Then continue with the saved workspace state.")
     );
-    assert_gateway_did_not_prewrite_session_db(&session.id)?;
+    assert_gateway_kept_canonical_session(&session.id)?;
 
     drop(router);
     drop(service);
@@ -378,7 +378,7 @@ async fn gateway_prompt_business_flow_repeated_turns_keep_session_stable_without
             .collect(),
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         Some("openai/gpt-5.5".to_string()),
         None,
@@ -432,7 +432,7 @@ async fn gateway_prompt_business_flow_repeated_turns_keep_session_stable_without
                 .get_session(&session.id)
                 .is_some_and(|session| session.status == SessionStatus::Idle)
         })?;
-        assert_gateway_did_not_prewrite_session_db(&session.id)?;
+        assert_gateway_kept_canonical_session(&session.id)?;
     }
 
     let messages = session_store().get_messages(&session.id);

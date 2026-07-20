@@ -1,7 +1,10 @@
-use session_log::{
-    file_queue, CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
-    ListSessionRecordsRequest, ListSessionsRequest, MarkSessionInterruptedRequest,
-    SessionLogCommand, SessionLogStore, UpsertSessionRequest,
+use lifecycle::{SessionAggregate, SessionCommand, SessionState, TaskPlan, TaskStep};
+use session_log::{file_queue, SessionLogStore};
+use session_log_contract::{
+    CommandCheckpoint, CreateSessionRequest, DeleteSessionRequest, DeleteWorkspaceRequest,
+    ExecuteSessionCommandRequest, GetSessionRequest, ListSessionRecordsRequest,
+    ListSessionsRequest, MarkSessionInterruptedRequest, PersistSessionPayloadRequest,
+    SessionLogCommand, UpsertSessionRequest,
 };
 use std::path::Path;
 use std::process::Command;
@@ -125,7 +128,10 @@ fn stores_workspaces_sessions_and_last_record_page() {
         .expect("sessions");
     assert_eq!(page.total, 1);
     assert_eq!(sessions[0].session_id, session_id);
-    assert_eq!(sessions[0].task_management["plan_summary"], "Plan");
+    assert_eq!(
+        sessions[0].task_management,
+        serde_json::json!({"plan_summary": "Plan"})
+    );
     assert_eq!(sessions[0].todos[0]["id"], "todo-1");
 
     let loaded = store
@@ -135,6 +141,10 @@ fn stores_workspaces_sessions_and_last_record_page() {
         .expect("get session")
         .expect("session should exist");
     assert_eq!(loaded.session["id"], session_id);
+    assert_eq!(
+        loaded.session["task_management"],
+        serde_json::json!({"plan_summary": "Plan"})
+    );
     assert_eq!(loaded.todos[0]["content"], "Check DB");
 
     let (page, records) = store
@@ -151,6 +161,435 @@ fn stores_workspaces_sessions_and_last_record_page() {
     assert!(
         db.workspace_db(&normalized_workspace).exists(),
         "workspace session log should live under <workspace>/.tura"
+    );
+}
+
+#[test]
+fn legacy_upsert_projects_historical_task_plan_into_canonical_lifecycle() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let session_id = format!("legacy-plan-{nonce}");
+    let workspace = db.workspace(&format!("legacy-plan-{nonce}"));
+
+    store
+        .upsert_session(UpsertSessionRequest {
+            session: serde_json::json!({
+                "id": session_id,
+                "name": "Historical plan",
+                "directory": workspace,
+                "created_at": 10,
+                "updated_at": 20,
+                "management": {
+                    "session_id": session_id,
+                    "session_name": "Historical plan",
+                    "state": "created",
+                    "task_plan": {
+                        "plan_summary": "Historical task plan",
+                        "detailed_tasks": [{
+                            "id": "legacy-task",
+                            "step": "Run the historical task",
+                            "status": "done",
+                            "deliverables": []
+                        }]
+                    }
+                }
+            }),
+            parent_id: None,
+            messages: Vec::new(),
+            todos: Vec::new(),
+        })
+        .expect("historical task plan upsert");
+
+    let loaded = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
+        .expect("load historical plan")
+        .expect("historical plan exists");
+    let lifecycle = loaded
+        .lifecycle_projection
+        .expect("canonical lifecycle projection");
+    assert_eq!(lifecycle.task_plan.plan_summary, "Historical task plan");
+    assert_eq!(lifecycle.task_plan.detailed_tasks[0].task_id, "legacy-task");
+    assert_eq!(lifecycle.task_plan.detailed_tasks[0].step, 1);
+    assert_eq!(
+        lifecycle.task_plan.detailed_tasks[0].task_summary,
+        "Run the historical task"
+    );
+    assert_eq!(loaded.task_management["tasks"][0]["id"], "legacy-task");
+
+    store
+        .execute_session_command(ExecuteSessionCommandRequest {
+            session_id: session_id.clone(),
+            session_command: SessionCommand::ApplyTaskStatus {
+                task_plan: lifecycle.task_plan,
+            },
+        })
+        .expect("idempotent task command");
+    let canonical = store
+        .get_session(GetSessionRequest { session_id })
+        .expect("load canonicalized plan")
+        .expect("canonicalized plan exists");
+    assert_eq!(
+        canonical.task_management["tasks"][0]["task_id"],
+        "legacy-task"
+    );
+    assert!(canonical.task_management["tasks"][0]["id"].is_null());
+}
+
+#[test]
+fn legacy_upsert_preserves_canonical_lifecycle_and_updates_payloads() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let workspace = db.workspace("canonical-legacy-upsert");
+    let session_id = format!("canonical-upsert-{}", uuid::Uuid::new_v4());
+    let task_plan = TaskPlan {
+        plan_summary: "Canonical plan".to_string(),
+        detailed_tasks: vec![TaskStep {
+            task_id: "canonical-task".to_string(),
+            task_summary: "Keep canonical state".to_string(),
+            ..TaskStep::default()
+        }],
+    };
+
+    store
+        .create_session(CreateSessionRequest {
+            session_id: session_id.clone(),
+            creation_command: SessionCommand::CreateSession {
+                task_plan: TaskPlan::default(),
+            },
+            workspace: workspace.clone(),
+            session_directory: workspace.clone(),
+            name: "Canonical".to_string(),
+            created_at: 10,
+            model: None,
+            agent: None,
+            session_type: "normal".to_string(),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: false,
+            use_last_tool_call_response: false,
+            auto_session_name: false,
+        })
+        .expect("create canonical session");
+    for command in [
+        SessionCommand::RegisterChildSession {
+            parent_id: "canonical-parent".to_string(),
+        },
+        SessionCommand::ApplyTaskStatus {
+            task_plan: task_plan.clone(),
+        },
+        SessionCommand::RuntimeStarted,
+        SessionCommand::QueueUserInputWhileBusy {
+            input: "queued-before-legacy-upsert".to_string(),
+        },
+    ] {
+        store
+            .execute_session_command(ExecuteSessionCommandRequest {
+                session_id: session_id.clone(),
+                session_command: command,
+            })
+            .expect("canonical command");
+    }
+
+    let stale_upsert = |message_id: &str| UpsertSessionRequest {
+        session: serde_json::json!({
+            "id": session_id,
+            "name": "Legacy payload",
+            "directory": workspace,
+            "created_at": 10,
+            "updated_at": 20,
+            "status": "idle",
+            "parent_id": "stale-parent",
+            "task_management": {
+                "plan_summary": "Stale plan",
+                "tasks": [{"task_id": "stale-task"}]
+            },
+            "management": {
+                "session_id": session_id,
+                "session_name": "Legacy payload",
+                "state": "created",
+                "is_child_session": false,
+                "task_plan": {
+                    "plan_summary": "Stale plan",
+                    "detailed_tasks": [{"task_id": "stale-task"}]
+                }
+            }
+        }),
+        parent_id: Some("stale-parent".to_string()),
+        messages: vec![serde_json::json!({
+            "id": message_id,
+            "role": "assistant",
+            "created_at": 20,
+            "updated_at": 20
+        })],
+        todos: vec![serde_json::json!({"id": "legacy-todo"})],
+    };
+
+    store
+        .upsert_session(stale_upsert("legacy-message-1"))
+        .expect("legacy payload update");
+    let loaded = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
+        .expect("load session")
+        .expect("session exists");
+    assert_eq!(loaded.state.as_deref(), Some("running"));
+    assert_eq!(loaded.status.as_deref(), Some("busy"));
+    assert_eq!(loaded.parent_id.as_deref(), Some("canonical-parent"));
+    assert_eq!(loaded.task_management["plan_summary"], "Canonical plan");
+    assert_eq!(loaded.management["state"], "running");
+    assert_eq!(
+        loaded.management["task_plan"]["plan_summary"],
+        "Canonical plan"
+    );
+    assert_eq!(loaded.management["is_child_session"], true);
+    assert_eq!(loaded.session["parent_id"], "canonical-parent");
+
+    let read_aggregate = || {
+        let conn = rusqlite::Connection::open(db.workspace_db(&workspace)).expect("workspace db");
+        let lifecycle_json: String = conn
+            .query_row(
+                "SELECT lifecycle_json FROM sessions WHERE session_id = ?1",
+                rusqlite::params![session_id],
+                |row| row.get(0),
+            )
+            .expect("lifecycle row");
+        serde_json::from_str::<SessionAggregate>(&lifecycle_json).expect("lifecycle aggregate")
+    };
+    let aggregate = read_aggregate();
+    assert_eq!(aggregate.state, SessionState::Running);
+    assert_eq!(aggregate.parent_id.as_deref(), Some("canonical-parent"));
+    assert_eq!(aggregate.task_plan, task_plan);
+    assert_eq!(
+        aggregate.pending_user_inputs,
+        vec!["queued-before-legacy-upsert"]
+    );
+    assert!(!aggregate.cancelled);
+
+    store
+        .execute_session_command(ExecuteSessionCommandRequest {
+            session_id: session_id.clone(),
+            session_command: SessionCommand::CancelSession,
+        })
+        .expect("cancel canonical session");
+    store
+        .upsert_session(stale_upsert("legacy-message-2"))
+        .expect("second legacy payload update");
+    let aggregate = read_aggregate();
+    assert_eq!(aggregate.state, SessionState::Cancelled);
+    assert!(aggregate.cancelled);
+    assert!(aggregate.pending_user_inputs.is_empty());
+    assert_eq!(aggregate.parent_id.as_deref(), Some("canonical-parent"));
+    assert_eq!(aggregate.task_plan, task_plan);
+
+    let loaded = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
+        .expect("load cancelled session")
+        .expect("cancelled session exists");
+    assert_eq!(loaded.state.as_deref(), Some("cancelled"));
+    assert_eq!(loaded.status.as_deref(), Some("error"));
+    assert_eq!(loaded.todos[0]["id"], "legacy-todo");
+    let (_, records) = store
+        .list_session_records(ListSessionRecordsRequest {
+            session_id,
+            page: 0,
+            page_size: 10,
+        })
+        .expect("updated records");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].message_id, "legacy-message-2");
+}
+
+#[test]
+fn payload_persistence_preserves_lifecycle_and_rolls_back_invalid_batches() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let workspace = db.workspace("canonical-payload");
+    let session_id = format!("canonical-payload-{}", uuid::Uuid::new_v4());
+    store
+        .create_session(CreateSessionRequest {
+            session_id: session_id.clone(),
+            creation_command: SessionCommand::CreateSession {
+                task_plan: TaskPlan::default(),
+            },
+            workspace: workspace.clone(),
+            session_directory: workspace.clone(),
+            name: "Payload".to_string(),
+            created_at: 10,
+            model: None,
+            agent: None,
+            session_type: "coding".to_string(),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: false,
+            use_last_tool_call_response: false,
+            auto_session_name: false,
+        })
+        .expect("create canonical session");
+    for session_command in [
+        SessionCommand::RuntimeStarted,
+        SessionCommand::QueueUserInputWhileBusy {
+            input: "keep queued input".to_string(),
+        },
+    ] {
+        store
+            .execute_session_command(ExecuteSessionCommandRequest {
+                session_id: session_id.clone(),
+                session_command,
+            })
+            .expect("canonical command");
+    }
+
+    let protected_workspace_fields = || {
+        let conn = rusqlite::Connection::open(db.workspace_db(&workspace)).expect("workspace db");
+        conn.query_row(
+            "SELECT lifecycle_json, state, status, parent_id, task_management_json,
+                    management_json, session_json
+             FROM sessions WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            },
+        )
+        .expect("protected workspace fields")
+    };
+    let index_projection = || {
+        let conn = rusqlite::Connection::open(db.index_db()).expect("index db");
+        conn.query_row(
+            "SELECT state, status, parent_id, task_management_json, management_json
+             FROM sessions WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .expect("index projection")
+    };
+    let index_message_count = || {
+        let conn = rusqlite::Connection::open(db.index_db()).expect("index db");
+        conn.query_row(
+            "SELECT message_count FROM sessions WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("index message count")
+    };
+    let workspace_before = protected_workspace_fields();
+    let index_before = index_projection();
+    assert_eq!(index_message_count(), 0);
+
+    store
+        .persist_session_payload(PersistSessionPayloadRequest {
+            session_id: session_id.clone(),
+            records: vec![
+                serde_json::json!({
+                    "id": "payload-1",
+                    "role": "user",
+                    "created_at": 20,
+                    "updated_at": 20
+                }),
+                serde_json::json!({
+                    "id": "payload-2",
+                    "role": "assistant",
+                    "created_at": 21,
+                    "updated_at": 22
+                }),
+            ],
+            todos: vec![serde_json::json!({"id": "payload-todo"})],
+        })
+        .expect("persist payload");
+
+    assert_eq!(protected_workspace_fields(), workspace_before);
+    assert_eq!(index_projection(), index_before);
+    assert_eq!(index_message_count(), 2);
+    let loaded = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
+        .expect("load session")
+        .expect("session exists");
+    assert_eq!(loaded.message_count, 2);
+    assert_eq!(loaded.todos[0]["id"], "payload-todo");
+    assert_eq!(
+        loaded
+            .lifecycle_projection
+            .expect("lifecycle projection")
+            .pending_user_inputs,
+        vec!["keep queued input"]
+    );
+
+    let error = store
+        .persist_session_payload(PersistSessionPayloadRequest {
+            session_id: session_id.clone(),
+            records: vec![
+                serde_json::json!({
+                    "id": "replacement",
+                    "role": "assistant",
+                    "created_at": 30,
+                    "updated_at": 30
+                }),
+                serde_json::json!({
+                    "id": "invalid-without-role",
+                    "created_at": 31,
+                    "updated_at": 31
+                }),
+            ],
+            todos: vec![serde_json::json!({"id": "must-roll-back"})],
+        })
+        .expect_err("invalid record should reject the whole payload");
+    assert!(
+        error.to_string().contains("record role missing"),
+        "unexpected error: {error:#}"
+    );
+    assert_eq!(protected_workspace_fields(), workspace_before);
+    assert_eq!(index_projection(), index_before);
+    assert_eq!(index_message_count(), 2);
+    let loaded = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
+        .expect("reload session")
+        .expect("session exists");
+    assert_eq!(loaded.message_count, 2);
+    assert_eq!(loaded.todos[0]["id"], "payload-todo");
+    let (_, records) = store
+        .list_session_records(ListSessionRecordsRequest {
+            session_id,
+            page: 0,
+            page_size: 10,
+        })
+        .expect("records after rollback");
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.message_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["payload-1", "payload-2"]
     );
 }
 
@@ -305,9 +744,9 @@ fn running_sessions_are_marked_interrupted_with_one_canonical_state_source() {
     assert_eq!(loaded.management["state"], "interrupted");
     assert_eq!(loaded.session["status"], "error");
     assert_eq!(
-        serde_json::from_value::<session_log::SessionState>(loaded.management["state"].clone())
+        serde_json::from_value::<lifecycle::SessionState>(loaded.management["state"].clone())
             .expect("persisted interrupted state should deserialize"),
-        session_log::SessionState::Interrupted
+        lifecycle::SessionState::Interrupted
     );
 }
 
@@ -421,6 +860,22 @@ fn mark_session_interrupted_targets_only_one_session() {
 
     assert_eq!(target.state.as_deref(), Some("interrupted"));
     assert_eq!(other.state.as_deref(), Some("running"));
+    assert_eq!(
+        target
+            .lifecycle_projection
+            .as_ref()
+            .expect("target lifecycle projection")
+            .state,
+        SessionState::Interrupted
+    );
+    assert_eq!(
+        other
+            .lifecycle_projection
+            .as_ref()
+            .expect("other lifecycle projection")
+            .state,
+        SessionState::Running
+    );
 }
 
 #[test]

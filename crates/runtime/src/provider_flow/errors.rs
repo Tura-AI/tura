@@ -1,11 +1,10 @@
 //! Provider failure helpers.
 
 use chrono::{DateTime, Utc};
+use lifecycle::RuntimeState;
 use std::time::Duration;
 
-use crate::state_machine::runtime_management::{
-    RuntimeCallResultStatus, RuntimeError, RuntimeManagement, UsageReport,
-};
+use crate::state_machine::runtime_management::{RuntimeError, RuntimeManagement, UsageReport};
 
 pub(crate) fn runtime_timeout(runtime: &RuntimeManagement) -> std::time::Duration {
     std::time::Duration::from_millis(runtime.provider.base.time_out_ms.max(1_000))
@@ -16,9 +15,16 @@ pub(crate) fn finish_runtime_failure(
     finished_at: DateTime<Utc>,
     error_code: &str,
     error_text: String,
-    status: RuntimeCallResultStatus,
+    terminal_state: RuntimeState,
 ) -> Result<(), String> {
-    finish_runtime_failure_with_usage(runtime, finished_at, error_code, error_text, status, None)
+    finish_runtime_failure_with_usage(
+        runtime,
+        finished_at,
+        error_code,
+        error_text,
+        terminal_state,
+        None,
+    )
 }
 
 pub(crate) fn finish_runtime_failure_with_usage(
@@ -26,7 +32,7 @@ pub(crate) fn finish_runtime_failure_with_usage(
     finished_at: DateTime<Utc>,
     error_code: &str,
     error_text: String,
-    status: RuntimeCallResultStatus,
+    terminal_state: RuntimeState,
     usage: Option<UsageReport>,
 ) -> Result<(), String> {
     finish_runtime_failure_with_policy(
@@ -34,7 +40,7 @@ pub(crate) fn finish_runtime_failure_with_usage(
         finished_at,
         error_code,
         error_text,
-        status,
+        terminal_state,
         RuntimeFailurePolicy {
             usage,
             retry_allowed: true,
@@ -47,7 +53,7 @@ pub(crate) fn finish_provider_call_failure(
     runtime: &mut RuntimeManagement,
     finished_at: DateTime<Utc>,
     error: &tura_llm_rust::TuraError,
-    status: RuntimeCallResultStatus,
+    terminal_state: RuntimeState,
 ) -> Result<(), String> {
     let retry_allowed = !error.is_non_retryable_provider_failure();
     finish_runtime_failure_with_policy(
@@ -55,7 +61,7 @@ pub(crate) fn finish_provider_call_failure(
         finished_at,
         "CALL_FAILED",
         error.to_string(),
-        status,
+        terminal_state,
         RuntimeFailurePolicy {
             usage: None,
             retry_allowed,
@@ -75,7 +81,7 @@ fn finish_runtime_failure_with_policy(
     finished_at: DateTime<Utc>,
     error_code: &str,
     error_text: String,
-    status: RuntimeCallResultStatus,
+    terminal_state: RuntimeState,
     policy: RuntimeFailurePolicy,
 ) -> Result<(), String> {
     let err = RuntimeError {
@@ -86,7 +92,7 @@ fn finish_runtime_failure_with_policy(
         fallback_to_id: None,
     };
     runtime
-        .finish_failure(finished_at, err, status, policy.usage)
+        .finish_failure(finished_at, err, terminal_state, policy.usage)
         .map_err(|e| format!("failed to finish runtime failure: {e}"))
 }
 
@@ -117,7 +123,7 @@ fn provider_retry_wait_override(retry_count: u8) -> Option<Duration> {
 }
 
 pub(crate) fn runtime_failure_allows_retry(runtime: &RuntimeManagement) -> bool {
-    runtime.call_result_status == RuntimeCallResultStatus::Failed
+    runtime.state == RuntimeState::Failed
         && runtime
             .error
             .as_ref()
@@ -144,9 +150,10 @@ pub(crate) fn runtime_failure_text(runtime: &RuntimeManagement) -> Option<String
 mod tests {
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{
-        RuntimeCallResultStatus, RuntimeError, RuntimeManagement, RuntimeProviderConfig,
+        RuntimeError, RuntimeManagement, RuntimeProviderConfig,
     };
     use chrono::Utc;
+    use lifecycle::RuntimeState;
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -229,7 +236,9 @@ mod tests {
     #[test]
     fn retry_allowed_failed_runtime_uses_provider_retry_path() {
         let mut runtime = runtime_for_retry_test("retryable-runtime");
-        runtime.call_result_status = RuntimeCallResultStatus::Failed;
+        runtime
+            .transition(RuntimeState::Failed)
+            .expect("mark runtime failed");
         runtime.error = Some(RuntimeError {
             error_code: Some("CALL_FAILED".to_string()),
             error_text: Some(
@@ -251,7 +260,9 @@ mod tests {
     #[test]
     fn non_retryable_failed_runtime_does_not_use_provider_retry_path() {
         let mut runtime = runtime_for_retry_test("non-retryable-runtime");
-        runtime.call_result_status = RuntimeCallResultStatus::Failed;
+        runtime
+            .transition(RuntimeState::Failed)
+            .expect("mark runtime failed");
         runtime.error = Some(RuntimeError {
             error_code: Some("CALL_FAILED".to_string()),
             error_text: Some("provider rejected invalid request".to_string()),

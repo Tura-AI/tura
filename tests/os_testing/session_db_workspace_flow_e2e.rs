@@ -7,10 +7,11 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::json;
-use session_log::{
+use session_log::SessionLogStore;
+use session_log_contract::{
     CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
     ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand, SessionLogResponse,
-    SessionLogStore, UpsertSessionRequest,
+    UpsertSessionRequest,
 };
 use std::{
     path::{Path, PathBuf},

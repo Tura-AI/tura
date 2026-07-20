@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
-use session_log::{
+use session_log_contract::{
     DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionsRequest,
     SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
 };

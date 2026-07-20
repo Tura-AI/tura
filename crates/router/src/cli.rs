@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::build_state;
 use crate::daemon::{serve_socket, serve_stdio};
-use crate::runtime_dispatch::{dispatch_run_agent, RunAgentRequest};
+use crate::runtime_dispatch::dispatch_run_agent;
 use crate::runtime_utils::tokio_runtime;
+use router_contract::RunAgentRequest;
 use tura_router::registry::agent::UpsertAgentRequest;
 use tura_router::registry::command::ExecuteCommandRequest;
 use tura_router::registry::persona::UpsertPersonaRequest;

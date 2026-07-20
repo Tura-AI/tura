@@ -1,6 +1,6 @@
 use crate::session_db_client::SessionDbClient;
 use anyhow::{anyhow, Context, Result};
-use session_log::{SessionSummary, WorkspaceSummary};
+use session_log_contract::{SessionSummary, WorkspaceSummary};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -774,7 +774,7 @@ mod tests {
         ActiveSessionItem, TrayClickAction, TrayLanguage, TraySnapshot, TrayText,
     };
     use serde_json::json;
-    use session_log::SessionSummary;
+    use session_log_contract::SessionSummary;
     use std::ffi::OsString;
     use std::process::{Child, Command, Stdio};
     use std::sync::Mutex;

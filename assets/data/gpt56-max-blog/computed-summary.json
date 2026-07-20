@@ -1,0 +1,145 @@
+{
+  "deepswe": {
+    "score_delta_percentage_points": 3.2666666666666657,
+    "multipliers": {
+      "cost": 2.4169566888986815,
+      "output": 2.10941901325362,
+      "input": 2.914111589558407,
+      "time": 1.8993048822617362,
+      "steps": 1.6604708380918032
+    }
+  },
+  "eza": {
+    "Tura Balanced": {
+      "high_mean": {
+        "passed": 46.5,
+        "rounds": 30.0,
+        "output": 69673.0,
+        "reasoning": 23425.0,
+        "cost": 6.0865765
+      },
+      "max": {
+        "passed": 49,
+        "rounds": 72,
+        "output": 218421,
+        "reasoning": 113103,
+        "cost": 14.55
+      },
+      "score_delta_points_of_52": 2.5,
+      "cost_multiplier": 2.3905063872934154,
+      "output_multiplier": 3.134944670101761,
+      "reasoning_multiplier": 4.828303094983991
+    },
+    "Tura Direct": {
+      "high_mean": {
+        "passed": 41.5,
+        "rounds": 8.0,
+        "output": 37917.0,
+        "reasoning": 15429.5,
+        "cost": 1.9146865
+      },
+      "max": {
+        "passed": 48,
+        "rounds": 18,
+        "output": 114651,
+        "reasoning": 81938,
+        "cost": 6.26
+      },
+      "score_delta_points_of_52": 6.5,
+      "cost_multiplier": 3.2694647400501333,
+      "output_multiplier": 3.0237360550676478,
+      "reasoning_multiplier": 5.310476684273632
+    },
+    "Codex CLI": {
+      "high_mean": {
+        "passed": 41.0,
+        "rounds": 62.5,
+        "output": 39492.0,
+        "reasoning": 12900.0,
+        "cost": 5.281946
+      },
+      "max": {
+        "passed": 48,
+        "rounds": 92,
+        "output": 69196,
+        "reasoning": 30230,
+        "cost": 12.01
+      },
+      "score_delta_points_of_52": 7.0,
+      "cost_multiplier": 2.27378318521242,
+      "output_multiplier": 1.7521523346500556,
+      "reasoning_multiplier": 2.3434108527131783
+    }
+  },
+  "task_types": {
+    "scoped_repair": {
+      "high": {
+        "n_scored_attempts": 28,
+        "n_tasks": 7,
+        "pass_rate": 64.28571428571429,
+        "cost": 3.463573285714286,
+        "output": 28341.464285714286,
+        "steps": 39.67857142857143
+      },
+      "max": {
+        "n_scored_attempts": 28,
+        "n_tasks": 7,
+        "pass_rate": 57.14285714285714,
+        "cost": 8.752185321428572,
+        "output": 61815.78571428572,
+        "steps": 67.64285714285714
+      },
+      "score_delta_percentage_points": -7.142857142857153,
+      "cost_multiplier": 2.5269236708596527,
+      "output_multiplier": 2.181107690524106,
+      "round_multiplier": 1.7047704770477046
+    },
+    "feature_implementation": {
+      "high": {
+        "n_scored_attempts": 379,
+        "n_tasks": 95,
+        "pass_rate": 70.18469656992085,
+        "cost": 3.5351029076517153,
+        "output": 28797.522427440632,
+        "steps": 37.27968337730871
+      },
+      "max": {
+        "n_scored_attempts": 378,
+        "n_tasks": 95,
+        "pass_rate": 74.60317460317461,
+        "cost": 8.598554703703703,
+        "output": 60707.775132275136,
+        "steps": 61.81481481481482
+      },
+      "score_delta_percentage_points": 4.418478033253763,
+      "cost_multiplier": 2.432335048887026,
+      "output_multiplier": 2.1080902110671786,
+      "round_multiplier": 1.6581367977078927
+    },
+    "repository_rewrite": {
+      "score_delta_percentage_points": [
+        4.8076923076923075,
+        13.461538461538462
+      ],
+      "cost_multiplier": [
+        2.27378318521242,
+        3.2694647400501333
+      ],
+      "output_multiplier": [
+        1.7521523346500556,
+        3.134944670101761
+      ],
+      "round_multiplier": [
+        1.472,
+        2.4
+      ]
+    }
+  },
+  "codex_max_cost_vs_tura_direct_max": 1.9185303514376997,
+  "max_tura_vs_codex": {
+    "balanced_output_multiplier": 3.156555292213423,
+    "direct_output_multiplier": 1.6569021330712759,
+    "balanced_reasoning_multiplier": 3.7414158121071783,
+    "direct_reasoning_multiplier": 2.710486271915316
+  }
+}

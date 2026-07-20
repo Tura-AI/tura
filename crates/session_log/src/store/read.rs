@@ -6,12 +6,12 @@ use super::payload::{
 };
 use super::SessionLogStore;
 use crate::path::normalize_workspace;
-use crate::protocol::{
+use anyhow::Result;
+use rusqlite::{params, OptionalExtension};
+use session_log_contract::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionRecord,
     SessionSnapshot, SessionSummary, WorkspaceSummary,
 };
-use anyhow::Result;
-use rusqlite::{params, OptionalExtension};
 use std::path::Path;
 use std::time::Duration;
 
@@ -19,7 +19,6 @@ const STALE_RUNNING_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 
 impl SessionLogStore {
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
-        self.sweep_missing_workspace_dbs()?;
         self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         self.with_index_connection(|conn| {
             let mut stmt = conn.prepare(
@@ -46,7 +45,6 @@ impl SessionLogStore {
         &self,
         request: ListSessionsRequest,
     ) -> Result<(Page, Vec<SessionSnapshot>)> {
-        self.sweep_missing_workspace_dbs()?;
         self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         let workspace = normalize_workspace(&request.workspace);
         let page_size = request.page_size.clamp(1, 500);
@@ -94,7 +92,6 @@ impl SessionLogStore {
         &self,
         request: ListSessionsRequest,
     ) -> Result<(Page, Vec<SessionSummary>)> {
-        self.sweep_missing_workspace_dbs()?;
         self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         let workspace = normalize_workspace(&request.workspace);
         let page_size = request.page_size.clamp(1, 500);
@@ -140,12 +137,19 @@ impl SessionLogStore {
 
     pub fn get_session(&self, request: GetSessionRequest) -> Result<Option<SessionSnapshot>> {
         self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
+        self.get_session_without_stale_sweep(&request.session_id)
+    }
+
+    pub(super) fn get_session_without_stale_sweep(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<SessionSnapshot>> {
         let row = self.with_index_connection(|conn| {
             conn.query_row(
                 "SELECT session_id, workspace_db_path
                  FROM sessions
                  WHERE session_id = ?1",
-                params![request.session_id],
+                params![session_id],
                 index_session_from_row,
             )
             .optional()
@@ -261,6 +265,7 @@ impl SessionLogStore {
             status: workspace_payload.status,
             message_count: workspace_payload.message_count as u64,
             task_management: workspace_payload.task_management,
+            lifecycle_projection: Some(workspace_payload.lifecycle_projection),
             management: workspace_payload.management,
             session: workspace_payload.session,
             todos: workspace_payload.todos,
@@ -297,31 +302,5 @@ impl SessionLogStore {
             )?;
             Ok(())
         })
-    }
-
-    fn sweep_missing_workspace_dbs(&self) -> Result<()> {
-        let missing = self.with_index_connection(|conn| {
-            let mut stmt = conn.prepare("SELECT DISTINCT workspace_db_path FROM sessions")?;
-            let paths = stmt
-                .query_map([], |row| row.get::<_, String>(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?
-                .into_iter()
-                .filter(|path| !Path::new(path).exists())
-                .collect::<Vec<_>>();
-            for path in &paths {
-                conn.execute(
-                    "DELETE FROM sessions WHERE workspace_db_path = ?1",
-                    params![path],
-                )?;
-            }
-            Ok(paths)
-        })?;
-        for path in missing {
-            tracing::warn!(
-                path,
-                "removed session index snapshots for missing workspace DB"
-            );
-        }
-        Ok(())
     }
 }

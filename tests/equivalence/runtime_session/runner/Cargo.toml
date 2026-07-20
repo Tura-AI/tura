@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "runtime-session-equivalence"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+gateway = { path = "../../../../crates/gateway" }
+lifecycle = { path = "../../../../crates/lifecycle" }
+runtime = { path = "../../../../crates/runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+session_log = { path = "../../../../crates/session_log" }
+session_log_contract = { path = "../../../../crates/session_log_contract" }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn = { version = "2", features = ["full", "visit"] }
+tempfile = "3"
+walkdir = "2"

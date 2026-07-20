@@ -291,6 +291,7 @@ fn write_command_run_background_child_script(script: &Path, child_pid_file: &Pat
     let child_pid_file = serde_json::to_string(&child_pid_file.display().to_string())?;
     let source = format!(
         r#"
+import os
 import subprocess
 import sys
 import time
@@ -304,6 +305,7 @@ child = subprocess.Popen(
 with open({child_pid_file}, "w", encoding="utf-8") as handle:
     handle.write(str(child.pid))
     handle.flush()
+os._exit(0)
 "#
     );
     std::fs::write(script, source)

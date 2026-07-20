@@ -5,7 +5,7 @@
 //! the session_log crate itself.
 
 use anyhow::{anyhow, bail, Context, Result};
-use session_log::{
+use session_log_contract::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand,
     SessionLogResponse, UpsertSessionRequest,
 };

@@ -3,12 +3,11 @@ use std::time::Instant;
 
 use crate::profile_timings;
 use serde_json::Value;
-use session_log::{
-    CommandCheckpoint, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
-    SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
+use session_log_contract::{
+    CommandCheckpoint, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page,
+    SessionLogCommand, SessionLogResponse, SessionRecord, SessionSnapshot, UpsertSessionRequest,
+    WorkspaceSummary,
 };
-
-pub use session_log::{Page, SessionRecord, SessionSnapshot, WorkspaceSummary};
 
 #[derive(Debug, Clone, Default)]
 pub struct SessionLogClient;
@@ -205,6 +204,9 @@ impl SessionLogClient {
 fn session_log_command_name(command: &SessionLogCommand) -> &'static str {
     match command {
         SessionLogCommand::Health => "health",
+        SessionLogCommand::CreateSession(_) => "create_session",
+        SessionLogCommand::ExecuteSessionCommand(_) => "execute_session_command",
+        SessionLogCommand::PersistSessionPayload(_) => "persist_session_payload",
         SessionLogCommand::UpsertSession(_) => "upsert_session",
         SessionLogCommand::ApplyCommandCheckpoint(_) => "apply_command_checkpoint",
         SessionLogCommand::GetSession(_) => "get_session",

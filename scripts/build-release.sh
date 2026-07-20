@@ -77,7 +77,7 @@ rm -f "$TARGET_DIR/cli" "$TARGET_DIR/cli.exe"
 
 copy_gui_dist() {
   src="$REPO_ROOT/apps/gui/app/dist"
-  dst="$TARGET_DIR/tura_gui"
+  dst="$TARGET_DIR/tura_gui_dist"
   if [ ! -f "$src/index.html" ]; then
     echo "GUI dist not found at $src. Run the GUI build before copying release artifacts." >&2
     exit 1
@@ -244,6 +244,7 @@ fi
 if [ "$BUILD_TAURI" -eq 1 ]; then
   install_js_if_missing "$REPO_ROOT/apps/gui" "app/node_modules/vite/package.json"
   install_js_if_missing "$REPO_ROOT/apps/tauri" "node_modules/@tauri-apps/cli/package.json"
+  [ ! -d "$TARGET_DIR/tura_gui" ] || rm -rf "$TARGET_DIR/tura_gui"
   rm -rf "$TARGET_DIR/bundle" "$TARGET_DIR/release/bundle"
   (cd "$REPO_ROOT/apps/tauri" && TURA_BUILD_KIND=release bun run build)
 fi

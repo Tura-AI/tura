@@ -5,7 +5,6 @@ use crate::front_lifecycle::FrontLifecycle;
 use crate::services::manager::ServiceManager;
 use crate::services::{
     command_run::CommandRunService, execution::ExecutionService, session_db::SessionDbService,
-    user_commands::UserCommandService,
 };
 use tura_router::registry::Registry;
 
@@ -16,7 +15,6 @@ pub(crate) struct AppState {
     pub(crate) session_db: SessionDbService,
     pub(crate) execution: ExecutionService,
     pub(crate) command_run: CommandRunService,
-    pub(crate) user_commands: UserCommandService,
     pub(crate) lifecycle: FrontLifecycle,
     pub(crate) shutdown: Arc<AtomicBool>,
 }
@@ -37,7 +35,6 @@ pub(crate) fn build_state() -> AppState {
         session_db: SessionDbService::new(),
         execution: ExecutionService::new(),
         command_run: CommandRunService::new(),
-        user_commands: UserCommandService::default(),
         lifecycle: FrontLifecycle::new(),
         shutdown: Arc::new(AtomicBool::new(false)),
     }

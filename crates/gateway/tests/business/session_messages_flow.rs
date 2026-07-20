@@ -6,12 +6,12 @@ use gateway::api::session::{
 };
 use gateway::contracts::{GlobalEvent, Message, MessagePart};
 use gateway::session_store;
-use runtime::state_machine::runtime_management::{
-    RuntimeCallResultStatus, RuntimeSessionSyncStatus, RuntimeState,
-};
-use runtime::state_machine::session_management::PlanStatus;
+use lifecycle::{PlanStatus, RuntimeProjection, RuntimeState, SessionCommand, SessionState};
 use serde_json::{json, Value};
-use session_log::{SessionLogCommand, SessionLogStore};
+use session_log::SessionLogStore;
+use session_log_contract::{
+    ExecuteSessionCommandRequest, SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
+};
 use std::collections::BTreeSet;
 use std::path::Path as FsPath;
 use std::time::{Duration, Instant};
@@ -357,7 +357,7 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
     let _service = ServiceThread::start()?;
 
     let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
-    let session_id = create_business_session(workspace_key.clone());
+    let session_id = create_canonical_business_session(workspace_key.clone());
     let runtime_id = "runtime-overlay-business".to_string();
     let runtime_message_id = format!("{runtime_id}.message");
     let text_part_id = format!("{runtime_id}.message");
@@ -590,7 +590,7 @@ async fn gateway_session_messages_business_flow_refreshes_session_task_managemen
     let _service = ServiceThread::start()?;
 
     let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
-    let session_id = create_business_session(workspace_key.clone());
+    let session_id = create_canonical_business_session(workspace_key.clone());
     let task_id = "runtime-task-refresh";
     session_store()
         .update_session(
@@ -613,7 +613,30 @@ async fn gateway_session_messages_business_flow_refreshes_session_task_managemen
     assert_eq!(stored_task_status(&session_id, task_id), Some("doing"));
     drain_events();
 
-    upsert_canonical_session_with_info(
+    let mut task_plan = session_store()
+        .get_session_info(&session_id)
+        .expect("session before canonical task update")
+        .management
+        .task_plan
+        .clone();
+    task_plan
+        .detailed_tasks
+        .iter_mut()
+        .find(|task| task.task_id == task_id)
+        .expect("task should exist before canonical task update")
+        .status = PlanStatus::Done;
+    let response = session_log::ipc::call_service(&SessionLogCommand::ExecuteSessionCommand(
+        ExecuteSessionCommandRequest {
+            session_id: session_id.clone(),
+            session_command: lifecycle::SessionCommand::ApplyTaskStatus { task_plan },
+        },
+    ))?;
+    assert!(
+        matches!(response, SessionLogResponse::SessionCommandApplied { .. }),
+        "typed task status update should be applied: {response:?}"
+    );
+
+    upsert_canonical_session(
         &session_id,
         &workspace_key,
         vec![db_text_message(
@@ -625,16 +648,6 @@ async fn gateway_session_messages_business_flow_refreshes_session_task_managemen
             1_781_514_294_000,
             1_781_514_294_000,
         )],
-        |info| {
-            let task = info
-                .management
-                .task_plan
-                .detailed_tasks
-                .iter_mut()
-                .find(|task| task.task_id == task_id)
-                .expect("task should exist in persisted session info");
-            task.status = PlanStatus::Done;
-        },
     )?;
     assert_eq!(
         stored_task_status(&session_id, task_id),
@@ -687,6 +700,86 @@ async fn gateway_session_messages_business_flow_refreshes_session_task_managemen
         saw_session_updated,
         "terminal runtime DB refresh must publish session.updated so plan views receive task_management"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn gateway_runtime_terminal_callbacks_apply_typed_session_transitions_and_fail_closed_without_session_db(
+) -> anyhow::Result<()> {
+    let _flow_guard = SESSION_MESSAGES_FLOW_LOCK.lock().await;
+    let _guard = SESSION_DB_ENV_LOCK.lock().await;
+    let root = tempfile::tempdir()?;
+    let home = root.path().join("home");
+    let workspace = root.path().join("workspace-terminal-callbacks");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+    let _env = EnvGuard::new(&home);
+    let service = ServiceThread::start()?;
+    let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
+
+    for (runtime_state, expected_session_state, expected_cancelled) in [
+        (RuntimeState::Finished, SessionState::Completed, false),
+        (RuntimeState::Failed, SessionState::Failed, false),
+        (RuntimeState::Cancelled, SessionState::Cancelled, true),
+    ] {
+        let session_id = create_canonical_business_session(workspace_key.clone());
+        session_store()
+            .execute_canonical_session_command(&session_id, SessionCommand::RuntimeStarted)
+            .expect("terminal callback session should start through Session DB");
+        let runtime_id = format!("runtime-terminal-{runtime_state:?}").to_lowercase();
+        let Json(response) = send_agent_message(
+            Path(session_id.clone()),
+            Json(terminal_callback_request(&runtime_id, runtime_state)),
+        )
+        .await;
+        assert!(
+            response.ok,
+            "{runtime_state:?} callback should succeed: {:?}",
+            response.error
+        );
+        let projection = session_store()
+            .session_lifecycle_projection(&session_id)
+            .expect("terminal callback projection");
+        assert_eq!(projection.state, expected_session_state);
+        assert_eq!(projection.cancelled, expected_cancelled);
+    }
+
+    let offline_session_id = create_canonical_business_session(workspace_key);
+    session_store()
+        .execute_canonical_session_command(&offline_session_id, SessionCommand::RuntimeStarted)
+        .expect("offline callback session should start while Session DB is available");
+    drop(service);
+
+    let Json(response) = send_agent_message(
+        Path(offline_session_id.clone()),
+        Json(terminal_callback_request(
+            "runtime-terminal-service-failure",
+            RuntimeState::Finished,
+        )),
+    )
+    .await;
+    assert!(
+        !response.ok,
+        "callback must not report success without Session DB"
+    );
+    assert!(
+        response
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("failed to execute canonical session command")),
+        "service failure should be explicit: {:?}",
+        response.error
+    );
+    let projection = session_store()
+        .session_lifecycle_projection(&offline_session_id)
+        .expect("offline callback projection");
+    assert_eq!(
+        projection.state,
+        SessionState::Running,
+        "failed Session DB mutation must not update the local projection"
+    );
+    assert!(!projection.cancelled);
 
     Ok(())
 }
@@ -810,21 +903,51 @@ fn create_business_session(directory: String) -> String {
         .id
 }
 
-fn runtime_sync_status(runtime_id: &str, live: bool) -> RuntimeSessionSyncStatus {
-    RuntimeSessionSyncStatus {
-        runtime_id: runtime_id.to_string(),
-        state: if live {
+fn create_canonical_business_session(directory: String) -> String {
+    let info = session_store().build_session_info(
+        Some(directory),
+        Some("business-model".to_string()),
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    let task_plan = info.management.task_plan.clone();
+    session_store()
+        .create_canonical_session(info, lifecycle::SessionCommand::CreateSession { task_plan })
+        .expect("canonical business session should be created")
+        .id
+}
+
+fn runtime_sync_status(runtime_id: &str, live: bool) -> RuntimeProjection {
+    RuntimeProjection::new(
+        runtime_id.to_string(),
+        if live {
             RuntimeState::Streaming
         } else {
             RuntimeState::Finished
         },
-        call_result_status: if live {
-            RuntimeCallResultStatus::Streaming
-        } else {
-            RuntimeCallResultStatus::Succeeded
-        },
-        live,
-        session_db_refresh_required: !live,
+    )
+}
+
+fn terminal_callback_request(runtime_id: &str, state: RuntimeState) -> SendAgentMessageRequest {
+    SendAgentMessageRequest {
+        reply_message: String::new(),
+        new_learning: String::new(),
+        step_summary: None,
+        media: Vec::new(),
+        runtime_id: Some(runtime_id.to_string()),
+        tool_call: None,
+        runtime_status: Some(RuntimeProjection::new(runtime_id.to_string(), state)),
+        context_tokens: None,
+        usage: None,
+        command_updates: Vec::new(),
+        created_at: 1_781_514_296_000,
+        updated_at: 1_781_514_296_500,
     }
 }
 
@@ -853,17 +976,16 @@ fn upsert_canonical_session_with_info(
         .max()
         .unwrap_or(info.updated_at);
     mutate_info(&mut info);
-    let response = session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-        session_log::UpsertSessionRequest {
+    let response =
+        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
             session: serde_json::to_value(info)?,
             parent_id: None,
             messages,
             todos: Vec::new(),
-        },
-    ))?;
+        }))?;
     match response {
-        session_log::SessionLogResponse::Ok => Ok(()),
-        session_log::SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
+        SessionLogResponse::Ok => Ok(()),
+        SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
         other => anyhow::bail!("unexpected session_log response: {other:?}"),
     }
 }
@@ -874,7 +996,7 @@ fn stored_task_status(session_id: &str, task_id: &str) -> Option<&'static str> {
         .management
         .task_plan
         .detailed_tasks
-        .into_iter()
+        .iter()
         .find(|task| task.task_id == task_id)
         .map(|task| match task.status {
             PlanStatus::Todo => "todo",

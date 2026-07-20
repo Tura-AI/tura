@@ -1,24 +1,27 @@
+mod support;
+
+use axum::body;
 use axum::extract::{Json, Path};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use gateway::api::session::{delete_session, fork_session};
-use gateway::contracts::ForkSessionRequest;
+use gateway::contracts::{ForkSessionRequest, Session};
 use gateway::session::MessageRole;
 use gateway::session_store;
-use session_log::{SessionLogCommand, SessionLogStore};
-use std::path::Path as FsPath;
-use std::time::{Duration, Instant};
+use lifecycle::SessionCommand;
+use session_log_contract::{
+    GetSessionRequest, ListSessionRecordsRequest, SessionLogCommand, SessionLogResponse,
+    SessionRecord, SessionSnapshot,
+};
+use support::TestSessionDb;
 
 #[tokio::test]
 async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let home = root.path().join("home");
-    let workspace = root.path().join("workspace");
-    std::fs::create_dir_all(&home)?;
-    std::fs::create_dir_all(&workspace)?;
-    let _env = EnvGuard::new(&home);
-    let _service = ServiceThread::start()?;
+    let service = TestSessionDb::start()?;
+    let workspace = service.workspace();
 
     let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
-    let source = session_store().create_session(
+    let source_info = session_store().build_session_info(
         Some(workspace_key.clone()),
         Some("db-test-model".to_string()),
         Some("thoughtful".to_string()),
@@ -30,13 +33,22 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
         false,
         false,
     );
+    let source_task_plan = source_info.management.task_plan.clone();
+    let source = session_store()
+        .create_canonical_session(
+            source_info,
+            SessionCommand::CreateSession {
+                task_plan: source_task_plan,
+            },
+        )
+        .map_err(anyhow::Error::msg)?;
     session_store().add_message(
         &source.id,
         MessageRole::User,
         "persist this context before fork".to_string(),
     );
 
-    let Json(forked) = fork_session(
+    let response = fork_session(
         Path(source.id.clone()),
         Json(ForkSessionRequest {
             directory: Some(workspace_key),
@@ -45,7 +57,11 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
             copy_context: Some(true),
         }),
     )
-    .await;
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body(), usize::MAX).await?;
+    let forked: Session = serde_json::from_slice(&body)?;
 
     assert_ne!(
         forked.id, source.id,
@@ -77,99 +93,29 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_persisted_session(
-    session_id: &str,
-) -> anyhow::Result<Option<Box<session_log::SessionSnapshot>>> {
-    let response = session_log::ipc::call_service(&SessionLogCommand::GetSession(
-        session_log::GetSessionRequest {
+fn get_persisted_session(session_id: &str) -> anyhow::Result<Option<Box<SessionSnapshot>>> {
+    let response =
+        session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
             session_id: session_id.to_string(),
-        },
-    ))?;
+        }))?;
     match response {
-        session_log::SessionLogResponse::Session { session } => Ok(session),
-        session_log::SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
+        SessionLogResponse::Session { session } => Ok(session),
+        SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
         other => anyhow::bail!("unexpected session_log get session response: {other:?}"),
     }
 }
 
-fn list_persisted_records(session_id: &str) -> anyhow::Result<Vec<session_log::SessionRecord>> {
+fn list_persisted_records(session_id: &str) -> anyhow::Result<Vec<SessionRecord>> {
     let response = session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
-        session_log::ListSessionRecordsRequest {
+        ListSessionRecordsRequest {
             session_id: session_id.to_string(),
             page: 0,
             page_size: 50,
         },
     ))?;
     match response {
-        session_log::SessionLogResponse::Records { records, .. } => Ok(records),
-        session_log::SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
+        SessionLogResponse::Records { records, .. } => Ok(records),
+        SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
         other => anyhow::bail!("unexpected session_log records response: {other:?}"),
     }
-}
-
-struct ServiceThread {
-    handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
-}
-
-impl ServiceThread {
-    fn start() -> anyhow::Result<Self> {
-        let store = SessionLogStore::open_default()?;
-        let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
-        wait_until(
-            Duration::from_secs(10),
-            session_log::ipc::service_is_running,
-        )?;
-        Ok(Self {
-            handle: Some(handle),
-        })
-    }
-}
-
-impl Drop for ServiceThread {
-    fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
-struct EnvGuard {
-    previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
-}
-
-impl EnvGuard {
-    fn new(home: &FsPath) -> Self {
-        let keys = ["TURA_HOME", "TURA_DB_ROOT", "SESSION_LOG_DB_ROOT"];
-        let previous = keys
-            .iter()
-            .map(|key| (*key, std::env::var_os(key)))
-            .collect::<Vec<_>>();
-        std::env::set_var("TURA_HOME", home);
-        std::env::remove_var("TURA_DB_ROOT");
-        std::env::remove_var("SESSION_LOG_DB_ROOT");
-        Self { previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.previous.drain(..).rev() {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
-}
-
-fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> anyhow::Result<()> {
-    let started = Instant::now();
-    while started.elapsed() < timeout {
-        if condition() {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    anyhow::bail!("condition was not met within {}ms", timeout.as_millis())
 }

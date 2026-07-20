@@ -1,7 +1,8 @@
 use std::sync::atomic::Ordering;
 
+use lifecycle::SessionState;
 use runtime::mano;
-use runtime::state_machine::session_management::{SessionInput, SessionState};
+use runtime::state_machine::session_management::SessionInput;
 use serde_json::Value;
 
 #[path = "../support/session_db_support.rs"]

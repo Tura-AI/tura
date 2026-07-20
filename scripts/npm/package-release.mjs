@@ -114,7 +114,7 @@ try {
     fail(`Tauri bundle version does not match ${packageJson.version}: ${mismatchedBundles.map((file) => path.basename(file)).join(", ")}`);
   }
 
-  copyDirectory(firstExistingPath(guiDistCandidates(repoRoot)), path.join(stageRelease, "tura_gui"), "GUI dist");
+  copyDirectory(firstExistingPath(guiDistCandidates(repoRoot)), path.join(stageRelease, "tura_gui_dist"), "GUI dist");
 
   for (const [sourceRelative, releaseRelative] of releaseConfigFiles) {
     const source = path.join(repoRoot, sourceRelative);

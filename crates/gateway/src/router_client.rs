@@ -4,18 +4,12 @@
 //! must use `SessionDbClient`, never router calls.
 
 use anyhow::{anyhow, Result};
+use router_contract::{EnqueueTurnRequest, ProbeSessionsRequest, METHOD_ENQUEUE_TURN};
 use serde_json::{json, Value};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct RouterClient;
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EnqueueTurnRequest {
-    pub turn_id: String,
-    pub session_id: String,
-    pub payload: Value,
-}
 
 impl RouterClient {
     pub fn global() -> Self {
@@ -29,7 +23,7 @@ impl RouterClient {
     pub fn enqueue_turn(&self, request: EnqueueTurnRequest) -> Result<Value> {
         let payload = enqueue_turn_payload(request)?;
         crate::router_process::global_router_process()?
-            .call("execution.enqueue_turn", payload)
+            .call(METHOD_ENQUEUE_TURN, payload)
             .map_err(|error| anyhow!("router execution enqueue failed: {error}"))
     }
 
@@ -50,34 +44,10 @@ impl RouterClient {
     pub fn probe_sessions(&self, session_ids: &[String]) -> Result<Value> {
         crate::router_process::global_router_process()?.call_existing_with_timeout(
             "execution.probe_sessions",
-            json!({ "session_ids": session_ids }),
+            serde_json::to_value(ProbeSessionsRequest {
+                session_ids: session_ids.to_vec(),
+            })?,
             Duration::from_secs(5),
-        )
-    }
-
-    pub fn append_user_command(
-        &self,
-        session_id: &str,
-        root_session_id: &str,
-        command: &str,
-    ) -> Result<Value> {
-        crate::router_process::global_router_process()?.call(
-            "session.append_user_command",
-            json!({
-                "session_id": session_id,
-                "root_session_id": root_session_id,
-                "command": command,
-            }),
-        )
-    }
-
-    pub fn clear_user_commands(&self, session_id: &str, root_session_id: &str) -> Result<Value> {
-        crate::router_process::global_router_process()?.call(
-            "session.clear_user_commands",
-            json!({
-                "session_id": session_id,
-                "root_session_id": root_session_id,
-            }),
         )
     }
 
@@ -100,9 +70,8 @@ fn kill_session_workers_payload(session_id: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        cancel_turn_payload, enqueue_turn_payload, kill_session_workers_payload, EnqueueTurnRequest,
-    };
+    use super::{cancel_turn_payload, enqueue_turn_payload, kill_session_workers_payload};
+    use router_contract::EnqueueTurnRequest;
     use serde_json::json;
 
     #[test]

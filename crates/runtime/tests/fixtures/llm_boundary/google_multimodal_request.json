@@ -1,0 +1,1 @@
+{"contents":[{"parts":[{"text":"Inspect the workspace"},{"inlineData":{"data":"QUJD","mimeType":"image/png"}}],"role":"user"},{"parts":[{"text":"Runtime context (debug):\ndebug context should become user text"}],"role":"user"}],"generationConfig":{"maxOutputTokens":77,"temperature":0.0},"systemInstruction":{"parts":[{"text":"Keep system instruction separate."}]}}

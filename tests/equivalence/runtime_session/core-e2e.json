@@ -1,0 +1,40 @@
+{
+  "schema": "tura.runtime-session-core-e2e.v1",
+  "scenarios": [
+    {
+      "name": "normal",
+      "command": "cargo test -p runtime --features business-tests --test provider_boundary_flow runtime_google_business_flow_extracts_text_tool_metadata_usage_and_request_options --quiet",
+      "observable": "final provider request, response text, state and usage"
+    },
+    {
+      "name": "tool",
+      "command": "cargo test -p runtime --features business-tests --test provider_boundary_flow runtime_openai_followup_request_matches_canonical_command_run_refill --quiet",
+      "observable": "tool refill records and next provider request value/raw bytes"
+    },
+    {
+      "name": "cancel",
+      "command": "cargo test -p gateway --features os-tests --test session_prompt_router_flow cancel_after_router_enqueue --quiet",
+      "observable": "accepted user message, cancellation marker and no success fallback"
+    },
+    {
+      "name": "timeout",
+      "command": "cargo test -p runtime --features business-tests --test provider_timeout_flow runtime_provider_timeout_business_flow --quiet",
+      "observable": "bounded duration, timeout state, error classification and empty output"
+    },
+    {
+      "name": "compact",
+      "command": "cargo test -p runtime --features business-tests --test runtime_context_business_flow context_business_flow --quiet",
+      "observable": "context order, media, tool refill and compaction boundary"
+    },
+    {
+      "name": "restart",
+      "command": "cargo test --features os-tests --test session_db_restart_queue_resilience session_db_restart --quiet",
+      "observable": "queue recovery, interrupted state, history and checkpoint idempotency"
+    },
+    {
+      "name": "busy_input",
+      "command": "cargo test -p gateway --features business-tests --test session_prompt_busy_flow busy_session_prompt_business_flow --quiet",
+      "observable": "FIFO queued input, preserved parts and stale cancellation clearing"
+    }
+  ]
+}

@@ -668,7 +668,7 @@ fn record_role(object: &serde_json::Map<String, Value>) -> String {
 }
 
 fn session_status(session: &SessionManagement) -> &'static str {
-    use crate::state_machine::session_management::SessionState;
+    use lifecycle::SessionState;
 
     match session.state {
         SessionState::Created | SessionState::Completed => "idle",

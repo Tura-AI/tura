@@ -18,7 +18,7 @@ import {
 import {
   executableName,
   executableNames,
-  missingReleaseFiles,
+  missingNpmPlatformFiles,
   missingReleaseRuntimeFiles,
   platformPackageName,
 } from "./release-artifacts.mjs";
@@ -145,7 +145,7 @@ function ensurePowerShellCliPath() {
 }
 
 function verifyInstall() {
-  const missingRelease = missingReleaseFiles(packageRoot);
+  const missingRelease = missingNpmPlatformFiles(packageRoot);
   if (missingRelease.length > 0) {
     fail(
       `release archive did not install required files: ${missingRelease.map((file) => path.relative(packageRoot, file)).join(", ")}`,
@@ -192,7 +192,7 @@ function installFromPlatformPackage() {
     return false;
   }
 
-  const missingPlatform = missingReleaseFiles(platformRoot);
+  const missingPlatform = missingNpmPlatformFiles(platformRoot);
   if (missingPlatform.length > 0) {
     fail(
       `platform package ${platformPackageName()} is incomplete: ${missingPlatform.map((file) => path.relative(platformRoot, file)).join(", ")}`,
@@ -218,7 +218,7 @@ function installFromPlatformPackage() {
 
 ensureRuntimeDependencies();
 
-const existingMissing = missingReleaseFiles(packageRoot);
+const existingMissing = missingNpmPlatformFiles(packageRoot);
 if (existingMissing.length === 0) {
   verifyInstall();
   registerCli();

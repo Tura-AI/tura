@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use lifecycle::RuntimeState;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -21,7 +22,7 @@ use crate::provider_flow::streamed_command_run::{
     command_run_stream_events_from_provider_content, streamed_command_run_call_id,
 };
 use crate::provider_flow::usage::usage_report_from_metrics;
-use crate::state_machine::runtime_management::{RuntimeCallResultStatus, RuntimeManagement};
+use crate::state_machine::runtime_management::RuntimeManagement;
 
 pub(crate) struct RuntimeStreamingInput {
     pub(crate) messages: Vec<serde_json::Value>,
@@ -101,7 +102,7 @@ pub(crate) async fn call_runtime_streaming(
         call_id: gateway_call_id,
         started_at,
         state: command_state.clone(),
-        runtime_status: runtime.session_sync_status(),
+        runtime_status: runtime.lifecycle_projection(),
         require_startup_task_state: input.require_startup_task_state,
     });
 
@@ -137,7 +138,7 @@ pub(crate) async fn call_runtime_streaming(
                     finished_at,
                     "CALL_TIMED_OUT",
                     message,
-                    RuntimeCallResultStatus::TimedOut,
+                    RuntimeState::TimedOut,
                 )?;
                 provider_task.abort();
                 let _ = (&mut provider_task).await;
@@ -154,7 +155,7 @@ pub(crate) async fn call_runtime_streaming(
                         runtime.set_output(serde_json::json!({
                             "error": e.to_string()
                         }));
-                        finish_provider_call_failure(runtime, finished_at, &e, RuntimeCallResultStatus::Failed)?;
+                        finish_provider_call_failure(runtime, finished_at, &e, RuntimeState::Failed)?;
                         drop(final_response_stream_tx);
                         let _ = command_task.join();
                         return Ok(());
@@ -171,7 +172,7 @@ pub(crate) async fn call_runtime_streaming(
                             finished_at,
                             "CALL_FAILED",
                             message,
-                            RuntimeCallResultStatus::Failed,
+                            RuntimeState::Failed,
                         )?;
                         drop(final_response_stream_tx);
                         let _ = command_task.join();
@@ -200,7 +201,7 @@ pub(crate) async fn call_runtime_streaming(
                         "COMMAND_RUN_CANCELLED",
                         "apply_patch failed; runtime stream cancelled after command_run result"
                             .to_string(),
-                        RuntimeCallResultStatus::Cancelled,
+                        RuntimeState::Cancelled,
                     )?;
                     provider_task.abort();
                     let _ = (&mut provider_task).await;

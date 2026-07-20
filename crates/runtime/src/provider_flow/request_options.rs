@@ -1,7 +1,7 @@
 use crate::context::USER_AGENT_CONTEXT_ROLE;
 use crate::profile_timings;
 use crate::session_log_client::SessionLogClient;
-use crate::state_machine::session_management::SessionId;
+use lifecycle::SessionId;
 use std::time::Instant;
 use tura_llm_rust::{openai_compatible_usage_stream_supported, prompt_cache_key_supported};
 

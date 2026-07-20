@@ -3,7 +3,10 @@ name: OS Worker Tests
 on:
   push:
     branches:
-      - "codex/**"
+      - "staging/runtime_session_refactor"
+    paths-ignore:
+      - "docs/**"
+      - "outreach/**"
   workflow_dispatch:
     inputs:
       suite:
@@ -36,6 +39,7 @@ jobs:
   select:
     name: Select OS test matrix
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       install_matrix: ${{ steps.select.outputs.install_matrix }}
       install_count: ${{ steps.select.outputs.install_count }}
@@ -49,6 +53,7 @@ jobs:
         env:
           OS_TEST_SUITE: ${{ inputs.suite }}
           OS_TEST_LABEL: ${{ inputs.label }}
+          OS_TEST_EVENT_NAME: ${{ github.event_name }}
           OS_TEST_REF_NAME: ${{ github.ref_name }}
           OS_TEST_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
@@ -79,10 +84,11 @@ jobs:
           $manualSuite = $manualSuite.ToLowerInvariant()
           $manualLabel = $manualLabel.ToLowerInvariant()
           $selector = "$($env:OS_TEST_REF_NAME) $($env:OS_TEST_COMMIT_MESSAGE)".ToLowerInvariant()
+          $isIntegrationPush = ($env:OS_TEST_EVENT_NAME -eq "push") -and ($env:OS_TEST_REF_NAME -eq "staging/runtime_session_refactor")
 
           $runFull = ($manualSuite -eq "full") -or $selector.Contains("os-full")
           $runInstall = $runFull -or ($manualSuite -eq "install-release") -or $selector.Contains("os-install") -or $selector.Contains("install-release")
-          $runBackend = $runFull -or ($manualSuite -eq "backend-os") -or $selector.Contains("os-backend") -or $selector.Contains("backend-os")
+          $runBackend = $isIntegrationPush -or $runFull -or ($manualSuite -eq "backend-os") -or $selector.Contains("os-backend") -or $selector.Contains("backend-os")
           $runTui = $runFull -or ($manualSuite -eq "tui-gateway") -or $selector.Contains("os-tui") -or $selector.Contains("tui-gateway")
 
           function Select-Rows {
@@ -174,6 +180,7 @@ jobs:
     needs: select
     if: needs.select.outputs.backend_count != '0'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.select.outputs.backend_matrix) }}
@@ -216,6 +223,7 @@ jobs:
     needs: select
     if: needs.select.outputs.tui_count != '0'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.select.outputs.tui_matrix) }}

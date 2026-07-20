@@ -1,8 +1,9 @@
 use super::SessionLogStore;
-use crate::checkpoint::CommandCheckpoint;
-use crate::protocol::{DeleteSessionRequest, DeleteWorkspaceRequest, UpsertSessionRequest};
 use anyhow::{anyhow, Result};
 use rusqlite::params;
+use session_log_contract::{
+    CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, UpsertSessionRequest,
+};
 
 impl SessionLogStore {
     pub fn replay_pending_write_queue(&self) -> Result<u64> {

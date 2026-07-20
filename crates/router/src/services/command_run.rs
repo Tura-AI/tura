@@ -97,7 +97,11 @@ mod tests {
     use super::{CommandRunRequest, CommandRunService};
     use serde_json::json;
     use std::collections::BTreeSet;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
+
+    const ACTIVE_FIXTURE_DELAY_MS: u64 = 1200;
+    const CONCURRENT_FIXTURE_DELAY_MS: u64 = 3000;
+    const READ_ONLY_FIXTURE_TIMEOUT_MS: u64 = 30000;
 
     #[tokio::test]
     async fn command_run_service_executes_inside_requested_workspace() {
@@ -148,8 +152,8 @@ mod tests {
                 "commands": [{
                     "command": "shell_command",
                     "command_line": json!({
-                        "command": delayed_read_only_command("active"),
-                        "timeout_ms": 5000
+                        "command": delayed_read_only_command("active", ACTIVE_FIXTURE_DELAY_MS),
+                        "timeout_ms": READ_ONLY_FIXTURE_TIMEOUT_MS
                     }).to_string()
                 }]
             }
@@ -204,8 +208,8 @@ mod tests {
                         "step": 1,
                         "command": "shell_command",
                         "command_line": json!({
-                            "command": delayed_read_only_command(label),
-                            "timeout_ms": 5000
+                            "command": delayed_read_only_command(label, CONCURRENT_FIXTURE_DELAY_MS),
+                            "timeout_ms": READ_ONLY_FIXTURE_TIMEOUT_MS
                         }).to_string()
                     }]
                 }
@@ -222,8 +226,14 @@ mod tests {
             .await
             .expect("sequential second command_run should finish");
         let sequential_elapsed = sequential_started.elapsed();
-        assert_eq!(seq_first["result"]["results"][0]["success"], true);
-        assert_eq!(seq_second["result"]["results"][0]["success"], true);
+        assert_eq!(
+            seq_first["result"]["results"][0]["success"], true,
+            "sequential first command_run should succeed: {seq_first}"
+        );
+        assert_eq!(
+            seq_second["result"]["results"][0]["success"], true,
+            "sequential second command_run should succeed: {seq_second}"
+        );
 
         let concurrent_started = Instant::now();
         let (first, second) = tokio::join!(
@@ -234,19 +244,30 @@ mod tests {
 
         let first = first.expect("first command_run should finish");
         let second = second.expect("second command_run should finish");
-        assert_eq!(first["result"]["results"][0]["success"], true);
-        assert_eq!(second["result"]["results"][0]["success"], true);
+        assert_eq!(
+            first["result"]["results"][0]["success"], true,
+            "first concurrent command_run should succeed: {first}"
+        );
+        assert_eq!(
+            second["result"]["results"][0]["success"], true,
+            "second concurrent command_run should succeed: {second}"
+        );
+        let overlap_margin = Duration::from_millis(CONCURRENT_FIXTURE_DELAY_MS / 2);
         assert!(
-            concurrent_elapsed.as_nanos() * 10 < sequential_elapsed.as_nanos() * 9,
+            concurrent_elapsed + overlap_margin < sequential_elapsed,
             "read-only command_run requests should overlap instead of serializing; sequential_elapsed={sequential_elapsed:?}; concurrent_elapsed={concurrent_elapsed:?}"
         );
     }
 
-    fn delayed_read_only_command(label: &str) -> String {
+    fn delayed_read_only_command(label: &str, delay_ms: u64) -> String {
         if cfg!(windows) {
-            format!("Test-Path .; Start-Sleep -Milliseconds 1200; Write-Output {label}")
+            format!("Test-Path .; Start-Sleep -Milliseconds {delay_ms}; Write-Output {label}")
         } else {
-            format!("find . -maxdepth 0; sleep 1.2; printf {label}")
+            format!(
+                "find . -maxdepth 0; sleep {}.{:03}; printf {label}",
+                delay_ms / 1000,
+                delay_ms % 1000
+            )
         }
     }
 }

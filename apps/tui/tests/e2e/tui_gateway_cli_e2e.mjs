@@ -198,12 +198,15 @@ async function runWebTerminalE2e(gateway) {
           fullPage: false,
         });
         await assertTerminalFits(page, `${profile} mobile`);
-        const mobileViewport = await terminalViewportText(page);
-        assert.match(
-          mobileViewport,
-          /Rich Fixture/,
-          `${profile} mobile viewport should keep the session title visible`,
+        await page.waitForFunction(
+          () =>
+            [...document.querySelectorAll(".xterm-rows > div")].some((row) =>
+              /Rich Fixture/.test(row.textContent ?? ""),
+            ),
+          null,
+          { timeout: 10_000 },
         );
+        const mobileViewport = await terminalViewportText(page);
         assert.doesNotMatch(mobileViewport, /(?:\\x1b|\\u001b|8;2;128;128;128m)/);
       }
       await page.setViewportSize({ width: 1280, height: 720 });

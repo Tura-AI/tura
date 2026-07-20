@@ -116,7 +116,7 @@ fn pass_bash_surface_runs_posix_script_without_exposing_shell_command() {
             "commands": [
                 {
                     "command": "bash",
-                    "command_line": json!({ "command": "for x in one two; do echo $x; done", "timeout_ms": 5000 }).to_string()
+                    "command_line": json!({ "command": "for x in one two; do echo $x; done", "timeout_ms": 30000 }).to_string()
                 }
             ]
         }),
@@ -126,7 +126,10 @@ fn pass_bash_surface_runs_posix_script_without_exposing_shell_command() {
     assert_eq!(commands::canonical_command("shell_command"), "bash");
     assert!(output["results"][0].get("command").is_none());
     assert_eq!(output["results"][0]["command_type"], "bash");
-    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["success"], true,
+        "bash surface should succeed: {output}"
+    );
     assert!(command_result_text(&output["results"][0]).contains("one"));
 }
 

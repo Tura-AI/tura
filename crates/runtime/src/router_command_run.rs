@@ -3,6 +3,7 @@
 //! The runtime owns turn orchestration and checkpoints. The router owns the
 //! child process tree created by shell/tool commands.
 
+use router_contract::{IpcRequest, IpcResponse};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -42,13 +43,7 @@ pub async fn execute_command_run_value(
         std::process::id(),
         REQUEST_SEQ.fetch_add(1, Ordering::SeqCst)
     );
-    let request = json!({
-        "request_id": request_id,
-        "kind": "call",
-        "method": "execution.command_run",
-        "payload": payload,
-        "deadline_ms": null,
-    });
+    let request = IpcRequest::call(request_id, "execution.command_run", payload);
 
     let timeout = command_run_router_timeout();
     let response = tokio::time::timeout(timeout, call_router(addr, request))
@@ -59,16 +54,14 @@ pub async fn execute_command_run_value(
                 timeout.as_secs()
             )
         })??;
-    if !response.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+    if !response.ok {
         return Err(response
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("router command_run failed")
-            .to_string());
+            .error
+            .unwrap_or_else(|| "router command_run failed".to_string()));
     }
     response
-        .get("payload")
-        .and_then(|payload| payload.get("result"))
+        .payload
+        .get("result")
         .cloned()
         .ok_or_else(|| "router command_run response did not contain payload.result".to_string())
 }
@@ -261,13 +254,20 @@ pub fn command_run_error_payload(error: String) -> Value {
     })
 }
 
-async fn call_router(addr: SocketAddr, request: Value) -> Result<Value, String> {
+async fn call_router(addr: SocketAddr, request: IpcRequest) -> Result<IpcResponse, String> {
     let stream = TcpStream::connect(addr)
         .await
         .map_err(|error| format!("failed to connect to router at {addr}: {error}"))?;
     let (read, mut write) = stream.into_split();
     write
-        .write_all(format!("{request}\n").as_bytes())
+        .write_all(
+            format!(
+                "{}\n",
+                serde_json::to_string(&request)
+                    .map_err(|error| format!("failed to encode router request: {error}"))?
+            )
+            .as_bytes(),
+        )
         .await
         .map_err(|error| format!("failed to write router command_run request: {error}"))?;
     write

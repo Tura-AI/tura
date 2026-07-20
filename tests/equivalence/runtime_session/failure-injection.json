@@ -1,0 +1,36 @@
+{
+  "schema": "tura.runtime-session-failure-injection.v1",
+  "policy": {
+    "clock": "fixed inside deterministic capture or bounded by explicit timeout assertion",
+    "ids": "fixed inside deterministic capture",
+    "process_randomness": "PID, port and temporary path are asserted at their owning process boundary and excluded from logical DB dumps",
+    "network": "local deterministic provider/router only"
+  },
+  "points": [
+    {
+      "name": "provider_timeout",
+      "test": "runtime::provider_timeout_flow::runtime_provider_timeout_business_flow_marks_runtime_timed_out_without_success_output",
+      "injection": "local provider accepts request and delays beyond runtime deadline"
+    },
+    {
+      "name": "gateway_cancel_after_enqueue",
+      "test": "gateway::session_prompt_router_flow::gateway_prompt_business_flow_cancel_after_router_enqueue_preserves_user_message_without_success_fallback",
+      "injection": "router acknowledgement is delayed while cancellation is committed"
+    },
+    {
+      "name": "session_db_before_restart",
+      "test": "tura_workspace::session_db_restart_queue_resilience::session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpoint_idempotency",
+      "injection": "commands are queued while service is stopped, including malformed and duplicate items"
+    },
+    {
+      "name": "session_db_interrupted_recovery",
+      "test": "tura_workspace::session_db_restart_queue_resilience::session_db_restart_marks_running_and_paused_sessions_interrupted_without_losing_history",
+      "injection": "service exits with running and paused sessions, then restarts"
+    },
+    {
+      "name": "router_endpoint_replacement",
+      "test": "gateway::session_prompt_router_flow::gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_between_turns",
+      "injection": "first local router is stopped and replaced at the same discovery boundary"
+    }
+  ]
+}

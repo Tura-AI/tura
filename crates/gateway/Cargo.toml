@@ -37,13 +37,17 @@ tower.workspace = true
 tower-http.workspace = true
 
 # Internal
+lifecycle.workspace = true
 runtime = { workspace = true }
 provider = { workspace = true }
 tura_path = { workspace = true }
 agents = { workspace = true }
 personas = { workspace = true }
 router = { workspace = true }
+router_contract.workspace = true
+runtime_contract.workspace = true
 session_log = { workspace = true }
+session_log_contract.workspace = true
 
 [[bin]]
 name = "tura_exec"

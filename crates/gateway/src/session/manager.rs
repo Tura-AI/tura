@@ -4,9 +4,8 @@
 //! session state machine (SessionManagement, SessionState, etc.)
 
 use chrono::Utc;
-use runtime::state_machine::session_management::{
-    SessionId, SessionInput, SessionManagement, SessionState, UserGoal,
-};
+use lifecycle::{SessionId, SessionState};
+use runtime::state_machine::session_management::{SessionInput, SessionManagement, UserGoal};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -102,14 +101,6 @@ impl SessionManager {
         SessionInfo::from_management(management)
     }
 
-    pub fn transition_session(
-        management: &mut SessionManagement,
-        next_state: SessionState,
-    ) -> Result<(), String> {
-        let now = Utc::now();
-        management.transition(next_state, now)
-    }
-
     pub fn get_state(management: &SessionManagement) -> SessionState {
         management.state
     }
@@ -165,8 +156,9 @@ fn default_true() -> bool {
 
 impl SessionInfo {
     pub fn from_management(management: &SessionManagement) -> Self {
+        let lifecycle = management.lifecycle_projection();
         Self {
-            id: management.session_id.clone(),
+            id: lifecycle.session_id,
             created_at: management.session_created_at.timestamp_millis(),
             updated_at: management.session_last_update_at.timestamp_millis(),
             last_user_message_at: Some(management.session_last_user_message_at.timestamp_millis()),
@@ -181,15 +173,10 @@ impl SessionInfo {
             model_acceleration_enabled: false,
             disable_permission_restrictions: management.disable_permission_restrictions,
             use_last_tool_call_response: management.use_last_tool_call_response,
-            status: SessionStatus::from_state(management.state),
+            status: SessionStatus::from_state(lifecycle.state),
             message_count: management.session_current_turn as usize,
             management: management.clone(),
         }
-    }
-
-    pub fn transition(&mut self, next_state: SessionState) -> Result<(), String> {
-        let now = Utc::now();
-        self.management.transition(next_state, now)
     }
 }
 

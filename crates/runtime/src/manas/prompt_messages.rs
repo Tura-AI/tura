@@ -10,9 +10,8 @@ use crate::prompt_style::{
     context_blocks, runtime_prompt_manual, tail_injection, task_status, user_new_command,
     PromptBuilder,
 };
-use crate::state_machine::session_management::{
-    ContextTokenStats, PlanStatus, SessionManagement, StartCondition, TaskStep,
-};
+use crate::state_machine::session_management::{ContextTokenStats, SessionManagement};
+use lifecycle::{PlanStatus, StartCondition, TaskStep};
 
 pub(crate) struct TurnMessages {
     pub messages: Vec<serde_json::Value>,

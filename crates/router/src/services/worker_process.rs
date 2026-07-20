@@ -13,9 +13,10 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 
-use crate::ipc;
+use crate::IpcNotificationSender;
+use router_contract::IpcNotification;
+use runtime_contract::{CallContext, GatewayCallbackFrame, WorkerEnvelope, GATEWAY_CALLBACK_KIND};
 
-use super::models::{CallContext, WorkerEnvelope};
 use super::process_scope::{attach_child_scope, configure_scoped_spawn, WorkerProcessScope};
 
 const WORKER_HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -60,23 +61,9 @@ impl WorkerProcess {
                 env,
             )));
         }
-        match Self::spawn_persistent(&worker_id, &service_name, executable_path, args, env).await {
-            Ok(worker) => Ok(Arc::new(worker)),
-            Err(err) => {
-                warn!(
-                    service_name,
-                    error = %err,
-                    "persistent worker mode unavailable, falling back to one-shot mode"
-                );
-                Ok(Arc::new(Self::one_shot(
-                    worker_id,
-                    service_name,
-                    executable_path,
-                    args,
-                    env,
-                )))
-            }
-        }
+        Self::spawn_persistent(&worker_id, &service_name, executable_path, args, env)
+            .await
+            .map(Arc::new)
     }
 
     fn one_shot(
@@ -161,10 +148,7 @@ impl WorkerProcess {
 
         let mut stdin_for_probe = stdin;
         let probe_result = async {
-            let health_req = WorkerEnvelope {
-                kind: "health_check".to_string(),
-                payload: json!({}),
-            };
+            let health_req = WorkerEnvelope::health_check();
             let payload = format!("{}\n", serde_json::to_string(&health_req)?);
             stdin_for_probe.write_all(payload.as_bytes()).await?;
             stdin_for_probe.flush().await?;
@@ -192,21 +176,20 @@ impl WorkerProcess {
                 return Err(anyhow!("worker health check failed"));
             }
 
-            // Version handshake (codex-style): refuse a worker built from a
-            // different version than this router. A worker that publishes no
-            // version (older build) is tolerated during the transition.
-            if let Some(worker_version) = parsed.get("version").and_then(Value::as_str) {
-                let expected = tura_path::instance_version();
-                if worker_version != expected {
-                    warn!(
-                        worker_id,
-                        service_name, worker_version, %expected, "worker version mismatch; refusing"
-                    );
-                    return Err(anyhow!(
-                        "runtime worker version {worker_version} does not match router {expected}; \
-                         refusing to dispatch to a different build"
-                    ));
-                }
+            let worker_version = parsed
+                .get("version")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("worker health response missing version"))?;
+            let expected = tura_path::instance_version();
+            if worker_version != expected {
+                warn!(
+                    worker_id,
+                    service_name, worker_version, %expected, "worker version mismatch; refusing"
+                );
+                return Err(anyhow!(
+                    "runtime worker version {worker_version} does not match router {expected}; \
+                     refusing to dispatch to a different build"
+                ));
             }
 
             Ok::<(), anyhow::Error>(())
@@ -284,7 +267,7 @@ impl WorkerProcess {
     pub async fn invoke_with_notifications(
         &self,
         ctx: CallContext,
-        notifications: Option<ipc::IpcNotificationSender>,
+        notifications: Option<IpcNotificationSender>,
     ) -> Result<Value> {
         match self.mode {
             WorkerMode::Persistent => self.invoke_persistent(ctx, notifications).await,
@@ -317,7 +300,7 @@ impl WorkerProcess {
     async fn invoke_persistent(
         &self,
         ctx: CallContext,
-        notifications: Option<ipc::IpcNotificationSender>,
+        notifications: Option<IpcNotificationSender>,
     ) -> Result<Value> {
         let _round_trip = self.round_trip.lock().await;
         let envelope = WorkerEnvelope {
@@ -427,7 +410,7 @@ impl WorkerProcess {
     async fn invoke_one_shot(
         &self,
         ctx: CallContext,
-        notifications: Option<ipc::IpcNotificationSender>,
+        notifications: Option<IpcNotificationSender>,
     ) -> Result<Value> {
         self.one_shot_cancelled.store(false, Ordering::SeqCst);
         let mut command = Command::new(&self.executable_path);
@@ -455,7 +438,7 @@ impl WorkerProcess {
             );
         }).ok().flatten();
 
-        let input = one_shot_input_bytes(&ctx, &self.spawn_env)?;
+        let input = one_shot_input_bytes(&ctx)?;
         let mut child = child;
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(&input).await?;
@@ -550,9 +533,7 @@ impl WorkerProcess {
             return Err(anyhow!("worker execution failed"));
         }
 
-        match parsed_stdout.or_else(|| {
-            parse_one_shot_worker_stdout(&stdout, one_shot_envelope_protocol(&self.spawn_env)).ok()
-        }) {
+        match parsed_stdout.or_else(|| parse_one_shot_worker_stdout(&stdout).ok()) {
             Some(v) => Ok(v),
             None => {
                 error!(
@@ -607,36 +588,19 @@ fn append_one_shot_worker_stderr_log(
     }
 }
 
-fn one_shot_input_bytes(ctx: &CallContext, env: &[(String, String)]) -> Result<Vec<u8>> {
-    if one_shot_envelope_protocol(env) {
-        let envelope = WorkerEnvelope {
-            kind: "call".to_string(),
-            payload: json!({
-                "input": {
-                    "request_id": ctx.request_id,
-                    "method": ctx.method,
-                    "path": ctx.path,
-                    "input": ctx.input
-                }
-            }),
-        };
-        serde_json::to_vec(&envelope).map_err(Into::into)
-    } else {
-        serde_json::to_vec(&ctx.input).map_err(Into::into)
-    }
+fn one_shot_input_bytes(ctx: &CallContext) -> Result<Vec<u8>> {
+    serde_json::to_vec(&WorkerEnvelope::call(ctx.clone())).map_err(Into::into)
 }
 
-fn parse_one_shot_worker_stdout(stdout: &str, allow_protocol_lines: bool) -> Result<Value> {
-    if !allow_protocol_lines {
-        return serde_json::from_str::<Value>(stdout.trim()).map_err(Into::into);
-    }
+fn parse_one_shot_worker_stdout(stdout: &str) -> Result<Value> {
     stdout
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .find_map(|line| {
             let value = serde_json::from_str::<Value>(line).ok()?;
-            (value.get("kind").and_then(Value::as_str) != Some("gateway.callback")).then_some(value)
+            (value.get("kind").and_then(Value::as_str) != Some(GATEWAY_CALLBACK_KIND))
+                .then_some(value)
         })
         .ok_or_else(|| anyhow!("one-shot worker returned no json response"))
 }
@@ -644,7 +608,7 @@ fn parse_one_shot_worker_stdout(stdout: &str, allow_protocol_lines: bool) -> Res
 async fn read_one_shot_worker_stdout(
     stdout: ChildStdout,
     request_id: String,
-    notifications: Option<ipc::IpcNotificationSender>,
+    notifications: Option<IpcNotificationSender>,
 ) -> Result<(String, Option<Value>)> {
     let mut reader = BufReader::new(stdout);
     let mut raw = String::new();
@@ -708,21 +672,12 @@ fn one_shot_worker_mode(env: &[(String, String)]) -> bool {
     })
 }
 
-fn one_shot_envelope_protocol(env: &[(String, String)]) -> bool {
-    env_value(env, "TURA_WORKER_ONESHOT_PROTOCOL").is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "envelope" | "worker-envelope" | "line-envelope"
-        )
-    })
-}
-
 async fn read_worker_json_response_line<R>(
     reader: &mut R,
     duration: Option<Duration>,
     operation: &str,
     request_id: Option<&str>,
-    notifications: Option<&ipc::IpcNotificationSender>,
+    notifications: Option<&IpcNotificationSender>,
 ) -> Result<String>
 where
     R: AsyncBufRead + Unpin,
@@ -789,22 +744,24 @@ where
 fn emit_worker_notification(
     value: &Value,
     request_id: Option<&str>,
-    notifications: Option<&ipc::IpcNotificationSender>,
+    notifications: Option<&IpcNotificationSender>,
 ) -> bool {
     let Some(kind) = value.get("kind").and_then(Value::as_str) else {
         return false;
     };
-    if kind != "gateway.callback" {
+    if kind != GATEWAY_CALLBACK_KIND {
         return false;
     }
-    let method = value
-        .get("method")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let payload = value.get("payload").cloned().unwrap_or(Value::Null);
+    let frame = match serde_json::from_value::<GatewayCallbackFrame>(value.clone()) {
+        Ok(frame) => frame,
+        Err(error) => {
+            warn!(error = %error, "dropping malformed worker gateway callback");
+            return true;
+        }
+    };
     let Some(request_id) = request_id.filter(|value| !value.trim().is_empty()) else {
         warn!(
-            method,
+            method = frame.method,
             "dropping worker gateway callback without request id"
         );
         return true;
@@ -812,19 +769,20 @@ fn emit_worker_notification(
     let Some(notifications) = notifications else {
         warn!(
             request_id,
-            method, "dropping worker gateway callback without notification sink"
+            method = frame.method,
+            "dropping worker gateway callback without notification sink"
         );
         return true;
     };
-    if let Err(error) = notifications.send(ipc::IpcNotification::new(
+    if let Err(error) = notifications.send(IpcNotification::new(
         request_id.to_string(),
-        kind.to_string(),
-        method.to_string(),
-        payload,
+        frame.kind,
+        frame.method.clone(),
+        serde_json::to_value(frame.payload).unwrap_or(Value::Null),
     )) {
         warn!(
             request_id,
-            method,
+            method = frame.method,
             error = %error,
             "failed to forward worker gateway callback"
         );
@@ -933,42 +891,17 @@ fn process_debug_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::models::CallContext;
     use super::{
         env_flag, env_value, one_shot_input_bytes, one_shot_worker_mode,
         parse_one_shot_worker_stdout, sanitize_log_component, worker_stderr_log_path, WorkerMode,
         WorkerProcess,
     };
+    use runtime_contract::CallContext;
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
     use tokio::sync::Notify;
     use tokio::{io::AsyncWriteExt, sync::Mutex};
-
-    #[tokio::test]
-    async fn missing_persistent_worker_falls_back_to_one_shot_and_preserves_spec() {
-        let executable = PathBuf::from("definitely-missing-runtime-worker-for-test");
-        let args = vec!["--serve".to_string(), "--jsonl".to_string()];
-        let env = vec![("TURA_DEBUG_RUNTIME".to_string(), "0".to_string())];
-
-        let worker = WorkerProcess::start_with(
-            "worker-id".to_string(),
-            "runtime".to_string(),
-            &executable,
-            &args,
-            &env,
-        )
-        .await
-        .expect("missing persistent worker should fall back to one-shot mode");
-
-        assert!(matches!(worker.mode, WorkerMode::OneShot));
-        assert_eq!(worker.worker_id, "worker-id");
-        assert_eq!(worker.service_name, "runtime");
-        assert_eq!(worker.executable_path, executable);
-        assert_eq!(worker.spawn_args, args);
-        assert_eq!(worker.spawn_env, env);
-        assert!(worker.is_alive().await);
-    }
 
     #[tokio::test]
     async fn explicit_one_shot_worker_mode_skips_persistent_health_probe() {
@@ -1032,14 +965,8 @@ mod tests {
     }
 
     #[test]
-    fn one_shot_mode_and_envelope_protocol_are_env_driven() {
-        let env = vec![
-            ("TURA_WORKER_MODE".to_string(), "oneshot".to_string()),
-            (
-                "TURA_WORKER_ONESHOT_PROTOCOL".to_string(),
-                "envelope".to_string(),
-            ),
-        ];
+    fn one_shot_mode_uses_the_worker_envelope_contract() {
+        let env = vec![("TURA_WORKER_MODE".to_string(), "oneshot".to_string())];
         let ctx = CallContext {
             request_id: "request-1".to_string(),
             method: "POST".to_string(),
@@ -1048,7 +975,7 @@ mod tests {
         };
 
         assert!(one_shot_worker_mode(&env));
-        let bytes = one_shot_input_bytes(&ctx, &env).expect("input bytes");
+        let bytes = one_shot_input_bytes(&ctx).expect("input bytes");
         let value: serde_json::Value =
             serde_json::from_slice(&bytes).expect("envelope should be json");
         assert_eq!(value["kind"], "call");
@@ -1059,7 +986,7 @@ mod tests {
     #[test]
     fn one_shot_envelope_stdout_parser_ignores_noise_lines() {
         let parsed =
-            parse_one_shot_worker_stdout("debug before json\n{\"ok\":true,\"value\":42}\n", true)
+            parse_one_shot_worker_stdout("debug before json\n{\"ok\":true,\"value\":42}\n")
                 .expect("json line should be parsed");
 
         assert_eq!(parsed["ok"], true);

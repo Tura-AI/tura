@@ -1,5 +1,5 @@
 use super::*;
-use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
+use lifecycle::{RuntimeProjection, RuntimeState, SessionCommand};
 pub async fn list_messages(
     Path(session_id): Path<String>,
     Query(params): Query<MessageListParams>,
@@ -55,13 +55,18 @@ impl MessageId for crate::session::Message {
 pub async fn send_message(
     Path(session_id): Path<String>,
     Json(payload): Json<SendMessageRequest>,
-) -> Json<Message> {
+) -> impl IntoResponse {
+    if let Err(error) = session_store().execute_canonical_session_command_with_status_event(
+        &session_id,
+        SessionCommand::StartUserTurn,
+    ) {
+        return session_mutation_error(error);
+    }
     session_store().add_message(
         &session_id,
         SessionMessageRole::User,
         payload.content.clone(),
     );
-    session_store().update_session_status(&session_id, SessionStatusMano::Busy);
     let before_count = session_store().get_messages(&session_id).len();
     run_mano_for_prompt(
         session_id.clone(),
@@ -74,7 +79,7 @@ pub async fn send_message(
     );
 
     if let Some(msg) = final_agent_message(&session_id, before_count) {
-        return Json(api_message_from_store(msg));
+        return Json(api_message_from_store(msg)).into_response();
     }
 
     Json(Message {
@@ -86,6 +91,7 @@ pub async fn send_message(
         updated_at: 0,
         parent_id: None,
     })
+    .into_response()
 }
 
 pub async fn send_agent_message(
@@ -230,6 +236,15 @@ fn runtime_managed_message_response(
     content: &str,
 ) -> Option<SendAgentMessageResponse> {
     let status = payload.runtime_status.as_ref()?;
+    if let Err(error) = apply_runtime_projection_to_session(session_id, status) {
+        return Some(SendAgentMessageResponse {
+            ok: false,
+            session_id: session_id.to_string(),
+            message_id: None,
+            event: None,
+            error: Some(error),
+        });
+    }
     sync_runtime_session_metrics(session_id, payload.context_tokens, payload.usage.clone());
     let runtime_message_id = runtime_message_id(&status.runtime_id);
     if status.should_refresh_session_db() {
@@ -297,6 +312,24 @@ fn runtime_managed_message_response(
     })
 }
 
+fn apply_runtime_projection_to_session(
+    session_id: &str,
+    status: &RuntimeProjection,
+) -> Result<(), String> {
+    let command = match status.state {
+        RuntimeState::Created
+        | RuntimeState::Dispatching
+        | RuntimeState::WaitingFirstToken
+        | RuntimeState::Streaming => SessionCommand::RuntimeStarted,
+        RuntimeState::Finished => SessionCommand::RuntimeCompleted,
+        RuntimeState::Failed | RuntimeState::TimedOut => SessionCommand::RuntimeFailed,
+        RuntimeState::Cancelled => SessionCommand::CancelSession,
+    };
+    session_store()
+        .execute_canonical_session_command_with_status_event(session_id, command)
+        .map(|_| ())
+}
+
 fn publish_refreshed_session_event(session_id: &str) {
     if let Err(error) = session_store().refresh_session_db_cache(session_id) {
         tracing::warn!(
@@ -321,7 +354,7 @@ fn runtime_final_message(
     session_id: &str,
     payload: &SendAgentMessageRequest,
     content: &str,
-    status: &RuntimeSessionSyncStatus,
+    status: &RuntimeProjection,
 ) -> Option<crate::session::Message> {
     let (created_at, updated_at) = runtime_message_times(payload);
     if !content.trim().is_empty() {
@@ -359,7 +392,7 @@ fn runtime_final_message(
 fn runtime_live_tool_message_response(
     session_id: &str,
     payload: &SendAgentMessageRequest,
-    status: &RuntimeSessionSyncStatus,
+    status: &RuntimeProjection,
 ) -> Option<SendAgentMessageResponse> {
     let tool_call = payload.tool_call.as_ref()?;
     if !tool_call_visible_to_frontend(tool_call) {
@@ -1097,15 +1130,10 @@ mod tests {
                     state: json!({ "output": {"reply_message": "done"} }),
                     metadata: None,
                 }),
-                runtime_status: Some(
-                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
-                        runtime_id: "runtime-usage-event".to_string(),
-                        state: runtime::state_machine::runtime_management::RuntimeState::Finished,
-                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Succeeded,
-                        live: false,
-                        session_db_refresh_required: true,
-                    },
-                ),
+                runtime_status: Some(lifecycle::RuntimeProjection::new(
+                    "runtime-usage-event".to_string(),
+                    lifecycle::RuntimeState::Finished,
+                )),
                 context_tokens: None,
                 usage: Some(usage),
                 command_updates: Vec::new(),
@@ -1168,15 +1196,10 @@ mod tests {
                 media: Vec::new(),
                 runtime_id: Some("runtime-live-metrics".to_string()),
                 tool_call: None,
-                runtime_status: Some(
-                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
-                        runtime_id: "runtime-live-metrics".to_string(),
-                        state: runtime::state_machine::runtime_management::RuntimeState::Streaming,
-                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Streaming,
-                        live: true,
-                        session_db_refresh_required: false,
-                    },
-                ),
+                runtime_status: Some(lifecycle::RuntimeProjection::new(
+                    "runtime-live-metrics".to_string(),
+                    lifecycle::RuntimeState::Streaming,
+                )),
                 context_tokens: Some(crate::contracts::SessionContextTokens {
                     input: 64_000,
                     limit: 128_000,
@@ -1355,15 +1378,10 @@ mod tests {
                     }),
                     metadata: None,
                 }),
-                runtime_status: Some(
-                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
-                        runtime_id: "runtime-command-update".to_string(),
-                        state: runtime::state_machine::runtime_management::RuntimeState::Streaming,
-                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Streaming,
-                        live: true,
-                        session_db_refresh_required: false,
-                    },
-                ),
+                runtime_status: Some(lifecycle::RuntimeProjection::new(
+                    "runtime-command-update".to_string(),
+                    lifecycle::RuntimeState::Streaming,
+                )),
                 context_tokens: None,
                 usage: None,
                 command_updates: vec![CommandUpdatePayload {

@@ -1,0 +1,456 @@
+use anyhow::{anyhow, Context, Result};
+use runtime_contract::CallContext;
+use serde_json::json;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use sysinfo::{Pid, System};
+use tura_router::manager::ServiceManager;
+use tura_router::models::WorkerSpec;
+
+#[tokio::test]
+async fn router_one_shot_flow_executes_contract_input_and_reuses_key() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp one-shot worker dir")?;
+    let script = write_one_shot_worker_script(temp.path())?;
+    let manager = ServiceManager::new();
+    let spec = one_shot_spec(
+        "runtime_worker:oneshot-session",
+        &python_executable()?,
+        &script,
+        "ok",
+    );
+
+    let first = manager.ensure_worker(spec.clone()).await?;
+    let reused = manager.ensure_worker(spec.clone()).await?;
+    assert_eq!(
+        first.worker_id, reused.worker_id,
+        "explicit one-shot workers are reused by router key"
+    );
+    assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 1);
+
+    let response = manager
+        .call_worker(
+            &first.worker_id,
+            CallContext::new(
+                "runtime.run".to_string(),
+                "/runtime".to_string(),
+                json!({ "prompt": "run one-shot", "turn": 1 }),
+            ),
+        )
+        .await?;
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["mode"], "ok");
+    assert_eq!(response["input"]["prompt"], "run one-shot");
+    assert!(
+        manager
+            .stop_worker_by_key("runtime_worker:oneshot-session")
+            .await
+    );
+    assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_one_shot_flow_reports_child_failure_and_cleans_key() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp one-shot failure worker dir")?;
+    let script = write_one_shot_worker_script(temp.path())?;
+    let manager = ServiceManager::new();
+    let spec = one_shot_spec(
+        "runtime_worker:oneshot-failure",
+        &python_executable()?,
+        &script,
+        "fail",
+    );
+
+    let handle = manager.ensure_worker(spec).await?;
+    let error = manager
+        .call_worker(
+            &handle.worker_id,
+            CallContext::new(
+                "runtime.run".to_string(),
+                "/runtime".to_string(),
+                json!({ "prompt": "fail one-shot" }),
+            ),
+        )
+        .await
+        .expect_err("failing one-shot worker should report execution failure");
+
+    assert!(
+        error.to_string().contains("worker execution failed"),
+        "unexpected one-shot failure error: {error:#}"
+    );
+    assert_eq!(manager.stop_workers_with_prefix("runtime_worker:").await, 1);
+    assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_one_shot_flow_restarts_child_for_each_invocation() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp one-shot restart worker dir")?;
+    let script = write_one_shot_worker_script(temp.path())?;
+    let counter = temp.path().join("invocation-count.txt");
+    let manager = ServiceManager::new();
+    let spec = one_shot_spec_with_env(
+        "runtime_worker:oneshot-restart",
+        &python_executable()?,
+        &script,
+        "ok",
+        vec![(
+            "TURA_TEST_ONESHOT_COUNTER".to_string(),
+            counter.to_string_lossy().to_string(),
+        )],
+    );
+
+    let handle = manager.ensure_worker(spec.clone()).await?;
+    for turn in 1..=3 {
+        let reused = manager.ensure_worker(spec.clone()).await?;
+        assert_eq!(
+            reused.worker_id, handle.worker_id,
+            "router key should continue reusing the one-shot worker handle"
+        );
+        let response = manager
+            .call_worker(
+                &handle.worker_id,
+                CallContext::new(
+                    "runtime.run".to_string(),
+                    format!("/runtime/oneshot/restart/{turn}"),
+                    json!({ "prompt": "one-shot restart", "turn": turn }),
+                ),
+            )
+            .await?;
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["mode"], "ok");
+        assert_eq!(response["invocation_index"], turn);
+        assert_eq!(response["input"]["turn"], turn);
+    }
+
+    let final_count = std::fs::read_to_string(&counter)
+        .with_context(|| format!("read one-shot counter {}", counter.display()))?;
+    assert_eq!(final_count.trim(), "3");
+    assert_eq!(manager.stop_workers_with_prefix("runtime_worker:").await, 1);
+    assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_one_shot_stop_kills_running_child_process() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp one-shot cancellation worker dir")?;
+    let script = write_one_shot_worker_script(temp.path())?;
+    let pid_file = temp.path().join("running.pid");
+    let manager = ServiceManager::new();
+    let spec = one_shot_spec_with_env(
+        "runtime_worker:oneshot-cancel",
+        &python_executable()?,
+        &script,
+        "sleep",
+        vec![(
+            "TURA_TEST_ONESHOT_PID_FILE".to_string(),
+            pid_file.to_string_lossy().to_string(),
+        )],
+    );
+
+    let handle = manager.ensure_worker(spec).await?;
+    let worker_id = handle.worker_id.clone();
+    let call = tokio::spawn({
+        let manager = manager.clone();
+        async move {
+            manager
+                .call_worker(
+                    &worker_id,
+                    CallContext::new(
+                        "runtime.run".to_string(),
+                        "/runtime/oneshot/cancel".to_string(),
+                        json!({ "prompt": "sleep until abort" }),
+                    ),
+                )
+                .await
+        }
+    });
+
+    let pid = wait_for_pid_file(&pid_file, Duration::from_secs(5)).await?;
+    wait_for_process_alive(pid, Duration::from_secs(5)).await?;
+    assert!(
+        manager
+            .stop_worker_by_key("runtime_worker:oneshot-cancel")
+            .await
+    );
+    wait_for_process_dead(pid, Duration::from_secs(10))
+        .await
+        .with_context(|| format!("one-shot worker pid {pid} should die after stop"))?;
+
+    let result = call.await.context("join cancelled one-shot call")?;
+    assert!(
+        result.is_err(),
+        "cancelled one-shot invocation should not report success after stop"
+    );
+    assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_one_shot_flow_rejects_successful_child_with_invalid_json() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp one-shot invalid json worker dir")?;
+    let script = write_one_shot_worker_script(temp.path())?;
+    let manager = ServiceManager::new();
+    let spec = one_shot_spec(
+        "runtime_worker:oneshot-invalid-json",
+        &python_executable()?,
+        &script,
+        "invalid-json",
+    );
+
+    let handle = manager.ensure_worker(spec).await?;
+    let error = manager
+        .call_worker(
+            &handle.worker_id,
+            CallContext::new(
+                "runtime.run".to_string(),
+                "/runtime/oneshot/invalid-json".to_string(),
+                json!({ "prompt": "invalid json after success" }),
+            ),
+        )
+        .await
+        .expect_err("successful one-shot child with invalid JSON should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("worker returned invalid response"),
+        "invalid one-shot stdout should be mapped to a bounded router error: {error:#}"
+    );
+    assert_eq!(manager.stop_workers_with_prefix("runtime_worker:").await, 1);
+    assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
+    assert!(!manager.stop_worker(&handle.worker_id).await);
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_one_shot_flow_skips_persistent_health_handshake() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp one-shot health rejection worker dir")?;
+    let script = write_one_shot_worker_script(temp.path())?;
+    let python = python_executable()?;
+    let manager = ServiceManager::new();
+
+    for (key_suffix, mode, unreachable_health_behavior) in [
+        (
+            "missing-ok",
+            "health-missing-ok",
+            "persistent health response omits the required ok flag",
+        ),
+        (
+            "version-mismatch",
+            "health-version-mismatch",
+            "persistent health response advertises a different build",
+        ),
+    ] {
+        let key = format!("runtime_worker:oneshot-health-{key_suffix}");
+        let spec = one_shot_spec(&key, &python, &script, mode);
+        let handle = manager.ensure_worker(spec.clone()).await.with_context(|| {
+            format!("explicit one-shot worker should skip {unreachable_health_behavior}")
+        })?;
+        let reused = manager.ensure_worker(spec).await?;
+        assert_eq!(
+            reused.worker_id, handle.worker_id,
+            "one-shot worker handle should remain reusable while skipping {unreachable_health_behavior}"
+        );
+        let response = manager
+            .call_worker(
+                &handle.worker_id,
+                CallContext::new(
+                    "runtime.run".to_string(),
+                    format!("/runtime/oneshot/health/{key_suffix}"),
+                    json!({
+                        "prompt": "health rejection fallback",
+                        "case": key_suffix
+                    }),
+                ),
+            )
+            .await?;
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["mode"], mode);
+        assert_eq!(response["input"]["case"], key_suffix);
+        assert!(
+            manager.stop_worker_by_key(&key).await,
+            "one-shot worker should be removable by key after health rejection"
+        );
+        assert!(!manager.stop_worker(&handle.worker_id).await);
+    }
+
+    assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
+    Ok(())
+}
+
+fn one_shot_spec(key: &str, python: &Path, script: &Path, mode: &str) -> WorkerSpec {
+    one_shot_spec_with_env(key, python, script, mode, Vec::new())
+}
+
+fn one_shot_spec_with_env(
+    key: &str,
+    python: &Path,
+    script: &Path,
+    mode: &str,
+    extra_env: Vec<(String, String)>,
+) -> WorkerSpec {
+    let mut env = vec![
+        ("TURA_WORKER_MODE".to_string(), "one-shot".to_string()),
+        ("TURA_TEST_ONESHOT_MODE".to_string(), mode.to_string()),
+    ];
+    env.extend(extra_env);
+    WorkerSpec {
+        key: key.to_string(),
+        service_name: "runtime".to_string(),
+        executable: python.to_path_buf(),
+        args: vec![script.to_string_lossy().to_string()],
+        env,
+    }
+}
+
+fn python_executable() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("PYTHON") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+    for candidate in ["python", "python3"] {
+        if let Ok(output) = std::process::Command::new(candidate)
+            .arg("--version")
+            .output()
+        {
+            if output.status.success() {
+                return Ok(PathBuf::from(candidate));
+            }
+        }
+    }
+    Err(anyhow!(
+        "python or python3 is required for router one-shot business flow"
+    ))
+}
+
+fn write_one_shot_worker_script(dir: &Path) -> Result<PathBuf> {
+    let script = dir.join("router_worker_oneshot_business.py");
+    std::fs::write(
+        &script,
+        r#"
+import json
+import os
+import sys
+
+chunks = []
+while True:
+    char = sys.stdin.read(1)
+    if char == "":
+        break
+    chunks.append(char)
+    if char == "\n":
+        break
+raw = "".join(chunks).strip()
+message = json.loads(raw) if raw else {}
+
+if message.get("kind") == "health_check":
+    mode = os.environ.get("TURA_TEST_ONESHOT_MODE", "ok")
+    if mode == "health-missing-ok":
+        print(json.dumps({"status": "ready"}), flush=True)
+        sys.exit(0)
+    if mode == "health-version-mismatch":
+        print(json.dumps({"ok": True, "version": "not-the-router-build"}), flush=True)
+        sys.exit(0)
+    print("health refused for explicit one-shot worker", file=sys.stderr, flush=True)
+    sys.exit(3)
+
+call_context = (message.get("payload") or {}).get("input") or {}
+call_input = call_context.get("input") or {}
+mode = os.environ.get("TURA_TEST_ONESHOT_MODE", "ok")
+if mode == "sleep":
+    pid_path = os.environ.get("TURA_TEST_ONESHOT_PID_FILE")
+    if pid_path:
+        with open(pid_path, "w", encoding="utf-8") as writer:
+            writer.write(str(os.getpid()))
+    import time
+    time.sleep(60)
+    print(json.dumps({"ok": True, "mode": mode, "input": call_input}), flush=True)
+    sys.exit(0)
+if mode == "fail":
+    print("intentional one-shot failure", file=sys.stderr, flush=True)
+    sys.exit(9)
+if mode == "invalid-json":
+    print("{ still not json", flush=True)
+    sys.exit(0)
+counter_path = os.environ.get("TURA_TEST_ONESHOT_COUNTER")
+invocation_index = None
+if counter_path:
+    try:
+        with open(counter_path, "r", encoding="utf-8") as reader:
+            current = int((reader.read() or "0").strip() or "0")
+    except FileNotFoundError:
+        current = 0
+    invocation_index = current + 1
+    with open(counter_path, "w", encoding="utf-8") as writer:
+        writer.write(str(invocation_index))
+
+print(json.dumps({
+    "ok": True,
+    "mode": mode,
+    "input": call_input,
+    "invocation_index": invocation_index,
+}), flush=True)
+"#,
+    )
+    .with_context(|| format!("write one-shot worker script {}", script.display()))?;
+    Ok(script)
+}
+
+async fn wait_for_pid_file(path: &Path, timeout: Duration) -> Result<u32> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if let Ok(raw) = std::fs::read_to_string(path) {
+            if let Ok(pid) = raw.trim().parse::<u32>() {
+                return Ok(pid);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(anyhow!(
+        "pid file {} was not written after {}ms",
+        path.display(),
+        timeout.as_millis()
+    ))
+}
+
+async fn wait_for_process_alive(pid: u32, timeout: Duration) -> Result<()> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if process_alive(pid) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(anyhow!(
+        "pid {pid} was not alive after {}ms",
+        timeout.as_millis()
+    ))
+}
+
+async fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if !process_alive(pid) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(anyhow!(
+        "pid {pid} was still alive after {}ms",
+        timeout.as_millis()
+    ))
+}
+
+fn process_alive(pid: u32) -> bool {
+    let mut system = System::new_all();
+    system.refresh_processes();
+    system.process(Pid::from_u32(pid)).is_some_and(|process| {
+        !matches!(
+            process.status(),
+            sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+        )
+    })
+}

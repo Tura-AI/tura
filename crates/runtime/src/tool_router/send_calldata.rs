@@ -1,10 +1,9 @@
 use chrono::Utc;
+use lifecycle::{RuntimeId, SessionId};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::state_machine::agent_management::AgentId;
-use crate::state_machine::runtime_management::RuntimeId;
-use crate::state_machine::session_management::SessionId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallData {

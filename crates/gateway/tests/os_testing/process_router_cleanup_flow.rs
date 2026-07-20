@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Context, Result};
-use axum::extract::{Json, Path, Query};
-use axum::http::HeaderMap;
-use gateway::api::session::{abort_session, create_session};
+use axum::extract::{Json, Path};
+use gateway::api::session::{abort_session, create_session_value};
 use gateway::contracts::{CreateSessionRequest, SessionDirectoryParams};
+use lifecycle::SessionState;
+use session_log::SessionLogStore;
+use session_log_contract::SessionLogCommand;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -10,6 +12,47 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+struct ServiceThread {
+    handle: Option<std::thread::JoinHandle<Result<()>>>,
+}
+
+impl ServiceThread {
+    fn start() -> Result<Self> {
+        let store = SessionLogStore::open_default().context("open cleanup-flow session DB")?;
+        let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(10) {
+            if session_log::ipc::service_is_running() {
+                return Ok(Self {
+                    handle: Some(handle),
+                });
+            }
+            if handle.is_finished() {
+                let result = handle
+                    .join()
+                    .map_err(|_| anyhow!("cleanup-flow session DB thread panicked"))?;
+                result.context("cleanup-flow session DB exited before becoming reachable")?;
+                return Err(anyhow!(
+                    "cleanup-flow session DB exited before becoming reachable"
+                ));
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        Err(anyhow!(
+            "cleanup-flow session DB did not become reachable within 10 seconds"
+        ))
+    }
+}
+
+impl Drop for ServiceThread {
+    fn drop(&mut self) {
+        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
 
 #[tokio::test]
 async fn gateway_abort_session_stops_router_worker_without_workspace_process_scan() -> Result<()> {
@@ -20,14 +63,14 @@ async fn gateway_abort_session_stops_router_worker_without_workspace_process_sca
     let workspace = tempfile::tempdir().context("session workspace")?;
     let other_workspace = tempfile::tempdir().context("other workspace")?;
     let _env = EnvGuard::new(&home, workspace.path());
+    let _service = ServiceThread::start()?;
     let _router_cleanup = RouterCleanupGuard;
 
-    let Json(session) = create_session(
-        HeaderMap::new(),
-        Query(SessionDirectoryParams {
+    let session = create_session_value(
+        SessionDirectoryParams {
             directory: Some(workspace.path().to_string_lossy().to_string()),
-        }),
-        Some(Json(CreateSessionRequest {
+        },
+        CreateSessionRequest {
             directory: None,
             model: Some("cleanup-model".to_string()),
             agent: Some("cleanup-agent".to_string()),
@@ -63,9 +106,11 @@ async fn gateway_abort_session_stops_router_worker_without_workspace_process_sca
                     }
                 ]
             })),
-        })),
+        },
+        None,
     )
-    .await;
+    .await
+    .map_err(anyhow::Error::msg)?;
 
     let Json(before_abort) = gateway::api::session::get_session(Path(session.id.clone())).await;
     let mut scoped_child = ChildGuard::spawn(workspace.path(), "abort-target")?;
@@ -92,15 +137,19 @@ async fn gateway_abort_session_stops_router_worker_without_workspace_process_sca
     );
 
     assert!(
-        !gateway::session::session_store().is_cancelled(&session.id),
-        "abort must not mark session cancellation state; it only stops the runtime worker"
+        gateway::session::session_store()
+            .session_lifecycle_projection(&session.id)
+            .is_some_and(|projection| {
+                projection.cancelled && projection.state == SessionState::Cancelled
+            }),
+        "abort must persist canonical cancellation while stopping the runtime worker"
     );
 
     let Json(after_abort) = gateway::api::session::get_session(Path(session.id)).await;
     assert_eq!(
         serde_json::to_value(after_abort.status)?,
-        serde_json::to_value(before_abort.status)?,
-        "abort must not change the session status artifact"
+        serde_json::json!("error"),
+        "cancelled lifecycle must project to the API error status"
     );
     assert_eq!(
         after_abort.task_management, before_abort.task_management,
@@ -121,14 +170,14 @@ async fn gateway_create_session_records_kill_processes_on_start_without_workspac
     std::fs::create_dir_all(&home)?;
     let workspace = tempfile::tempdir().context("session workspace")?;
     let _env = EnvGuard::new(&home, workspace.path());
+    let _service = ServiceThread::start()?;
     let mut stale_child = ChildGuard::spawn(workspace.path(), "startup-cleanup-target")?;
 
-    let Json(session) = create_session(
-        HeaderMap::new(),
-        Query(SessionDirectoryParams {
+    let session = create_session_value(
+        SessionDirectoryParams {
             directory: Some(workspace.path().to_string_lossy().to_string()),
-        }),
-        Some(Json(CreateSessionRequest {
+        },
+        CreateSessionRequest {
             directory: None,
             model: Some("startup-cleanup-model".to_string()),
             agent: Some("startup-cleanup-agent".to_string()),
@@ -141,9 +190,11 @@ async fn gateway_create_session_records_kill_processes_on_start_without_workspac
             disable_permission_restrictions: Some(false),
             auto_session_name: Some(false),
             task_management: None,
-        })),
+        },
+        None,
     )
-    .await;
+    .await
+    .map_err(anyhow::Error::msg)?;
 
     assert_eq!(
         session.directory.as_deref(),

@@ -63,7 +63,7 @@ impl SessionStore {
     pub fn apply_runtime_sync_status(
         &self,
         session_id: &str,
-        status: &RuntimeSessionSyncStatus,
+        status: &RuntimeProjection,
         message_id: Option<&str>,
     ) -> Option<Message> {
         if status.live_overlay_active() {

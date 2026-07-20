@@ -166,7 +166,7 @@ if ($BuildTui) {
   Assert-Path (Join-Path $TargetDir "tura.exe") "Missing release TUI executable."
 }
 if ($BuildGui) {
-  Assert-Path (Join-Path $TargetDir "tura_gui\index.html") "Missing release GUI dist."
+  Assert-Path (Join-Path $TargetDir "tura_gui_dist\index.html") "Missing release GUI dist."
 }
 if ($BuildTauri) {
   Assert-AnyPath @(

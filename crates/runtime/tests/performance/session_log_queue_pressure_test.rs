@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use runtime::session_log_client::SessionLogClient;
 use serde_json::{json, Value};
-use session_log::SessionLogCommand;
+use session_log_contract::SessionLogCommand;
 use std::path::Path;
 use std::time::{Duration, Instant};
 

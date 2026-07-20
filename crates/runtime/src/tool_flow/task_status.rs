@@ -4,9 +4,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::prompt_style::runtime_prompt_manual;
-use crate::state_machine::session_management::{
-    PlanStatus, SessionManagement, StartCondition, TaskStep,
-};
+use crate::state_machine::session_management::SessionManagement;
+use lifecycle::{PlanStatus, StartCondition, TaskStep};
 
 const COMMAND_RUN_TOOL: &str = "command_run";
 const PLANNING_TOOL: &str = "planning";

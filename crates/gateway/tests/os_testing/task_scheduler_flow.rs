@@ -3,11 +3,13 @@ mod helpers;
 use helpers::*;
 #[tokio::test]
 async fn gateway_task_scheduler_business_flow_triggers_due_tasks_without_duplicate_runs() {
+    let _db = SchedulerTestDb::start();
     let root = tempfile::tempdir().expect("temp scheduler root");
     let now = Utc::now();
     let due = now - chrono::Duration::seconds(30);
     let future = now + chrono::Duration::hours(1);
-    let scheduled = session_store().create_session(
+    let scheduled = create_scheduler_session(
+        session_store(),
         Some(root.path().join("scheduled").to_string_lossy().to_string()),
         None,
         None,
@@ -19,7 +21,8 @@ async fn gateway_task_scheduler_business_flow_triggers_due_tasks_without_duplica
         false,
         false,
     );
-    let polling = session_store().create_session(
+    let polling = create_scheduler_session(
+        session_store(),
         Some(root.path().join("polling").to_string_lossy().to_string()),
         None,
         None,
@@ -31,7 +34,8 @@ async fn gateway_task_scheduler_business_flow_triggers_due_tasks_without_duplica
         false,
         false,
     );
-    let future_session = session_store().create_session(
+    let future_session = create_scheduler_session(
+        session_store(),
         Some(root.path().join("future").to_string_lossy().to_string()),
         None,
         None,
@@ -156,8 +160,10 @@ async fn gateway_task_scheduler_business_flow_triggers_due_tasks_without_duplica
 
 #[tokio::test]
 async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once() {
+    let _db = SchedulerTestDb::start();
     let root = tempfile::tempdir().expect("temp scheduler idle root");
-    let idle = session_store().create_session(
+    let idle = create_scheduler_session(
+        session_store(),
         Some(
             root.path()
                 .join("idle-question")
@@ -174,7 +180,8 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         false,
         false,
     );
-    let done = session_store().create_session(
+    let done = create_scheduler_session(
+        session_store(),
         Some(root.path().join("done").to_string_lossy().to_string()),
         None,
         None,
@@ -186,7 +193,8 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         false,
         false,
     );
-    let busy = session_store().create_session(
+    let busy = create_scheduler_session(
+        session_store(),
         Some(root.path().join("busy").to_string_lossy().to_string()),
         None,
         None,
@@ -199,7 +207,7 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         false,
     );
 
-    session_store().update_session_status(&idle.id, StoreSessionStatus::Busy);
+    execute_scheduler_command(&idle.id, SessionCommand::RuntimeStarted);
 
     let _ = update_session_task_management(
         Path(idle.id.clone()),
@@ -224,7 +232,7 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         }),
     )
     .await;
-    session_store().update_session_status(&idle.id, StoreSessionStatus::Idle);
+    execute_scheduler_command(&idle.id, SessionCommand::RuntimeCompleted);
     let _ = update_session_task_management(
         Path(done.id.clone()),
         Json(UpdateSessionTaskManagementRequest {
@@ -249,7 +257,7 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         }),
     )
     .await;
-    session_store().update_session_status(&busy.id, StoreSessionStatus::Busy);
+    execute_scheduler_command(&busy.id, SessionCommand::RuntimeStarted);
 
     run_due_task_scheduler_tick_for_business_test();
 
@@ -286,11 +294,13 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
 
 #[tokio::test]
 async fn gateway_task_scheduler_business_flow_survives_edits_between_ticks() {
+    let _db = SchedulerTestDb::start();
     let root = tempfile::tempdir().expect("temp scheduler edit root");
     let now = Utc::now();
     let first_due = now - chrono::Duration::minutes(10);
     let second_due = now - chrono::Duration::minutes(5);
-    let session = session_store().create_session(
+    let session = create_scheduler_session(
+        session_store(),
         Some(
             root.path()
                 .join("scheduler-edit")
@@ -409,7 +419,7 @@ async fn gateway_task_scheduler_business_flow_survives_edits_between_ticks() {
         }),
     )
     .await;
-    session_store().update_session_status(&session.id, StoreSessionStatus::Idle);
+    execute_scheduler_command(&session.id, SessionCommand::RuntimeCompleted);
 
     run_due_task_scheduler_tick_for_business_test();
     assert_eq!(
@@ -449,8 +459,10 @@ async fn gateway_task_scheduler_business_flow_survives_edits_between_ticks() {
 
 #[tokio::test]
 async fn gateway_task_scheduler_business_flow_repeats_polling_cycles_without_duplicate_claims() {
+    let _db = SchedulerTestDb::start();
     let root = tempfile::tempdir().expect("temp scheduler polling cycle root");
-    let session = session_store().create_session(
+    let session = create_scheduler_session(
+        session_store(),
         Some(
             root.path()
                 .join("scheduler-polling-cycle")
@@ -476,7 +488,7 @@ async fn gateway_task_scheduler_business_flow_repeats_polling_cycles_without_dup
 
     for (index, summary) in summaries.iter().enumerate() {
         let due = Utc::now() - chrono::Duration::seconds(10);
-        session_store().update_session_status(&session.id, StoreSessionStatus::Idle);
+        execute_scheduler_command(&session.id, SessionCommand::RuntimeCompleted);
         set_polling_task_due(&session.id, summary, due).await;
 
         run_due_task_scheduler_tick_for_business_test();
@@ -549,8 +561,10 @@ async fn gateway_task_scheduler_business_flow_repeats_polling_cycles_without_dup
 
 #[tokio::test]
 async fn gateway_task_management_business_flow_reorders_and_rejects_invalid_multi_task_patches() {
+    let _db = SchedulerTestDb::start();
     let root = tempfile::tempdir().expect("temp task patch root");
-    let session = session_store().create_session(
+    let session = create_scheduler_session(
+        session_store(),
         Some(
             root.path()
                 .join("task-management-patch")
@@ -568,9 +582,9 @@ async fn gateway_task_management_business_flow_reorders_and_rejects_invalid_mult
         false,
     );
 
-    let Json(initial) = update_session_task_management(
-        Path(session.id.clone()),
-        Json(UpdateSessionTaskManagementRequest {
+    let initial = update_session_task_management_value(
+        session.id.clone(),
+        UpdateSessionTaskManagementRequest {
             task_management: json!({
                 "plan_summary": "Patch ordering business plan",
                 "tasks": [
@@ -597,9 +611,9 @@ async fn gateway_task_management_business_flow_reorders_and_rejects_invalid_mult
                     }
                 ]
             }),
-        }),
+        },
     )
-    .await;
+    .expect("initial task plan should be accepted");
     let initial_tasks = task_array(&initial.task_management);
     assert_eq!(initial_tasks[0]["task_id"], "alpha");
     assert_eq!(initial_tasks[0]["step"], 1);
@@ -611,9 +625,9 @@ async fn gateway_task_management_business_flow_reorders_and_rejects_invalid_mult
     assert_eq!(initial_tasks[2]["step"], 3);
     assert_eq!(initial_tasks[2]["start_condition"], "scheduled_task");
 
-    let Json(reordered) = update_session_task_management(
-        Path(session.id.clone()),
-        Json(UpdateSessionTaskManagementRequest {
+    let reordered = update_session_task_management_value(
+        session.id.clone(),
+        UpdateSessionTaskManagementRequest {
             task_management: json!({
                 "tasks": [
                     {
@@ -633,9 +647,9 @@ async fn gateway_task_management_business_flow_reorders_and_rejects_invalid_mult
                     }
                 ]
             }),
-        }),
+        },
     )
-    .await;
+    .expect("reordered task plan should be accepted");
     let reordered_tasks = task_array(&reordered.task_management);
     assert_eq!(reordered_tasks[0]["task_id"], "gamma");
     assert_eq!(reordered_tasks[0]["step"], 1);
@@ -649,31 +663,31 @@ async fn gateway_task_management_business_flow_reorders_and_rejects_invalid_mult
     assert_eq!(reordered_tasks[2]["start_condition"], "user_action");
 
     let before_invalid = reordered.task_management.clone();
-    let Json(after_invalid) = update_session_task_management(
-        Path(session.id.clone()),
-        Json(UpdateSessionTaskManagementRequest {
+    let after_invalid = update_session_task_management_value(
+        session.id.clone(),
+        UpdateSessionTaskManagementRequest {
             task_management: json!({
                 "status": "done",
                 "task_summary": "Ambiguous patch must not overwrite multi-task state"
             }),
-        }),
+        },
     )
-    .await;
+    .expect("ambiguous task patch should remain non-fatal");
     assert_eq!(
         after_invalid.task_management, before_invalid,
         "multi-task sessions require task_id for single-task patches"
     );
 
-    let Json(after_bad_status) = update_session_task_management(
-        Path(session.id.clone()),
-        Json(UpdateSessionTaskManagementRequest {
+    let after_bad_status = update_session_task_management_value(
+        session.id.clone(),
+        UpdateSessionTaskManagementRequest {
             task_management: json!({
                 "task_id": "gamma",
                 "status": "not_a_real_status"
             }),
-        }),
+        },
     )
-    .await;
+    .expect("invalid task status should remain non-fatal");
     assert_eq!(
         after_bad_status.task_management, before_invalid,
         "invalid status patches should leave the previous task plan intact"
@@ -682,8 +696,10 @@ async fn gateway_task_management_business_flow_reorders_and_rejects_invalid_mult
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gateway_task_scheduler_business_flow_concurrent_edits_race_scheduler_tick_once() {
+    let _db = SchedulerTestDb::start();
     let root = tempfile::tempdir().expect("temp scheduler edit race root");
-    let session = session_store().create_session(
+    let session = create_scheduler_session(
+        session_store(),
         Some(
             root.path()
                 .join("scheduler-edit-race")
@@ -867,7 +883,8 @@ fn gateway_task_scheduler_business_flow_hydrates_persisted_due_task_after_store_
     let service = SchedulerServiceThread::start()?;
     let writer = SessionStore::new();
     let due = Utc::now() - chrono::Duration::minutes(2);
-    let session = writer.create_session(
+    let session = create_scheduler_session(
+        &writer,
         Some(workspace.to_string_lossy().to_string()),
         None,
         None,

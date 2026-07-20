@@ -50,10 +50,26 @@ function Start-CiJob {
   New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
   $stdout = Join-Path $LogRoot "$Name.out.txt"
   $stderr = Join-Path $LogRoot "$Name.err.txt"
-  Remove-Item -LiteralPath $stdout, $stderr -ErrorAction SilentlyContinue
+  $exitPath = Join-Path $LogRoot "$Name.exit.txt"
+  Remove-Item -LiteralPath $stdout, $stderr, $exitPath -ErrorAction SilentlyContinue
+  $quotedFilePath = "'$($FilePath -replace "'", "''")'"
+  $quotedArguments = ($Arguments | ForEach-Object { "'$($_ -replace "'", "''")'" }) -join " "
+  $quotedWorkingDirectory = "'$($WorkingDirectory -replace "'", "''")'"
+  $quotedExitPath = "'$($exitPath -replace "'", "''")'"
+  $script = @"
+`$ErrorActionPreference = "Stop"
+`$ProgressPreference = "SilentlyContinue"
+Set-Location $quotedWorkingDirectory
+& $quotedFilePath $quotedArguments
+`$exitCode = `$LASTEXITCODE
+if (`$null -eq `$exitCode) { `$exitCode = if (`$?) { 0 } else { 1 } }
+[System.IO.File]::WriteAllText($quotedExitPath, [string]`$exitCode)
+exit `$exitCode
+"@
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
   Write-Host "==> Starting CI job: $Name"
-  $process = Start-Process -FilePath $FilePath `
-    -ArgumentList $Arguments `
+  $process = Start-Process -FilePath "powershell" `
+    -ArgumentList @("-NoProfile", "-EncodedCommand", $encoded) `
     -WorkingDirectory $WorkingDirectory `
     -RedirectStandardOutput $stdout `
     -RedirectStandardError $stderr `
@@ -66,6 +82,7 @@ function Start-CiJob {
     TimeoutSeconds = $TimeoutSeconds
     Stdout = $stdout
     Stderr = $stderr
+    ExitPath = $exitPath
   }
 }
 
@@ -87,7 +104,12 @@ function Wait-CiJobs {
       }
       if ($job.Process.HasExited) {
         $job.Process.WaitForExit()
-        $exitCode = $job.Process.ExitCode
+        $exitCode = if (Test-Path -LiteralPath $job.ExitPath) {
+          [int](Get-Content -Raw -LiteralPath $job.ExitPath)
+        } else {
+          $job.Process.ExitCode
+        }
+        if ($null -eq $exitCode) { $exitCode = 1 }
         if ($exitCode -eq 0) {
           Write-Host "==> Passed CI job: $($job.Name)"
         } else {
@@ -137,15 +159,21 @@ $jobs += Start-CiJob `
   -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "xtask\scripts\run-ci-crate-tests.ps1", "-Parallelism", "$Parallelism", "-TimeoutSeconds", "$CrateTimeoutSeconds") `
   -TimeoutSeconds ([Math]::Max($CrateTimeoutSeconds * 2, $CrateTimeoutSeconds + 300))
 $jobs += Start-CiJob `
-  -Name "backend-business" `
-  -FilePath "powershell" `
-  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "xtask\scripts\run-backend-business-tests.ps1", "-TimeoutSeconds", "$BusinessTimeoutSeconds", "-Parallelism", "$Parallelism") `
-  -TimeoutSeconds ([Math]::Max($BusinessTimeoutSeconds * 2, $BusinessTimeoutSeconds + 300))
-$jobs += Start-CiJob `
   -Name "tui-local" `
   -FilePath $npm `
   -Arguments @("--prefix", "apps/tui", "run", "test:unit") `
   -TimeoutSeconds $TuiTimeoutSeconds
+
+if ($env:OS -eq "Windows_NT") {
+  Wait-CiJobs $jobs
+  $jobs = @()
+}
+
+$jobs += Start-CiJob `
+  -Name "backend-business" `
+  -FilePath "powershell" `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "xtask\scripts\run-backend-business-tests.ps1", "-TimeoutSeconds", "$BusinessTimeoutSeconds", "-Parallelism", "$Parallelism") `
+  -TimeoutSeconds ([Math]::Max($BusinessTimeoutSeconds * 2, $BusinessTimeoutSeconds + 300))
 
 Wait-CiJobs $jobs
 Write-Host "CI flow passed"

@@ -8,7 +8,8 @@ use gateway::api::session_log::{
 };
 use gateway::contracts::{SessionLogListParams, SessionLogRecordsParams};
 use serde_json::{json, Value};
-use session_log::{SessionLogCommand, SessionLogStore};
+use session_log::SessionLogStore;
+use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
 use std::path::Path as FsPath;
 use std::time::{Duration, Instant};
 
@@ -197,12 +198,8 @@ async fn response_json(response: Response) -> Result<(StatusCode, Value)> {
     Ok((status, value))
 }
 
-fn upsert_request(
-    session_id: &str,
-    workspace: &str,
-    message_count: usize,
-) -> session_log::UpsertSessionRequest {
-    session_log::UpsertSessionRequest {
+fn upsert_request(session_id: &str, workspace: &str, message_count: usize) -> UpsertSessionRequest {
+    UpsertSessionRequest {
         session: json!({
             "id": session_id,
             "name": "Gateway Session Log API",
@@ -236,10 +233,10 @@ fn upsert_request(
     }
 }
 
-fn assert_ok(response: session_log::SessionLogResponse) -> Result<()> {
+fn assert_ok(response: SessionLogResponse) -> Result<()> {
     match response {
-        session_log::SessionLogResponse::Ok => Ok(()),
-        session_log::SessionLogResponse::Error { error } => bail!("{error}"),
+        SessionLogResponse::Ok => Ok(()),
+        SessionLogResponse::Error { error } => bail!("{error}"),
         other => bail!("unexpected session_log response: {other:?}"),
     }
 }

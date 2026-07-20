@@ -7,6 +7,10 @@
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex as ParkingMutex;
+use router_contract::{
+    IpcNotification, IpcRequest, IpcResponse, RouterEndpoint, METHOD_HEALTH_CHECK,
+};
+use runtime_contract::GATEWAY_CALLBACK_KIND;
 use serde_json::{json, Value};
 use std::{
     io::{BufRead, BufReader, Write},
@@ -41,13 +45,6 @@ struct ProcessLockRecord {
     kind: Option<String>,
     build_kind: Option<String>,
     home: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RouterEndpoint {
-    addr: String,
-    pid: Option<u32>,
-    process_start_time: Option<u64>,
 }
 
 pub struct RouterProcess {
@@ -383,18 +380,11 @@ impl RouterProcess {
             "gateway-{}",
             self.request_seq.fetch_add(1, Ordering::SeqCst)
         );
-        let deadline_ms: Option<u64> = if method == "health_check" {
-            Some(ROUTER_HEALTH_TIMEOUT.as_millis() as u64)
+        let request = if method == METHOD_HEALTH_CHECK {
+            IpcRequest::health_check(request_id, ROUTER_HEALTH_TIMEOUT.as_millis() as u64)
         } else {
-            None
+            IpcRequest::call(request_id, method, payload)
         };
-        let request = json!({
-            "request_id": request_id,
-            "kind": if method == "health_check" { "health_check" } else { "call" },
-            "method": method,
-            "payload": payload,
-            "deadline_ms": deadline_ms,
-        });
         call_router_addr(&addr, &request, timeout)
     }
 
@@ -507,7 +497,7 @@ impl RouterProcess {
 
 fn call_router_addr(
     addr: &str,
-    request: &serde_json::Value,
+    request: &IpcRequest,
     timeout: Duration,
 ) -> Result<serde_json::Value> {
     let socket: SocketAddr = addr
@@ -518,7 +508,7 @@ fn call_router_addr(
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(Duration::from_secs(10)))?;
     let mut writer = stream.try_clone()?;
-    writer.write_all(format!("{request}\n").as_bytes())?;
+    writer.write_all(format!("{}\n", serde_json::to_string(request)?).as_bytes())?;
     writer.flush()?;
 
     let mut reader = BufReader::new(stream);
@@ -532,33 +522,29 @@ fn call_router_addr(
         if line.trim().is_empty() {
             continue;
         }
-        let value: Value =
-            serde_json::from_str(line.trim()).context("failed to decode router daemon response")?;
-        if handle_router_notification(&value) {
+        let value: Value = serde_json::from_str(line.trim())
+            .context("failed to decode router daemon response frame")?;
+        if value.get("kind").and_then(Value::as_str) == Some(GATEWAY_CALLBACK_KIND) {
+            let notification: IpcNotification = serde_json::from_value(value)
+                .context("failed to decode router callback notification")?;
+            handle_router_notification(&notification);
             continue;
         }
-        return Ok(value);
+        let response: IpcResponse =
+            serde_json::from_value(value).context("failed to decode router daemon response")?;
+        return serde_json::to_value(response).map_err(Into::into);
     }
 }
 
-fn handle_router_notification(value: &Value) -> bool {
-    if value.get("kind").and_then(Value::as_str) != Some("gateway.callback") {
-        return false;
+fn handle_router_notification(notification: &IpcNotification) {
+    if let Err(error) = apply_gateway_callback_notification(notification) {
+        tracing::warn!(error = %error, ?notification, "failed to apply router gateway callback");
     }
-    if let Err(error) = apply_gateway_callback_notification(value) {
-        tracing::warn!(error = %error, notification = %value, "failed to apply router gateway callback");
-    }
-    true
 }
 
-fn apply_gateway_callback_notification(value: &Value) -> Result<()> {
-    let method = value
-        .get("method")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("gateway callback notification missing method"))?;
-    let payload = value
-        .get("payload")
-        .ok_or_else(|| anyhow!("gateway callback notification missing payload"))?;
+fn apply_gateway_callback_notification(notification: &IpcNotification) -> Result<()> {
+    let method = notification.method.as_str();
+    let payload = &notification.payload;
     let session_id = payload
         .get("session_id")
         .and_then(Value::as_str)
@@ -690,13 +676,10 @@ fn healthy_router_endpoint() -> Result<Option<(RouterEndpoint, serde_json::Value
     let Some(mut endpoint) = read_router_endpoint_record()? else {
         return Ok(None);
     };
-    let request = json!({
-        "request_id": "gateway-health-probe",
-        "kind": "health_check",
-        "method": "health_check",
-        "payload": {},
-        "deadline_ms": ROUTER_HEALTH_TIMEOUT.as_millis() as u64,
-    });
+    let request = IpcRequest::health_check(
+        "gateway-health-probe",
+        ROUTER_HEALTH_TIMEOUT.as_millis() as u64,
+    );
     let response =
         match call_router_addr(&endpoint.addr, &request, read_timeout_for("health_check")) {
             Ok(response) => response,
@@ -727,34 +710,14 @@ fn healthy_router_endpoint() -> Result<Option<(RouterEndpoint, serde_json::Value
 }
 
 fn parse_router_endpoint(raw: &str) -> Result<Option<RouterEndpoint>> {
-    let endpoint: serde_json::Value = serde_json::from_str(raw)?;
-    let version = endpoint
-        .get("version")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if !version.is_empty() && version != tura_path::instance_version() {
+    let endpoint: RouterEndpoint = serde_json::from_str(raw)?;
+    if endpoint.version != tura_path::instance_version() {
         return Ok(None);
     }
-    let Some(addr) = endpoint
-        .get("addr")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string)
-    else {
+    if endpoint.addr.trim().is_empty() {
         return Ok(None);
-    };
-    let pid = endpoint
-        .get("pid")
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok());
-    let process_start_time = endpoint
-        .get("process_start_time")
-        .and_then(serde_json::Value::as_u64);
-    Ok(Some(RouterEndpoint {
-        addr,
-        pid,
-        process_start_time,
-    }))
+    }
+    Ok(Some(endpoint))
 }
 
 fn wait_for_router_addr_unreachable(addr: &str, timeout: Duration) -> bool {
@@ -1166,7 +1129,12 @@ mod tests {
                 "version": tura_path::instance_version(),
             }),
         )?;
-        assert!(reachable_router_addr()?.is_none());
+        let missing_addr = reachable_router_addr()
+            .expect_err("router endpoint without an address should be rejected");
+        assert!(
+            format!("{missing_addr:#}").contains("missing field `addr`"),
+            "error should describe the missing router address: {missing_addr:#}"
+        );
         assert!(
             !path.exists(),
             "router endpoints without an address should be removed"
@@ -1288,11 +1256,13 @@ mod tests {
         )
         .expect("incompatible endpoint should parse")
         .is_none());
-        assert!(parse_router_endpoint(
-            &json!({"version": tura_path::instance_version()}).to_string()
-        )
-        .expect("missing address should parse")
-        .is_none());
+        let missing_addr =
+            parse_router_endpoint(&json!({"version": tura_path::instance_version()}).to_string())
+                .expect_err("missing address should be rejected");
+        assert!(
+            missing_addr.to_string().contains("missing field `addr`"),
+            "error should describe the missing router address: {missing_addr:#}"
+        );
     }
 
     #[test]
@@ -1315,6 +1285,7 @@ mod tests {
         .expect("router lock");
         let matching = RouterEndpoint {
             addr: "127.0.0.1:1".to_string(),
+            version: tura_path::instance_version(),
             pid: Some(current_pid),
             process_start_time: Some(current_start),
         };
@@ -1328,6 +1299,7 @@ mod tests {
 
         let no_start_time = RouterEndpoint {
             addr: "127.0.0.1:1".to_string(),
+            version: tura_path::instance_version(),
             pid: Some(current_pid),
             process_start_time: None,
         };
@@ -1348,6 +1320,7 @@ mod tests {
         std::fs::create_dir_all(tura_path::locks_dir()).expect("locks dir");
         let endpoint = RouterEndpoint {
             addr: "127.0.0.1:1".to_string(),
+            version: tura_path::instance_version(),
             pid: Some(current_pid),
             process_start_time: Some(current_start),
         };
@@ -1427,11 +1400,8 @@ mod tests {
             let mut writer = stream;
             std::io::Write::write_all(
                 &mut writer,
-                serde_json::to_string(&json!({
-                    "ok": true,
-                    "payload": {"healthy": true}
-                }))?
-                .as_bytes(),
+                serde_json::to_string(&IpcResponse::ok("health-test", json!({"healthy": true})))?
+                    .as_bytes(),
             )?;
             std::io::Write::write_all(&mut writer, b"\n")?;
             std::io::Write::flush(&mut writer)?;
@@ -1440,10 +1410,7 @@ mod tests {
 
         let response = call_router_addr(
             &success_addr,
-            &json!({
-                "kind": "health_check",
-                "method": "health_check",
-            }),
+            &IpcRequest::health_check("health-test", 2_000),
             Duration::from_secs(2),
         )?;
         assert_eq!(response["ok"], true);
@@ -1465,17 +1432,14 @@ mod tests {
             assert_eq!(request["method"], "execution.enqueue_turn");
             std::io::Write::write_all(
                 &mut stream,
-                b"{\"ok\":false,\"error\":\"worker unavailable\"}\n",
+                b"{\"request_id\":\"error-test\",\"ok\":false,\"payload\":null,\"error\":\"worker unavailable\"}\n",
             )?;
             std::io::Write::flush(&mut stream)?;
             Ok(())
         });
         let response = call_router_addr(
             &error_addr,
-            &json!({
-                "kind": "call",
-                "method": "execution.enqueue_turn",
-            }),
+            &IpcRequest::call("error-test", "execution.enqueue_turn", json!({})),
             Duration::from_secs(2),
         )?;
         assert_eq!(response["ok"], false);

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 export const commandNames = [
@@ -146,9 +146,9 @@ export function releaseOutputRoot(root) {
 export function guiDistCandidates(root) {
   const releaseDir = releaseRoot(root);
   return [
-    path.join(releaseDir, "tura_gui"),
-    path.join(releaseDir, "tura_gui_dist")
-  ];
+    path.join(releaseDir, "tura_gui_dist"),
+    path.join(releaseDir, "tura_gui")
+  ].filter((candidate) => existsSync(candidate) && statSync(candidate).isDirectory());
 }
 
 export function bundleCandidates(root) {
@@ -201,12 +201,15 @@ export function firstExistingPath(candidates) {
 }
 
 export function requiredReleaseFiles(root, platform = process.platform) {
+  return [...requiredNpmPlatformFiles(root, platform), ...requiredDesktopReleaseFiles(root, platform)];
+}
+
+export function requiredNpmPlatformFiles(root, platform = process.platform) {
   const releaseDir = releaseRoot(root);
   const files = executableNames.map((name) => path.join(releaseDir, executableName(name, platform)));
   files.push(path.join(releaseDir, "config", "provider_config.json"));
   const guiDist = firstExistingPath(guiDistCandidates(root));
-  files.push(guiDist ? path.join(guiDist, "index.html") : path.join(releaseDir, "tura_gui", "index.html"));
-  files.push(...requiredDesktopReleaseFiles(root, platform));
+  files.push(guiDist ? path.join(guiDist, "index.html") : path.join(releaseDir, "tura_gui_dist", "index.html"));
   return files;
 }
 
@@ -225,6 +228,10 @@ export function missingReleaseFiles(root, platform = process.platform) {
     missing.push(path.join(bundleRoot, `installer${desktopBundleAssetExtensions(platform).join("|")}`));
   }
   return missing;
+}
+
+export function missingNpmPlatformFiles(root, platform = process.platform) {
+  return requiredNpmPlatformFiles(root, platform).filter((file) => !existsSync(file));
 }
 
 export function requiredReleaseRuntimeConfigFiles(root) {

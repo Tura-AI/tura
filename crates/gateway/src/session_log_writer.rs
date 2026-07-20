@@ -4,7 +4,7 @@
 //! mutations that are initiated directly by frontend actions.
 
 use anyhow::{anyhow, Result};
-use session_log::{SessionLogCommand, SessionLogResponse};
+use session_log_contract::{SessionLogCommand, SessionLogResponse};
 
 pub fn write_session_log(command: SessionLogCommand) -> Result<()> {
     if session_log::ipc::service_is_running() {

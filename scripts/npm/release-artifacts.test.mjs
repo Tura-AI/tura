@@ -8,6 +8,8 @@ import {
   desktopBundleAssets,
   executableName,
   executableNames,
+  guiDistCandidates,
+  missingNpmPlatformFiles,
   missingReleaseFiles,
   mismatchedDesktopBundleAssets
 } from "./release-artifacts.mjs";
@@ -38,6 +40,23 @@ test("desktop bundle discovery accepts installable assets for every release plat
   }
 });
 
+test("npm platform validation does not require Tauri desktop artifacts", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "tura-npm-platform-required-"));
+  try {
+    const releaseDir = path.join(root, "target", "release");
+    for (const name of executableNames) {
+      writeFixtureFile(releaseDir, executableName(name, "linux"));
+    }
+    writeFixtureFile(releaseDir, "config/provider_config.json");
+    writeFixtureFile(releaseDir, "tura_gui_dist/index.html");
+
+    assert.deepEqual(missingNpmPlatformFiles(root, "linux"), []);
+    assert.notDeepEqual(missingReleaseFiles(root, "linux"), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("release validation rejects a desktop bundle directory without an installer", () => {
   const root = mkdtempSync(path.join(tmpdir(), "tura-desktop-required-"));
   try {
@@ -47,7 +66,7 @@ test("release validation rejects a desktop bundle directory without an installer
     }
     writeFixtureFile(releaseDir, executableName("tura_gui", "win32"));
     writeFixtureFile(releaseDir, "config/provider_config.json");
-    writeFixtureFile(releaseDir, "tura_gui/index.html");
+    writeFixtureFile(releaseDir, "tura_gui_dist/index.html");
     mkdirSync(path.join(releaseDir, "bundle"), { recursive: true });
 
     const missingInstaller = missingReleaseFiles(root, "win32");
@@ -56,6 +75,19 @@ test("release validation rejects a desktop bundle directory without an installer
 
     writeFixtureFile(releaseDir, "bundle/msi/tura_gui.msi");
     assert.deepEqual(missingReleaseFiles(root, "win32"), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("GUI dist discovery never treats the Unix desktop executable as a directory", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "tura-gui-dist-"));
+  try {
+    const releaseDir = path.join(root, "target", "release");
+    writeFixtureFile(releaseDir, "tura_gui");
+    writeFixtureFile(releaseDir, "tura_gui_dist/index.html");
+
+    assert.deepEqual(guiDistCandidates(root), [path.join(releaseDir, "tura_gui_dist")]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

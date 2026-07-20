@@ -96,7 +96,7 @@ function Add-RustFlag {
 
 function Copy-GuiDist {
   $Source = Join-Path $RepoRoot "apps\gui\app\dist"
-  $Destination = Join-Path $TargetDir "tura_gui"
+  $Destination = Join-Path $TargetDir "tura_gui_dist"
   if (-not (Test-Path (Join-Path $Source "index.html"))) {
     throw "GUI dist not found at $Source. Run the GUI build before copying release artifacts."
   }
@@ -278,6 +278,9 @@ if ($BuildTui) {
 if ($BuildTauri) {
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\gui") @("app\node_modules\vite\package.json")
   Invoke-JsInstallIfMissing (Join-Path $RepoRoot "apps\tauri") @("node_modules\@tauri-apps\cli\package.json")
+  if (Test-Path -LiteralPath (Join-Path $TargetDir "tura_gui") -PathType Container) {
+    Remove-Item -LiteralPath (Join-Path $TargetDir "tura_gui") -Recurse -Force
+  }
   Remove-Item -LiteralPath (Join-Path $TargetDir "bundle") -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath (Join-Path $TargetDir "release\bundle") -Recurse -Force -ErrorAction SilentlyContinue
   $PreviousTuraBuildKind = $env:TURA_BUILD_KIND
@@ -292,7 +295,7 @@ if ($BuildTauri) {
 Write-Host "Release artifacts ready in $TargetDir"
 $Entries = @("tura_exec.exe", "tura_gateway.exe", "tura_router.exe", "tura_session_db.exe", "tura_runtime.exe")
 if ($BuildTui) { $Entries = @("tura.exe") + $Entries }
-if ($BuildGui) { $Entries += "tura_gui/" }
+if ($BuildGui) { $Entries += "tura_gui_dist/" }
 if ($BuildTauri) { $Entries += "tura_gui bundle" }
 if (-not $Binary) { $Entries += "runtime configs/prompts/commands" }
 Write-Host ("Entries: " + ($Entries -join ", "))

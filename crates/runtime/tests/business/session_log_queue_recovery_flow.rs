@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use runtime::session_log_client::SessionLogClient;
 use serde_json::json;
-use session_log::SessionLogCommand;
+use session_log_contract::SessionLogCommand;
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
@@ -363,7 +363,7 @@ fn all_sessions_and_records_visible(
 fn wait_for_session(
     client: &SessionLogClient,
     session_id: &str,
-    mut condition: impl FnMut(&session_log::SessionSnapshot) -> bool,
+    mut condition: impl FnMut(&session_log_contract::SessionSnapshot) -> bool,
 ) -> Result<()> {
     wait_until(Duration::from_secs(10), || {
         client

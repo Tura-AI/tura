@@ -1,9 +1,8 @@
+use lifecycle::{RuntimeCallResultStatus, RuntimeState};
 use runtime::runtime::create_runtime::{create_runtime, runtime_provider_config_from_tura};
 use runtime::runtime::types::RuntimeQueueItem;
 use runtime::state_machine::agent_management::{ProviderConfig, ToolChoice};
-use runtime::state_machine::runtime_management::{
-    RuntimeCallResultStatus, RuntimeManagement, RuntimeState,
-};
+use runtime::state_machine::runtime_management::RuntimeManagement;
 use runtime::state_machine::session_management::ContextTokenStats;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -74,7 +73,10 @@ async fn create_runtime_business_flow_builds_runtime_queue_and_provider_config_f
 
     assert_runtime_and_queue_are_consistent(&runtime, &queue_item, &messages, &tools);
     assert_eq!(runtime.state, RuntimeState::Created);
-    assert_eq!(runtime.call_result_status, RuntimeCallResultStatus::Pending);
+    assert_eq!(
+        runtime.call_result_status(),
+        RuntimeCallResultStatus::Pending
+    );
     assert!(runtime.runtime_id.starts_with("runtime-"));
     assert_eq!(runtime.session_id, "session-create-runtime-business");
     assert_eq!(runtime.agent_id, "agent-create-runtime-business");
