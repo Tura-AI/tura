@@ -1,4 +1,5 @@
 use crate::CommandCheckpoint;
+use lifecycle::{SessionCommand, SessionEvent, SessionProjection};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,6 +46,8 @@ pub struct SessionSnapshot {
     pub status: Option<String>,
     pub message_count: u64,
     pub task_management: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_projection: Option<SessionProjection>,
     pub management: serde_json::Value,
     #[serde(default)]
     pub session: serde_json::Value,
@@ -89,6 +92,51 @@ pub struct UpsertSessionRequest {
     pub todos: Vec<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PersistSessionPayloadRequest {
+    pub session_id: String,
+    pub records: Vec<serde_json::Value>,
+    pub todos: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CreateSessionRequest {
+    pub session_id: String,
+    pub creation_command: SessionCommand,
+    pub workspace: String,
+    pub session_directory: String,
+    pub name: String,
+    pub created_at: i64,
+    pub model: Option<String>,
+    pub agent: Option<String>,
+    pub session_type: String,
+    pub kill_processes_on_start: bool,
+    pub validator_enabled: bool,
+    pub force_planning: bool,
+    pub model_variant: Option<String>,
+    pub model_acceleration_enabled: bool,
+    pub disable_permission_restrictions: bool,
+    pub use_last_tool_call_response: bool,
+    pub auto_session_name: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecuteSessionCommandRequest {
+    pub session_id: String,
+    pub session_command: SessionCommand,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SessionCommandResult {
+    pub event: SessionEvent,
+    pub projection: SessionProjection,
+    pub session_name: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListSessionsRequest {
     pub workspace: String,
@@ -131,6 +179,9 @@ pub struct DeleteWorkspaceRequest {
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum SessionLogCommand {
     Health,
+    CreateSession(CreateSessionRequest),
+    ExecuteSessionCommand(ExecuteSessionCommandRequest),
+    PersistSessionPayload(PersistSessionPayloadRequest),
     UpsertSession(UpsertSessionRequest),
     ApplyCommandCheckpoint(Box<CommandCheckpoint>),
     GetSession(GetSessionRequest),
@@ -148,6 +199,9 @@ pub enum SessionLogCommand {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionLogResponse {
     Ok,
+    SessionCommandApplied {
+        result: Box<SessionCommandResult>,
+    },
     Workspaces {
         workspaces: Vec<WorkspaceSummary>,
     },
@@ -174,10 +228,13 @@ pub enum SessionLogResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionRecordsRequest,
-        ListSessionsRequest, MarkSessionInterruptedRequest, Page, SessionLogCommand,
-        SessionLogResponse, SessionRecord, SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
+        CreateSessionRequest, DeleteSessionRequest, DeleteWorkspaceRequest,
+        ExecuteSessionCommandRequest, GetSessionRequest, ListSessionRecordsRequest,
+        ListSessionsRequest, MarkSessionInterruptedRequest, Page, SessionCommandResult,
+        SessionLogCommand, SessionLogResponse, SessionRecord, SessionSnapshot,
+        UpsertSessionRequest, WorkspaceSummary,
     };
+    use lifecycle::{SessionAggregate, SessionCommand, SessionEvent, SessionQuery};
     use serde_json::json;
 
     #[test]
@@ -219,6 +276,10 @@ mod tests {
     fn command_serde_uses_snake_case_tagged_contract() {
         let commands = [
             SessionLogCommand::Health,
+            SessionLogCommand::ExecuteSessionCommand(ExecuteSessionCommandRequest {
+                session_id: "session".to_string(),
+                session_command: SessionCommand::SubmitUserInput,
+            }),
             SessionLogCommand::GetSession(GetSessionRequest {
                 session_id: "session".to_string(),
             }),
@@ -243,6 +304,12 @@ mod tests {
                     .all(|ch| ch.is_ascii_lowercase() || ch == '_'),
                 "command tag must stay snake_case: {command_name}"
             );
+            if command_name == "execute_session_command" {
+                assert_eq!(
+                    value["session_command"],
+                    json!({ "command": "submit_user_input" })
+                );
+            }
             let round_trip: SessionLogCommand =
                 serde_json::from_value(value).expect("command round trip");
             assert_eq!(
@@ -279,6 +346,7 @@ mod tests {
                 status: Some("idle".to_string()),
                 message_count: 1,
                 task_management: json!({}),
+                lifecycle_projection: None,
                 management: json!({ "state": "created" }),
                 session: json!({ "id": "session" }),
                 todos: Vec::new(),
@@ -298,6 +366,16 @@ mod tests {
 
         for response in [
             SessionLogResponse::Ok,
+            SessionLogResponse::SessionCommandApplied {
+                result: Box::new(SessionCommandResult {
+                    event: SessionEvent::SessionCreated {
+                        task_plan: lifecycle::TaskPlan::default(),
+                    },
+                    projection: SessionAggregate::new("session".to_string())
+                        .query(SessionQuery::Lifecycle),
+                    session_name: Some("Session".to_string()),
+                }),
+            },
             workspaces,
             sessions,
             SessionLogResponse::Session { session: None },
@@ -314,5 +392,40 @@ mod tests {
                 std::mem::discriminant(&response)
             );
         }
+    }
+
+    #[test]
+    fn typed_session_mutations_reject_extra_fields() {
+        let create = CreateSessionRequest {
+            session_id: "session".to_string(),
+            creation_command: SessionCommand::CreateSession {
+                task_plan: lifecycle::TaskPlan::default(),
+            },
+            workspace: "C:/workspace".to_string(),
+            session_directory: "C:/workspace".to_string(),
+            name: "Session".to_string(),
+            created_at: 1,
+            model: None,
+            agent: None,
+            session_type: "coding".to_string(),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: false,
+            use_last_tool_call_response: false,
+            auto_session_name: true,
+        };
+        let value = serde_json::to_value(create).expect("create json");
+        assert!(serde_json::from_value::<CreateSessionRequest>(value).is_ok());
+        assert!(
+            serde_json::from_value::<ExecuteSessionCommandRequest>(json!({
+                "session_id": "session",
+                "session_command": { "command": "submit_user_input" },
+                "extra": true
+            }))
+            .is_err()
+        );
     }
 }

@@ -1,12 +1,16 @@
 //! Direct client for the session DB service data path.
 //!
-//! Gateway/session reads use this client directly. Runtime-owned code is
-//! responsible for session DB writes.
+//! Gateway/session reads and typed lifecycle commands use this client directly.
+//! Runtime owns whole-session checkpoints; Gateway has one narrow projection
+//! payload path for forked conversation records and todos.
 
 use anyhow::{anyhow, Result};
+use lifecycle::SessionCommand;
 use session_log_contract::{
-    GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionLogCommand,
-    SessionLogResponse, SessionRecord, SessionSnapshot, SessionSummary, WorkspaceSummary,
+    CreateSessionRequest, ExecuteSessionCommandRequest, GetSessionRequest,
+    ListSessionRecordsRequest, ListSessionsRequest, Page, PersistSessionPayloadRequest,
+    SessionCommandResult, SessionLogCommand, SessionLogResponse, SessionRecord, SessionSnapshot,
+    SessionSummary, WorkspaceSummary,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -19,6 +23,39 @@ impl SessionDbClient {
 
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
         workspaces_response(self.call(SessionLogCommand::ListWorkspaces)?)
+    }
+
+    pub fn create_session(&self, request: CreateSessionRequest) -> Result<SessionCommandResult> {
+        session_command_response(
+            "create_session",
+            self.call(SessionLogCommand::CreateSession(request))?,
+        )
+    }
+
+    pub fn execute_session_command(
+        &self,
+        session_id: String,
+        command: SessionCommand,
+    ) -> Result<SessionCommandResult> {
+        session_command_response(
+            "execute_session_command",
+            self.call(SessionLogCommand::ExecuteSessionCommand(
+                ExecuteSessionCommandRequest {
+                    session_id,
+                    session_command: command,
+                },
+            ))?,
+        )
+    }
+
+    pub fn persist_session_payload(&self, request: PersistSessionPayloadRequest) -> Result<()> {
+        match self.call(SessionLogCommand::PersistSessionPayload(request))? {
+            SessionLogResponse::Ok => Ok(()),
+            SessionLogResponse::Error { error } => {
+                Err(service_error("persist_session_payload", error))
+            }
+            other => Err(unexpected_response("persist_session_payload", other)),
+        }
     }
 
     pub fn list_sessions(
@@ -73,11 +110,15 @@ impl SessionDbClient {
     }
 
     pub fn call(&self, command: SessionLogCommand) -> Result<SessionLogResponse> {
-        if !is_read_command(&command) {
+        if !is_gateway_command(&command) {
             return Err(anyhow!(
-                "gateway session_db client is read-only; write command rejected"
+                "gateway session_db client only accepts queries and typed session commands"
             ));
         }
+        self.call_service_command(command)
+    }
+
+    fn call_service_command(&self, command: SessionLogCommand) -> Result<SessionLogResponse> {
         if tokio::runtime::Handle::try_current().is_ok() {
             return std::thread::spawn(move || Self::call_blocking(command))
                 .join()
@@ -96,10 +137,13 @@ impl SessionDbClient {
     }
 }
 
-fn is_read_command(command: &SessionLogCommand) -> bool {
+fn is_gateway_command(command: &SessionLogCommand) -> bool {
     matches!(
         command,
         SessionLogCommand::Health
+            | SessionLogCommand::CreateSession(_)
+            | SessionLogCommand::ExecuteSessionCommand(_)
+            | SessionLogCommand::PersistSessionPayload(_)
             | SessionLogCommand::GetSession(_)
             | SessionLogCommand::ListWorkspaces
             | SessionLogCommand::ListSessions(_)
@@ -107,6 +151,17 @@ fn is_read_command(command: &SessionLogCommand) -> bool {
             | SessionLogCommand::ListSessionRecords(_)
             | SessionLogCommand::Shutdown
     )
+}
+
+fn session_command_response(
+    operation: &str,
+    response: SessionLogResponse,
+) -> Result<SessionCommandResult> {
+    match response {
+        SessionLogResponse::SessionCommandApplied { result } => Ok(*result),
+        SessionLogResponse::Error { error } => Err(service_error(operation, error)),
+        other => Err(unexpected_response(operation, other)),
+    }
 }
 
 fn workspaces_response(response: SessionLogResponse) -> Result<Vec<WorkspaceSummary>> {
@@ -160,12 +215,15 @@ fn unexpected_response(operation: &str, response: SessionLogResponse) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::{
-        is_read_command, records_response, session_response, sessions_response, workspaces_response,
+        is_gateway_command, records_response, session_response, sessions_response,
+        workspaces_response,
     };
+    use lifecycle::SessionCommand;
     use serde_json::json;
     use session_log_contract::{
         CommandCheckpoint, DeleteSessionRequest, MarkSessionInterruptedRequest, Page,
-        SessionLogCommand, SessionLogResponse, SessionSnapshot, WorkspaceSummary,
+        SessionLogCommand, SessionLogResponse, SessionSnapshot, UpsertSessionRequest,
+        WorkspaceSummary,
     };
 
     fn snapshot(session_id: &str) -> SessionSnapshot {
@@ -181,6 +239,7 @@ mod tests {
             status: Some("running".to_string()),
             message_count: 3,
             task_management: json!({}),
+            lifecycle_projection: None,
             management: json!({}),
             session: json!({ "session_id": session_id }),
             todos: Vec::new(),
@@ -254,19 +313,35 @@ mod tests {
     }
 
     #[test]
-    fn gateway_session_db_client_rejects_write_commands() {
-        assert!(is_read_command(&SessionLogCommand::ListWorkspaces));
-        assert!(!is_read_command(&SessionLogCommand::DeleteSession(
+    fn gateway_session_db_client_only_accepts_queries_and_typed_mutations() {
+        assert!(is_gateway_command(&SessionLogCommand::ListWorkspaces));
+        assert!(is_gateway_command(
+            &SessionLogCommand::ExecuteSessionCommand(
+                session_log_contract::ExecuteSessionCommandRequest {
+                    session_id: "session-1".to_string(),
+                    session_command: SessionCommand::SubmitUserInput,
+                }
+            )
+        ));
+        assert!(!is_gateway_command(&SessionLogCommand::UpsertSession(
+            UpsertSessionRequest {
+                session: json!({}),
+                parent_id: None,
+                messages: Vec::new(),
+                todos: Vec::new(),
+            }
+        )));
+        assert!(!is_gateway_command(&SessionLogCommand::DeleteSession(
             DeleteSessionRequest {
                 session_id: "session-1".to_string()
             }
         )));
-        assert!(!is_read_command(
+        assert!(!is_gateway_command(
             &SessionLogCommand::MarkSessionInterrupted(MarkSessionInterruptedRequest {
                 session_id: "session-1".to_string()
             })
         ));
-        assert!(!is_read_command(
+        assert!(!is_gateway_command(
             &SessionLogCommand::ApplyCommandCheckpoint(Box::new(CommandCheckpoint {
                 session_id: "session-1".to_string(),
                 turn_id: "turn-1".to_string(),

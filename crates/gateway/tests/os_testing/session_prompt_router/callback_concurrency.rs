@@ -12,7 +12,7 @@ async fn gateway_prompt_business_flow_uses_runtime_callback_message_instead_of_f
     let _env = EnvGuard::new(&home, &workspace);
     let service = ServiceThread::start()?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         Some("openai/gpt-5.5".to_string()),
         None,
@@ -166,7 +166,7 @@ async fn gateway_prompt_business_flow_uses_runtime_callback_message_instead_of_f
         }),
         "gateway must not synthesize a success fallback when runtime callback produced a final message"
     );
-    assert_gateway_did_not_prewrite_session_db(&session.id)?;
+    assert_gateway_kept_canonical_session(&session.id)?;
 
     drop(router);
     drop(service);
@@ -201,7 +201,7 @@ async fn gateway_prompt_business_flow_concurrent_sessions_enqueue_independent_ro
 
     let sessions = (0..3)
         .map(|index| {
-            session_store().create_session(
+            create_canonical_test_session(
                 Some(workspace.to_string_lossy().to_string()),
                 Some(format!("codex/gpt-5.5-{index}")),
                 None,
@@ -311,7 +311,7 @@ async fn gateway_prompt_business_flow_concurrent_sessions_enqueue_independent_ro
             "successful router handoff without runtime callback must not synthesize assistant fallback for session {}",
             session.id
         );
-        assert_gateway_did_not_prewrite_session_db(&session.id)?;
+        assert_gateway_kept_canonical_session(&session.id)?;
     }
 
     drop(router);

@@ -8,6 +8,7 @@ pub(crate) use gateway::contracts::SessionStatus;
 pub(crate) use gateway::session::config::{save_config, TuraSessionConfig};
 pub(crate) use gateway::session::MessageRole;
 pub(crate) use gateway::session_store;
+pub(crate) use lifecycle::SessionCommand;
 pub(crate) use serde_json::{json, Value};
 pub(crate) use session_log::SessionLogStore;
 pub(crate) use session_log_contract::SessionLogCommand;
@@ -20,6 +21,42 @@ pub(crate) use std::time::{Duration, Instant};
 pub(crate) use tokio::sync::Mutex;
 
 pub(crate) static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+pub(crate) fn create_canonical_test_session(
+    directory: Option<String>,
+    model: Option<String>,
+    agent: Option<String>,
+    session_type: Option<String>,
+    kill_processes_on_start: bool,
+    validator_enabled: bool,
+    force_planning: bool,
+    model_variant: Option<String>,
+    model_acceleration_enabled: bool,
+    disable_permission_restrictions: bool,
+) -> gateway::contracts::Session {
+    let info = session_store().build_session_info(
+        directory,
+        model,
+        agent,
+        session_type,
+        kill_processes_on_start,
+        validator_enabled,
+        force_planning,
+        model_variant,
+        model_acceleration_enabled,
+        disable_permission_restrictions,
+    );
+    let task_plan = info.management.task_plan.clone();
+    session_store()
+        .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
+        .expect("canonical router-flow session should be created")
+}
+
+pub(crate) fn execute_canonical_test_command(session_id: &str, command: SessionCommand) {
+    session_store()
+        .execute_canonical_session_command(session_id, command)
+        .expect("canonical router-flow command should succeed");
+}
 
 pub(crate) struct EnvGuard {
     previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
@@ -278,12 +315,12 @@ pub(crate) fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool)
     ))
 }
 
-pub(crate) fn assert_gateway_did_not_prewrite_session_db(session_id: &str) -> Result<()> {
+pub(crate) fn assert_gateway_kept_canonical_session(session_id: &str) -> Result<()> {
     let persisted = gateway::session_db_client::SessionDbClient::discover()?
         .get_session(session_id.to_string())?;
     assert!(
-        persisted.is_none(),
-        "gateway must not prewrite session_db for prompt handoff; found {persisted:#?}"
+        persisted.is_some(),
+        "gateway must keep the canonical session_db row during prompt handoff"
     );
     Ok(())
 }

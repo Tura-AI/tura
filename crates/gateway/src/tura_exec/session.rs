@@ -238,6 +238,7 @@ mod tests {
             status: None,
             message_count: 0,
             task_management: serde_json::json!({}),
+            lifecycle_projection: None,
             management: serde_json::json!({}),
             session: serde_json::json!({}),
             todos: Vec::new(),

@@ -18,7 +18,7 @@ async fn gateway_prompt_business_flow_records_router_rejection_as_session_error(
         }))],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         None,
         None,
@@ -67,7 +67,7 @@ async fn gateway_prompt_business_flow_records_router_rejection_as_session_error(
         }),
         "router rejection should be visible as a session error fallback"
     );
-    assert_gateway_did_not_prewrite_session_db(&session.id)?;
+    assert_gateway_kept_canonical_session(&session.id)?;
 
     drop(router);
     drop(service);
@@ -92,7 +92,7 @@ async fn gateway_prompt_business_flow_records_router_transport_error_without_db_
         )],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         None,
         None,
@@ -149,7 +149,7 @@ async fn gateway_prompt_business_flow_records_router_transport_error_without_db_
         }),
         "malformed router response should produce a visible session error"
     );
-    assert_gateway_did_not_prewrite_session_db(&session.id)?;
+    assert_gateway_kept_canonical_session(&session.id)?;
 
     drop(router);
     drop(service);
@@ -179,7 +179,7 @@ async fn gateway_prompt_business_flow_reports_runtime_stop_without_mano_failure(
         )],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         None,
         None,
@@ -259,22 +259,16 @@ async fn gateway_prompt_business_flow_appends_prompt_when_router_reports_active_
     let service = ServiceThread::start()?;
     let router = FakeRouter::start(
         &home,
-        vec![
-            RouterReply::Payload(json!({
-                "ok": false,
-                "code": "session_active_turn",
-                "session_id": "filled below by assertion only",
-                "turn_id": "router-active-turn",
-                "error": "session already has an active turn"
-            })),
-            RouterReply::Payload(json!({
-                "ok": true,
-                "commands": ["append this to the running runtime"]
-            })),
-        ],
+        vec![RouterReply::Payload(json!({
+            "ok": false,
+            "code": "session_active_turn",
+            "session_id": "filled below by assertion only",
+            "turn_id": "router-active-turn",
+            "error": "session already has an active turn"
+        }))],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         None,
         None,
@@ -309,20 +303,13 @@ async fn gateway_prompt_business_flow_appends_prompt_when_router_reports_active_
     assert_eq!(enqueue["payload"]["turn_id"], "router-active-turn");
     assert_eq!(enqueue["payload"]["session_id"], session.id);
 
-    let append = router.next_request(Duration::from_secs(10))?;
-    assert_eq!(append["kind"], "call");
-    assert_eq!(append["method"], "session.append_user_command");
-    assert_eq!(append["payload"]["session_id"], session.id);
-    assert_eq!(append["payload"]["root_session_id"], session.id);
-    assert_eq!(
-        append["payload"]["command"],
-        "append this to the running runtime"
-    );
-
     wait_until(Duration::from_secs(10), || {
         session_store()
-            .get_session(&session.id)
-            .is_some_and(|session| session.status == SessionStatus::Busy)
+            .session_lifecycle_projection(&session.id)
+            .is_some_and(|projection| {
+                projection.pending_user_inputs
+                    == vec!["append this to the running runtime".to_string()]
+            })
     })?;
     let messages = session_store().get_messages(&session.id);
     assert!(
@@ -344,7 +331,10 @@ async fn gateway_prompt_business_flow_appends_prompt_when_router_reports_active_
         "active-turn fallback must append to runtime instead of surfacing a MANO failure"
     );
     assert_eq!(
-        session_store().take_user_commands_for_session(&session.id),
+        session_store()
+            .session_lifecycle_projection(&session.id)
+            .expect("active runtime projection")
+            .pending_user_inputs,
         vec!["append this to the running runtime".to_string()]
     );
 
@@ -394,7 +384,7 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
         }))],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         Some("codex/gpt-5.5".to_string()),
         Some("business-runtime-agent".to_string()),
@@ -497,7 +487,7 @@ async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router
         }))],
     )?;
 
-    let session = session_store().create_session(
+    let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         None,
         None,

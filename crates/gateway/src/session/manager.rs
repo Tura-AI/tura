@@ -101,14 +101,6 @@ impl SessionManager {
         SessionInfo::from_management(management)
     }
 
-    pub fn transition_session(
-        management: &mut SessionManagement,
-        next_state: SessionState,
-    ) -> Result<(), String> {
-        let now = Utc::now();
-        management.transition(next_state, now)
-    }
-
     pub fn get_state(management: &SessionManagement) -> SessionState {
         management.state
     }
@@ -187,10 +179,6 @@ impl SessionInfo {
         }
     }
 
-    pub fn transition(&mut self, next_state: SessionState) -> Result<(), String> {
-        let now = Utc::now();
-        self.management.transition(next_state, now)
-    }
 }
 
 pub fn normalize_session_type(session_type: Option<String>, agent: Option<&str>) -> String {

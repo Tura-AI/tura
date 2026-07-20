@@ -1,4 +1,92 @@
 use super::*;
+use lifecycle::{SessionTaskPatch, SessionTaskPlanPatch};
+
+pub(super) fn parse_task_management_patch(
+    patch: serde_json::Value,
+    now: DateTime<Utc>,
+) -> Result<SessionTaskPlanPatch, String> {
+    if let Some(tasks) = patch.as_array() {
+        let tasks = parse_task_patch_list(tasks)?;
+        return Ok(SessionTaskPlanPatch {
+            plan_summary: None,
+            generated_task_ids: (0..tasks.len()).map(|_| random_task_id()).collect(),
+            tasks: Some(tasks),
+            task: None,
+            generated_task_id: random_task_id(),
+            now,
+        });
+    }
+    let object = patch
+        .as_object()
+        .ok_or_else(|| "task_management must be an object or array".to_string())?;
+    let tasks = object
+        .get("tasks")
+        .and_then(serde_json::Value::as_array)
+        .map(|tasks| parse_task_patch_list(tasks))
+        .transpose()?;
+    let generated_task_ids = tasks
+        .as_ref()
+        .map(|tasks| (0..tasks.len()).map(|_| random_task_id()).collect())
+        .unwrap_or_default();
+    let task = object_has_any_field(object, TASK_MANAGEMENT_TASK_PATCH_FIELDS)
+        .then(|| parse_task_patch(object))
+        .transpose()?;
+    Ok(SessionTaskPlanPatch {
+        plan_summary: string_field(object, &["plan_summary"]),
+        tasks,
+        task,
+        generated_task_ids,
+        generated_task_id: random_task_id(),
+        now,
+    })
+}
+
+fn parse_task_patch_list(
+    tasks: &[serde_json::Value],
+) -> Result<Vec<SessionTaskPatch>, String> {
+    tasks
+        .iter()
+        .map(|value| {
+            value
+                .as_object()
+                .ok_or_else(|| "tasks entries must be objects".to_string())
+                .and_then(parse_task_patch)
+        })
+        .collect()
+}
+
+fn parse_task_patch(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<SessionTaskPatch, String> {
+    Ok(SessionTaskPatch {
+        task_id: string_field(object, &["task_id"]),
+        step: number_field(object, &["step"]),
+        task_summary: string_field(object, &["task_summary"]),
+        deliverable: string_field(object, &["deliverable"]),
+        sub_session_id: string_field(object, &["sub_session_id"]),
+        start_condition: first_field(object, &["start_condition"])
+            .map(|value| {
+                serde_json::from_value(value.clone())
+                    .map_err(|error| format!("invalid start_condition: {error}"))
+            })
+            .transpose()?,
+        start_at: first_field(object, &["start_at"])
+            .map(parse_start_at)
+            .transpose()?,
+        poll_interval: first_field(object, &["poll_interval"])
+            .map(|value| {
+                serde_json::from_value(value.clone())
+                    .map_err(|error| format!("invalid poll interval: {error}"))
+            })
+            .transpose()?,
+        status: first_field(object, &["status"])
+            .map(|value| {
+                serde_json::from_value(value.clone())
+                    .map_err(|error| format!("invalid status: {error}"))
+            })
+            .transpose()?,
+    })
+}
 
 fn ensure_first_task(info: &mut SessionInfo) -> Result<&mut TaskStep, String> {
     if info.management.task_plan.detailed_tasks.is_empty() {
@@ -338,54 +426,4 @@ fn parse_start_at(value: &serde_json::Value) -> Result<DateTime<Utc>, String> {
             .ok_or_else(|| "invalid start_at milliseconds".to_string());
     }
     Err("start_at must be RFC3339 or epoch milliseconds".to_string())
-}
-
-pub(super) fn task_is_scheduler_eligible(task: &TaskStep, now: DateTime<Utc>) -> bool {
-    if matches!(
-        task.status,
-        PlanStatus::WaitingUser | PlanStatus::Done | PlanStatus::Archived
-    ) {
-        return false;
-    }
-    match task.start_condition {
-        StartCondition::ScheduledTask | StartCondition::PollingTask => {
-            matches!(task.status, PlanStatus::Todo | PlanStatus::Question) && task.start_at <= now
-        }
-        StartCondition::SessionIdle => {
-            matches!(task.status, PlanStatus::Todo | PlanStatus::Question)
-        }
-        StartCondition::UserAction => false,
-    }
-}
-
-pub(super) fn task_display_summary(task: &TaskStep, plan_summary: &str) -> String {
-    [
-        task.task_summary.as_str(),
-        task.step_task.as_str(),
-        plan_summary,
-    ]
-    .into_iter()
-    .map(str::trim)
-    .find(|value| !value.is_empty())
-    .unwrap_or("Continue planned task")
-    .to_string()
-}
-
-pub(super) fn next_polling_start(
-    previous_start: DateTime<Utc>,
-    interval: PollInterval,
-    now: DateTime<Utc>,
-) -> DateTime<Utc> {
-    let seconds = interval
-        .s
-        .saturating_add(interval.m.saturating_mul(60))
-        .saturating_add(interval.h.saturating_mul(60 * 60))
-        .saturating_add(interval.d.saturating_mul(24 * 60 * 60));
-    let seconds = seconds.max(1);
-    let step = chrono::Duration::seconds(seconds.min(i64::MAX as u64) as i64);
-    let mut next = previous_start + step;
-    while next <= now {
-        next += step;
-    }
-    next
 }

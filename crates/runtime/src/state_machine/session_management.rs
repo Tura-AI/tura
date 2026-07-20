@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashSet;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 
 use super::agent_management::AgentName;
@@ -14,7 +15,8 @@ use super::agent_management::AgentName;
 pub type UtcDateTimeMs = DateTime<Utc>;
 
 use lifecycle::{
-    SessionAggregate, SessionCommand, SessionId, SessionProjection, SessionQuery, SessionState,
+    PlanStatus, SessionAggregate, SessionCommand, SessionId, SessionProjection, SessionQuery,
+    SessionState, TaskPlan, TaskStep,
 };
 
 /// Natural-language session name.
@@ -81,19 +83,6 @@ pub struct SessionInput {
     pub planning_mode_override: Option<bool>,
 }
 
-/// Completion status for one task-plan item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum PlanStatus {
-    #[default]
-    Todo,
-    WaitingUser,
-    Doing,
-    Question,
-    Done,
-    Archived,
-}
-
 pub type TaskStatus = PlanStatus;
 
 pub const DEFAULT_CONTEXT_TOKEN_LIMIT: u64 = 260_000;
@@ -144,125 +133,34 @@ fn default_context_token_limit() -> u64 {
     DEFAULT_CONTEXT_TOKEN_LIMIT
 }
 
-/// Condition that starts or resumes a task-plan item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum StartCondition {
-    SessionIdle,
-    #[default]
-    UserAction,
-    ScheduledTask,
-    PollingTask,
-}
-
-/// Polling interval split into calendar-like parts for model-visible state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct PollInterval {
-    #[serde(default)]
-    pub m: u64,
-    #[serde(default)]
-    pub d: u64,
-    #[serde(default)]
-    pub h: u64,
-    #[serde(default)]
-    pub s: u64,
-}
-
-/// One executable subtask in the session plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct TaskStep {
-    /// Stable task id. This is the primary key for task-management updates.
-    #[serde(default)]
-    pub task_id: String,
-    /// Non-negative plan step number.
-    #[serde(default)]
-    pub step: u64,
-    /// Optional child/sub-session id for delegated work.
-    #[serde(default)]
-    pub sub_session_id: String,
-    /// Task start timestamp in UTC.
-    #[serde(default = "Utc::now")]
-    pub start_at: UtcDateTimeMs,
-    /// Polling interval parts.
-    #[serde(default)]
-    pub poll_interval: PollInterval,
-    /// Condition that started this task.
-    #[serde(default)]
-    pub start_condition: StartCondition,
-    /// Current completion status.
-    #[serde(default)]
-    pub status: PlanStatus,
-    /// Compact state-machine summary visible to normal runtime turns.
-    #[serde(default)]
-    pub task_summary: String,
-    /// Human-readable subtask description.
-    #[serde(default)]
-    pub step_task: String,
-    /// Total turn count consumed by this step, including child processes.
-    #[serde(default)]
-    pub step_turn: u64,
-    /// Tool description as JSON text.
-    #[serde(default)]
-    pub step_tool: StepToolJson,
-    /// Context needed for the step.
-    #[serde(default)]
-    pub step_context: StepContext,
-    /// Agent responsible for the step.
-    #[serde(default)]
-    pub step_agent_name: AgentName,
-    /// Description of the expected deliverable.
-    #[serde(default)]
-    pub step_deliverable_description: DeliverableDescription,
-    /// Absolute output path of the deliverable.
-    #[serde(default)]
-    pub step_deliverable_path: DeliverablePath,
-}
-
-/// Session-level task plan split into plan display name and detailed task records.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct TaskPlan {
-    /// Compact plan display name visible to normal turns.
-    #[serde(default)]
-    pub plan_summary: String,
-    /// Detailed multiple-task records. Only multiple-task/delegation paths should write these.
-    #[serde(default)]
-    pub detailed_tasks: Vec<TaskStep>,
-}
-
 /// Root session state object.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionManagement {
     /// Canonical session identity and lifecycle state.
-    #[serde(flatten)]
     lifecycle: SessionAggregate,
     /// Natural-language session name.
     pub session_name: SessionName,
     /// Whether the session name should follow the latest task summary.
-    #[serde(default = "default_auto_session_name")]
     pub auto_session_name: bool,
     /// Absolute directory path of the session.
     pub session_directory: PathBuf,
     /// Whether this session uses Docker.
     pub session_uses_docker: bool,
     /// Runtime prompt manual task types active for this session.
-    #[serde(default, deserialize_with = "deserialize_task_type")]
     pub task_type: SessionTaskType,
     /// Command capabilities already loaded into the active session context.
-    #[serde(default, deserialize_with = "deserialize_session_capabilities")]
     pub session_capabilities: SessionCapabilities,
     /// Total turn count across the whole tree of the session.
     pub session_current_turn: u64,
     /// Historical execution log entries.
     pub session_log: Vec<SessionLogEntry>,
     /// Retention state for compacted session_log history.
-    #[serde(default)]
     pub session_log_retention: SessionLogRetention,
     /// Session creation timestamp in UTC.
     pub session_created_at: UtcDateTimeMs,
     /// Last activation time in UTC.
     pub session_last_update_at: UtcDateTimeMs,
     /// Last user message received by this session in UTC.
-    #[serde(default = "Utc::now")]
     pub session_last_user_message_at: UtcDateTimeMs,
     /// Current run start time in UTC.
     pub session_started_at: UtcDateTimeMs,
@@ -271,44 +169,29 @@ pub struct SessionManagement {
     /// Summarized overall user goal.
     pub user_goal: UserGoal,
     /// Current objective used for planning completion-audit reminders.
-    #[serde(default)]
     pub current_objective: String,
-    /// Planned subtasks.
-    #[serde(default, deserialize_with = "deserialize_task_plan")]
-    pub task_plan: TaskPlan,
     /// Whether runtime context should inject the previous tool response verbatim.
-    #[serde(default = "default_use_last_tool_call_response")]
     pub use_last_tool_call_response: bool,
     /// Whether this session was spawned as a child/delegated session.
-    #[serde(default)]
     pub is_child_session: bool,
     /// Whether command execution may bypass workspace permission restrictions.
-    #[serde(default)]
     pub disable_permission_restrictions: bool,
     /// Whether the active agent state for this run includes planning.
-    #[serde(default)]
     pub planning_enabled: bool,
     /// Whether the active agent requests reflective task-status prompt style.
-    #[serde(default)]
     pub reflection_enabled: bool,
     /// Whether runtime operation manuals may be injected for active task types.
-    #[serde(default = "default_op_manual_enabled")]
     pub op_manual_enabled: bool,
     /// Whether the caller disabled operation manuals for this run.
-    #[serde(default)]
     pub no_op_manual: bool,
     /// Whether this session should keep running until the goal is explicitly
     /// settled by task_status.
-    #[serde(default)]
     pub goal_mode: bool,
     /// Last user command that explicitly enabled goal mode.
-    #[serde(default)]
     pub last_goal_user_input: String,
     /// Latest provider-reported input token count and active compaction limit.
-    #[serde(default)]
     pub context_tokens: ContextTokenStats,
     /// Latest terminal provider token/cost report for the session.
-    #[serde(default)]
     pub runtime_usage: serde_json::Value,
 }
 
@@ -374,6 +257,10 @@ impl<'de> Deserialize<'de> for SessionManagement {
             lifecycle: SessionAggregate {
                 session_id: wire.session_id,
                 state: wire.state,
+                parent_id: None,
+                task_plan: wire.task_plan.clone(),
+                pending_user_inputs: Vec::new(),
+                cancelled: false,
             },
             session_name: wire.session_name,
             auto_session_name: wire.auto_session_name,
@@ -391,7 +278,6 @@ impl<'de> Deserialize<'de> for SessionManagement {
             input: wire.input,
             user_goal: wire.user_goal,
             current_objective: wire.current_objective,
-            task_plan: wire.task_plan,
             use_last_tool_call_response: wire.use_last_tool_call_response,
             is_child_session: wire.is_child_session,
             disable_permission_restrictions: wire.disable_permission_restrictions,
@@ -407,11 +293,69 @@ impl<'de> Deserialize<'de> for SessionManagement {
     }
 }
 
+impl Serialize for SessionManagement {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Keep the established SessionManagement wire field order. The lifecycle
+        // aggregate owns task_plan internally, but aggregate-only fields are not
+        // part of this runtime persistence projection.
+        let mut state = serializer.serialize_struct("SessionManagement", 30)?;
+        state.serialize_field("session_id", &self.lifecycle.session_id)?;
+        state.serialize_field("state", &self.lifecycle.state)?;
+        state.serialize_field("session_name", &self.session_name)?;
+        state.serialize_field("auto_session_name", &self.auto_session_name)?;
+        state.serialize_field("session_directory", &self.session_directory)?;
+        state.serialize_field("session_uses_docker", &self.session_uses_docker)?;
+        state.serialize_field("task_type", &self.task_type)?;
+        state.serialize_field("session_capabilities", &self.session_capabilities)?;
+        state.serialize_field("session_current_turn", &self.session_current_turn)?;
+        state.serialize_field("session_log", &self.session_log)?;
+        state.serialize_field("session_log_retention", &self.session_log_retention)?;
+        state.serialize_field("session_created_at", &self.session_created_at)?;
+        state.serialize_field("session_last_update_at", &self.session_last_update_at)?;
+        state.serialize_field(
+            "session_last_user_message_at",
+            &self.session_last_user_message_at,
+        )?;
+        state.serialize_field("session_started_at", &self.session_started_at)?;
+        state.serialize_field("input", &self.input)?;
+        state.serialize_field("user_goal", &self.user_goal)?;
+        state.serialize_field("current_objective", &self.current_objective)?;
+        state.serialize_field("task_plan", &self.lifecycle.task_plan)?;
+        state.serialize_field(
+            "use_last_tool_call_response",
+            &self.use_last_tool_call_response,
+        )?;
+        state.serialize_field("is_child_session", &self.is_child_session)?;
+        state.serialize_field(
+            "disable_permission_restrictions",
+            &self.disable_permission_restrictions,
+        )?;
+        state.serialize_field("planning_enabled", &self.planning_enabled)?;
+        state.serialize_field("reflection_enabled", &self.reflection_enabled)?;
+        state.serialize_field("op_manual_enabled", &self.op_manual_enabled)?;
+        state.serialize_field("no_op_manual", &self.no_op_manual)?;
+        state.serialize_field("goal_mode", &self.goal_mode)?;
+        state.serialize_field("last_goal_user_input", &self.last_goal_user_input)?;
+        state.serialize_field("context_tokens", &self.context_tokens)?;
+        state.serialize_field("runtime_usage", &self.runtime_usage)?;
+        state.end()
+    }
+}
+
 impl Deref for SessionManagement {
     type Target = SessionAggregate;
 
     fn deref(&self) -> &Self::Target {
         &self.lifecycle
+    }
+}
+
+impl DerefMut for SessionManagement {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.lifecycle
     }
 }
 
@@ -438,21 +382,29 @@ impl SessionManagement {
         self.lifecycle.query(SessionQuery::Lifecycle)
     }
 
+    /// Replaces the local read model without executing a transition locally.
+    pub fn replace_lifecycle_projection(&mut self, projection: SessionProjection) {
+        self.lifecycle = SessionAggregate {
+            session_id: projection.session_id,
+            state: projection.state,
+            parent_id: projection.parent_id,
+            task_plan: projection.task_plan,
+            pending_user_inputs: projection.pending_user_inputs,
+            cancelled: projection.cancelled,
+        };
+    }
+
     pub fn rebind_session_id(&mut self, session_id: SessionId) {
-        self.lifecycle
-            .execute(SessionCommand::RebindIdentity { session_id })
-            .expect("rebinding a canonical session identity is always valid");
+        self.lifecycle.session_id = session_id;
     }
 
     pub fn restore_state(&mut self, state: SessionState) {
-        self.lifecycle
-            .execute(SessionCommand::Restore { state })
-            .expect("restoring a canonical session state is always valid");
+        self.lifecycle.state = state;
     }
 
     pub fn interrupt(&mut self, now: UtcDateTimeMs) {
         self.lifecycle
-            .execute(SessionCommand::Interrupt)
+            .execute(SessionCommand::InterruptSession)
             .expect("interrupting a session is always valid");
         self.session_last_update_at = now;
     }
@@ -498,7 +450,6 @@ impl SessionManagement {
             current_objective,
             input,
             user_goal,
-            task_plan: TaskPlan::default(),
             use_last_tool_call_response: true,
             is_child_session: false,
             disable_permission_restrictions: false,
@@ -516,7 +467,7 @@ impl SessionManagement {
     /// Applies a validated state transition and refreshes `session_last_update_at`.
     pub fn transition(&mut self, next: SessionState, now: UtcDateTimeMs) -> Result<(), String> {
         self.lifecycle
-            .execute(SessionCommand::Transition { next })
+            .execute(SessionCommand::ApplyRuntimeState { state: next })
             .map_err(|error| error.to_string())?;
         self.session_last_update_at = now;
         Ok(())
@@ -539,7 +490,7 @@ impl SessionManagement {
         self.session_last_user_message_at = now;
         let previous = self.state;
         self.lifecycle
-            .execute(SessionCommand::PrepareUserTurn)
+            .execute(SessionCommand::SubmitUserInput)
             .expect("preparing a user turn is always valid");
         if previous != self.state {
             self.session_started_at = now;
@@ -797,7 +748,8 @@ where
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     if value.is_array() {
-        let detailed_tasks = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        let detailed_tasks: Vec<TaskStep> =
+            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
         return Ok(TaskPlan {
             plan_summary: String::new(),
             detailed_tasks,

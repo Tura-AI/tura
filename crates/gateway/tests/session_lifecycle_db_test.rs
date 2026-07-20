@@ -1,6 +1,9 @@
+use axum::body;
 use axum::extract::{Json, Path};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use gateway::api::session::{delete_session, fork_session};
-use gateway::contracts::ForkSessionRequest;
+use gateway::contracts::{ForkSessionRequest, Session};
 use gateway::session::MessageRole;
 use gateway::session_store;
 use session_log::SessionLogStore;
@@ -40,7 +43,7 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
         "persist this context before fork".to_string(),
     );
 
-    let Json(forked) = fork_session(
+    let response = fork_session(
         Path(source.id.clone()),
         Json(ForkSessionRequest {
             directory: Some(workspace_key),
@@ -49,7 +52,11 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
             copy_context: Some(true),
         }),
     )
-    .await;
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body(), usize::MAX).await?;
+    let forked: Session = serde_json::from_slice(&body)?;
 
     assert_ne!(
         forked.id, source.id,

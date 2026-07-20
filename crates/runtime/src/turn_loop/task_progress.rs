@@ -4,6 +4,7 @@ use chrono::Utc;
 
 use crate::prompt_style::context_blocks;
 use crate::state_machine::session_management::{SessionManagement, TaskStatus};
+use lifecycle::{StartCondition, TaskStep};
 
 const TASK_STATUS_COMMAND: &str = "task_status";
 
@@ -96,7 +97,7 @@ pub(crate) fn active_doing_task_user_message(
 
 fn task_user_message_by(
     session: &SessionManagement,
-    predicate: fn(&crate::state_machine::session_management::TaskStep) -> bool,
+    predicate: fn(&TaskStep) -> bool,
 ) -> Option<serde_json::Value> {
     let (_index, task) = session
         .task_plan
@@ -166,21 +167,17 @@ pub(crate) fn record_task_focus_message_for_terminal_done(
     );
 }
 
-fn task_is_executable(task: &crate::state_machine::session_management::TaskStep) -> bool {
+fn task_is_executable(task: &TaskStep) -> bool {
     task.status == TaskStatus::Doing
-        || (task.status == TaskStatus::Todo
-            && task.start_condition
-                == crate::state_machine::session_management::StartCondition::UserAction)
+        || (task.status == TaskStatus::Todo && task.start_condition == StartCondition::UserAction)
 }
 
-fn task_is_doing(task: &crate::state_machine::session_management::TaskStep) -> bool {
+fn task_is_doing(task: &TaskStep) -> bool {
     task.status == TaskStatus::Doing
 }
 
-fn task_is_user_action_todo(task: &crate::state_machine::session_management::TaskStep) -> bool {
-    task.status == TaskStatus::Todo
-        && task.start_condition
-            == crate::state_machine::session_management::StartCondition::UserAction
+fn task_is_user_action_todo(task: &TaskStep) -> bool {
+    task.status == TaskStatus::Todo && task.start_condition == StartCondition::UserAction
 }
 
 #[cfg(test)]

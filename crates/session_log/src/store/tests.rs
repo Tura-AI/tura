@@ -2,10 +2,9 @@ use super::connection::{init_workspace_db, with_connection};
 use super::helpers::{
     bounded_page, management_task_management, millis_at, millis_to_rfc3339, parse_json_field,
     remove_sqlite_files, session_state_from_management, session_state_text, string_at,
-    transition_management_to_interrupted,
 };
-use super::payload::{load_workspace_session_payload, mark_workspace_session_interrupted};
-use lifecycle::SessionState;
+use super::payload::load_workspace_session_payload;
+use lifecycle::{SessionAggregate, SessionState, TaskPlan};
 use rusqlite::params;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -24,7 +23,7 @@ fn insert_workspace_session(
         "session_last_update_at": "2026-01-01T00:00:00.000Z",
         "task_plan": {
             "plan_summary": "Plan",
-            "detailed_tasks": [{"id": "task-1"}]
+            "detailed_tasks": [{"task_id": "task-1"}]
         }
     });
     let session = json!({
@@ -34,13 +33,17 @@ fn insert_workspace_session(
         "status": state.ui_status(),
         "management": management
     });
+    let mut aggregate = SessionAggregate::new(session_id.to_string());
+    aggregate.state = state;
+    aggregate.task_plan =
+        serde_json::from_value::<TaskPlan>(management["task_plan"].clone()).expect("task plan");
     with_connection(db_path, init_workspace_db, |conn| {
         conn.execute(
             "INSERT INTO sessions(
                     session_id, workspace, name, parent_id, created_at, updated_at,
                     state, status, message_count, task_management_json, management_json,
-                    session_json, todos_json
-                ) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    session_json, todos_json, lifecycle_json
+                ) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 session_id,
                 "C:/workspace",
@@ -57,6 +60,7 @@ fn insert_workspace_session(
                 serde_json::to_string(&management).expect("management json"),
                 serde_json::to_string(&session).expect("session json"),
                 "[]",
+                serde_json::to_string(&aggregate).expect("lifecycle json"),
             ],
         )?;
         Ok(())
@@ -87,81 +91,113 @@ fn state_text_and_management_state_use_canonical_snake_case_only() {
 }
 
 #[test]
-fn transition_to_interrupted_updates_only_recoverable_states() {
-    let now_ms = 1_789_123_456_789_i64;
-    let mut running = json!({"state":"running"});
-    assert!(
-        transition_management_to_interrupted(&mut running, "running-session", now_ms)
-            .expect("running should transition")
-    );
-    assert_eq!(running["state"], "interrupted");
+fn workspace_schema_migration_backfills_canonical_lifecycle() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = dir.path().join("legacy-workspace.sqlite3");
+    let conn = rusqlite::Connection::open(&db_path).expect("legacy db");
+    conn.execute_batch(
+        "CREATE TABLE sessions (
+            session_id TEXT PRIMARY KEY,
+            workspace TEXT NOT NULL,
+            name TEXT,
+            parent_id TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            last_user_message_at INTEGER,
+            state TEXT,
+            status TEXT,
+            message_count INTEGER NOT NULL DEFAULT 0,
+            task_management_json TEXT NOT NULL,
+            management_json TEXT NOT NULL,
+            session_json TEXT NOT NULL,
+            todos_json TEXT NOT NULL DEFAULT '[]'
+        );",
+    )
+    .expect("legacy schema");
+    let management = json!({
+        "session_id": "legacy-session",
+        "state": "cancelled",
+        "task_plan": {
+            "plan_summary": "Migrated plan",
+            "detailed_tasks": [{"task_id": "migrated-task"}]
+        }
+    });
+    conn.execute(
+        "INSERT INTO sessions(
+            session_id, workspace, name, parent_id, created_at, updated_at,
+            state, status, task_management_json, management_json, session_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            "legacy-session",
+            "C:/legacy-workspace",
+            "Legacy",
+            "legacy-parent",
+            1_i64,
+            2_i64,
+            "cancelled",
+            "error",
+            r#"{"plan_summary":"Migrated plan","tasks":[{"task_id":"migrated-task"}]}"#,
+            serde_json::to_string(&management).expect("management json"),
+            serde_json::to_string(&json!({"id":"legacy-session","management":management}))
+                .expect("session json"),
+        ],
+    )
+    .expect("legacy row");
+
+    init_workspace_db(&conn).expect("migrate legacy schema");
+    let lifecycle_json: String = conn
+        .query_row(
+            "SELECT lifecycle_json FROM sessions WHERE session_id = 'legacy-session'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("migrated lifecycle");
+    let aggregate: SessionAggregate =
+        serde_json::from_str(&lifecycle_json).expect("canonical aggregate");
+    assert_eq!(aggregate.session_id, "legacy-session");
+    assert_eq!(aggregate.state, SessionState::Cancelled);
+    assert_eq!(aggregate.parent_id.as_deref(), Some("legacy-parent"));
+    assert_eq!(aggregate.task_plan.plan_summary, "Migrated plan");
     assert_eq!(
-        running["session_last_update_at"],
-        millis_to_rfc3339(now_ms).expect("timestamp")
+        aggregate.task_plan.detailed_tasks[0].task_id,
+        "migrated-task"
     );
-
-    let mut paused = json!({"state":"paused"});
-    assert!(
-        transition_management_to_interrupted(&mut paused, "paused-session", now_ms)
-            .expect("paused should transition")
-    );
-    assert_eq!(paused["state"], "interrupted");
-
-    for terminal in ["created", "completed", "failed", "cancelled", "interrupted"] {
-        let mut management = json!({"state": terminal});
-        assert!(
-            !transition_management_to_interrupted(&mut management, "terminal-session", now_ms)
-                .expect("non-running state should not transition"),
-            "{terminal}"
-        );
-        assert_eq!(management["state"], terminal);
-    }
+    assert!(aggregate.pending_user_inputs.is_empty());
+    assert!(aggregate.cancelled);
 }
 
 #[test]
-fn mark_workspace_session_interrupted_updates_workspace_payload_atomically() {
+fn index_schema_does_not_store_canonical_lifecycle_aggregate() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = dir.path().join("index.sqlite3");
+    let conn = rusqlite::Connection::open(&db_path).expect("index db");
+    super::connection::init_index_db(&conn).expect("initialize index");
+    let columns = conn
+        .prepare("PRAGMA table_info(sessions)")
+        .expect("prepare columns")
+        .query_map([], |row| row.get::<_, String>(1))
+        .expect("query columns")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("collect columns");
+    assert!(!columns.iter().any(|column| column == "lifecycle_json"));
+}
+
+#[test]
+fn workspace_payload_exposes_canonical_lifecycle_projection() {
     let dir = tempfile::tempdir().expect("tempdir");
     let db_path = dir.path().join("workspace.sqlite3");
     insert_workspace_session(&db_path, "s-running", SessionState::Running, 100);
 
-    let management = mark_workspace_session_interrupted(&db_path, "s-running", 200)
-        .expect("mark interrupted")
-        .expect("running session should be updated");
-
-    assert_eq!(management["state"], "interrupted");
     let payload = load_workspace_session_payload(&db_path, "s-running")
         .expect("load payload")
         .expect("payload exists");
-    assert_eq!(payload.state.as_deref(), Some("interrupted"));
-    assert_eq!(payload.status.as_deref(), Some("error"));
-    assert_eq!(payload.updated_at, 200);
-    assert_eq!(payload.management["state"], "interrupted");
-    assert_eq!(payload.session["status"], "error");
-    assert_eq!(payload.session["updated_at"], 200);
-}
-
-#[test]
-fn mark_workspace_session_interrupted_skips_missing_nonexistent_and_terminal_sessions() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db_path = dir.path().join("workspace.sqlite3");
-    insert_workspace_session(&db_path, "s-done", SessionState::Completed, 100);
-
-    assert!(mark_workspace_session_interrupted(&db_path, "missing", 200)
-        .expect("missing row should be harmless")
-        .is_none());
-    assert!(mark_workspace_session_interrupted(&db_path, "s-done", 200)
-        .expect("terminal state should be harmless")
-        .is_none());
-    assert!(
-        mark_workspace_session_interrupted(&dir.path().join("absent.sqlite3"), "s1", 200)
-            .expect("missing DB should be harmless")
-            .is_none()
+    assert_eq!(payload.lifecycle_projection.session_id, "s-running");
+    assert_eq!(payload.lifecycle_projection.state, SessionState::Running);
+    assert_eq!(
+        payload.lifecycle_projection.task_plan.detailed_tasks[0].task_id,
+        "task-1"
     );
-
-    let payload = load_workspace_session_payload(&db_path, "s-done")
-        .expect("load payload")
-        .expect("payload exists");
-    assert_eq!(payload.state.as_deref(), Some("completed"));
+    assert!(!payload.lifecycle_projection.cancelled);
     assert_eq!(payload.updated_at, 100);
 }
 

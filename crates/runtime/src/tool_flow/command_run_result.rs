@@ -3,8 +3,9 @@
 use chrono::Utc;
 
 use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::{PlanStatus, SessionManagement, StartCondition};
+use crate::state_machine::session_management::SessionManagement;
 use crate::tool_callback_sanitizer::sanitize_tool_callback_result;
+use lifecycle::{PlanStatus, StartCondition};
 
 pub(crate) fn apply_task_attribution_to_streamed_result(
     session: &SessionManagement,

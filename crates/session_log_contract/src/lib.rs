@@ -7,8 +7,9 @@ mod protocol;
 pub use checkpoint::{CheckpointType, CommandCheckpoint};
 pub use endpoint::ServiceEndpoint;
 pub use protocol::{
-    DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionRecordsRequest,
-    ListSessionsRequest, MarkSessionInterruptedRequest, Page, SessionLogCommand,
-    SessionLogResponse, SessionRecord, SessionSnapshot, SessionSummary, UpsertSessionRequest,
-    WorkspaceSummary,
+    CreateSessionRequest, DeleteSessionRequest, DeleteWorkspaceRequest,
+    ExecuteSessionCommandRequest, GetSessionRequest, ListSessionRecordsRequest,
+    ListSessionsRequest, MarkSessionInterruptedRequest, Page, PersistSessionPayloadRequest,
+    SessionCommandResult, SessionLogCommand, SessionLogResponse, SessionRecord, SessionSnapshot,
+    SessionSummary, UpsertSessionRequest, WorkspaceSummary,
 };

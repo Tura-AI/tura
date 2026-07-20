@@ -2794,6 +2794,7 @@ dependencies = [
 name = "lifecycle"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
 ]
@@ -4195,6 +4196,7 @@ dependencies = [
  "agents",
  "anyhow",
  "fs2",
+ "lifecycle",
  "parking_lot",
  "personas",
  "router_contract",
@@ -4698,6 +4700,7 @@ dependencies = [
 name = "session_log_contract"
 version = "0.1.0"
 dependencies = [
+ "lifecycle",
  "serde",
  "serde_json",
 ]

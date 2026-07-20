@@ -3,12 +3,14 @@ pub(crate) use chrono::{DateTime, Utc};
 pub(crate) use gateway::api::session::{
     run_due_task_scheduler_tick_for_business_test,
     run_due_task_scheduler_tick_for_store_business_test, update_session_task_management,
+    update_session_task_management_value,
 };
 pub(crate) use gateway::contracts::{
     SessionStatus as ApiSessionStatus, UpdateSessionTaskManagementRequest,
 };
 pub(crate) use gateway::session::MessageRole;
-pub(crate) use gateway::{session_store, SessionStatus as StoreSessionStatus, SessionStore};
+pub(crate) use gateway::{session_store, SessionStore};
+pub(crate) use lifecycle::SessionCommand;
 pub(crate) use serde_json::json;
 pub(crate) use session_log::SessionLogStore;
 pub(crate) use session_log_contract::{
@@ -20,6 +22,69 @@ pub(crate) use std::time::{Duration, Instant};
 pub(crate) use tokio::sync::Barrier;
 
 pub(crate) static SCHEDULER_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn create_scheduler_session(
+    store: &SessionStore,
+    directory: Option<String>,
+    model: Option<String>,
+    agent: Option<String>,
+    session_type: Option<String>,
+    kill_processes_on_start: bool,
+    validator_enabled: bool,
+    force_planning: bool,
+    model_variant: Option<String>,
+    model_acceleration_enabled: bool,
+    disable_permission_restrictions: bool,
+) -> gateway::contracts::Session {
+    let info = store.build_session_info(
+        directory,
+        model,
+        agent,
+        session_type,
+        kill_processes_on_start,
+        validator_enabled,
+        force_planning,
+        model_variant,
+        model_acceleration_enabled,
+        disable_permission_restrictions,
+    );
+    let task_plan = info.management.task_plan.clone();
+    store
+        .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
+        .expect("canonical scheduler session should be created")
+}
+
+pub(crate) fn execute_scheduler_command(session_id: &str, command: SessionCommand) {
+    session_store()
+        .execute_canonical_session_command(session_id, command)
+        .expect("canonical scheduler command should succeed");
+}
+
+pub(crate) struct SchedulerTestDb {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    _root: tempfile::TempDir,
+    _env: SchedulerEnvGuard,
+    _service: SchedulerServiceThread,
+}
+
+impl SchedulerTestDb {
+    pub(crate) fn start() -> Self {
+        let guard = SCHEDULER_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = tempfile::tempdir().expect("scheduler test DB root");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).expect("scheduler test DB home");
+        let env = SchedulerEnvGuard::new(&home);
+        let service = SchedulerServiceThread::start().expect("start scheduler test DB");
+        Self {
+            _guard: guard,
+            _root: root,
+            _env: env,
+            _service: service,
+        }
+    }
+}
 
 pub(crate) async fn set_polling_task_due(session_id: &str, summary: &str, due: DateTime<Utc>) {
     let _ = update_session_task_management(

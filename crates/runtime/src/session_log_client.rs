@@ -204,6 +204,9 @@ impl SessionLogClient {
 fn session_log_command_name(command: &SessionLogCommand) -> &'static str {
     match command {
         SessionLogCommand::Health => "health",
+        SessionLogCommand::CreateSession(_) => "create_session",
+        SessionLogCommand::ExecuteSessionCommand(_) => "execute_session_command",
+        SessionLogCommand::PersistSessionPayload(_) => "persist_session_payload",
         SessionLogCommand::UpsertSession(_) => "upsert_session",
         SessionLogCommand::ApplyCommandCheckpoint(_) => "apply_command_checkpoint",
         SessionLogCommand::GetSession(_) => "get_session",

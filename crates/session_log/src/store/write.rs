@@ -1,18 +1,17 @@
 use super::connection::{init_workspace_db, with_connection};
 use super::helpers::{
-    i64_at, management_task_management, millis_at, path_text, remove_sqlite_files,
-    session_state_from_management, session_state_text, set_object_i64, set_object_string,
-    string_at,
+    apply_lifecycle_projection, i64_at, legacy_session_aggregate, management_task_management,
+    millis_at, path_text, remove_sqlite_files, session_state_from_management, session_state_text,
+    set_object_i64, set_object_string, string_at,
 };
-use super::payload::mark_workspace_session_interrupted;
 use super::SessionLogStore;
 use crate::path::{normalize_workspace, workspace_session_log_db};
 use anyhow::{Context, Result};
-use lifecycle::SessionState;
+use lifecycle::{SessionAggregate, SessionCommand, SessionQuery, SessionState};
 use rusqlite::{params, params_from_iter, OptionalExtension};
 use session_log_contract::{
-    CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, MarkSessionInterruptedRequest,
-    UpsertSessionRequest,
+    CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, ExecuteSessionCommandRequest,
+    GetSessionRequest, MarkSessionInterruptedRequest, UpsertSessionRequest,
 };
 use std::path::Path;
 use std::sync::OnceLock;
@@ -68,40 +67,7 @@ impl SessionLogStore {
     }
 
     pub fn mark_session_interrupted_by_id(&self, session_id: &str) -> Result<bool> {
-        let workspace_db_path = self.with_index_connection(|conn| {
-            conn.query_row(
-                "SELECT workspace_db_path FROM sessions WHERE session_id = ?1",
-                params![session_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(Into::into)
-        })?;
-        let Some(workspace_db_path) = workspace_db_path else {
-            return Ok(false);
-        };
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        let Some(management) =
-            mark_workspace_session_interrupted(Path::new(&workspace_db_path), session_id, now_ms)?
-        else {
-            return Ok(false);
-        };
-        let state_text = session_state_text(SessionState::Interrupted)?;
-        let status = SessionState::Interrupted.ui_status();
-        let management_json = serde_json::to_string(&management)?;
-        self.with_index_connection(|conn| {
-            conn.execute(
-                "UPDATE sessions
-                 SET state = ?2,
-                     status = ?3,
-                     updated_at = MAX(updated_at, ?4),
-                     management_json = ?5
-                 WHERE session_id = ?1",
-                params![session_id, state_text, status, now_ms, management_json],
-            )?;
-            Ok(())
-        })?;
-        Ok(true)
+        self.interrupt_session_if_recoverable(session_id)
     }
 
     pub fn mark_stale_running_sessions_interrupted(&self, max_idle: Duration) -> Result<u64> {
@@ -109,45 +75,20 @@ impl SessionLogStore {
         let cutoff_ms = now_ms.saturating_sub(max_idle.as_millis() as i64);
         let candidates = self.with_index_connection(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT session_id, workspace_db_path
+                "SELECT session_id
                  FROM sessions
                  WHERE state IN ('running', 'paused')
                    AND updated_at <= ?1",
             )?;
             let rows = stmt
-                .query_map(params![cutoff_ms], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?
+                .query_map(params![cutoff_ms], |row| row.get::<_, String>(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(rows)
         })?;
 
         let mut affected = 0;
-        for (session_id, workspace_db_path) in candidates {
-            let Some(management) = mark_workspace_session_interrupted(
-                Path::new(&workspace_db_path),
-                &session_id,
-                now_ms,
-            )?
-            else {
-                continue;
-            };
-            let state_text = session_state_text(SessionState::Interrupted)?;
-            let status = SessionState::Interrupted.ui_status();
-            let management_json = serde_json::to_string(&management)?;
-            self.with_index_connection(|conn| {
-                conn.execute(
-                    "UPDATE sessions
-                     SET state = ?2,
-                         status = ?3,
-                         updated_at = MAX(updated_at, ?4),
-                         management_json = ?5
-                     WHERE session_id = ?1",
-                    params![session_id, state_text, status, now_ms, management_json],
-                )?;
-                Ok(())
-            })?;
-            affected += 1;
+        for session_id in candidates {
+            affected += u64::from(self.interrupt_session_if_recoverable(&session_id)?);
         }
         Ok(affected)
     }
@@ -170,7 +111,7 @@ impl SessionLogStore {
         let workspace_db = workspace_session_log_db(&workspace);
         let workspace_db_text = path_text(&workspace_db);
 
-        let management = session
+        let mut management = session
             .get("management")
             .cloned()
             .context("session management missing")?;
@@ -198,11 +139,14 @@ impl SessionLogStore {
         let name =
             string_at(&session, &["name"]).or_else(|| string_at(&management, &["session_name"]));
         let parent_id = parent_id.or_else(|| string_at(&session, &["parent_id"]));
+        let initial_aggregate =
+            legacy_session_aggregate(&session_id, state, parent_id.clone(), &management)?;
         let serialize_start = Instant::now();
         let task_management_json = serde_json::to_string(&task_management)?;
         let management_json = serde_json::to_string(&management)?;
         let session_json = serde_json::to_string(&session)?;
         let todos_json = serde_json::to_string(&todos)?;
+        let lifecycle_json = serde_json::to_string(&initial_aggregate)?;
         profile_log(
             "session_log_store.upsert_session.serialize_session_fields",
             Some(serialize_start.elapsed()),
@@ -217,60 +161,88 @@ impl SessionLogStore {
         );
 
         let workspace_write_start = Instant::now();
-        let message_count = self.with_workspace_connection(&workspace_db, |conn| {
-            let transaction_start = Instant::now();
-            let tx = conn.transaction()?;
-            let session_row_start = Instant::now();
-            tx.execute(
-                "INSERT INTO sessions(
+        let (message_count, parent_id, state_text, status, task_management_json, management_json) =
+            self.with_workspace_connection(&workspace_db, |conn| {
+                let transaction_start = Instant::now();
+                let tx = conn.transaction()?;
+                let session_row_start = Instant::now();
+                tx.execute(
+                    "INSERT INTO sessions(
                     session_id, workspace, name, parent_id, created_at, updated_at,
                     last_user_message_at, state, status, message_count, task_management_json,
-                    management_json, session_json, todos_json
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                    management_json, session_json, todos_json, lifecycle_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace=excluded.workspace,
                     name=excluded.name,
-                    parent_id=excluded.parent_id,
                     created_at=excluded.created_at,
                     updated_at=excluded.updated_at,
                     last_user_message_at=excluded.last_user_message_at,
-                    state=excluded.state,
-                    status=excluded.status,
                     message_count=excluded.message_count,
-                    task_management_json=excluded.task_management_json,
                     management_json=excluded.management_json,
                     session_json=excluded.session_json,
                     todos_json=excluded.todos_json",
-                params![
-                    session_id,
-                    workspace,
-                    name,
-                    parent_id,
-                    created_at,
-                    updated_at,
-                    last_user_message_at,
-                    state_text,
-                    status,
-                    requested_message_count,
-                    task_management_json,
-                    management_json,
-                    session_json,
-                    todos_json,
-                ],
-            )?;
-            profile_log(
-                "session_log_store.upsert_session.workspace_session_row",
-                Some(session_row_start.elapsed()),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "workspace_db": workspace_db_text,
-                }),
-            );
+                    params![
+                        session_id,
+                        workspace,
+                        name,
+                        parent_id,
+                        created_at,
+                        updated_at,
+                        last_user_message_at,
+                        state_text,
+                        status,
+                        requested_message_count,
+                        task_management_json,
+                        management_json,
+                        session_json,
+                        todos_json,
+                        lifecycle_json,
+                    ],
+                )?;
+                let lifecycle_json: String = tx.query_row(
+                    "SELECT lifecycle_json FROM sessions WHERE session_id = ?1",
+                    params![session_id],
+                    |row| row.get(0),
+                )?;
+                let aggregate: SessionAggregate = serde_json::from_str(&lifecycle_json)
+                    .with_context(|| format!("invalid lifecycle_json for session {session_id}"))?;
+                let projection = aggregate.query(SessionQuery::Lifecycle);
+                let state_text = session_state_text(projection.state)?;
+                let status = projection.state.ui_status().to_string();
+                let task_management =
+                    apply_lifecycle_projection(&mut management, &mut session, &projection)?;
+                let task_management_json = serde_json::to_string(&task_management)?;
+                let management_json = serde_json::to_string(&management)?;
+                let session_json = serde_json::to_string(&session)?;
+                tx.execute(
+                    "UPDATE sessions
+                 SET parent_id = ?2, state = ?3, status = ?4,
+                     task_management_json = ?5, management_json = ?6, session_json = ?7
+                 WHERE session_id = ?1",
+                    params![
+                        session_id,
+                        projection.parent_id,
+                        state_text,
+                        status,
+                        task_management_json,
+                        management_json,
+                        session_json,
+                    ],
+                )?;
+                profile_log(
+                    "session_log_store.upsert_session.workspace_session_row",
+                    Some(session_row_start.elapsed()),
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "workspace_db": workspace_db_text,
+                    }),
+                );
 
-            {
-                let records_start = Instant::now();
-                let mut stmt = tx.prepare(
-                    "INSERT INTO session_records(
+                {
+                    let records_start = Instant::now();
+                    let mut stmt = tx.prepare(
+                        "INSERT INTO session_records(
                         session_id, message_id, role, created_at, updated_at, record_json
                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                     ON CONFLICT(session_id, message_id) DO UPDATE SET
@@ -278,106 +250,113 @@ impl SessionLogStore {
                         created_at=excluded.created_at,
                         updated_at=excluded.updated_at,
                         record_json=excluded.record_json",
-                )?;
-                let mut message_ids = Vec::new();
-                let mut record_json_bytes = 0usize;
-                let mut record_serialize_us = 0u128;
-                let mut record_execute_us = 0u128;
-                for message in messages {
-                    let created = i64_at(&message, &["created_at"]).unwrap_or_default();
-                    let message_id = string_at(&message, &["id"])
-                        .unwrap_or_else(|| format!("{session_id}:{created}"));
-                    message_ids.push(message_id.clone());
-                    let role = string_at(&message, &["role"]).unwrap_or_default();
-                    let updated = i64_at(&message, &["updated_at"]).unwrap_or(created);
-                    let record_serialize_start = Instant::now();
-                    let record_json = serde_json::to_string(&message)?;
-                    record_serialize_us += record_serialize_start.elapsed().as_micros();
-                    record_json_bytes += record_json.len();
-                    let record_execute_start = Instant::now();
-                    stmt.execute(params![
-                        session_id,
-                        message_id,
-                        role,
-                        created,
-                        updated,
-                        record_json,
-                    ])?;
-                    record_execute_us += record_execute_start.elapsed().as_micros();
-                }
-                drop(stmt);
-                let cleanup_start = Instant::now();
-                let preserve_unlisted_records = session_log_omitted_entries(&management) > 0;
-                if preserve_unlisted_records {
-                    // Compacted runtime snapshots only send the retained session_log tail.
-                    // Keep older session_records so UI/history reads do not collapse to the tail.
-                } else if message_ids.is_empty() {
-                    tx.execute(
-                        "DELETE FROM session_records WHERE session_id = ?1",
-                        params![session_id],
                     )?;
-                } else {
-                    let placeholders = std::iter::repeat_n("?", message_ids.len())
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    let sql = format!(
-                        "DELETE FROM session_records
+                    let mut message_ids = Vec::new();
+                    let mut record_json_bytes = 0usize;
+                    let mut record_serialize_us = 0u128;
+                    let mut record_execute_us = 0u128;
+                    for message in messages {
+                        let created = i64_at(&message, &["created_at"]).unwrap_or_default();
+                        let message_id = string_at(&message, &["id"])
+                            .unwrap_or_else(|| format!("{session_id}:{created}"));
+                        message_ids.push(message_id.clone());
+                        let role = string_at(&message, &["role"]).unwrap_or_default();
+                        let updated = i64_at(&message, &["updated_at"]).unwrap_or(created);
+                        let record_serialize_start = Instant::now();
+                        let record_json = serde_json::to_string(&message)?;
+                        record_serialize_us += record_serialize_start.elapsed().as_micros();
+                        record_json_bytes += record_json.len();
+                        let record_execute_start = Instant::now();
+                        stmt.execute(params![
+                            session_id,
+                            message_id,
+                            role,
+                            created,
+                            updated,
+                            record_json,
+                        ])?;
+                        record_execute_us += record_execute_start.elapsed().as_micros();
+                    }
+                    drop(stmt);
+                    let cleanup_start = Instant::now();
+                    let preserve_unlisted_records = session_log_omitted_entries(&management) > 0;
+                    if preserve_unlisted_records {
+                        // Compacted runtime snapshots only send the retained session_log tail.
+                        // Keep older session_records so UI/history reads do not collapse to the tail.
+                    } else if message_ids.is_empty() {
+                        tx.execute(
+                            "DELETE FROM session_records WHERE session_id = ?1",
+                            params![session_id],
+                        )?;
+                    } else {
+                        let placeholders = std::iter::repeat_n("?", message_ids.len())
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        let sql = format!(
+                            "DELETE FROM session_records
                          WHERE session_id = ? AND message_id NOT IN ({placeholders})"
+                        );
+                        let params = std::iter::once(session_id.clone()).chain(message_ids);
+                        tx.execute(&sql, params_from_iter(params))?;
+                    }
+                    let cleanup_elapsed = cleanup_start.elapsed();
+                    profile_log(
+                        "session_log_store.upsert_session.workspace_records",
+                        Some(records_start.elapsed()),
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "record_json_bytes": record_json_bytes,
+                            "record_serialize_us": record_serialize_us,
+                            "record_execute_us": record_execute_us,
+                            "cleanup_us": cleanup_elapsed.as_micros(),
+                        }),
                     );
-                    let params = std::iter::once(session_id.clone()).chain(message_ids);
-                    tx.execute(&sql, params_from_iter(params))?;
                 }
-                let cleanup_elapsed = cleanup_start.elapsed();
+                let count_start = Instant::now();
+                let message_count = tx.query_row(
+                    "SELECT COUNT(*) FROM session_records WHERE session_id = ?1",
+                    params![session_id],
+                    |row| row.get::<_, i64>(0),
+                )?;
+                tx.execute(
+                    "UPDATE sessions SET message_count = ?2 WHERE session_id = ?1",
+                    params![session_id, message_count],
+                )?;
                 profile_log(
-                    "session_log_store.upsert_session.workspace_records",
-                    Some(records_start.elapsed()),
+                    "session_log_store.upsert_session.workspace_count_update",
+                    Some(count_start.elapsed()),
                     serde_json::json!({
                         "session_id": session_id,
-                        "record_json_bytes": record_json_bytes,
-                        "record_serialize_us": record_serialize_us,
-                        "record_execute_us": record_execute_us,
-                        "cleanup_us": cleanup_elapsed.as_micros(),
+                        "message_count": message_count,
                     }),
                 );
-            }
-            let count_start = Instant::now();
-            let message_count = tx.query_row(
-                "SELECT COUNT(*) FROM session_records WHERE session_id = ?1",
-                params![session_id],
-                |row| row.get::<_, i64>(0),
-            )?;
-            tx.execute(
-                "UPDATE sessions SET message_count = ?2 WHERE session_id = ?1",
-                params![session_id, message_count],
-            )?;
-            profile_log(
-                "session_log_store.upsert_session.workspace_count_update",
-                Some(count_start.elapsed()),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "message_count": message_count,
-                }),
-            );
-            let commit_start = Instant::now();
-            tx.commit()?;
-            profile_log(
-                "session_log_store.upsert_session.workspace_commit",
-                Some(commit_start.elapsed()),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "message_count": message_count,
-                }),
-            );
-            profile_log(
-                "session_log_store.upsert_session.workspace_transaction",
-                Some(transaction_start.elapsed()),
-                serde_json::json!({
-                    "session_id": session_id,
-                    "message_count": message_count,
-                }),
-            );
-            Ok(message_count)
-        })?;
+                let commit_start = Instant::now();
+                tx.commit()?;
+                profile_log(
+                    "session_log_store.upsert_session.workspace_commit",
+                    Some(commit_start.elapsed()),
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "message_count": message_count,
+                    }),
+                );
+                profile_log(
+                    "session_log_store.upsert_session.workspace_transaction",
+                    Some(transaction_start.elapsed()),
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "message_count": message_count,
+                    }),
+                );
+                Ok((
+                    message_count,
+                    projection.parent_id,
+                    state_text,
+                    status,
+                    task_management_json,
+                    management_json,
+                ))
+            })?;
         profile_log(
             "session_log_store.upsert_session.workspace_total",
             Some(workspace_write_start.elapsed()),
@@ -480,45 +459,39 @@ impl SessionLogStore {
     }
 
     pub fn mark_running_sessions_interrupted(&self) -> Result<u64> {
-        let now_ms = chrono::Utc::now().timestamp_millis();
         let candidates = self.with_index_connection(|conn| {
-            let mut stmt = conn.prepare("SELECT session_id, workspace_db_path FROM sessions")?;
+            let mut stmt = conn.prepare("SELECT session_id FROM sessions")?;
             let rows = stmt
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?
+                .query_map([], |row| row.get::<_, String>(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(rows)
         })?;
 
         let mut affected: u64 = 0;
-        for (session_id, workspace_db_path) in candidates {
-            let Some(management) = mark_workspace_session_interrupted(
-                Path::new(&workspace_db_path),
-                &session_id,
-                now_ms,
-            )?
-            else {
-                continue;
-            };
-            let state_text = session_state_text(SessionState::Interrupted)?;
-            let status = SessionState::Interrupted.ui_status();
-            let management_json = serde_json::to_string(&management)?;
-            self.with_index_connection(|conn| {
-                conn.execute(
-                    "UPDATE sessions
-                     SET state = ?2,
-                         status = ?3,
-                         updated_at = MAX(updated_at, ?4),
-                         management_json = ?5
-                     WHERE session_id = ?1",
-                    params![session_id, state_text, status, now_ms, management_json],
-                )?;
-                Ok(())
-            })?;
-            affected += 1;
+        for session_id in candidates {
+            affected += u64::from(self.interrupt_session_if_recoverable(&session_id)?);
         }
         Ok(affected)
+    }
+
+    fn interrupt_session_if_recoverable(&self, session_id: &str) -> Result<bool> {
+        let Some(snapshot) = self.get_session(GetSessionRequest {
+            session_id: session_id.to_string(),
+        })?
+        else {
+            return Ok(false);
+        };
+        let projection = snapshot.lifecycle_projection.with_context(|| {
+            format!("canonical lifecycle projection missing for session {session_id}")
+        })?;
+        if !projection.state.is_recoverable_running() {
+            return Ok(false);
+        }
+        let result = self.execute_session_command(ExecuteSessionCommandRequest {
+            session_id: session_id.to_string(),
+            session_command: SessionCommand::InterruptSession,
+        })?;
+        Ok(result.projection.state == SessionState::Interrupted)
     }
 
     pub fn delete_session(&self, request: DeleteSessionRequest) -> Result<()> {

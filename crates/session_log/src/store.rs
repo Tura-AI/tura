@@ -6,6 +6,7 @@ mod helpers;
 mod payload;
 mod queue;
 mod read;
+mod session_commands;
 mod write;
 
 const INDEX_DB_FILE: &str = "index.sqlite3";

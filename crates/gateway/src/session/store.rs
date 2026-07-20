@@ -14,12 +14,15 @@ use crate::session::manager::{
 };
 use crate::session_db_client::SessionDbClient;
 use chrono::{DateTime, Utc};
-use lifecycle::{RuntimeProjection, SessionState};
-use parking_lot::RwLock;
-use runtime::state_machine::session_management::{
-    PlanStatus, PollInterval, StartCondition, TaskStep,
+use lifecycle::{
+    PlanStatus, PollInterval, RuntimeProjection, SessionCommand, SessionEvent, SessionProjection,
+    SessionState, StartCondition, TaskStep,
 };
-use session_log_contract::{SessionRecord, SessionSnapshot, UpsertSessionRequest};
+use parking_lot::RwLock;
+use session_log_contract::{
+    CreateSessionRequest as CreateSessionDbRequest, SessionCommandResult, SessionRecord,
+    PersistSessionPayloadRequest, SessionSnapshot,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use std::path::PathBuf;
@@ -74,8 +77,6 @@ pub struct SessionStore {
     live_messages: Arc<RwLock<HashMap<String, Vec<LiveMessageOverlay>>>>,
     todos: Arc<RwLock<HashMap<String, Vec<serde_json::Value>>>>,
     children: Arc<RwLock<HashMap<String, Vec<String>>>>,
-    user_commands: Arc<RwLock<HashMap<String, Vec<String>>>>,
-    cancelled: Arc<RwLock<HashSet<String>>>,
     current_session_id: Arc<RwLock<Option<String>>>,
     events: Arc<RwLock<EventLog>>,
 }
@@ -118,10 +119,7 @@ pub struct ScheduledTaskRun {
 
 #[path = "store_task_management.rs"]
 mod store_task_management;
-use store_task_management::{
-    apply_task_management_patch, next_polling_start, task_display_summary,
-    task_is_scheduler_eligible,
-};
+use store_task_management::{apply_task_management_patch, parse_task_management_patch};
 
 #[path = "store_frontend.rs"]
 mod store_frontend;
@@ -150,8 +148,6 @@ impl SessionStore {
             live_messages: Arc::new(RwLock::new(HashMap::new())),
             todos: Arc::new(RwLock::new(HashMap::new())),
             children: Arc::new(RwLock::new(HashMap::new())),
-            user_commands: Arc::new(RwLock::new(HashMap::new())),
-            cancelled: Arc::new(RwLock::new(HashSet::new())),
             current_session_id: Arc::new(RwLock::new(None)),
             events: Arc::new(RwLock::new(EventLog::new())),
         };
@@ -390,6 +386,241 @@ impl SessionStore {
         self.sessions.read().get(session_id).cloned()
     }
 
+    pub fn session_lifecycle_projection(&self, session_id: &str) -> Option<SessionProjection> {
+        self.sessions
+            .read()
+            .get(session_id)
+            .map(|info| info.management.lifecycle_projection())
+    }
+
+    pub fn insert_projection_cache(
+        &self,
+        mut info: SessionInfo,
+        projection: SessionProjection,
+        session_name: Option<String>,
+    ) -> ApiSession {
+        let session_id = projection.session_id.clone();
+        let parent_id = projection.parent_id.clone();
+        info.id.clone_from(&session_id);
+        info.management.replace_lifecycle_projection(projection);
+        if let Some(session_name) = session_name {
+            info.management.session_name = session_name;
+        }
+        info.status = SessionStatusMano::from_state(info.management.state);
+        let session = api_session_from_info(&info, parent_id.clone());
+        self.sessions.write().insert(session_id.clone(), info);
+        self.messages.write().entry(session_id.clone()).or_default();
+        self.todos.write().entry(session_id.clone()).or_default();
+        self.replace_parent_cache(&session_id, parent_id);
+        session
+    }
+
+    pub fn create_canonical_session(
+        &self,
+        info: SessionInfo,
+        creation_command: SessionCommand,
+    ) -> Result<ApiSession, String> {
+        let workspace = info.directory.clone().unwrap_or_else(|| {
+            info.management
+                .session_directory
+                .to_string_lossy()
+                .to_string()
+        });
+        let request = CreateSessionDbRequest {
+            session_id: info.id.clone(),
+            creation_command,
+            workspace,
+            session_directory: info
+                .management
+                .session_directory
+                .to_string_lossy()
+                .to_string(),
+            name: info.management.session_name.clone(),
+            created_at: info.created_at,
+            model: info.model.clone(),
+            agent: info.agent.clone(),
+            session_type: info
+                .session_type
+                .clone()
+                .unwrap_or_else(|| "coding".to_string()),
+            kill_processes_on_start: info.kill_processes_on_start,
+            validator_enabled: info.validator_enabled,
+            force_planning: info.force_planning,
+            model_variant: info.model_variant.clone(),
+            model_acceleration_enabled: info.model_acceleration_enabled,
+            disable_permission_restrictions: info.disable_permission_restrictions,
+            use_last_tool_call_response: info.use_last_tool_call_response,
+            auto_session_name: info.management.auto_session_name,
+        };
+        let result = SessionDbClient::discover()
+            .and_then(|client| client.create_session(request))
+            .map_err(|error| format!("failed to create canonical session: {error}"))?;
+        Ok(self.insert_projection_cache(info, result.projection, result.session_name))
+    }
+
+    pub fn apply_initial_task_management(
+        &self,
+        info: &mut SessionInfo,
+        task_management: serde_json::Value,
+    ) -> Result<(), String> {
+        apply_task_management_patch(info, task_management)
+    }
+
+    pub fn execute_task_management_patch(
+        &self,
+        session_id: &str,
+        task_management: serde_json::Value,
+    ) -> Result<ApiSession, String> {
+        let patch = match parse_task_management_patch(task_management, Utc::now()) {
+            Ok(patch) => patch,
+            Err(error) => {
+                tracing::warn!(session_id, error, "invalid task management patch ignored");
+                return self
+                    .get_session(session_id)
+                    .ok_or_else(|| format!("session {session_id} not found"));
+            }
+        };
+        self.execute_canonical_session_command(
+            session_id,
+            SessionCommand::ApplyTaskPlanPatch { patch },
+        )?;
+        self.get_session(session_id)
+            .ok_or_else(|| format!("session {session_id} projection cache is missing"))
+    }
+
+    pub fn register_canonical_child_session(
+        &self,
+        parent_session_id: &str,
+        child_session_id: &str,
+        directory: Option<String>,
+        name: Option<String>,
+        task_instruction: Option<String>,
+    ) -> Result<ApiSession, String> {
+        if self.sessions.read().contains_key(child_session_id) {
+            self.execute_canonical_session_command(
+                child_session_id,
+                SessionCommand::RegisterChildSession {
+                    parent_id: parent_session_id.to_string(),
+                },
+            )?;
+            return self
+                .get_session(child_session_id)
+                .ok_or_else(|| format!("session {child_session_id} projection cache is missing"));
+        }
+
+        let parent = self.sessions.read().get(parent_session_id).cloned();
+        let mut info = self.build_session_info(
+            directory,
+            None,
+            Some(CODING_AGENT_NAME.to_string()),
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            parent
+                .as_ref()
+                .is_some_and(|parent| parent.disable_permission_restrictions),
+        );
+        info.id = child_session_id.to_string();
+        info.management
+            .rebind_session_id(child_session_id.to_string());
+        info.management.session_name =
+            name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
+        let session = self.create_canonical_session(
+            info,
+            SessionCommand::RegisterChildSession {
+                parent_id: parent_session_id.to_string(),
+            },
+        )?;
+        if let Some(task_instruction) = task_instruction.filter(|value| !value.trim().is_empty()) {
+            let _ = self.add_message(child_session_id, MessageRole::User, task_instruction);
+        }
+        Ok(session)
+    }
+
+    pub fn execute_canonical_session_command(
+        &self,
+        session_id: &str,
+        command: SessionCommand,
+    ) -> Result<SessionCommandResult, String> {
+        let result = SessionDbClient::discover()
+            .and_then(|client| client.execute_session_command(session_id.to_string(), command))
+            .map_err(|error| format!("failed to execute canonical session command: {error}"))?;
+        if matches!(&result.event, SessionEvent::SessionDeleted) {
+            self.delete_session(session_id);
+        } else if self
+            .replace_projection_cache(result.projection.clone(), result.session_name.clone())
+            .is_none()
+        {
+            return Err(format!(
+                "session {session_id} command succeeded but projection cache is missing"
+            ));
+        }
+        if matches!(
+            &result.event,
+            SessionEvent::RuntimeCompleted { .. }
+                | SessionEvent::RuntimeFailed { .. }
+                | SessionEvent::SessionCancelled { .. }
+        ) {
+            self.session_db_refresh_needed
+                .write()
+                .insert(session_id.to_string());
+        }
+        Ok(result)
+    }
+
+    pub fn execute_canonical_session_command_with_status_event(
+        &self,
+        session_id: &str,
+        command: SessionCommand,
+    ) -> Result<SessionCommandResult, String> {
+        let previous = self
+            .session_lifecycle_projection(session_id)
+            .map(|projection| projection.state);
+        let result = self.execute_canonical_session_command(session_id, command)?;
+        if previous != Some(result.projection.state) {
+            self.push_current_session_status_event(session_id);
+        }
+        Ok(result)
+    }
+
+    pub fn replace_projection_cache(
+        &self,
+        projection: SessionProjection,
+        session_name: Option<String>,
+    ) -> Option<ApiSession> {
+        let session_id = projection.session_id.clone();
+        let parent_id = projection.parent_id.clone();
+        let mut sessions = self.sessions.write();
+        let info = sessions.get_mut(&session_id)?;
+        info.management.replace_lifecycle_projection(projection);
+        if let Some(session_name) = session_name {
+            info.management.session_name = session_name;
+        }
+        info.status = SessionStatusMano::from_state(info.management.state);
+        info.updated_at = Utc::now().timestamp_millis();
+        let session = api_session_from_info(info, parent_id.clone());
+        drop(sessions);
+        self.replace_parent_cache(&session_id, parent_id);
+        Some(session)
+    }
+
+    fn replace_parent_cache(&self, session_id: &str, parent_id: Option<String>) {
+        let mut children = self.children.write();
+        for child_ids in children.values_mut() {
+            child_ids.retain(|child_id| child_id != session_id);
+        }
+        children.retain(|_, child_ids| !child_ids.is_empty());
+        if let Some(parent_id) = parent_id {
+            children
+                .entry(parent_id)
+                .or_default()
+                .push(session_id.to_string());
+        }
+    }
+
     pub fn list_child_sessions(&self, parent_session_id: &str) -> Vec<ApiSession> {
         let child_ids = self
             .children
@@ -442,123 +673,11 @@ impl SessionStore {
         self.root_session_id(session_id)
     }
 
-    pub fn append_user_command(&self, session_id: &str, command: impl Into<String>) -> Vec<String> {
-        let command = command.into();
-        let command = command.trim();
-        if command.is_empty() {
-            return self.user_commands_for_session(session_id);
-        }
-        let root_id = self.root_session_id(session_id);
-        let mut commands = self.user_commands.write();
-        let entry = commands.entry(root_id).or_default();
-        entry.push(command.to_string());
-        entry.clone()
-    }
-
-    pub fn user_commands_for_session(&self, session_id: &str) -> Vec<String> {
-        let root_id = self.root_session_id(session_id);
-        self.user_commands
-            .read()
-            .get(&root_id)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    pub fn take_user_commands_for_session(&self, session_id: &str) -> Vec<String> {
-        let root_id = self.root_session_id(session_id);
-        self.user_commands
-            .write()
-            .remove(&root_id)
-            .unwrap_or_default()
-    }
-
-    pub fn clear_user_commands_for_session(&self, session_id: &str) -> Vec<String> {
-        self.take_user_commands_for_session(session_id)
-    }
-
-    pub fn register_child_session(
-        &self,
-        parent_session_id: &str,
-        child_session_id: &str,
-        directory: Option<String>,
-        name: Option<String>,
-        task_instruction: Option<String>,
-    ) -> ApiSession {
-        let now = Utc::now().timestamp_millis();
-        if let Some(existing) = self.sessions.write().get_mut(child_session_id) {
-            let _ = existing.transition(SessionState::Running);
-            existing.status = SessionStatusMano::from_state(existing.management.state);
-            existing.updated_at = now;
-            if existing.directory.is_none() {
-                existing.directory = directory;
-            }
-            if existing.management.session_name.trim().is_empty() {
-                existing.management.session_name =
-                    name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
-            }
-            {
-                let mut children = self.children.write();
-                let entry = children.entry(parent_session_id.to_string()).or_default();
-                if !entry.iter().any(|id| id == child_session_id) {
-                    entry.push(child_session_id.to_string());
-                }
-            }
-            return api_session_from_info(existing, Some(parent_session_id.to_string()));
-        }
-
-        let mut info = SessionManager::create_session(
-            directory,
-            None,
-            Some(CODING_AGENT_NAME.to_string()),
-            Some("coding".to_string()),
-        );
-        info.id = child_session_id.to_string();
-        info.management.session_name =
-            name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
-        info.created_at = now;
-        info.updated_at = now;
-        info.management
-            .rebind_session_id(child_session_id.to_string());
-        let _ = info.transition(SessionState::Running);
-        info.status = SessionStatusMano::from_state(info.management.state);
-        if let Some(parent) = self.sessions.read().get(parent_session_id) {
-            info.disable_permission_restrictions = parent.disable_permission_restrictions;
-            info.management.disable_permission_restrictions =
-                parent.management.disable_permission_restrictions;
-        }
-        let session = api_session_from_info(&info, Some(parent_session_id.to_string()));
-
-        self.sessions
-            .write()
-            .insert(child_session_id.to_string(), info);
-        self.messages
-            .write()
-            .entry(child_session_id.to_string())
-            .or_default();
-        self.todos
-            .write()
-            .entry(child_session_id.to_string())
-            .or_default();
-        {
-            let mut children = self.children.write();
-            let entry = children.entry(parent_session_id.to_string()).or_default();
-            if !entry.iter().any(|id| id == child_session_id) {
-                entry.push(child_session_id.to_string());
-            }
-        }
-
-        if let Some(task_instruction) = task_instruction.filter(|value| !value.trim().is_empty()) {
-            let _ = self.add_message(child_session_id, MessageRole::User, task_instruction);
-        }
-
-        session
-    }
-
     #[expect(
         clippy::too_many_arguments,
         reason = "gateway session creation mirrors the persisted session schema"
     )]
-    pub fn create_session(
+    pub fn build_session_info(
         &self,
         directory: Option<String>,
         model: Option<String>,
@@ -570,7 +689,7 @@ impl SessionStore {
         model_variant: Option<String>,
         model_acceleration_enabled: bool,
         disable_permission_restrictions: bool,
-    ) -> ApiSession {
+    ) -> SessionInfo {
         #[cfg(not(test))]
         self.hydrate_directory_background(directory.clone());
         let persisted_config = directory.as_deref().map(load_config).unwrap_or_default();
@@ -591,15 +710,43 @@ impl SessionStore {
             info.agent.as_deref(),
         );
         info.management.use_last_tool_call_response = info.use_last_tool_call_response;
-        let session_id = info.id.clone();
+        info
+    }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test compatibility helper mirrors session creation inputs"
+    )]
+    pub fn create_session(
+        &self,
+        directory: Option<String>,
+        model: Option<String>,
+        agent: Option<String>,
+        session_type: Option<String>,
+        kill_processes_on_start: bool,
+        validator_enabled: bool,
+        force_planning: bool,
+        model_variant: Option<String>,
+        model_acceleration_enabled: bool,
+        disable_permission_restrictions: bool,
+    ) -> ApiSession {
+        let info = self.build_session_info(
+            directory,
+            model,
+            agent,
+            session_type,
+            kill_processes_on_start,
+            validator_enabled,
+            force_planning,
+            model_variant,
+            model_acceleration_enabled,
+            disable_permission_restrictions,
+        );
         let session = api_session_from_info(&info, None);
-
-        self.sessions.write().insert(session_id.clone(), info);
-        self.messages.write().insert(session_id, Vec::new());
+        self.sessions.write().insert(info.id.clone(), info);
+        self.messages.write().insert(session.id.clone(), Vec::new());
         self.todos.write().insert(session.id.clone(), Vec::new());
         self.persist_active_config(&session);
-
         session
     }
 
@@ -620,6 +767,16 @@ impl SessionStore {
         disable_permission_restrictions: Option<bool>,
         task_management: Option<serde_json::Value>,
     ) -> Option<ApiSession> {
+        if let Some(task_management) = task_management {
+            if let Err(error) = self.execute_task_management_patch(session_id, task_management) {
+                tracing::warn!(
+                    session_id,
+                    error,
+                    "canonical task management patch rejected"
+                );
+                return None;
+            }
+        }
         let parent_id = self.parent_for_child(session_id);
         let mut sessions = self.sessions.write();
         let info = sessions.get_mut(session_id)?;
@@ -666,21 +823,6 @@ impl SessionStore {
             info.disable_permission_restrictions = disable_permission_restrictions;
             info.management.disable_permission_restrictions = disable_permission_restrictions;
         }
-        if let Some(task_management) = task_management {
-            let mut patched = info.clone();
-            match apply_task_management_patch(&mut patched, task_management) {
-                Ok(()) => {
-                    preserve_busy_doing_tasks(info, &mut patched);
-                    mark_new_session_idle_tasks_added_while_idle_waiting_user(info, &mut patched);
-                    info.management.session_name = patched.management.session_name;
-                    info.management.task_plan = patched.management.task_plan;
-                }
-                Err(err) => {
-                    tracing::warn!(session_id, error = %err, "invalid task management patch ignored");
-                }
-            }
-        }
-
         info.updated_at = Utc::now().timestamp_millis();
 
         let session = api_session_from_info(info, parent_id);
@@ -713,7 +855,6 @@ impl SessionStore {
             self.live_messages.write().remove(session_id);
             self.todos.write().remove(session_id);
             self.children.write().remove(session_id);
-            self.cancelled.write().remove(session_id);
             for child_ids in self.children.write().values_mut() {
                 child_ids.retain(|child_id| child_id != session_id);
             }
@@ -749,28 +890,22 @@ impl SessionStore {
         self.get_session(child_session_id)
     }
 
-    pub fn session_log_upsert_request(
+    pub fn session_payload_request(
         &self,
         session_id: &str,
-    ) -> Result<UpsertSessionRequest, String> {
-        let info = self
-            .sessions
-            .read()
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| format!("session {session_id} not found"))?;
-        let session = serde_json::to_value(&info)
-            .map_err(|error| format!("failed to serialize session {session_id}: {error}"))?;
-        let messages = self
+    ) -> Result<PersistSessionPayloadRequest, String> {
+        if !self.sessions.read().contains_key(session_id) {
+            return Err(format!("session {session_id} not found"));
+        }
+        let records = self
             .get_messages(session_id)
             .into_iter()
             .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to serialize messages for {session_id}: {error}"))?;
-        Ok(UpsertSessionRequest {
-            session,
-            parent_id: self.parent_for_child(session_id),
-            messages,
+        Ok(PersistSessionPayloadRequest {
+            session_id: session_id.to_string(),
+            records,
             todos: self.get_todos(session_id),
         })
     }
@@ -787,115 +922,6 @@ impl SessionStore {
         } else {
             false
         }
-    }
-
-    pub fn update_session_status(&self, session_id: &str, status: SessionStatusMano) {
-        if let Some(info) = self.sessions.write().get_mut(session_id) {
-            let now = Utc::now();
-            let target_state = match status {
-                SessionStatusMano::Idle => match info.management.state {
-                    SessionState::Created | SessionState::Completed => SessionState::Created,
-                    SessionState::Running | SessionState::Paused => SessionState::Completed,
-                    SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {
-                        info.management.state
-                    }
-                },
-                SessionStatusMano::Busy => SessionState::Running,
-                SessionStatusMano::Error => SessionState::Failed,
-            };
-            if target_state != info.management.state {
-                if let Err(err) = info.transition(target_state) {
-                    tracing::warn!(
-                        session_id,
-                        current_state = ?info.management.state,
-                        target_state = ?target_state,
-                        error = %err,
-                        "session status update rejected by state machine"
-                    );
-                }
-            }
-            info.status = SessionStatusMano::from_state(info.management.state);
-            info.updated_at = now.timestamp_millis();
-        }
-        if matches!(status, SessionStatusMano::Idle | SessionStatusMano::Error) {
-            self.session_db_refresh_needed
-                .write()
-                .insert(session_id.to_string());
-        }
-        let (status, updated_at, context_tokens, usage) = self
-            .sessions
-            .read()
-            .get(session_id)
-            .map(|info| {
-                let context_tokens = session_context_tokens(info);
-                (
-                    info.status,
-                    info.updated_at,
-                    context_tokens,
-                    session_usage_from_info(info, context_tokens),
-                )
-            })
-            .unwrap_or_else(|| {
-                let context_tokens = crate::contracts::SessionContextTokens::default();
-                (
-                    status,
-                    Utc::now().timestamp_millis(),
-                    context_tokens,
-                    crate::contracts::SessionUsage::new(context_tokens, serde_json::Value::Null),
-                )
-            });
-        self.push_event(GlobalEvent::SessionStatus {
-            properties: crate::contracts::SessionStatusProperties {
-                session_id: session_id.to_string(),
-                updated_at,
-                status: match status {
-                    SessionStatusMano::Idle => serde_json::json!({ "type": "idle" }),
-                    SessionStatusMano::Busy => serde_json::json!({ "type": "busy" }),
-                    SessionStatusMano::Error => serde_json::json!({ "type": "error" }),
-                },
-                context_tokens,
-                usage,
-            },
-        });
-    }
-
-    pub fn mark_interrupted(&self, session_id: &str) -> Option<ApiSession> {
-        let parent_id = self.parent_for_child(session_id);
-        let mut sessions = self.sessions.write();
-        let info = sessions.get_mut(session_id)?;
-        if matches!(
-            info.management.state,
-            SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted
-        ) {
-            return Some(api_session_from_info(info, parent_id));
-        }
-        let now = Utc::now();
-        match info.management.state {
-            SessionState::Running | SessionState::Paused => {
-                if let Err(err) = info.transition(SessionState::Interrupted) {
-                    tracing::warn!(
-                        session_id,
-                        current_state = ?info.management.state,
-                        error = %err,
-                        "session interrupted transition rejected by state machine"
-                    );
-                    return Some(api_session_from_info(info, parent_id));
-                }
-            }
-            SessionState::Created | SessionState::Completed => {
-                info.management.interrupt(now);
-            }
-            SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {}
-        }
-        for task in &mut info.management.task_plan.detailed_tasks {
-            if task.status == PlanStatus::Doing {
-                task.status = PlanStatus::WaitingUser;
-            }
-        }
-        info.updated_at = now.timestamp_millis();
-        info.management.session_last_update_at = now;
-        info.status = SessionStatusMano::from_state(info.management.state);
-        Some(api_session_from_info(info, parent_id))
     }
 
     pub fn update_session_runtime_usage(&self, session_id: &str, usage: serde_json::Value) -> bool {
@@ -955,55 +981,51 @@ impl SessionStore {
     }
 
     pub fn claim_due_task_runs(&self, now: DateTime<Utc>) -> Vec<ScheduledTaskRun> {
-        let mut claimed = Vec::new();
-        let mut claimed_ids = Vec::new();
-        {
-            let mut sessions = self.sessions.write();
-            for info in sessions.values_mut() {
-                if !matches!(info.status, SessionStatusMano::Idle) {
-                    continue;
-                }
-
-                let Some(task_index) = info
-                    .management
+        let candidate_ids = self
+            .sessions
+            .read()
+            .values()
+            .filter(|info| matches!(info.status, SessionStatusMano::Idle))
+            .filter(|info| {
+                info.management
                     .task_plan
                     .detailed_tasks
                     .iter()
-                    .position(|task| task_is_scheduler_eligible(task, now))
-                else {
-                    continue;
-                };
-                if let Err(err) = info.transition(SessionState::Running) {
-                    tracing::warn!(
-                        session_id = %info.id,
-                        current_state = ?info.management.state,
-                        error = %err,
-                        "scheduled task claim rejected by state machine"
-                    );
-                    continue;
-                }
-
-                let plan_summary = info.management.task_plan.plan_summary.clone();
-                let task = &mut info.management.task_plan.detailed_tasks[task_index];
-                let start_condition = task.start_condition;
-                let task_summary = task_display_summary(task, &plan_summary);
-                task.status = PlanStatus::Doing;
-                if matches!(start_condition, StartCondition::PollingTask) {
-                    task.start_at = next_polling_start(task.start_at, task.poll_interval, now);
-                }
-
-                info.status = SessionStatusMano::from_state(info.management.state);
-                info.updated_at = now.timestamp_millis();
-                claimed.push(ScheduledTaskRun {
-                    session_id: info.id.clone(),
-                    task_summary,
-                    start_condition,
-                });
-                claimed_ids.push(info.id.clone());
+                    .any(|task| task.scheduler_eligible(now))
+            })
+            .map(|info| info.id.clone())
+            .collect::<Vec<_>>();
+        let mut claimed = Vec::new();
+        for session_id in candidate_ids {
+            match self.execute_canonical_session_command(
+                &session_id,
+                SessionCommand::StartScheduledTask { now },
+            ) {
+                Ok(result) => match result.event {
+                    SessionEvent::ScheduledTaskClaimed {
+                        task_summary,
+                        start_condition,
+                        ..
+                    } => claimed.push(ScheduledTaskRun {
+                        session_id,
+                        task_summary,
+                        start_condition,
+                    }),
+                    event => tracing::warn!(
+                        session_id,
+                        event = ?event,
+                        "session service returned an unexpected scheduler claim event"
+                    ),
+                },
+                Err(error) => tracing::debug!(
+                    session_id,
+                    error,
+                    "scheduled task candidate was not claimable"
+                ),
             }
         }
 
-        for session_id in claimed_ids {
+        for session_id in claimed.iter().map(|run| run.session_id.clone()) {
             let (context_tokens, usage) = if let Some(session) = self.get_session(&session_id) {
                 let context_tokens = session.context_tokens;
                 let usage = session.usage.clone();
@@ -1083,18 +1105,6 @@ impl SessionStore {
             .entries
             .pop_front()
             .map(|entry| entry.event)
-    }
-
-    pub fn mark_cancelled(&self, session_id: &str) {
-        self.cancelled.write().insert(session_id.to_string());
-    }
-
-    pub fn clear_cancelled(&self, session_id: &str) {
-        self.cancelled.write().remove(session_id);
-    }
-
-    pub fn is_cancelled(&self, session_id: &str) -> bool {
-        self.cancelled.read().contains(session_id)
     }
 
     fn parent_by_child(&self) -> HashMap<String, String> {
@@ -1218,58 +1228,6 @@ fn session_usage_from_info(
     crate::contracts::SessionUsage::new(context_tokens, info.management.runtime_usage.clone())
 }
 
-fn preserve_busy_doing_tasks(current: &SessionInfo, patched: &mut SessionInfo) {
-    if !matches!(current.status, SessionStatusMano::Busy) {
-        return;
-    }
-
-    for current_task in current
-        .management
-        .task_plan
-        .detailed_tasks
-        .iter()
-        .filter(|task| task.status == PlanStatus::Doing)
-    {
-        let Some(patched_task) = patched
-            .management
-            .task_plan
-            .detailed_tasks
-            .iter_mut()
-            .find(|task| task.task_id == current_task.task_id)
-        else {
-            continue;
-        };
-        if matches!(patched_task.status, PlanStatus::Todo | PlanStatus::Question) {
-            patched_task.status = PlanStatus::Doing;
-        }
-    }
-}
-
-fn mark_new_session_idle_tasks_added_while_idle_waiting_user(
-    current: &SessionInfo,
-    patched: &mut SessionInfo,
-) {
-    let current_ids = current
-        .management
-        .task_plan
-        .detailed_tasks
-        .iter()
-        .map(|task| task.task_id.as_str())
-        .collect::<HashSet<_>>();
-    let session_is_busy = matches!(current.status, SessionStatusMano::Busy);
-    for task in &mut patched.management.task_plan.detailed_tasks {
-        if !matches!(task.start_condition, StartCondition::SessionIdle)
-            || !matches!(task.status, PlanStatus::Todo | PlanStatus::Question)
-            || current_ids.contains(task.task_id.as_str())
-        {
-            continue;
-        }
-        if !session_is_busy {
-            task.status = PlanStatus::WaitingUser;
-        }
-    }
-}
-
 fn persisted_record_from_session_log(
     snapshot: SessionSnapshot,
     records: Vec<SessionRecord>,
@@ -1324,7 +1282,10 @@ fn persisted_record_from_session_log(
 }
 
 fn apply_session_log_snapshot_lifecycle(info: &mut SessionInfo, snapshot: &SessionSnapshot) {
-    if let Some(state) = snapshot.state.as_deref().and_then(session_state_from_text) {
+    if let Some(projection) = snapshot.lifecycle_projection.clone() {
+        info.status = SessionStatusMano::from_state(projection.state);
+        info.management.replace_lifecycle_projection(projection);
+    } else if let Some(state) = snapshot.state.as_deref().and_then(session_state_from_text) {
         info.management.restore_state(state);
         info.status = SessionStatusMano::from_state(state);
     } else if let Some(status) = snapshot

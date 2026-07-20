@@ -1,85 +1,30 @@
 use super::*;
+use crate::test_support::SessionDbTestService;
 use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
 
-struct EnvRestore {
-    keys: Vec<(&'static str, Option<std::ffi::OsString>)>,
+fn create_canonical_test_session(store: &SessionStore, directory: String) -> ApiSession {
+    let info = store.build_session_info(
+        Some(directory),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    let task_plan = info.management.task_plan.clone();
+    store
+        .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
+        .expect("canonical test session should be created")
 }
 
-impl EnvRestore {
-    fn capture(keys: &[&'static str]) -> Self {
-        Self {
-            keys: keys
-                .iter()
-                .map(|key| (*key, std::env::var_os(key)))
-                .collect(),
-        }
-    }
-}
-
-impl Drop for EnvRestore {
-    fn drop(&mut self) {
-        for (key, value) in &self.keys {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
-}
-
-struct SessionDbTestService {
-    _guard: std::sync::MutexGuard<'static, ()>,
-    _env: EnvRestore,
-    _root: tempfile::TempDir,
-    handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
-}
-
-impl SessionDbTestService {
-    fn start() -> Self {
-        let guard = crate::test_support::env_lock();
-        let env = EnvRestore::capture(&["TURA_HOME", "SESSION_LOG_DB_ROOT", "TURA_DB_ROOT"]);
-        let root = tempfile::tempdir().expect("session db root");
-        let home = root.path().join("home");
-        std::fs::create_dir_all(&home).expect("session db home");
-        std::env::set_var("TURA_HOME", &home);
-        std::env::set_var("SESSION_LOG_DB_ROOT", root.path());
-        std::env::remove_var("TURA_DB_ROOT");
-
-        let handle = std::thread::spawn(session_log::service::run_socket_service);
-        let started = std::time::Instant::now();
-        while started.elapsed() < std::time::Duration::from_secs(10) {
-            if handle.is_finished() {
-                let detail = match handle.join() {
-                    Ok(Ok(())) => "service exited without publishing service.addr".to_string(),
-                    Ok(Err(error)) => format!("service exited with error: {error:#}"),
-                    Err(_) => "service thread panicked before publishing service.addr".to_string(),
-                };
-                panic!("session_db test service did not become reachable: {detail}");
-            }
-            if session_log::ipc::service_is_running() {
-                return Self {
-                    _guard: guard,
-                    _env: env,
-                    _root: root,
-                    handle: Some(handle),
-                };
-            }
-            std::thread::sleep(std::time::Duration::from_millis(25));
-        }
-        panic!(
-            "session_db test service did not become reachable within 10s; addr_path={}",
-            session_log::ipc::service_addr_path().display()
-        );
-    }
-}
-
-impl Drop for SessionDbTestService {
-    fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-    }
+fn execute_test_command(store: &SessionStore, session_id: &str, command: SessionCommand) {
+    store
+        .execute_canonical_session_command_with_status_event(session_id, command)
+        .expect("canonical test command should succeed");
 }
 
 #[test]
@@ -119,6 +64,7 @@ fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxilia
         status: Some("idle".to_string()),
         message_count: 6,
         task_management: serde_json::json!({}),
+        lifecycle_projection: None,
         management: serde_json::to_value(&management).expect("management json"),
         session: serde_json::to_value(&info).expect("session json"),
         todos: vec![serde_json::json!({"id": "todo-1"})],
@@ -198,6 +144,64 @@ fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxilia
 }
 
 #[test]
+fn persisted_session_log_hydration_restores_canonical_lifecycle_projection() {
+    let now = chrono::Utc::now();
+    let session_id = format!("hydrate-lifecycle-{}", uuid::Uuid::new_v4());
+    let workspace = std::env::temp_dir()
+        .join(format!("hydrate-lifecycle-{}", uuid::Uuid::new_v4()))
+        .to_string_lossy()
+        .to_string();
+    let management = runtime::state_machine::session_management::SessionManagement::new(
+        session_id.clone(),
+        "canonical lifecycle".to_string(),
+        PathBuf::from(&workspace),
+        false,
+        "coding".to_string(),
+        runtime::state_machine::session_management::SessionInput {
+            user_input: "cancel this run".to_string(),
+            file_input: Vec::new(),
+            agent: Some("thinking".to_string()),
+            runtime_context: None,
+            planning_mode_override: None,
+        },
+        "cancel this run".to_string(),
+        now,
+    );
+    let info = SessionInfo::from_management(&management);
+    let mut aggregate = lifecycle::SessionAggregate::new(session_id.clone());
+    aggregate
+        .execute(SessionCommand::RuntimeStarted)
+        .expect("fixture runtime should start");
+    aggregate
+        .execute(SessionCommand::CancelSession)
+        .expect("fixture runtime should cancel");
+    let projection = aggregate.query(lifecycle::SessionQuery::Lifecycle);
+    let snapshot = SessionSnapshot {
+        session_id: session_id.clone(),
+        workspace,
+        name: Some("canonical lifecycle".to_string()),
+        parent_id: None,
+        created_at: 1,
+        updated_at: 2,
+        last_user_message_at: Some(1),
+        state: Some("created".to_string()),
+        status: Some("idle".to_string()),
+        message_count: 0,
+        task_management: serde_json::json!({}),
+        lifecycle_projection: Some(projection.clone()),
+        management: serde_json::to_value(&management).expect("management json"),
+        session: serde_json::to_value(&info).expect("session json"),
+        todos: Vec::new(),
+    };
+
+    let persisted =
+        persisted_record_from_session_log(snapshot, Vec::new()).expect("hydrate lifecycle");
+
+    assert_eq!(persisted.info.management.lifecycle_projection(), projection);
+    assert_eq!(persisted.info.status, SessionStatusMano::Error);
+}
+
+#[test]
 fn persisted_session_log_hydration_preserves_command_run_runtime_state_over_event_drift() {
     let now = chrono::Utc::now();
     let session_id = format!("hydrate-command-run-{}", uuid::Uuid::new_v4());
@@ -236,6 +240,7 @@ fn persisted_session_log_hydration_preserves_command_run_runtime_state_over_even
         status: Some("idle".to_string()),
         message_count: 3,
         task_management: serde_json::json!({}),
+        lifecycle_projection: None,
         management: serde_json::to_value(&management).expect("management json"),
         session: serde_json::to_value(&info).expect("session json"),
         todos: Vec::new(),
@@ -374,6 +379,7 @@ fn session_log_hydration_prefers_top_level_idle_state_over_stale_embedded_busy_s
         status: Some("idle".to_string()),
         message_count: 2,
         task_management: serde_json::json!({}),
+        lifecycle_projection: None,
         management: serde_json::json!({
             "session_id": session_id,
             "state": "created"
@@ -524,19 +530,9 @@ fn upsert_session_messages_for_test(
 
 #[test]
 fn update_session_status_updates_stored_status() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     let mut info = store
         .get_session_info(&session.id)
@@ -554,7 +550,7 @@ fn update_session_status_updates_stored_status() {
     store.replace_management(&session.id, info.management);
     let mut cursor = store.event_cursor();
 
-    store.update_session_status(&session.id, SessionStatusMano::Busy);
+    execute_test_command(&store, &session.id, SessionCommand::RuntimeStarted);
     let updated = store
         .get_session(&session.id)
         .expect("session should exist");
@@ -577,7 +573,7 @@ fn update_session_status_updates_stored_status() {
         other => panic!("unexpected event: {other:?}"),
     }
 
-    store.update_session_status(&session.id, SessionStatusMano::Idle);
+    execute_test_command(&store, &session.id, SessionCommand::RuntimeCompleted);
     let updated = store
         .get_session(&session.id)
         .expect("session should exist");
@@ -761,48 +757,64 @@ fn add_tool_message_normalizes_running_state_with_final_output_metadata() {
 
 #[test]
 fn user_commands_are_shared_from_parent_to_child_sessions() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
     let child_id = format!("child-{}", Uuid::new_v4());
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
-    store.register_child_session(
+    store
+        .register_canonical_child_session(
+            &session.id,
+            &child_id,
+            Some("C:/workspace".to_string()),
+            Some("Subtask".to_string()),
+            Some("read files".to_string()),
+        )
+        .expect("canonical child should be registered");
+    execute_test_command(&store, &session.id, SessionCommand::RuntimeStarted);
+    execute_test_command(
+        &store,
         &session.id,
-        &child_id,
-        Some("C:/workspace".to_string()),
-        Some("Subtask".to_string()),
-        Some("read files".to_string()),
-    );
-    store.append_user_command(&session.id, "focus on tests");
-
-    assert_eq!(
-        store.user_commands_for_session(&session.id),
-        vec!["focus on tests"]
-    );
-    assert_eq!(
-        store.user_commands_for_session(&child_id),
-        vec!["focus on tests"]
+        SessionCommand::QueueUserInputWhileBusy {
+            input: "focus on tests".to_string(),
+        },
     );
 
-    store.append_user_command(&child_id, "also update docs");
     assert_eq!(
-        store.user_commands_for_session(&session.id),
-        vec!["focus on tests", "also update docs"]
+        store
+            .session_lifecycle_projection(&session.id)
+            .expect("root projection")
+            .pending_user_inputs,
+        vec!["focus on tests"]
     );
+    assert!(
+        store
+            .session_lifecycle_projection(&child_id)
+            .expect("child projection")
+            .pending_user_inputs
+            .is_empty(),
+        "the child cache must not hold a second queue"
+    );
+
+    let root_id = store.root_session_id(&child_id);
+    assert_eq!(root_id, session.id);
+    execute_test_command(
+        &store,
+        &root_id,
+        SessionCommand::QueueUserInputWhileBusy {
+            input: "also update docs".to_string(),
+        },
+    );
+    let consumed = store
+        .execute_canonical_session_command(&root_id, SessionCommand::ConsumeQueuedUserInputs)
+        .expect("root queue should be consumed atomically");
     assert_eq!(
-        store.user_commands_for_session(&child_id),
-        vec!["focus on tests", "also update docs"]
+        consumed.event,
+        SessionEvent::QueuedUserInputsConsumed {
+            inputs: vec!["focus on tests".to_string(), "also update docs".to_string()]
+        }
     );
+    assert!(consumed.projection.pending_user_inputs.is_empty());
 }
 
 #[test]
@@ -1778,18 +1790,8 @@ fn idle_status_refreshes_session_db_message_cache_after_runtime_write() {
     let root = std::env::temp_dir().join(format!("tura-stale-session-db-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some(directory),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, directory);
+    execute_test_command(&store, &session.id, SessionCommand::RuntimeStarted);
 
     let user = message_record(
         &session.id,
@@ -1813,7 +1815,7 @@ fn idle_status_refreshes_session_db_message_cache_after_runtime_write() {
     );
     upsert_session_messages_for_test(&store, &session.id, None, vec![user, assistant]);
 
-    store.update_session_status(&session.id, SessionStatusMano::Idle);
+    execute_test_command(&store, &session.id, SessionCommand::RuntimeCompleted);
 
     let refreshed_after_idle = store.get_frontend_messages(&session.id);
     assert!(
@@ -1982,84 +1984,19 @@ fn user_messages_preserve_and_hydrate_pending_task_management_state() {
 
 #[test]
 fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
+    let _service = SessionDbTestService::start();
     let root = std::env::temp_dir().join(format!("tura-scheduled-task-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
     let now = Utc::now();
     let due = (now - chrono::Duration::minutes(5)).to_rfc3339();
     let future = (now + chrono::Duration::minutes(5)).to_rfc3339();
-    let scheduled = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
-    let busy = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
-    let done = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
-    let user_action = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
-    let future_scheduled = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
-    let idle = store.create_session(
-        Some(directory),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let scheduled = create_canonical_test_session(&store, directory.clone());
+    let busy = create_canonical_test_session(&store, directory.clone());
+    let done = create_canonical_test_session(&store, directory.clone());
+    let user_action = create_canonical_test_session(&store, directory.clone());
+    let future_scheduled = create_canonical_test_session(&store, directory.clone());
+    let idle = create_canonical_test_session(&store, directory);
 
     store.update_session(
         &scheduled.id,
@@ -2093,7 +2030,7 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
             "start_at": due
         })),
     );
-    store.update_session_status(&busy.id, SessionStatusMano::Busy);
+    execute_test_command(&store, &busy.id, SessionCommand::RuntimeStarted);
     store.update_session(
         &done.id,
         None,
@@ -2175,7 +2112,7 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
             .task_management["status"],
         "doing"
     );
-    store.update_session_status(&scheduled.id, SessionStatusMano::Idle);
+    execute_test_command(&store, &scheduled.id, SessionCommand::RuntimeCompleted);
     assert!(
         store
             .claim_due_task_runs(now + chrono::Duration::minutes(1))
@@ -2254,21 +2191,11 @@ fn new_session_idle_task_added_while_idle_waits_for_user_action() {
 
 #[test]
 fn new_session_idle_task_added_while_busy_runs_after_idle_edge() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
     let now = Utc::now();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
-    store.update_session_status(&session.id, SessionStatusMano::Busy);
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    execute_test_command(&store, &session.id, SessionCommand::RuntimeStarted);
     store.update_session(
         &session.id,
         None,
@@ -2288,7 +2215,7 @@ fn new_session_idle_task_added_while_busy_runs_after_idle_edge() {
 
     assert!(store.claim_due_task_runs(now).is_empty());
 
-    store.update_session_status(&session.id, SessionStatusMano::Idle);
+    execute_test_command(&store, &session.id, SessionCommand::RuntimeCompleted);
 
     let claimed = store.claim_due_task_runs(now);
     assert_eq!(claimed.len(), 1);
@@ -2304,18 +2231,7 @@ fn scheduler_claim_persists_next_polling_start() {
     let store = SessionStore::new();
     let now = Utc::now();
     let due = now - chrono::Duration::minutes(30);
-    let session = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, directory.clone());
     store.update_session(
         &session.id,
         None,
@@ -2362,7 +2278,7 @@ fn scheduler_claim_persists_next_polling_start() {
         persisted.task_management["start_at"],
         updated.task_management["start_at"]
     );
-    store.update_session_status(&session.id, SessionStatusMano::Idle);
+    execute_test_command(&store, &session.id, SessionCommand::RuntimeCompleted);
     assert!(
         store.claim_due_task_runs(now).is_empty(),
         "polling task should not be reclaimed until its next start_at is due"

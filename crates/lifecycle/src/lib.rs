@@ -9,6 +9,7 @@ pub use runtime::{
     RuntimeProjection, RuntimeQuery, RuntimeState, RuntimeTransitionError,
 };
 pub use session::{
-    SessionAggregate, SessionCommand, SessionEvent, SessionId, SessionProjection, SessionQuery,
-    SessionState, SessionTransitionError,
+    PlanStatus, PollInterval, SessionAggregate, SessionCommand, SessionEvent, SessionId,
+    SessionProjection, SessionQuery, SessionState, SessionTaskPatch, SessionTaskPlanPatch,
+    SessionTransitionError, StartCondition, TaskPlan, TaskStep,
 };

@@ -1,7 +1,10 @@
+use super::helpers::{legacy_session_aggregate, session_state_from_management};
 use super::SessionLogStore;
 use anyhow::{Context, Result};
 use fs2::FileExt;
-use rusqlite::Connection;
+use lifecycle::SessionState;
+use rusqlite::{params, Connection};
+use serde_json::Value;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -130,6 +133,43 @@ pub(super) fn init_index_db(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn backfill_workspace_lifecycle(conn: &Connection) -> Result<()> {
+    let rows = {
+        let mut stmt = conn.prepare(
+            "SELECT session_id, state, parent_id, management_json
+             FROM sessions
+             WHERE lifecycle_json IS NULL OR lifecycle_json = ''",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    for (session_id, state, parent_id, management_json) in rows {
+        let management: Value = serde_json::from_str(&management_json).with_context(|| {
+            format!("invalid management_json while migrating session {session_id}")
+        })?;
+        let state = match state {
+            Some(state) => serde_json::from_value::<SessionState>(Value::String(state))
+                .with_context(|| format!("invalid state while migrating session {session_id}"))?,
+            None => session_state_from_management(&management, &session_id)?,
+        };
+        let aggregate = legacy_session_aggregate(&session_id, state, parent_id, &management)?;
+        conn.execute(
+            "UPDATE sessions SET lifecycle_json = ?2 WHERE session_id = ?1",
+            params![session_id, serde_json::to_string(&aggregate)?],
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn init_workspace_db(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
@@ -147,7 +187,8 @@ pub(super) fn init_workspace_db(conn: &Connection) -> Result<()> {
             task_management_json TEXT NOT NULL,
             management_json TEXT NOT NULL,
             session_json TEXT NOT NULL,
-            todos_json TEXT NOT NULL DEFAULT '[]'
+            todos_json TEXT NOT NULL DEFAULT '[]',
+            lifecycle_json TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_workspace_sessions_updated
             ON sessions(workspace, updated_at DESC, session_id);
@@ -174,6 +215,8 @@ pub(super) fn init_workspace_db(conn: &Connection) -> Result<()> {
         ",
     )?;
     ensure_column(conn, "sessions", "last_user_message_at", "INTEGER")?;
+    ensure_column(conn, "sessions", "lifecycle_json", "TEXT")?;
+    backfill_workspace_lifecycle(conn)?;
     conn.execute_batch(
         "
         CREATE INDEX IF NOT EXISTS idx_workspace_sessions_last_user_message

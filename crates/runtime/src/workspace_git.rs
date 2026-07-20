@@ -2,7 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use crate::state_machine::session_management::{PlanStatus, SessionManagement};
+use crate::state_machine::session_management::SessionManagement;
+use lifecycle::PlanStatus;
 use tracing::warn;
 
 const TURA_GIT_USER_NAME: &str = "Tura";

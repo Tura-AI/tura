@@ -250,6 +250,18 @@ fn dispatch_inner(
 ) -> Result<SessionLogResponse> {
     Ok(match command {
         SessionLogCommand::Health => SessionLogResponse::Ok,
+        SessionLogCommand::CreateSession(payload) => SessionLogResponse::SessionCommandApplied {
+            result: Box::new(store.create_session(payload)?),
+        },
+        SessionLogCommand::ExecuteSessionCommand(payload) => {
+            SessionLogResponse::SessionCommandApplied {
+                result: Box::new(store.execute_session_command(payload)?),
+            }
+        }
+        SessionLogCommand::PersistSessionPayload(payload) => {
+            store.persist_session_payload(payload)?;
+            SessionLogResponse::Ok
+        }
         SessionLogCommand::UpsertSession(payload) => {
             store.upsert_session(payload)?;
             SessionLogResponse::Ok

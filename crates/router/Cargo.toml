@@ -23,6 +23,7 @@ tracing.workspace = true
 parking_lot.workspace = true
 uuid.workspace = true
 anyhow.workspace = true
+lifecycle.workspace = true
 agents = { workspace = true }
 personas = { workspace = true }
 session_log = { workspace = true }

@@ -1,4 +1,5 @@
-use crate::state_machine::session_management::{PlanStatus, SessionManagement, TaskStep};
+use crate::state_machine::session_management::SessionManagement;
+use lifecycle::{PlanStatus, TaskStep};
 
 pub(crate) fn task_plan_summary_json(session: &SessionManagement) -> serde_json::Value {
     serde_json::json!({

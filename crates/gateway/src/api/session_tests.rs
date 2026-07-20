@@ -9,12 +9,27 @@ use super::{
 use crate::contracts::{Session, SessionContextTokens, SessionStatus};
 use crate::session::config::TuraSessionConfig;
 use crate::session_store;
+use crate::test_support::SessionDbTestService;
 use axum::{
     extract::{Path, Query},
     http::HeaderMap,
     Json,
 };
 use std::fs;
+
+async fn create_canonical_test_session(directory: String) -> Session {
+    super::create_session_value(
+        super::SessionDirectoryParams { directory: None },
+        super::CreateSessionRequest {
+            directory: Some(directory),
+            session_type: Some("chat".to_string()),
+            ..super::CreateSessionRequest::default()
+        },
+        None,
+    )
+    .await
+    .expect("canonical test session should be created")
+}
 
 #[test]
 fn prompt_payload_keeps_frontend_message_and_part_ids() {
@@ -191,6 +206,7 @@ fn session_list_can_include_children_when_requested() {
 
 #[tokio::test]
 async fn session_list_orders_by_latest_user_message_not_runtime_update() {
+    let _service = SessionDbTestService::start();
     let directory = std::env::temp_dir()
         .join(format!(
             "tura-session-user-message-order-{}",
@@ -199,51 +215,29 @@ async fn session_list_orders_by_latest_user_message_not_runtime_update() {
         .to_string_lossy()
         .to_string();
 
-    let assistant_updated_later = session_store().create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("chat".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
-    let user_sent_later = session_store().create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("chat".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let assistant_updated_later = create_canonical_test_session(directory.clone()).await;
+    let user_sent_later = create_canonical_test_session(directory.clone()).await;
 
-    let Json(_) = super::update_session_task_management(
-        Path(assistant_updated_later.id.clone()),
-        Json(super::UpdateSessionTaskManagementRequest {
+    super::update_session_task_management_value(
+        assistant_updated_later.id.clone(),
+        super::UpdateSessionTaskManagementRequest {
             task_management: serde_json::json!({
                 "task_summary": "Assistant updated later",
                 "start_at": "2026-06-25T12:00:00Z"
             }),
-        }),
+        },
     )
-    .await;
-    let Json(_) = super::update_session_task_management(
-        Path(user_sent_later.id.clone()),
-        Json(super::UpdateSessionTaskManagementRequest {
+    .expect("first task management patch should succeed");
+    super::update_session_task_management_value(
+        user_sent_later.id.clone(),
+        super::UpdateSessionTaskManagementRequest {
             task_management: serde_json::json!({
                 "task_summary": "User sent later",
                 "start_at": "2026-06-25T10:00:00Z"
             }),
-        }),
+        },
     )
-    .await;
+    .expect("second task management patch should succeed");
 
     session_store().add_message(
         &assistant_updated_later.id,
@@ -345,14 +339,14 @@ async fn session_status_includes_task_management_display_fields() {
 
 #[tokio::test]
 async fn create_session_accepts_task_management_and_serializes_session_fields() {
+    let _service = SessionDbTestService::start();
     let directory = std::env::temp_dir()
         .join(format!("tura-create-session-plan-{}", uuid::Uuid::new_v4()))
         .to_string_lossy()
         .to_string();
-    let Json(session) = super::create_session(
-        HeaderMap::new(),
-        Query(super::SessionDirectoryParams { directory: None }),
-        Some(Json(super::CreateSessionRequest {
+    let session = super::create_session_value(
+        super::SessionDirectoryParams { directory: None },
+        super::CreateSessionRequest {
             directory: Some(directory.clone()),
             model: None,
             agent: None,
@@ -368,9 +362,11 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
                 "plan_summary": "Create Route Plan",
                 "task_summary": "Create route task"
             })),
-        })),
+        },
+        None,
     )
-    .await;
+    .await
+    .expect("canonical session creation should succeed");
 
     assert_eq!(session.directory.as_deref(), Some(directory.as_str()));
     assert_eq!(session.plan_summary.as_deref(), Some("Create Route Plan"));
@@ -416,6 +412,7 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
 
 #[tokio::test]
 async fn task_management_route_patches_session_and_returns_session_fields() {
+    let _service = SessionDbTestService::start();
     let directory = std::env::temp_dir()
         .join(format!(
             "tura-task-management-route-{}",
@@ -423,31 +420,20 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
         ))
         .to_string_lossy()
         .to_string();
-    let session = session_store().create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("chat".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(directory.clone()).await;
 
-    let Json(updated) = super::update_session_task_management(
-        Path(session.id.clone()),
-        Json(super::UpdateSessionTaskManagementRequest {
+    let updated = super::update_session_task_management_value(
+        session.id.clone(),
+        super::UpdateSessionTaskManagementRequest {
             task_management: serde_json::json!({
                 "plan_summary": "Dedicated Patch Route",
                 "task_summary": "Patch task",
                 "status": "question",
                 "start_at": "2026-05-25T08:30:00Z"
             }),
-        }),
+        },
     )
-    .await;
+    .expect("task management patch should succeed");
 
     assert_eq!(
         updated.plan_summary.as_deref(),

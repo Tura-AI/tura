@@ -5,9 +5,8 @@ use crate::contracts::*;
 use crate::mock::global_store;
 use crate::router_client::RouterClient;
 use crate::session::config::{load_config, merge_config, TuraSessionConfig};
-use crate::session::{
-    session_store, MessageRole as SessionMessageRole, SessionStatus as SessionStatusMano,
-};
+use crate::session::{session_store, MessageRole as SessionMessageRole};
+use crate::session_db_client::SessionDbClient;
 use axum::{
     extract::{Path, Query},
     http::{HeaderMap, StatusCode},
@@ -19,10 +18,7 @@ use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
-use runtime::state_machine::session_management::StartCondition;
-use session_log_contract::{
-    DeleteSessionRequest, MarkSessionInterruptedRequest, SessionLogCommand,
-};
+use lifecycle::{SessionAggregate, SessionCommand, SessionEvent, StartCondition};
 
 // ============================================================================
 // Session List & Create
@@ -141,11 +137,20 @@ fn inactive_sessions_from_probe(
 }
 
 async fn mark_session_interrupted_from_gateway_probe(session_id: &str) {
-    let Some(session) = session_store().mark_interrupted(session_id) else {
+    if let Err(error) = session_store()
+        .execute_canonical_session_command(session_id, SessionCommand::InterruptSession)
+    {
+        tracing::warn!(
+            session_id,
+            error,
+            "failed to apply runtime liveness interruption"
+        );
+        return;
+    }
+    let Some(session) = session_store().get_session(session_id) else {
         return;
     };
     session_store().finish_todos(session_id, false);
-    session_store().clear_user_commands_for_session(session_id);
     session_store().push_event(GlobalEvent::SessionUpdated {
         properties: SessionUpdatedProperties {
             session_id: session_id.to_string(),
@@ -154,19 +159,6 @@ async fn mark_session_interrupted_from_gateway_probe(session_id: &str) {
     });
     session_store().push_current_session_status_event(session_id);
 
-    if let Err(error) = write_session_log_command(SessionLogCommand::MarkSessionInterrupted(
-        MarkSessionInterruptedRequest {
-            session_id: session_id.to_string(),
-        },
-    ))
-    .await
-    {
-        tracing::warn!(
-            session_id,
-            error,
-            "failed to persist gateway runtime liveness interruption"
-        );
-    }
 }
 
 fn filter_list_sessions(
@@ -276,23 +268,25 @@ pub async fn create_session(
     headers: HeaderMap,
     Query(params): Query<SessionDirectoryParams>,
     payload: Option<Json<CreateSessionRequest>>,
-) -> Json<Session> {
+) -> impl IntoResponse {
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
-    Json(
-        create_session_value(
-            params,
-            payload,
-            encoded_header(&headers, "x-opencode-directory"),
-        )
-        .await,
+    match create_session_value(
+        params,
+        payload,
+        encoded_header(&headers, "x-opencode-directory"),
     )
+    .await
+    {
+        Ok(session) => Json(session).into_response(),
+        Err(error) => session_mutation_error(error),
+    }
 }
 
 pub async fn create_session_value(
     params: SessionDirectoryParams,
     payload: CreateSessionRequest,
     header_directory: Option<String>,
-) -> Session {
+) -> Result<Session, String> {
     let directory = payload
         .directory
         .clone()
@@ -336,7 +330,7 @@ pub async fn create_session_value(
         .agent
         .clone()
         .or(persisted_config.active_agent.clone());
-    let mut session = session_store().create_session(
+    let mut info = session_store().build_session_info(
         directory,
         payload.model.clone().or(persisted_config.model),
         requested_agent,
@@ -348,36 +342,34 @@ pub async fn create_session_value(
         model_acceleration_enabled,
         disable_permission_restrictions,
     );
-    if auto_session_name != session.auto_session_name {
-        if let Some(updated) =
-            session_store().update_session_auto_session_name(&session.id, auto_session_name)
-        {
-            session = updated;
-        }
-    }
+    info.management.auto_session_name = auto_session_name;
     if let Some(task_management) = payload.task_management {
-        if let Some(updated) = session_store().update_session(
-            &session.id,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(task_management),
-        ) {
-            session = updated;
-        }
+        session_store().apply_initial_task_management(&mut info, task_management)?;
     }
+    let task_plan = info.management.task_plan.clone();
+    let session = session_store().create_canonical_session(
+        info,
+        SessionCommand::CreateSession { task_plan },
+    )?;
     session_store().push_event(GlobalEvent::SessionCreated {
         properties: SessionCreatedProperties {
             session_id: session.id.clone(),
             info: session.clone(),
         },
     });
-    session
+    Ok(session)
+}
+
+fn session_mutation_error(error: String) -> axum::response::Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "session_service_mutation_failed",
+            "message": error,
+        })),
+    )
+        .into_response()
 }
 
 pub async fn get_session_config(
@@ -471,20 +463,16 @@ pub async fn delete_session_value(session_id: String) -> bool {
         aborted_sessions = ?abort.sessions,
         "aborted session scope before delete"
     );
-    let write_result =
-        write_session_log_command(SessionLogCommand::DeleteSession(DeleteSessionRequest {
-            session_id: session_id.clone(),
-        }))
-        .await;
-    if let Err(error) = &write_result {
+    let delete_result = session_store()
+        .execute_canonical_session_command(&session_id, SessionCommand::DeleteSession);
+    if let Err(error) = &delete_result {
         tracing::warn!(
             session_id,
             error,
-            "failed to delete session from session_log"
+            "failed to delete canonical session"
         );
     }
-    let deleted = session_store().delete_session(&session_id);
-    if deleted || write_result.is_ok() {
+    if delete_result.is_ok() {
         if let Some(info) = info {
             session_store().push_event(GlobalEvent::SessionDeleted {
                 properties: SessionDeletedProperties {
@@ -494,17 +482,26 @@ pub async fn delete_session_value(session_id: String) -> bool {
             });
         }
     }
-    deleted || write_result.is_ok()
+    delete_result.is_ok()
 }
 
 pub async fn update_session(
     Path(session_id): Path<String>,
     Json(payload): Json<UpdateSessionRequest>,
-) -> Json<Session> {
-    Json(update_session_value(session_id, payload))
+) -> impl IntoResponse {
+    match update_session_value(session_id, payload) {
+        Ok(session) => Json(session).into_response(),
+        Err(error) => session_mutation_error(error),
+    }
 }
 
-pub fn update_session_value(session_id: String, payload: UpdateSessionRequest) -> Session {
+pub fn update_session_value(
+    session_id: String,
+    mut payload: UpdateSessionRequest,
+) -> Result<Session, String> {
+    if let Some(task_management) = payload.task_management.take() {
+        session_store().execute_task_management_patch(&session_id, task_management)?;
+    }
     if let Some(auto_session_name) = payload.auto_session_name {
         let _ = session_store().update_session_auto_session_name(&session_id, auto_session_name);
     }
@@ -519,35 +516,9 @@ pub fn update_session_value(session_id: String, payload: UpdateSessionRequest) -
             payload.validator_enabled,
             payload.force_planning,
             payload.disable_permission_restrictions,
-            payload.task_management,
+            None,
         )
-        .unwrap_or_else(|| Session {
-            id: session_id.clone(),
-            name: None,
-            parent_id: None,
-            created_at: 0,
-            updated_at: 0,
-            last_user_message_at: None,
-            task_start_at: None,
-            directory: None,
-            model: None,
-            agent: Some("thoughtful".to_string()),
-            session_type: Some("coding".to_string()),
-            auto_session_name: true,
-            kill_processes_on_start: false,
-            validator_enabled: false,
-            force_planning: false,
-            model_variant: None,
-            model_acceleration_enabled: false,
-            disable_permission_restrictions: false,
-            status: SessionStatus::Idle,
-            message_count: 0,
-            task_management: serde_json::json!({}),
-            context_tokens: SessionContextTokens::default(),
-            usage: Default::default(),
-            plan_summary: None,
-            session_display_name: None,
-        });
+        .ok_or_else(|| format!("session {session_id} not found"))?;
 
     session_store().push_event(GlobalEvent::SessionUpdated {
         properties: SessionUpdatedProperties {
@@ -556,67 +527,32 @@ pub fn update_session_value(session_id: String, payload: UpdateSessionRequest) -
         },
     });
 
-    session
+    Ok(session)
 }
 
 pub async fn update_session_task_management(
     Path(session_id): Path<String>,
     Json(payload): Json<UpdateSessionTaskManagementRequest>,
-) -> Json<Session> {
-    Json(update_session_task_management_value(session_id, payload))
+) -> impl IntoResponse {
+    match update_session_task_management_value(session_id, payload) {
+        Ok(session) => Json(session).into_response(),
+        Err(error) => session_mutation_error(error),
+    }
 }
 
 pub fn update_session_task_management_value(
     session_id: String,
     payload: UpdateSessionTaskManagementRequest,
-) -> Session {
+) -> Result<Session, String> {
     let session = session_store()
-        .update_session(
-            &session_id,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(payload.task_management),
-        )
-        .unwrap_or_else(|| Session {
-            id: session_id.clone(),
-            name: None,
-            parent_id: None,
-            created_at: 0,
-            updated_at: 0,
-            last_user_message_at: None,
-            task_start_at: None,
-            directory: None,
-            model: None,
-            agent: Some("thoughtful".to_string()),
-            session_type: Some("coding".to_string()),
-            auto_session_name: true,
-            kill_processes_on_start: false,
-            validator_enabled: false,
-            force_planning: false,
-            model_variant: None,
-            model_acceleration_enabled: false,
-            disable_permission_restrictions: false,
-            status: SessionStatus::Idle,
-            message_count: 0,
-            task_management: serde_json::json!({}),
-            context_tokens: SessionContextTokens::default(),
-            usage: Default::default(),
-            plan_summary: None,
-            session_display_name: None,
-        });
+        .execute_task_management_patch(&session_id, payload.task_management)?;
     session_store().push_event(GlobalEvent::SessionUpdated {
         properties: SessionUpdatedProperties {
             session_id: session.id.clone(),
             info: session.clone(),
         },
     });
-    session
+    Ok(session)
 }
 
 pub async fn abort_session(Path(session_id): Path<String>) -> Json<AbortResponse> {
@@ -628,8 +564,11 @@ pub fn abort_session_value(session_id: &str) -> AbortResponse {
     let mut cleanups = Vec::new();
     let router = RouterClient::global();
     for id in &aborted_sessions {
-        cleanups.push(match router.kill_session_workers(id) {
-            Ok(payload) => AbortCleanup {
+        let lifecycle_error = session_store()
+            .execute_canonical_session_command(id, SessionCommand::CancelSession)
+            .err();
+        cleanups.push(match (router.kill_session_workers(id), lifecycle_error) {
+            (Ok(payload), None) => AbortCleanup {
                 session_id: id.clone(),
                 status: payload
                     .get("status")
@@ -642,17 +581,35 @@ pub fn abort_session_value(session_id: &str) -> AbortResponse {
                     .unwrap_or(false),
                 error: None,
             },
-            Err(error) => AbortCleanup {
+            (Ok(payload), Some(error)) => AbortCleanup {
+                session_id: id.clone(),
+                status: payload
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                stopped_worker: payload
+                    .get("stopped_worker")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                error: Some(error),
+            },
+            (Err(error), lifecycle_error) => AbortCleanup {
                 session_id: id.clone(),
                 status: "error".to_string(),
                 stopped_worker: false,
-                error: Some(error.to_string()),
+                error: Some(match lifecycle_error {
+                    Some(lifecycle_error) => {
+                        format!("{error}; session cancellation failed: {lifecycle_error}")
+                    }
+                    None => error.to_string(),
+                }),
             },
         });
     }
 
     AbortResponse {
-        aborted: true,
+        aborted: cleanups.iter().all(|cleanup| cleanup.error.is_none()),
         sessions: aborted_sessions,
         cleanup: cleanups.first().cloned(),
         cleanups,
@@ -662,13 +619,19 @@ pub fn abort_session_value(session_id: &str) -> AbortResponse {
 pub async fn fork_session(
     Path(session_id): Path<String>,
     Json(payload): Json<ForkSessionRequest>,
-) -> Json<Session> {
-    Json(fork_session_value(session_id, payload).await)
+) -> impl IntoResponse {
+    match fork_session_value(session_id, payload).await {
+        Ok(session) => Json(session).into_response(),
+        Err(error) => session_mutation_error(error),
+    }
 }
 
-pub async fn fork_session_value(session_id: String, payload: ForkSessionRequest) -> Session {
+pub async fn fork_session_value(
+    session_id: String,
+    payload: ForkSessionRequest,
+) -> Result<Session, String> {
     let original = session_store().get_session(&session_id);
-    let new_session = session_store().create_session(
+    let info = session_store().build_session_info(
         payload
             .directory
             .or_else(|| original.as_ref().and_then(|s| s.directory.clone())),
@@ -703,36 +666,37 @@ pub async fn fork_session_value(session_id: String, payload: ForkSessionRequest)
             .map(|session| session.disable_permission_restrictions)
             .unwrap_or(false),
     );
-    let new_session = session_store()
-        .attach_child_session(&session_id, &new_session.id)
-        .unwrap_or(new_session);
+    let new_session = session_store().create_canonical_session(
+        info,
+        SessionCommand::ForkSession {
+            parent_id: session_id.clone(),
+        },
+    )?;
     if payload.copy_context.unwrap_or(true) {
         let _ = session_store().copy_session_context(&session_id, &new_session.id);
     }
     let new_session = session_store()
         .get_session(&new_session.id)
         .unwrap_or(new_session);
-    match session_store().session_log_upsert_request(&new_session.id) {
+    match session_store().session_payload_request(&new_session.id) {
         Ok(request) => {
-            if let Err(error) =
-                write_session_log_command(SessionLogCommand::UpsertSession(request)).await
+            if let Err(error) = SessionDbClient::discover()
+                .and_then(|client| client.persist_session_payload(request))
             {
                 tracing::warn!(
                     session_id = %new_session.id,
                     parent_session_id = %session_id,
-                    error,
-                    "failed to persist forked session to session_log"
+                    error = %error,
+                    "failed to persist forked session payload"
                 );
             }
         }
-        Err(error) => {
-            tracing::warn!(
-                session_id = %new_session.id,
-                parent_session_id = %session_id,
-                error,
-                "failed to build forked session_log snapshot"
-            );
-        }
+        Err(error) => tracing::warn!(
+            session_id = %new_session.id,
+            parent_session_id = %session_id,
+            error,
+            "failed to build forked session payload"
+        ),
     }
     session_store().push_event(GlobalEvent::SessionCreated {
         properties: SessionCreatedProperties {
@@ -740,14 +704,7 @@ pub async fn fork_session_value(session_id: String, payload: ForkSessionRequest)
             info: new_session.clone(),
         },
     });
-    new_session
-}
-
-async fn write_session_log_command(command: SessionLogCommand) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || crate::session_log_writer::write_session_log(command))
-        .await
-        .map_err(|error| format!("session_log writer task failed: {error}"))?
-        .map_err(|error| error.to_string())
+    Ok(new_session)
 }
 
 pub async fn session_status() -> Json<std::collections::HashMap<String, serde_json::Value>> {
@@ -793,59 +750,76 @@ pub async fn session_children(Path(session_id): Path<String>) -> Json<Vec<Sessio
     Json(session_store().list_child_sessions(&session_id))
 }
 
-pub async fn session_user_commands(Path(session_id): Path<String>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "session_id": session_id,
-        "commands": session_store().take_user_commands_for_session(&session_id),
-    }))
+pub async fn session_user_commands(Path(session_id): Path<String>) -> impl IntoResponse {
+    let root_session_id = session_store().root_session_id(&session_id);
+    let result = session_store().execute_canonical_session_command(
+        &root_session_id,
+        SessionCommand::ConsumeQueuedUserInputs,
+    );
+    match result {
+        Ok(result) => match result.event {
+            SessionEvent::QueuedUserInputsConsumed { inputs } => Json(serde_json::json!({
+                "session_id": session_id,
+                "commands": inputs,
+            }))
+            .into_response(),
+            event => session_mutation_error(format!(
+                "session service returned unexpected queued-input event: {event:?}"
+            )),
+        },
+        Err(error) => session_mutation_error(error),
+    }
 }
 
-pub(crate) fn append_user_command_for_runtime(session_id: &str, command: String) -> Vec<String> {
-    let root_session_id = session_store().user_command_root_session_id(session_id);
-    let commands = session_store().append_user_command(session_id, command.clone());
-    if let Err(error) =
-        RouterClient::global().append_user_command(session_id, &root_session_id, &command)
-    {
-        tracing::warn!(
-            session_id,
-            root_session_id,
-            error = %error,
-            "failed to forward user command to router queue"
-        );
-    }
-    commands
+pub(crate) fn append_user_command_for_runtime(
+    session_id: &str,
+    command: String,
+) -> Result<Vec<String>, String> {
+    let root_session_id = session_store().root_session_id(session_id);
+    let result = session_store().execute_canonical_session_command(
+        &root_session_id,
+        SessionCommand::QueueUserInputWhileBusy { input: command },
+    )?;
+    Ok(result.projection.pending_user_inputs)
 }
 
 pub async fn append_session_user_command(
     Path(session_id): Path<String>,
     Json(payload): Json<AppendUserCommandRequest>,
-) -> Json<serde_json::Value> {
-    let commands = append_user_command_for_runtime(&session_id, payload.command);
-    Json(serde_json::json!({
-        "ok": true,
-        "session_id": session_id,
-        "commands": commands,
-    }))
+) -> impl IntoResponse {
+    match append_user_command_for_runtime(&session_id, payload.command) {
+        Ok(commands) => Json(serde_json::json!({
+            "ok": true,
+            "session_id": session_id,
+            "commands": commands,
+        }))
+        .into_response(),
+        Err(error) => session_mutation_error(error),
+    }
 }
 
 pub async fn register_child_session(
     Path(session_id): Path<String>,
     Json(payload): Json<RegisterChildSessionRequest>,
-) -> Json<Session> {
-    let session = session_store().register_child_session(
+) -> impl IntoResponse {
+    let session = session_store().register_canonical_child_session(
         &session_id,
         &payload.child_session_id,
         Some(payload.directory.clone()),
         Some(payload.name.clone()),
         Some(payload.task_instruction.clone()),
     );
+    let session = match session {
+        Ok(session) => session,
+        Err(error) => return session_mutation_error(error),
+    };
     session_store().push_event(GlobalEvent::SessionCreated {
         properties: SessionCreatedProperties {
             session_id: session.id.clone(),
             info: session.clone(),
         },
     });
-    Json(session)
+    Json(session).into_response()
 }
 
 pub async fn update_session_status_for_runtime(
@@ -863,10 +837,10 @@ pub async fn update_session_status_for_runtime(
         )
             .into_response();
     }
-    let status = match payload.status.as_str() {
-        "idle" => SessionStatusMano::Idle,
-        "busy" => SessionStatusMano::Busy,
-        "error" => SessionStatusMano::Error,
+    let (command, api_status) = match payload.status.as_str() {
+        "idle" => (SessionCommand::RuntimeCompleted, SessionStatus::Idle),
+        "busy" => (SessionCommand::RuntimeStarted, SessionStatus::Busy),
+        "error" => (SessionCommand::RuntimeFailed, SessionStatus::Error),
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -879,12 +853,34 @@ pub async fn update_session_status_for_runtime(
                 .into_response();
         }
     };
-    session_store().update_session_status(&session_id, status);
-    let api_status = match status {
-        SessionStatusMano::Idle => SessionStatus::Idle,
-        SessionStatusMano::Busy => SessionStatus::Busy,
-        SessionStatusMano::Error => SessionStatus::Error,
-    };
+    if let Some(projection) = session_store().session_lifecycle_projection(&session_id) {
+        let aggregate = SessionAggregate {
+            session_id: projection.session_id,
+            state: projection.state,
+            parent_id: projection.parent_id,
+            task_plan: projection.task_plan,
+            pending_user_inputs: projection.pending_user_inputs,
+            cancelled: projection.cancelled,
+        };
+        if aggregate.decide(command.clone()).is_err() {
+            let session = session_store().get_session(&session_id);
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "session_status_transition_rejected",
+                    "requested": payload.status,
+                    "actual": session.as_ref().map(|session| session.status.clone()),
+                })),
+            )
+                .into_response();
+        }
+    }
+    if let Err(error) = session_store()
+        .execute_canonical_session_command_with_status_event(&session_id, command)
+    {
+        return session_mutation_error(error);
+    }
     let session = session_store().get_session(&session_id);
     if session
         .as_ref()

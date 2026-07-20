@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use lifecycle::SessionState;
+use lifecycle::{SessionAggregate, SessionProjection, SessionState, TaskPlan};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -53,6 +53,63 @@ pub(super) fn management_task_management(management: &Value) -> Option<Value> {
     }))
 }
 
+pub(super) fn task_management_value(task_plan: &TaskPlan) -> Value {
+    serde_json::json!({
+        "plan_summary": task_plan.plan_summary,
+        "tasks": task_plan.detailed_tasks,
+    })
+}
+
+pub(super) fn legacy_session_aggregate(
+    session_id: &str,
+    state: SessionState,
+    parent_id: Option<String>,
+    management: &Value,
+) -> Result<SessionAggregate> {
+    let task_plan = management
+        .get("task_plan")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .with_context(|| format!("invalid canonical task plan for session {session_id}"))?
+        .unwrap_or_default();
+    let mut aggregate = SessionAggregate::new(session_id.to_string());
+    aggregate.state = state;
+    aggregate.parent_id = parent_id;
+    aggregate.task_plan = task_plan;
+    aggregate.cancelled = state == SessionState::Cancelled;
+    Ok(aggregate)
+}
+
+pub(super) fn apply_lifecycle_projection(
+    management: &mut Value,
+    session: &mut Value,
+    projection: &SessionProjection,
+) -> Result<Value> {
+    let task_management = task_management_value(&projection.task_plan);
+    set_object_value(management, "state", serde_json::to_value(projection.state)?);
+    set_object_value(
+        management,
+        "task_plan",
+        serde_json::to_value(&projection.task_plan)?,
+    );
+    set_object_value(
+        management,
+        "is_child_session",
+        Value::Bool(projection.parent_id.is_some()),
+    );
+    set_object_string(session, "status", projection.state.ui_status());
+    set_object_value(session, "task_management", task_management.clone());
+    match projection.parent_id.as_deref() {
+        Some(parent_id) => {
+            set_object_value(session, "parent_id", Value::String(parent_id.to_string()))
+        }
+        None => remove_object_field(session, "parent_id"),
+    }
+    set_object_value(session, "management", management.clone());
+    Ok(task_management)
+}
+
 pub(super) fn session_state_from_management(
     management: &Value,
     session_id: &str,
@@ -72,35 +129,6 @@ pub(super) fn session_state_text(state: SessionState) -> Result<String> {
     }
 }
 
-pub(super) fn transition_management_to_interrupted(
-    management: &mut Value,
-    session_id: &str,
-    now_ms: i64,
-) -> Result<bool> {
-    let current = session_state_from_management(management, session_id)?;
-    if !current.is_recoverable_running() {
-        return Ok(false);
-    }
-    if !current.can_transition_to(SessionState::Interrupted) {
-        anyhow::bail!(
-            "invalid session state transition for {session_id}: {:?} -> {:?}",
-            current,
-            SessionState::Interrupted
-        );
-    }
-    set_object_string(
-        management,
-        "state",
-        &session_state_text(SessionState::Interrupted)?,
-    );
-    set_object_string(
-        management,
-        "session_last_update_at",
-        &millis_to_rfc3339(now_ms)?,
-    );
-    Ok(true)
-}
-
 pub(super) fn set_object_string(value: &mut Value, key: &str, next: &str) {
     if !value.is_object() {
         *value = serde_json::json!({});
@@ -116,6 +144,21 @@ pub(super) fn set_object_i64(value: &mut Value, key: &str, next: i64) {
     }
     if let Some(object) = value.as_object_mut() {
         object.insert(key.to_string(), Value::Number(next.into()));
+    }
+}
+
+pub(super) fn set_object_value(value: &mut Value, key: &str, next: Value) {
+    if !value.is_object() {
+        *value = serde_json::json!({});
+    }
+    if let Some(object) = value.as_object_mut() {
+        object.insert(key.to_string(), next);
+    }
+}
+
+pub(super) fn remove_object_field(value: &mut Value, key: &str) {
+    if let Some(object) = value.as_object_mut() {
+        object.remove(key);
     }
 }
 
