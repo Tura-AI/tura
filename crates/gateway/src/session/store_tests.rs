@@ -177,7 +177,7 @@ fn persisted_session_log_hydration_restores_canonical_lifecycle_projection() {
         .expect("fixture runtime should cancel");
     let projection = aggregate.query(lifecycle::SessionQuery::Lifecycle);
     let snapshot = SessionSnapshot {
-        session_id: session_id.clone(),
+        session_id,
         workspace,
         name: Some("canonical lifecycle".to_string()),
         parent_id: None,
@@ -836,13 +836,15 @@ fn hydrated_child_session_keeps_parent_mapping() {
         false,
     );
 
-    store.register_child_session(
-        &parent.id,
-        "child-1",
-        Some(directory.clone()),
-        Some("Subtask".to_string()),
-        Some("read files".to_string()),
-    );
+    store
+        .register_canonical_child_session(
+            &parent.id,
+            "child-1",
+            Some(directory.clone()),
+            Some("Subtask".to_string()),
+            Some("read files".to_string()),
+        )
+        .expect("canonical child should be created");
     upsert_runtime_owned_session_for_test(&store, "child-1", Some(parent.id.clone()));
 
     let hydrated = SessionStore::new();
@@ -859,10 +861,13 @@ fn hydrated_child_session_keeps_parent_mapping() {
 
 #[test]
 fn child_session_derives_workspace_and_task_instruction_context() {
+    let _service = SessionDbTestService::start();
+    let root = std::env::temp_dir().join(format!("tura-child-context-{}", Uuid::new_v4()));
+    let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
     let child_id = format!("child-{}", Uuid::new_v4());
     let parent = store.create_session(
-        Some("C:/workspace".to_string()),
+        Some(directory.clone()),
         None,
         None,
         Some("coding".to_string()),
@@ -874,23 +879,25 @@ fn child_session_derives_workspace_and_task_instruction_context() {
         true,
     );
 
-    let child = store.register_child_session(
-        &parent.id,
-        &child_id,
-        parent.directory.clone(),
-        Some("Backend subtask".to_string()),
-        Some("Read docs/backend/ACCEPTANCE.md and implement the backend module.".to_string()),
-    );
+    let child = store
+        .register_canonical_child_session(
+            &parent.id,
+            &child_id,
+            parent.directory.clone(),
+            Some("Backend subtask".to_string()),
+            Some("Read docs/backend/ACCEPTANCE.md and implement the backend module.".to_string()),
+        )
+        .expect("canonical child should be created");
     let child_info = store
         .get_session_info(&child_id)
         .expect("child session info should exist");
     let messages = store.get_messages(&child_id);
 
     assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
-    assert_eq!(child.directory.as_deref(), Some("C:/workspace"));
+    assert_eq!(child.directory.as_deref(), Some(directory.as_str()));
     assert_eq!(
         child_info.management.session_directory,
-        PathBuf::from("C:/workspace")
+        PathBuf::from(&directory)
     );
     assert!(child_info.management.disable_permission_restrictions);
     assert!(messages.iter().any(|message| {
@@ -901,15 +908,20 @@ fn child_session_derives_workspace_and_task_instruction_context() {
                     .is_some_and(|text| text.contains("docs/backend/ACCEPTANCE.md"))
             })
     }));
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
 fn cancellation_scope_includes_root_and_descendants_from_child() {
+    let _service = SessionDbTestService::start();
+    let root_directory =
+        std::env::temp_dir().join(format!("tura-cancellation-scope-{}", Uuid::new_v4()));
+    let directory = root_directory.to_string_lossy().to_string();
     let store = SessionStore::new();
     let child_id = format!("child-{}", uuid::Uuid::new_v4());
     let grandchild_id = format!("grandchild-{}", uuid::Uuid::new_v4());
     let root = store.create_session(
-        Some("C:/workspace".to_string()),
+        Some(directory.clone()),
         None,
         None,
         Some("coding".to_string()),
@@ -921,25 +933,30 @@ fn cancellation_scope_includes_root_and_descendants_from_child() {
         false,
     );
 
-    store.register_child_session(
-        &root.id,
-        &child_id,
-        Some("C:/workspace".to_string()),
-        Some("Subtask 1".to_string()),
-        Some("first".to_string()),
-    );
-    store.register_child_session(
-        &child_id,
-        &grandchild_id,
-        Some("C:/workspace".to_string()),
-        Some("Subtask 1.1".to_string()),
-        Some("nested".to_string()),
-    );
+    store
+        .register_canonical_child_session(
+            &root.id,
+            &child_id,
+            Some(directory.clone()),
+            Some("Subtask 1".to_string()),
+            Some("first".to_string()),
+        )
+        .expect("canonical child should be created");
+    store
+        .register_canonical_child_session(
+            &child_id,
+            &grandchild_id,
+            Some(directory),
+            Some("Subtask 1.1".to_string()),
+            Some("nested".to_string()),
+        )
+        .expect("canonical grandchild should be created");
 
     assert_eq!(
         store.cancellation_scope_session_ids(&child_id),
         vec![root.id, child_id, grandchild_id]
     );
+    let _ = std::fs::remove_dir_all(root_directory);
 }
 
 #[test]

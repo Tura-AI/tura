@@ -14,9 +14,9 @@ use super::agent_management::AgentName;
 /// `2026-04-08T12:34:56.789Z`.
 pub type UtcDateTimeMs = DateTime<Utc>;
 
+pub use lifecycle::{PlanStatus, PollInterval, StartCondition, TaskPlan, TaskStep};
 use lifecycle::{
-    PlanStatus, SessionAggregate, SessionCommand, SessionId, SessionProjection, SessionQuery,
-    SessionState, TaskPlan, TaskStep,
+    SessionAggregate, SessionCommand, SessionId, SessionProjection, SessionQuery, SessionState,
 };
 
 /// Natural-language session name.

@@ -20,8 +20,8 @@ use lifecycle::{
 };
 use parking_lot::RwLock;
 use session_log_contract::{
-    CreateSessionRequest as CreateSessionDbRequest, SessionCommandResult, SessionRecord,
-    PersistSessionPayloadRequest, SessionSnapshot,
+    CreateSessionRequest as CreateSessionDbRequest, PersistSessionPayloadRequest,
+    SessionCommandResult, SessionRecord, SessionSnapshot,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
@@ -713,6 +713,12 @@ impl SessionStore {
         info
     }
 
+    #[cfg(any(
+        test,
+        feature = "business-tests",
+        feature = "os-tests",
+        feature = "performance-tests"
+    ))]
     #[expect(
         clippy::too_many_arguments,
         reason = "test compatibility helper mirrors session creation inputs"

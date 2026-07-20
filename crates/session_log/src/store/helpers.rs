@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
-use lifecycle::{SessionAggregate, SessionProjection, SessionState, TaskPlan};
+use lifecycle::{
+    PlanStatus, SessionAggregate, SessionProjection, SessionState, TaskPlan, TaskStep,
+};
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -65,13 +68,15 @@ pub(super) fn legacy_session_aggregate(
     state: SessionState,
     parent_id: Option<String>,
     management: &Value,
+    task_management: Option<&Value>,
 ) -> Result<SessionAggregate> {
     let task_plan = management
         .get("task_plan")
         .cloned()
-        .map(serde_json::from_value)
+        .or_else(|| task_management.map(task_plan_from_projection))
+        .map(parse_legacy_task_plan)
         .transpose()
-        .with_context(|| format!("invalid canonical task plan for session {session_id}"))?
+        .with_context(|| format!("invalid task plan for session {session_id}"))?
         .unwrap_or_default();
     let mut aggregate = SessionAggregate::new(session_id.to_string());
     aggregate.state = state;
@@ -79,6 +84,72 @@ pub(super) fn legacy_session_aggregate(
     aggregate.task_plan = task_plan;
     aggregate.cancelled = state == SessionState::Cancelled;
     Ok(aggregate)
+}
+
+fn task_plan_from_projection(task_management: &Value) -> Value {
+    serde_json::json!({
+        "plan_summary": task_management
+            .get("plan_summary")
+            .cloned()
+            .unwrap_or_else(|| Value::String(String::new())),
+        "detailed_tasks": task_management
+            .get("tasks")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+    })
+}
+
+fn parse_legacy_task_plan(value: Value) -> Result<TaskPlan, serde_json::Error> {
+    match serde_json::from_value::<TaskPlan>(value.clone()) {
+        Ok(task_plan) => Ok(task_plan),
+        Err(canonical_error) => serde_json::from_value::<LegacyTaskPlan>(value)
+            .map(TaskPlan::from)
+            .map_err(|_| canonical_error),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyTaskPlan {
+    #[serde(default)]
+    plan_summary: String,
+    #[serde(default)]
+    detailed_tasks: Vec<LegacyTaskStep>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyTaskStep {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    step: String,
+    #[serde(default)]
+    status: PlanStatus,
+    #[serde(default)]
+    deliverables: Vec<String>,
+}
+
+impl From<LegacyTaskPlan> for TaskPlan {
+    fn from(legacy: LegacyTaskPlan) -> Self {
+        Self {
+            plan_summary: legacy.plan_summary,
+            detailed_tasks: legacy
+                .detailed_tasks
+                .into_iter()
+                .enumerate()
+                .map(|(index, task)| TaskStep {
+                    task_id: task.id,
+                    step: index as u64 + 1,
+                    task_summary: task.step.clone(),
+                    step_task: task.step,
+                    status: task.status,
+                    step_deliverable_description: task.deliverables.join("\n"),
+                    ..TaskStep::default()
+                })
+                .collect(),
+        }
+    }
 }
 
 pub(super) fn apply_lifecycle_projection(

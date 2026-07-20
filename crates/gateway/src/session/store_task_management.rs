@@ -41,9 +41,7 @@ pub(super) fn parse_task_management_patch(
     })
 }
 
-fn parse_task_patch_list(
-    tasks: &[serde_json::Value],
-) -> Result<Vec<SessionTaskPatch>, String> {
+fn parse_task_patch_list(tasks: &[serde_json::Value]) -> Result<Vec<SessionTaskPatch>, String> {
     tasks
         .iter()
         .map(|value| {

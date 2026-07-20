@@ -1,3 +1,5 @@
+mod support;
+
 use axum::body;
 use axum::extract::{Json, Path};
 use axum::http::StatusCode;
@@ -6,26 +8,20 @@ use gateway::api::session::{delete_session, fork_session};
 use gateway::contracts::{ForkSessionRequest, Session};
 use gateway::session::MessageRole;
 use gateway::session_store;
-use session_log::SessionLogStore;
+use lifecycle::SessionCommand;
 use session_log_contract::{
     GetSessionRequest, ListSessionRecordsRequest, SessionLogCommand, SessionLogResponse,
     SessionRecord, SessionSnapshot,
 };
-use std::path::Path as FsPath;
-use std::time::{Duration, Instant};
+use support::TestSessionDb;
 
 #[tokio::test]
 async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let home = root.path().join("home");
-    let workspace = root.path().join("workspace");
-    std::fs::create_dir_all(&home)?;
-    std::fs::create_dir_all(&workspace)?;
-    let _env = EnvGuard::new(&home);
-    let _service = ServiceThread::start()?;
+    let service = TestSessionDb::start()?;
+    let workspace = service.workspace();
 
     let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
-    let source = session_store().create_session(
+    let source_info = session_store().build_session_info(
         Some(workspace_key.clone()),
         Some("db-test-model".to_string()),
         Some("thoughtful".to_string()),
@@ -37,6 +33,15 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
         false,
         false,
     );
+    let source_task_plan = source_info.management.task_plan.clone();
+    let source = session_store()
+        .create_canonical_session(
+            source_info,
+            SessionCommand::CreateSession {
+                task_plan: source_task_plan,
+            },
+        )
+        .map_err(anyhow::Error::msg)?;
     session_store().add_message(
         &source.id,
         MessageRole::User,
@@ -113,71 +118,4 @@ fn list_persisted_records(session_id: &str) -> anyhow::Result<Vec<SessionRecord>
         SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
         other => anyhow::bail!("unexpected session_log records response: {other:?}"),
     }
-}
-
-struct ServiceThread {
-    handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
-}
-
-impl ServiceThread {
-    fn start() -> anyhow::Result<Self> {
-        let store = SessionLogStore::open_default()?;
-        let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
-        wait_until(
-            Duration::from_secs(10),
-            session_log::ipc::service_is_running,
-        )?;
-        Ok(Self {
-            handle: Some(handle),
-        })
-    }
-}
-
-impl Drop for ServiceThread {
-    fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
-struct EnvGuard {
-    previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
-}
-
-impl EnvGuard {
-    fn new(home: &FsPath) -> Self {
-        let keys = ["TURA_HOME", "TURA_DB_ROOT", "SESSION_LOG_DB_ROOT"];
-        let previous = keys
-            .iter()
-            .map(|key| (*key, std::env::var_os(key)))
-            .collect::<Vec<_>>();
-        std::env::set_var("TURA_HOME", home);
-        std::env::remove_var("TURA_DB_ROOT");
-        std::env::remove_var("SESSION_LOG_DB_ROOT");
-        Self { previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.previous.drain(..).rev() {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
-}
-
-fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> anyhow::Result<()> {
-    let started = Instant::now();
-    while started.elapsed() < timeout {
-        if condition() {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    anyhow::bail!("condition was not met within {}ms", timeout.as_millis())
 }

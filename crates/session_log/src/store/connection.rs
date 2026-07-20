@@ -136,7 +136,7 @@ pub(super) fn init_index_db(conn: &Connection) -> Result<()> {
 fn backfill_workspace_lifecycle(conn: &Connection) -> Result<()> {
     let rows = {
         let mut stmt = conn.prepare(
-            "SELECT session_id, state, parent_id, management_json
+            "SELECT session_id, state, parent_id, management_json, task_management_json
              FROM sessions
              WHERE lifecycle_json IS NULL OR lifecycle_json = ''",
         )?;
@@ -147,21 +147,32 @@ fn backfill_workspace_lifecycle(conn: &Connection) -> Result<()> {
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         rows
     };
-    for (session_id, state, parent_id, management_json) in rows {
+    for (session_id, state, parent_id, management_json, task_management_json) in rows {
         let management: Value = serde_json::from_str(&management_json).with_context(|| {
             format!("invalid management_json while migrating session {session_id}")
         })?;
+        let task_management: Value =
+            serde_json::from_str(&task_management_json).with_context(|| {
+                format!("invalid task_management_json while migrating session {session_id}")
+            })?;
         let state = match state {
             Some(state) => serde_json::from_value::<SessionState>(Value::String(state))
                 .with_context(|| format!("invalid state while migrating session {session_id}"))?,
             None => session_state_from_management(&management, &session_id)?,
         };
-        let aggregate = legacy_session_aggregate(&session_id, state, parent_id, &management)?;
+        let aggregate = legacy_session_aggregate(
+            &session_id,
+            state,
+            parent_id,
+            &management,
+            Some(&task_management),
+        )?;
         conn.execute(
             "UPDATE sessions SET lifecycle_json = ?2 WHERE session_id = ?1",
             params![session_id, serde_json::to_string(&aggregate)?],

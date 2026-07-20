@@ -213,22 +213,26 @@ async fn busy_session_prompt_business_flow_runtime_status_requires_canonical_val
         "invalid status must not silently rewrite the session to idle"
     );
 
-    let first = response_json(append_session_user_command(
-        Path(session.id.clone()),
-        Json(AppendUserCommandRequest {
-            command: "inspect current files".to_string(),
-        }),
+    let first = response_json(
+        append_session_user_command(
+            Path(session.id.clone()),
+            Json(AppendUserCommandRequest {
+                command: "inspect current files".to_string(),
+            }),
+        )
+        .await,
     )
-    .await)
     .await;
     assert_eq!(first["commands"], json!(["inspect current files"]));
-    let second = response_json(append_session_user_command(
-        Path(session.id.clone()),
-        Json(AppendUserCommandRequest {
-            command: "continue after inspection".to_string(),
-        }),
+    let second = response_json(
+        append_session_user_command(
+            Path(session.id.clone()),
+            Json(AppendUserCommandRequest {
+                command: "continue after inspection".to_string(),
+            }),
+        )
+        .await,
     )
-    .await)
     .await;
     assert_eq!(
         second["commands"],

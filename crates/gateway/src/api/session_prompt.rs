@@ -111,10 +111,12 @@ fn run_due_task_scheduler_tick() {
             .is_err()
             {
                 tracing::error!(session_id = %run.session_id, "scheduled task panicked");
-                if let Err(error) = session_store().execute_canonical_session_command_with_status_event(
-                    &run.session_id,
-                    SessionCommand::RuntimeFailed,
-                ) {
+                if let Err(error) = session_store()
+                    .execute_canonical_session_command_with_status_event(
+                        &run.session_id,
+                        SessionCommand::RuntimeFailed,
+                    )
+                {
                     tracing::warn!(session_id = %run.session_id, error, "failed to record scheduled task panic");
                 }
                 session_store().finish_todos(&run.session_id, false);
@@ -604,7 +606,11 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                     SessionCommand::RuntimeCompleted,
                 )
             {
-                tracing::warn!(session_id, error = lifecycle_error, "failed to record stopped runtime");
+                tracing::warn!(
+                    session_id,
+                    error = lifecycle_error,
+                    "failed to record stopped runtime"
+                );
             }
             session_store().finish_todos(&session_id, false);
             add_agent_fallback_message_with_metadata(
@@ -620,7 +626,11 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                     SessionCommand::RuntimeFailed,
                 )
             {
-                tracing::warn!(session_id, error = lifecycle_error, "failed to record runtime failure");
+                tracing::warn!(
+                    session_id,
+                    error = lifecycle_error,
+                    "failed to record runtime failure"
+                );
             }
             session_store().finish_todos(&session_id, false);
             add_agent_fallback_message(

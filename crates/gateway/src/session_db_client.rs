@@ -222,8 +222,8 @@ mod tests {
     use serde_json::json;
     use session_log_contract::{
         CommandCheckpoint, DeleteSessionRequest, MarkSessionInterruptedRequest, Page,
-        SessionLogCommand, SessionLogResponse, SessionSnapshot, UpsertSessionRequest,
-        WorkspaceSummary,
+        PersistSessionPayloadRequest, SessionLogCommand, SessionLogResponse, SessionSnapshot,
+        UpsertSessionRequest, WorkspaceSummary,
     };
 
     fn snapshot(session_id: &str) -> SessionSnapshot {
@@ -322,6 +322,13 @@ mod tests {
                     session_command: SessionCommand::SubmitUserInput,
                 }
             )
+        ));
+        assert!(is_gateway_command(
+            &SessionLogCommand::PersistSessionPayload(PersistSessionPayloadRequest {
+                session_id: "session-1".to_string(),
+                records: Vec::new(),
+                todos: Vec::new(),
+            })
         ));
         assert!(!is_gateway_command(&SessionLogCommand::UpsertSession(
             UpsertSessionRequest {

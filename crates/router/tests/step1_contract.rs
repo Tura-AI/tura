@@ -76,7 +76,7 @@ fn gateway_abort_and_delete_force_stop_runtime_before_session_db_delete() {
     let session_api = read("crates/gateway/src/api/session.rs");
     assert!(
         session_api.contains("let abort = abort_session_value(&session_id);")
-            && session_api.contains("SessionLogCommand::DeleteSession"),
+            && session_api.contains("SessionCommand::DeleteSession"),
         "delete_session must abort the session scope before deleting session DB state"
     );
     assert!(
@@ -119,17 +119,20 @@ fn runtime_session_db_client_uses_file_queue_without_one_shot_processes() {
 }
 
 #[test]
-fn gateway_session_db_client_is_read_only_without_one_shot_processes() {
+fn gateway_session_db_client_allows_only_queries_and_typed_mutations() {
     let path = "crates/gateway/src/session_db_client.rs";
     let source = read(path);
     assert!(
-        source.contains("gateway session_db client is read-only; write command rejected")
+        source
+            .contains("gateway session_db client only accepts queries and typed session commands")
             && source.contains("ipc::call_service")
-            && source.contains("fn is_read_command")
+            && source.contains("fn is_gateway_command")
+            && source.contains("SessionLogCommand::ExecuteSessionCommand")
+            && source.contains("SessionLogCommand::PersistSessionPayload")
             && !source.contains("file_queue::enqueue_command")
             && !source.contains("SessionLogStore::open_default")
             && !source.contains("file_queue::drain_queue"),
-        "{path} must be a read-only session_db socket client"
+        "{path} must allow only queries and typed SessionMachine/payload mutations"
     );
     let forbidden_direct_env = ["TURA_SESSION_DB_ALLOW", "DIRECT"].join("_");
     for forbidden in [

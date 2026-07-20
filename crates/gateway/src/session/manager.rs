@@ -178,7 +178,6 @@ impl SessionInfo {
             management: management.clone(),
         }
     }
-
 }
 
 pub fn normalize_session_type(session_type: Option<String>, agent: Option<&str>) -> String {

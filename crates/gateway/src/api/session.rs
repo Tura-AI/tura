@@ -158,7 +158,6 @@ async fn mark_session_interrupted_from_gateway_probe(session_id: &str) {
         },
     });
     session_store().push_current_session_status_event(session_id);
-
 }
 
 fn filter_list_sessions(
@@ -347,10 +346,8 @@ pub async fn create_session_value(
         session_store().apply_initial_task_management(&mut info, task_management)?;
     }
     let task_plan = info.management.task_plan.clone();
-    let session = session_store().create_canonical_session(
-        info,
-        SessionCommand::CreateSession { task_plan },
-    )?;
+    let session = session_store()
+        .create_canonical_session(info, SessionCommand::CreateSession { task_plan })?;
     session_store().push_event(GlobalEvent::SessionCreated {
         properties: SessionCreatedProperties {
             session_id: session.id.clone(),
@@ -466,19 +463,12 @@ pub async fn delete_session_value(session_id: String) -> bool {
     let delete_result = session_store()
         .execute_canonical_session_command(&session_id, SessionCommand::DeleteSession);
     if let Err(error) = &delete_result {
-        tracing::warn!(
-            session_id,
-            error,
-            "failed to delete canonical session"
-        );
+        tracing::warn!(session_id, error, "failed to delete canonical session");
     }
     if delete_result.is_ok() {
         if let Some(info) = info {
             session_store().push_event(GlobalEvent::SessionDeleted {
-                properties: SessionDeletedProperties {
-                    session_id: session_id.clone(),
-                    info,
-                },
+                properties: SessionDeletedProperties { session_id, info },
             });
         }
     }
@@ -544,8 +534,8 @@ pub fn update_session_task_management_value(
     session_id: String,
     payload: UpdateSessionTaskManagementRequest,
 ) -> Result<Session, String> {
-    let session = session_store()
-        .execute_task_management_patch(&session_id, payload.task_management)?;
+    let session =
+        session_store().execute_task_management_patch(&session_id, payload.task_management)?;
     session_store().push_event(GlobalEvent::SessionUpdated {
         properties: SessionUpdatedProperties {
             session_id: session.id.clone(),
@@ -876,8 +866,8 @@ pub async fn update_session_status_for_runtime(
                 .into_response();
         }
     }
-    if let Err(error) = session_store()
-        .execute_canonical_session_command_with_status_event(&session_id, command)
+    if let Err(error) =
+        session_store().execute_canonical_session_command_with_status_event(&session_id, command)
     {
         return session_mutation_error(error);
     }

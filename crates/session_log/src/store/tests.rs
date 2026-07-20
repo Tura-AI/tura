@@ -119,7 +119,12 @@ fn workspace_schema_migration_backfills_canonical_lifecycle() {
         "state": "cancelled",
         "task_plan": {
             "plan_summary": "Migrated plan",
-            "detailed_tasks": [{"task_id": "migrated-task"}]
+            "detailed_tasks": [{
+                "id": "migrated-task",
+                "step": "Migrate the stored task",
+                "status": "done",
+                "deliverables": ["migration report"]
+            }]
         }
     });
     conn.execute(
@@ -161,6 +166,15 @@ fn workspace_schema_migration_backfills_canonical_lifecycle() {
     assert_eq!(
         aggregate.task_plan.detailed_tasks[0].task_id,
         "migrated-task"
+    );
+    assert_eq!(aggregate.task_plan.detailed_tasks[0].step, 1);
+    assert_eq!(
+        aggregate.task_plan.detailed_tasks[0].task_summary,
+        "Migrate the stored task"
+    );
+    assert_eq!(
+        aggregate.task_plan.detailed_tasks[0].step_deliverable_description,
+        "migration report"
     );
     assert!(aggregate.pending_user_inputs.is_empty());
     assert!(aggregate.cancelled);

@@ -159,6 +159,14 @@ impl SessionLogStore {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let command = request.session_command;
         let auto_name = task_summary_for_auto_name(&command);
+        let task_projection_requested = matches!(
+            &command,
+            SessionCommand::ApplyTaskStatus { .. }
+                | SessionCommand::ApplyTaskPatch { .. }
+                | SessionCommand::ApplyTaskPatches { .. }
+                | SessionCommand::ApplyTaskPlanPatch { .. }
+                | SessionCommand::StartScheduledTask { .. }
+        );
         let result = self.with_workspace_connection(&workspace_db_path, |conn| {
             let tx = conn.transaction()?;
             let row = load_command_row(&tx, &request.session_id)?
@@ -170,6 +178,8 @@ impl SessionLogStore {
             let previous_task_plan = aggregate.task_plan.clone();
             let event = aggregate.execute(command)?;
             let projection = aggregate.query(SessionQuery::Lifecycle);
+            let task_plan_changed = projection.task_plan != previous_task_plan;
+            let publish_task_projection = task_projection_requested || task_plan_changed;
             if matches!(event, SessionEvent::SessionDeleted) {
                 tx.execute(
                     "DELETE FROM sessions WHERE session_id = ?1",
@@ -200,15 +210,28 @@ impl SessionLogStore {
                 Value::String(timestamp),
             );
             if let Some(name) = auto_name
-                .filter(|_| projection.task_plan != previous_task_plan)
+                .filter(|_| task_plan_changed)
                 .filter(|_| management["auto_session_name"].as_bool().unwrap_or(true))
             {
                 set_json_field(&mut management, "session_name", Value::String(name.clone()));
                 set_json_field(&mut session, "name", Value::String(name));
             }
             set_json_field(&mut session, "updated_at", Value::Number(now_ms.into()));
-            let task_management =
+            let projected_task_management =
                 apply_lifecycle_projection(&mut management, &mut session, &projection)?;
+            let task_management = if publish_task_projection {
+                projected_task_management
+            } else {
+                let task_management: Value = serde_json::from_str(&row.task_management_json)
+                    .with_context(|| {
+                        format!(
+                            "invalid task_management_json for session {}",
+                            request.session_id
+                        )
+                    })?;
+                set_json_field(&mut session, "task_management", task_management.clone());
+                task_management
+            };
             let lifecycle_json = serde_json::to_string(&aggregate)?;
             let management_json = serde_json::to_string(&management)?;
             let session_json = serde_json::to_string(&session)?;
@@ -438,6 +461,7 @@ struct CommandRow {
     created_at: i64,
     last_user_message_at: Option<i64>,
     message_count: i64,
+    task_management_json: String,
     management_json: String,
     session_json: String,
     lifecycle_json: String,
@@ -446,7 +470,7 @@ struct CommandRow {
 fn load_command_row(tx: &Transaction<'_>, session_id: &str) -> Result<Option<CommandRow>> {
     tx.query_row(
         "SELECT workspace, created_at, last_user_message_at, message_count,
-                management_json, session_json, lifecycle_json
+                task_management_json, management_json, session_json, lifecycle_json
          FROM sessions WHERE session_id = ?1",
         params![session_id],
         |row| {
@@ -455,9 +479,10 @@ fn load_command_row(tx: &Transaction<'_>, session_id: &str) -> Result<Option<Com
                 created_at: row.get(1)?,
                 last_user_message_at: row.get(2)?,
                 message_count: row.get(3)?,
-                management_json: row.get(4)?,
-                session_json: row.get(5)?,
-                lifecycle_json: row.get(6)?,
+                task_management_json: row.get(4)?,
+                management_json: row.get(5)?,
+                session_json: row.get(6)?,
+                lifecycle_json: row.get(7)?,
             })
         },
     )

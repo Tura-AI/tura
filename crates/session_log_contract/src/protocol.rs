@@ -230,9 +230,9 @@ mod tests {
     use super::{
         CreateSessionRequest, DeleteSessionRequest, DeleteWorkspaceRequest,
         ExecuteSessionCommandRequest, GetSessionRequest, ListSessionRecordsRequest,
-        ListSessionsRequest, MarkSessionInterruptedRequest, Page, SessionCommandResult,
-        SessionLogCommand, SessionLogResponse, SessionRecord, SessionSnapshot,
-        UpsertSessionRequest, WorkspaceSummary,
+        ListSessionsRequest, MarkSessionInterruptedRequest, Page, PersistSessionPayloadRequest,
+        SessionCommandResult, SessionLogCommand, SessionLogResponse, SessionRecord,
+        SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
     };
     use lifecycle::{SessionAggregate, SessionCommand, SessionEvent, SessionQuery};
     use serde_json::json;
@@ -280,6 +280,11 @@ mod tests {
                 session_id: "session".to_string(),
                 session_command: SessionCommand::SubmitUserInput,
             }),
+            SessionLogCommand::PersistSessionPayload(PersistSessionPayloadRequest {
+                session_id: "session".to_string(),
+                records: vec![json!({ "id": "message", "role": "assistant" })],
+                todos: vec![json!({ "id": "todo" })],
+            }),
             SessionLogCommand::GetSession(GetSessionRequest {
                 session_id: "session".to_string(),
             }),
@@ -309,6 +314,11 @@ mod tests {
                     value["session_command"],
                     json!({ "command": "submit_user_input" })
                 );
+            }
+            if command_name == "persist_session_payload" {
+                assert_eq!(value["session_id"], "session");
+                assert_eq!(value["records"][0]["id"], "message");
+                assert_eq!(value["todos"][0]["id"], "todo");
             }
             let round_trip: SessionLogCommand =
                 serde_json::from_value(value).expect("command round trip");
@@ -424,6 +434,15 @@ mod tests {
                 "session_id": "session",
                 "session_command": { "command": "submit_user_input" },
                 "extra": true
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<PersistSessionPayloadRequest>(json!({
+                "session_id": "session",
+                "records": [],
+                "todos": [],
+                "lifecycle": { "state": "running" }
             }))
             .is_err()
         );

@@ -108,7 +108,8 @@ pub(crate) mod test_support {
 
     impl Drop for SessionDbTestService {
         fn drop(&mut self) {
-            let _ = session_log::ipc::call_service(&session_log_contract::SessionLogCommand::Shutdown);
+            let _ =
+                session_log::ipc::call_service(&session_log_contract::SessionLogCommand::Shutdown);
             if let Some(handle) = self.handle.take() {
                 let _ = handle.join();
             }

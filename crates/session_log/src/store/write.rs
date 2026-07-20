@@ -2,7 +2,7 @@ use super::connection::{init_workspace_db, with_connection};
 use super::helpers::{
     apply_lifecycle_projection, i64_at, legacy_session_aggregate, management_task_management,
     millis_at, path_text, remove_sqlite_files, session_state_from_management, session_state_text,
-    set_object_i64, set_object_string, string_at,
+    set_object_i64, set_object_string, set_object_value, string_at,
 };
 use super::SessionLogStore;
 use crate::path::{normalize_workspace, workspace_session_log_db};
@@ -11,7 +11,7 @@ use lifecycle::{SessionAggregate, SessionCommand, SessionQuery, SessionState};
 use rusqlite::{params, params_from_iter, OptionalExtension};
 use session_log_contract::{
     CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, ExecuteSessionCommandRequest,
-    GetSessionRequest, MarkSessionInterruptedRequest, UpsertSessionRequest,
+    MarkSessionInterruptedRequest, UpsertSessionRequest,
 };
 use std::path::Path;
 use std::sync::OnceLock;
@@ -139,8 +139,13 @@ impl SessionLogStore {
         let name =
             string_at(&session, &["name"]).or_else(|| string_at(&management, &["session_name"]));
         let parent_id = parent_id.or_else(|| string_at(&session, &["parent_id"]));
-        let initial_aggregate =
-            legacy_session_aggregate(&session_id, state, parent_id.clone(), &management)?;
+        let initial_aggregate = legacy_session_aggregate(
+            &session_id,
+            state,
+            parent_id.clone(),
+            &management,
+            Some(&task_management),
+        )?;
         let serialize_start = Instant::now();
         let task_management_json = serde_json::to_string(&task_management)?;
         let management_json = serde_json::to_string(&management)?;
@@ -166,6 +171,11 @@ impl SessionLogStore {
                 let transaction_start = Instant::now();
                 let tx = conn.transaction()?;
                 let session_row_start = Instant::now();
+                let session_exists = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id = ?1)",
+                    params![session_id],
+                    |row| row.get::<_, bool>(0),
+                )?;
                 tx.execute(
                     "INSERT INTO sessions(
                     session_id, workspace, name, parent_id, created_at, updated_at,
@@ -210,9 +220,15 @@ impl SessionLogStore {
                 let projection = aggregate.query(SessionQuery::Lifecycle);
                 let state_text = session_state_text(projection.state)?;
                 let status = projection.state.ui_status().to_string();
-                let task_management =
+                let projected_task_management =
                     apply_lifecycle_projection(&mut management, &mut session, &projection)?;
-                let task_management_json = serde_json::to_string(&task_management)?;
+                let persisted_task_management = if session_exists {
+                    projected_task_management
+                } else {
+                    set_object_value(&mut session, "task_management", task_management.clone());
+                    task_management.clone()
+                };
+                let task_management_json = serde_json::to_string(&persisted_task_management)?;
                 let management_json = serde_json::to_string(&management)?;
                 let session_json = serde_json::to_string(&session)?;
                 tx.execute(
@@ -475,10 +491,7 @@ impl SessionLogStore {
     }
 
     fn interrupt_session_if_recoverable(&self, session_id: &str) -> Result<bool> {
-        let Some(snapshot) = self.get_session(GetSessionRequest {
-            session_id: session_id.to_string(),
-        })?
-        else {
+        let Some(snapshot) = self.get_session_without_stale_sweep(session_id)? else {
             return Ok(false);
         };
         let projection = snapshot.lifecycle_projection.with_context(|| {
