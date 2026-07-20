@@ -244,6 +244,7 @@ fn legacy_upsert_preserves_canonical_lifecycle_and_updates_payloads() {
     let store = SessionLogStore::open_default().expect("store");
     let workspace = db.workspace("canonical-legacy-upsert");
     let session_id = format!("canonical-upsert-{}", uuid::Uuid::new_v4());
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let task_plan = TaskPlan {
         plan_summary: "Canonical plan".to_string(),
         detailed_tasks: vec![TaskStep {
@@ -302,7 +303,7 @@ fn legacy_upsert_preserves_canonical_lifecycle_and_updates_payloads() {
             "name": "Legacy payload",
             "directory": workspace,
             "created_at": 10,
-            "updated_at": 20,
+            "updated_at": now_ms,
             "status": "idle",
             "parent_id": "stale-parent",
             "task_management": {
@@ -325,7 +326,7 @@ fn legacy_upsert_preserves_canonical_lifecycle_and_updates_payloads() {
             "id": message_id,
             "role": "assistant",
             "created_at": 20,
-            "updated_at": 20
+            "updated_at": now_ms
         })],
         todos: vec![serde_json::json!({"id": "legacy-todo"})],
     };
@@ -884,6 +885,8 @@ fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
     let store = SessionLogStore::open_default().expect("store");
     let session_id = format!("workspace-authority-{}", uuid::Uuid::new_v4());
     let workspace = db.workspace("workspace-authority");
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let authoritative_updated_at = now_ms + 1;
 
     store
         .upsert_session(UpsertSessionRequest {
@@ -892,7 +895,7 @@ fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
                 "name": "Workspace Authority",
                 "directory": workspace,
                 "created_at": 1,
-                "updated_at": 2,
+                "updated_at": now_ms,
                 "management": {
                     "session_id": session_id,
                     "session_name": "Workspace Authority",
@@ -917,7 +920,7 @@ fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
     let mut management: serde_json::Value =
         serde_json::from_str(&management_json).expect("management json");
     session["status"] = serde_json::json!("error");
-    session["updated_at"] = serde_json::json!(99);
+    session["updated_at"] = serde_json::json!(authoritative_updated_at);
     management["state"] = serde_json::json!("interrupted");
     conn.execute(
         "UPDATE sessions
@@ -927,7 +930,7 @@ fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
             session_id,
             "interrupted",
             "error",
-            99_i64,
+            authoritative_updated_at,
             serde_json::to_string(&session).expect("session to json"),
             serde_json::to_string(&management).expect("management to json"),
         ],
@@ -942,7 +945,7 @@ fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
         .expect("session exists");
     assert_eq!(loaded.state.as_deref(), Some("interrupted"));
     assert_eq!(loaded.status.as_deref(), Some("error"));
-    assert_eq!(loaded.updated_at, 99);
+    assert_eq!(loaded.updated_at, authoritative_updated_at);
     assert_eq!(loaded.management["state"], "interrupted");
 
     let (_page, sessions) = store

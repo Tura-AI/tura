@@ -2,7 +2,7 @@
 
 > 文档性质：架构基线、当前行为等价约束与实施计划
 > 目标范围：Runtime、Session、Gateway、Router、Session DB、GUI/TUI 生命周期链路
-> 当前阶段：Phase 1 共享 lifecycle domain/protocol 实施；生产流量尚未切换
+> 当前阶段：Phase 2 SessionMachine 单写者切流实施与远端验收中；`phase0-runtime-session-evidence` 仅为持续保留的基线门禁名称，Phase 3 尚未完成
 > 核心原则：先锁定当前行为，再替换所有权；只保留当前需要的数据，不为旧版本或未来设想留字段
 
 ### 当前实施步范围：四个服务 crate 的依赖解耦与状态机统一

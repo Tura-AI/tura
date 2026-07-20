@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Context, Result};
+use lifecycle::SessionCommand;
 use runtime::session_log_client::SessionLogClient;
 use serde_json::json;
-use session_log_contract::SessionLogCommand;
+use session_log_contract::{
+    ExecuteSessionCommandRequest, PersistSessionPayloadRequest, SessionLogCommand,
+};
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
@@ -487,17 +490,24 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
     assert_eq!(interrupted.status.as_deref(), Some("error"));
     assert_eq!(interrupted.message_count, 2);
 
-    client.upsert_session(
-        resumed_session_payload(&session_id, &workspace),
-        None,
-        vec![
-            message_payload(&session_id, "resume-m-1", "user", 1),
-            message_payload(&session_id, "resume-m-2", "assistant", 2),
-            message_payload(&session_id, "resume-m-3", "user", 3),
-            message_payload(&session_id, "resume-m-4", "assistant", 4),
-        ],
-        vec![json!({ "id": "resume-todo-1", "status": "done" })],
-    )?;
+    session_log::file_queue::enqueue_command(&SessionLogCommand::ExecuteSessionCommand(
+        ExecuteSessionCommandRequest {
+            session_id: session_id.clone(),
+            session_command: SessionCommand::SubmitUserInput,
+        },
+    ))?;
+    session_log::file_queue::enqueue_command(&SessionLogCommand::PersistSessionPayload(
+        PersistSessionPayloadRequest {
+            session_id: session_id.clone(),
+            records: vec![
+                message_payload(&session_id, "resume-m-1", "user", 1),
+                message_payload(&session_id, "resume-m-2", "assistant", 2),
+                message_payload(&session_id, "resume-m-3", "user", 3),
+                message_payload(&session_id, "resume-m-4", "assistant", 4),
+            ],
+            todos: vec![json!({ "id": "resume-todo-1", "status": "done" })],
+        },
+    ))?;
     wait_for_session(&client, &session_id, |snapshot| {
         snapshot.state.as_deref() == Some("created")
             && snapshot.status.as_deref() == Some("idle")
@@ -559,22 +569,6 @@ fn session_payload(session_id: &str, workspace: &Path, updated_at: i64) -> serde
             "session_last_user_message_at": chrono::DateTime::from_timestamp_millis(updated_at)
                 .unwrap_or_else(chrono::Utc::now)
                 .to_rfc3339(),
-            "state": "created"
-        }
-    })
-}
-
-fn resumed_session_payload(session_id: &str, workspace: &Path) -> serde_json::Value {
-    json!({
-        "id": session_id,
-        "name": "Runtime Interrupted Resume Recovery",
-        "directory": workspace.to_string_lossy(),
-        "created_at": 1,
-        "updated_at": 5,
-        "status": "idle",
-        "management": {
-            "session_id": session_id,
-            "session_name": "Runtime Interrupted Resume Recovery",
             "state": "created"
         }
     })

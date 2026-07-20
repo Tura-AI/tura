@@ -5863,6 +5863,7 @@ name = "tura_workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "lifecycle",
  "router",
  "router_contract",
  "runtime",

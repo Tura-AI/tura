@@ -1,7 +1,7 @@
 //! File-backed handoff queue for session DB writes.
 //!
-//! Runtime processes must not block on session-log storage. They enqueue JSON
-//! commands here and let the session DB owner drain them.
+//! Runtime processes and explicit offline handoffs enqueue JSON commands here
+//! and let the session DB owner drain them.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,7 +22,10 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 pub fn is_async_write(command: &SessionLogCommand) -> bool {
     matches!(
         command,
-        SessionLogCommand::UpsertSession(_)
+        SessionLogCommand::CreateSession(_)
+            | SessionLogCommand::ExecuteSessionCommand(_)
+            | SessionLogCommand::PersistSessionPayload(_)
+            | SessionLogCommand::UpsertSession(_)
             | SessionLogCommand::ApplyCommandCheckpoint(_)
             | SessionLogCommand::MarkSessionInterrupted(_)
             | SessionLogCommand::DeleteSession(_)
@@ -166,6 +169,11 @@ fn apply_file(store: &SessionLogStore, path: &Path) -> Result<()> {
 
 fn apply_command(store: &SessionLogStore, command: SessionLogCommand) -> Result<()> {
     match command {
+        SessionLogCommand::CreateSession(payload) => store.create_session(payload).map(|_| ()),
+        SessionLogCommand::ExecuteSessionCommand(payload) => {
+            store.execute_session_command(payload).map(|_| ())
+        }
+        SessionLogCommand::PersistSessionPayload(payload) => store.persist_session_payload(payload),
         SessionLogCommand::UpsertSession(payload) => store.upsert_session(payload),
         SessionLogCommand::ApplyCommandCheckpoint(payload) => {
             store.apply_command_checkpoint(*payload)
@@ -200,8 +208,9 @@ mod tests {
     use super::{is_async_write, queue_item_name};
     use serde_json::json;
     use session_log_contract::{
-        CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
-        ListSessionRecordsRequest, ListSessionsRequest, MarkSessionInterruptedRequest,
+        CommandCheckpoint, CreateSessionRequest, DeleteSessionRequest, DeleteWorkspaceRequest,
+        ExecuteSessionCommandRequest, GetSessionRequest, ListSessionRecordsRequest,
+        ListSessionsRequest, MarkSessionInterruptedRequest, PersistSessionPayloadRequest,
         SessionLogCommand, UpsertSessionRequest,
     };
 
@@ -255,9 +264,43 @@ mod tests {
         }
     }
 
+    fn create_session() -> CreateSessionRequest {
+        CreateSessionRequest {
+            session_id: "session".to_string(),
+            creation_command: lifecycle::SessionCommand::CreateSession {
+                task_plan: lifecycle::TaskPlan::default(),
+            },
+            workspace: "workspace".to_string(),
+            session_directory: "workspace".to_string(),
+            name: "Session".to_string(),
+            created_at: 1,
+            model: None,
+            agent: None,
+            session_type: "coding".to_string(),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: false,
+            use_last_tool_call_response: false,
+            auto_session_name: false,
+        }
+    }
+
     #[test]
     fn async_write_classifier_accepts_only_mutating_commands() {
         let write_commands = [
+            SessionLogCommand::CreateSession(create_session()),
+            SessionLogCommand::ExecuteSessionCommand(ExecuteSessionCommandRequest {
+                session_id: "session".to_string(),
+                session_command: lifecycle::SessionCommand::SubmitUserInput,
+            }),
+            SessionLogCommand::PersistSessionPayload(PersistSessionPayloadRequest {
+                session_id: "session".to_string(),
+                records: Vec::new(),
+                todos: Vec::new(),
+            }),
             SessionLogCommand::UpsertSession(upsert()),
             SessionLogCommand::ApplyCommandCheckpoint(Box::new(checkpoint())),
             SessionLogCommand::MarkSessionInterrupted(MarkSessionInterruptedRequest {
