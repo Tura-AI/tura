@@ -974,7 +974,28 @@ pub async fn update_todos(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::SessionDbTestService;
     use serde_json::json;
+
+    fn create_canonical_test_session(directory: &str) -> crate::contracts::Session {
+        let store = session_store();
+        let info = store.build_session_info(
+            Some(directory.to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let task_plan = info.management.task_plan.clone();
+        store
+            .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
+            .expect("canonical callback test session should be created")
+    }
 
     fn request(reply_message: &str) -> SendAgentMessageRequest {
         SendAgentMessageRequest {
@@ -1086,18 +1107,8 @@ mod tests {
 
     #[test]
     fn terminal_runtime_usage_callback_updates_session_usage_and_emits_status_event() {
-        let session = session_store().create_session(
-            Some("C:/workspace".to_string()),
-            None,
-            None,
-            Some("coding".to_string()),
-            false,
-            false,
-            false,
-            None,
-            false,
-            false,
-        );
+        let _service = SessionDbTestService::start();
+        let session = create_canonical_test_session("C:/workspace");
         let mut info = session_store()
             .get_session_info(&session.id)
             .expect("session info should exist");
@@ -1166,18 +1177,8 @@ mod tests {
 
     #[test]
     fn live_runtime_callback_updates_session_metrics_before_message_event() {
-        let session = session_store().create_session(
-            Some("C:/workspace-live-metrics".to_string()),
-            None,
-            None,
-            Some("coding".to_string()),
-            false,
-            false,
-            false,
-            None,
-            false,
-            false,
-        );
+        let _service = SessionDbTestService::start();
+        let session = create_canonical_test_session("C:/workspace-live-metrics");
         let mut cursor = session_store().event_cursor();
         let usage = json!({
             "input_tokens": 200,
@@ -1341,18 +1342,8 @@ mod tests {
 
     #[test]
     fn command_updates_emit_incremental_gateway_events() {
-        let session = session_store().create_session(
-            Some("C:/workspace-command-updates".to_string()),
-            None,
-            None,
-            Some("coding".to_string()),
-            false,
-            false,
-            false,
-            None,
-            false,
-            false,
-        );
+        let _service = SessionDbTestService::start();
+        let session = create_canonical_test_session("C:/workspace-command-updates");
         let mut cursor = session_store().event_cursor();
 
         let response = send_agent_message_payload(

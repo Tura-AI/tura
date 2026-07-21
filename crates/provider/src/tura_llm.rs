@@ -514,17 +514,15 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or_default();
     let now = Utc::now().timestamp_millis();
-    if expires > now + 60_000 {
-        if let Some(tokens) = codex_auth.as_ref() {
-            apply_codex_auth_env(tokens);
-        }
-        return Ok(access);
-    }
     if let Some(tokens) = codex_auth.as_ref() {
+        // Codex may rotate auth.json independently; keep this call aligned with that shared login.
+        apply_codex_auth_env(tokens);
         if tokens.access_token != access {
-            apply_codex_auth_env(tokens);
             return Ok(tokens.access_token.clone());
         }
+    }
+    if expires > now + 60_000 {
+        return Ok(access);
     }
 
     let refresh = conf

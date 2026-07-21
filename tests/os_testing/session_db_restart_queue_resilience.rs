@@ -8,8 +8,8 @@
 
 use anyhow::{anyhow, bail, Result};
 use session_log_contract::{
-    DeleteSessionRequest, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
-    SessionLogCommand, SessionLogResponse,
+    GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand,
+    SessionLogResponse,
 };
 use std::{
     sync::{Arc, Barrier},
@@ -31,22 +31,26 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
     let delete_id = env.session_id("delete");
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
 
-    enqueue(SessionLogCommand::UpsertSession(upsert_session(
+    for command in create_session_commands(
         &keep_id,
         &workspace_key,
         timestamp,
-        "running",
+        SessionState::Running,
         &["keep-m1", "keep-m2"],
-        &[("keep-todo-1", "doing")],
-    )))?;
-    enqueue(SessionLogCommand::UpsertSession(upsert_session(
+        &[("keep-todo-1", PlanStatus::Doing)],
+    ) {
+        enqueue(command)?;
+    }
+    for command in create_session_commands(
         &delete_id,
         &workspace_key,
         timestamp + 10,
-        "created",
+        SessionState::Created,
         &["delete-m1"],
         &[],
-    )))?;
+    ) {
+        enqueue(command)?;
+    }
     let first_checkpoint = checkpoint(&keep_id, 1, "command_finished");
     enqueue(SessionLogCommand::ApplyCommandCheckpoint(Box::new(
         first_checkpoint.clone(),
@@ -83,17 +87,40 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
     assert_workspace_db_exists(&workspace)?;
     service.shutdown()?;
 
-    enqueue(SessionLogCommand::DeleteSession(DeleteSessionRequest {
-        session_id: delete_id.clone(),
-    }))?;
-    enqueue(SessionLogCommand::UpsertSession(upsert_session(
+    enqueue(execute_session_command(
+        &delete_id,
+        SessionCommand::DeleteSession,
+    ))?;
+    enqueue(execute_session_command(
         &keep_id,
-        &workspace_key,
+        SessionCommand::SubmitUserInput,
+    ))?;
+    enqueue(execute_session_command(
+        &keep_id,
+        SessionCommand::RuntimeStarted,
+    ))?;
+    enqueue(execute_session_command(
+        &keep_id,
+        SessionCommand::ApplyTaskStatus {
+            task_plan: task_plan(&[
+                ("keep-todo-1", PlanStatus::Done),
+                ("keep-todo-2", PlanStatus::Done),
+            ]),
+        },
+    ))?;
+    enqueue(execute_session_command(
+        &keep_id,
+        SessionCommand::RuntimeCompleted,
+    ))?;
+    enqueue(persist_session_payload_command(
+        &keep_id,
         timestamp + 40,
-        "completed",
         &["keep-m1", "keep-m2", "keep-m3"],
-        &[("keep-todo-1", "done"), ("keep-todo-2", "done")],
-    )))?;
+        &[
+            ("keep-todo-1", PlanStatus::Done),
+            ("keep-todo-2", PlanStatus::Done),
+        ],
+    ))?;
     enqueue(SessionLogCommand::ApplyCommandCheckpoint(Box::new(
         checkpoint(&keep_id, 2, "turn_finished"),
     )))?;
@@ -133,36 +160,36 @@ fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losi
     let completed_id = env.session_id("completed");
 
     let mut service = SessionDbService::start()?;
-    assert_ok(session_log::ipc::call_service(
-        &SessionLogCommand::UpsertSession(upsert_session(
-            &running_id,
-            &workspace_key,
-            100,
-            "running",
-            &["running-m1", "running-m2"],
-            &[("running-todo", "doing")],
-        )),
-    )?)?;
-    assert_ok(session_log::ipc::call_service(
-        &SessionLogCommand::UpsertSession(upsert_session(
-            &paused_id,
-            &workspace_key,
-            110,
-            "paused",
-            &["paused-m1"],
-            &[("paused-todo", "waiting_user")],
-        )),
-    )?)?;
-    assert_ok(session_log::ipc::call_service(
-        &SessionLogCommand::UpsertSession(upsert_session(
-            &completed_id,
-            &workspace_key,
-            120,
-            "completed",
-            &["completed-m1"],
-            &[("completed-todo", "done")],
-        )),
-    )?)?;
+    for command in create_session_commands(
+        &running_id,
+        &workspace_key,
+        100,
+        SessionState::Running,
+        &["running-m1", "running-m2"],
+        &[("running-todo", PlanStatus::Doing)],
+    ) {
+        assert_ok(session_log::ipc::call_service(&command)?)?;
+    }
+    for command in create_session_commands(
+        &paused_id,
+        &workspace_key,
+        110,
+        SessionState::Paused,
+        &["paused-m1"],
+        &[("paused-todo", PlanStatus::WaitingUser)],
+    ) {
+        assert_ok(session_log::ipc::call_service(&command)?)?;
+    }
+    for command in create_session_commands(
+        &completed_id,
+        &workspace_key,
+        120,
+        SessionState::Completed,
+        &["completed-m1"],
+        &[("completed-todo", PlanStatus::Done)],
+    ) {
+        assert_ok(session_log::ipc::call_service(&command)?)?;
+    }
     service.shutdown()?;
 
     let mut restarted = SessionDbService::start()?;
@@ -178,7 +205,7 @@ fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losi
         "interrupted",
         "error",
         2,
-        Some("doing"),
+        Some("waiting_user"),
     )?;
     assert_session_snapshot(
         &paused_id,
@@ -240,16 +267,16 @@ fn session_db_handles_concurrent_short_lived_clients_after_restart_with_workspac
                 format!("m-{index}-2"),
             ];
             let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
-            assert_ok(session_log::ipc::call_service(
-                &SessionLogCommand::UpsertSession(upsert_session(
-                    &session_id,
-                    &workspace,
-                    1_000 + index as i64,
-                    "completed",
-                    &message_refs,
-                    &[("batch-task", "done")],
-                )),
-            )?)?;
+            for command in create_session_commands(
+                &session_id,
+                &workspace,
+                1_000 + index as i64,
+                SessionState::Completed,
+                &message_refs,
+                &[("batch-task", PlanStatus::Done)],
+            ) {
+                assert_ok(session_log::ipc::call_service(&command)?)?;
+            }
             Ok((session_id, workspace))
         }));
     }
@@ -316,14 +343,16 @@ fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Re
             format!("queued-before-start-{index}-1"),
         ];
         let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
-        enqueue(SessionLogCommand::UpsertSession(upsert_session(
+        for command in create_session_commands(
             &session_id,
             &workspace,
             2_000 + index as i64,
-            "completed",
+            SessionState::Completed,
             &message_refs,
-            &[("queued-task", "done")],
-        )))?;
+            &[("queued-task", PlanStatus::Done)],
+        ) {
+            enqueue(command)?;
+        }
         expected_sessions.push((session_id, workspace, messages.len()));
     }
 
@@ -352,16 +381,16 @@ fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Re
                     format!("socket-writer-{writer}-2"),
                 ];
                 let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
-                assert_ok(session_log::ipc::call_service(
-                    &SessionLogCommand::UpsertSession(upsert_session(
-                        &session_id,
-                        &workspace,
-                        3_000 + writer as i64,
-                        "completed",
-                        &message_refs,
-                        &[("socket-task", "done")],
-                    )),
-                )?)?;
+                for command in create_session_commands(
+                    &session_id,
+                    &workspace,
+                    3_000 + writer as i64,
+                    SessionState::Completed,
+                    &message_refs,
+                    &[("socket-task", PlanStatus::Done)],
+                ) {
+                    assert_ok(session_log::ipc::call_service(&command)?)?;
+                }
                 let _ = record_ids(&session_id)?;
                 Ok(vec![(session_id, workspace, messages.len())])
             },
@@ -391,14 +420,16 @@ fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Re
                         format!("queued-while-running-{queue_writer}-{item}-1"),
                     ];
                     let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
-                    enqueue(SessionLogCommand::UpsertSession(upsert_session(
+                    for command in create_session_commands(
                         &session_id,
                         &workspace,
                         4_000 + queue_writer as i64 * 10 + item as i64,
-                        "completed",
+                        SessionState::Completed,
                         &message_refs,
-                        &[("live-queue-task", "done")],
-                    )))?;
+                        &[("live-queue-task", PlanStatus::Done)],
+                    ) {
+                        enqueue(command)?;
+                    }
                     sessions.push((session_id, workspace, messages.len()));
                 }
                 Ok(sessions)

@@ -123,6 +123,7 @@ incremental = false
 
 [dev-dependencies]
 anyhow.workspace = true
+lifecycle.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
 session_log.workspace = true

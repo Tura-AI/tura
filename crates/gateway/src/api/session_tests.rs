@@ -292,22 +292,12 @@ fn workspace_key_normalizes_slashes_and_trailing_separator() {
 
 #[tokio::test]
 async fn session_status_includes_task_management_display_fields() {
+    let _service = SessionDbTestService::start();
     let directory = std::env::temp_dir()
         .join(format!("tura-session-status-{}", uuid::Uuid::new_v4()))
         .to_string_lossy()
         .to_string();
-    let session = session_store().create_session(
-        Some(directory),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(directory).await;
     session_store()
         .update_session(
             &session.id,

@@ -7,12 +7,14 @@
 //! or third-party services.
 
 pub(crate) use anyhow::{anyhow, bail, Context, Result};
+pub(crate) use lifecycle::{PlanStatus, SessionCommand, SessionState, TaskPlan, TaskStep};
 pub(crate) use rusqlite::Connection;
 pub(crate) use serde_json::json;
 pub(crate) use session_log::file_queue;
 pub(crate) use session_log_contract::{
-    CommandCheckpoint, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
-    SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
+    CommandCheckpoint, CreateSessionRequest, ExecuteSessionCommandRequest, GetSessionRequest,
+    ListSessionRecordsRequest, ListSessionsRequest, PersistSessionPayloadRequest,
+    SessionLogCommand, SessionLogResponse,
 };
 pub(crate) use std::{
     path::{Path, PathBuf},
@@ -28,43 +30,72 @@ pub(crate) fn enqueue(command: SessionLogCommand) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn upsert_session(
+pub(crate) fn task_plan(tasks: &[(&str, PlanStatus)]) -> TaskPlan {
+    TaskPlan {
+        plan_summary: "restart recovery plan".to_string(),
+        detailed_tasks: tasks
+            .iter()
+            .enumerate()
+            .map(|(index, (task_id, status))| TaskStep {
+                task_id: (*task_id).to_string(),
+                step: index as u64 + 1,
+                task_summary: format!("task {task_id}"),
+                step_task: format!("task {task_id}"),
+                status: *status,
+                ..TaskStep::default()
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn create_session_command(
     session_id: &str,
     workspace: &str,
+    created_at: i64,
+    tasks: &[(&str, PlanStatus)],
+) -> SessionLogCommand {
+    SessionLogCommand::CreateSession(CreateSessionRequest {
+        session_id: session_id.to_string(),
+        creation_command: SessionCommand::CreateSession {
+            task_plan: task_plan(tasks),
+        },
+        workspace: workspace.to_string(),
+        session_directory: workspace.to_string(),
+        name: format!("Session {session_id}"),
+        created_at,
+        model: None,
+        agent: None,
+        session_type: "coding".to_string(),
+        kill_processes_on_start: false,
+        validator_enabled: false,
+        force_planning: false,
+        model_variant: None,
+        model_acceleration_enabled: false,
+        disable_permission_restrictions: false,
+        use_last_tool_call_response: false,
+        auto_session_name: false,
+    })
+}
+
+pub(crate) fn execute_session_command(
+    session_id: &str,
+    session_command: SessionCommand,
+) -> SessionLogCommand {
+    SessionLogCommand::ExecuteSessionCommand(ExecuteSessionCommandRequest {
+        session_id: session_id.to_string(),
+        session_command,
+    })
+}
+
+pub(crate) fn persist_session_payload_command(
+    session_id: &str,
     updated_at: i64,
-    state: &str,
     messages: &[&str],
-    todos: &[(&str, &str)],
-) -> UpsertSessionRequest {
-    UpsertSessionRequest {
-        session: json!({
-            "id": session_id,
-            "name": format!("Session {session_id}"),
-            "directory": workspace,
-            "created_at": updated_at - 1,
-            "updated_at": updated_at,
-            "management": {
-                "session_id": session_id,
-                "session_name": format!("Session {session_id}"),
-                "session_directory": workspace,
-                "session_created_at": "2026-06-12T00:00:00.000Z",
-                "session_last_update_at": "2026-06-12T00:00:01.000Z",
-                "state": state,
-                "task_plan": {
-                    "plan_summary": format!("plan for {session_id}"),
-                    "detailed_tasks": todos.iter().map(|(id, status)| {
-                        json!({
-                            "id": id,
-                            "step": format!("task {id}"),
-                            "status": status,
-                            "deliverables": []
-                        })
-                    }).collect::<Vec<_>>()
-                }
-            }
-        }),
-        parent_id: None,
-        messages: messages
+    todos: &[(&str, PlanStatus)],
+) -> SessionLogCommand {
+    SessionLogCommand::PersistSessionPayload(PersistSessionPayloadRequest {
+        session_id: session_id.to_string(),
+        records: messages
             .iter()
             .enumerate()
             .map(|(index, message_id)| {
@@ -87,7 +118,77 @@ pub(crate) fn upsert_session(
                 })
             })
             .collect(),
+    })
+}
+
+pub(crate) fn create_session_commands(
+    session_id: &str,
+    workspace: &str,
+    created_at: i64,
+    state: SessionState,
+    messages: &[&str],
+    tasks: &[(&str, PlanStatus)],
+) -> Vec<SessionLogCommand> {
+    let mut commands = vec![create_session_command(
+        session_id, workspace, created_at, tasks,
+    )];
+    match state {
+        SessionState::Created => {}
+        SessionState::Running => commands.push(execute_session_command(
+            session_id,
+            SessionCommand::RuntimeStarted,
+        )),
+        SessionState::Paused => {
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeStarted,
+            ));
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::ApplyRuntimeState {
+                    state: SessionState::Paused,
+                },
+            ));
+        }
+        SessionState::Completed => {
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeStarted,
+            ));
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeCompleted,
+            ));
+        }
+        SessionState::Failed => {
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeStarted,
+            ));
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeFailed,
+            ));
+        }
+        SessionState::Cancelled => commands.push(execute_session_command(
+            session_id,
+            SessionCommand::CancelSession,
+        )),
+        SessionState::Interrupted => {
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeStarted,
+            ));
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::InterruptSession,
+            ));
+        }
     }
+    commands.push(persist_session_payload_command(
+        session_id, created_at, messages, tasks,
+    ));
+    commands
 }
 
 pub(crate) fn checkpoint(session_id: &str, seq: i64, status: &str) -> CommandCheckpoint {
@@ -111,7 +212,7 @@ pub(crate) fn checkpoint(session_id: &str, seq: i64, status: &str) -> CommandChe
 
 pub(crate) fn assert_ok(response: SessionLogResponse) -> Result<()> {
     match response {
-        SessionLogResponse::Ok => Ok(()),
+        SessionLogResponse::Ok | SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
         SessionLogResponse::Error { error } => bail!("session_db returned error: {error}"),
         other => bail!("session_db returned unexpected response: {other:?}"),
     }
