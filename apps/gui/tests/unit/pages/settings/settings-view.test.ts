@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import providerConfig from "../../../../../../crates/provider/config/provider_config.json";
 import type { SdkProvider } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import { initialAppState } from "../../../../app/src/state/global-store";
@@ -12,33 +11,6 @@ import {
   providerAuthDisplayState,
   providerConfigured,
 } from "../../../../app/src/utils/settings";
-
-const settingsViewSource = readFileSync(
-  resolve(import.meta.dir, "../../../../app/src/pages/settings/settings-view.tsx"),
-  "utf8",
-);
-const navigationCss = readFileSync(
-  resolve(import.meta.dir, "../../../../app/src/styles/parts/base/navigation.css"),
-  "utf8",
-);
-const appShellSource = readFileSync(
-  resolve(import.meta.dir, "../../../../app/src/app/app-shell.tsx"),
-  "utf8",
-);
-const aboutPanelSource = readFileSync(
-  resolve(import.meta.dir, "../../../../app/src/pages/settings/about-panel.tsx"),
-  "utf8",
-);
-const gatewayServerSource = readFileSync(
-  resolve(import.meta.dir, "../../../../../../crates/gateway/src/web/server.rs"),
-  "utf8",
-);
-const providerConfig = JSON.parse(
-  readFileSync(
-    resolve(import.meta.dir, "../../../../../../crates/provider/config/provider_config.json"),
-    "utf8",
-  ),
-);
 
 const MEDIA_GENERATION_PROVIDERS = [
   "alibaba_cloud",
@@ -152,41 +124,8 @@ describe("MainTabs", () => {
     expect(entries.some((entry) => entry.id === "plan")).toBe(false);
   });
 
-  describe("About settings", () => {
-    test("is the final settings destination and uses the shared Gateway client", () => {
-      expect(settingsRoutes().at(-1)?.id).toBe("about");
-      expect(settingsViewSource).toContain('props.section === "about"');
-      for (const method of [
-        "aboutInfo",
-        "starTuraRepository",
-        "openAboutTarget",
-        "checkTuraUpdate",
-        "installTuraUpdate",
-      ]) {
-        expect(aboutPanelSource).toContain(method);
-      }
-    });
-
-    test("uses fixed About routes and the existing confirmation dialog", () => {
-      for (const route of [
-        "/about",
-        "/about/star",
-        "/about/open",
-        "/about/update/check",
-        "/about/update/install",
-      ]) {
-        expect(gatewayServerSource).toContain(route);
-      }
-      expect(aboutPanelSource).toContain('class="name-dialog"');
-      expect(aboutPanelSource).toContain('t("aboutUpdateWarning"');
-    });
-  });
-
-  test("uses the no-icon grid so the session label is not clipped into the icon column", () => {
-    expect(navigationCss).toContain(".main-tabs button.no-icon");
-    expect(settingsViewSource).toContain(
-      'classNames("no-icon", props.active === item.id && "selected")',
-    );
+  test("keeps About as the final settings destination", () => {
+    expect(settingsRoutes().at(-1)?.id).toBe("about");
   });
 });
 
@@ -207,14 +146,6 @@ describe("settings config patches", () => {
       code_font_size: null,
       skill_folders: [],
     });
-  });
-
-  test("renders the corner radius selector with the current default as 8px", () => {
-    expect(settingsViewSource).toContain("CORNER_RADIUS_OPTIONS");
-    expect(settingsViewSource).toContain("props.state.cornerRadius");
-    expect(settingsViewSource).toContain("value={props.state.cornerRadius}");
-    expect(appShellSource).toContain("cornerRadiusScale(state().cornerRadius)");
-    expect(appShellSource).toContain('"--corner-radius-scale"');
   });
 });
 

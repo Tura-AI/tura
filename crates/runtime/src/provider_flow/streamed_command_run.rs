@@ -3,8 +3,10 @@
 use chrono::{DateTime, Utc};
 use lifecycle::RuntimeProjection;
 use serde_json::Value;
+use session_log_contract::{SessionFeedCommandUpdate, SessionFeedEvent};
 
-use crate::gateway_events::{runtime_message_id, runtime_tool_part_id};
+use crate::gateway_events::{publish_feed_event, runtime_message_id, runtime_tool_part_id};
+use crate::runtime_event_writer::RuntimeFeedPublisher;
 use crate::tool_callback_sanitizer::{
     sanitize_tool_callback_output, sanitize_tool_callback_result,
 };
@@ -167,25 +169,23 @@ pub fn command_run_live_delta_result(
     })
 }
 
-pub struct StreamedCommandRunUpdate<'a> {
-    pub session_id: &'a str,
-    pub runtime_id: &'a str,
-    pub provider: &'a Value,
-    pub call_id: &'a str,
-    pub commands: &'a [Value],
-    pub results: &'a [Value],
-    pub status: &'a str,
-    pub started_at: DateTime<Utc>,
-    pub ended_at: Option<DateTime<Utc>>,
-    pub runtime_status: RuntimeProjection,
+pub(crate) struct StreamedCommandRunUpdate<'a> {
+    pub(crate) session_id: &'a str,
+    pub(crate) runtime_id: &'a str,
+    pub(crate) provider: &'a Value,
+    pub(crate) call_id: &'a str,
+    pub(crate) commands: &'a [Value],
+    pub(crate) results: &'a [Value],
+    pub(crate) status: &'a str,
+    pub(crate) started_at: DateTime<Utc>,
+    pub(crate) ended_at: Option<DateTime<Utc>>,
+    pub(crate) runtime_status: RuntimeProjection,
+    pub(crate) publisher: Option<&'a RuntimeFeedPublisher>,
 }
 
-pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>) {
-    if gateway_callbacks_disabled() {
-        return;
-    }
-
-    let target_session_id = gateway_callback_session_id(update.session_id);
+pub(crate) fn publish_streamed_command_run_update(
+    update: StreamedCommandRunUpdate<'_>,
+) -> Result<(), String> {
     let updated_at = update
         .ended_at
         .unwrap_or(update.started_at)
@@ -256,30 +256,23 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
         "metadata": metadata,
         "time": time,
     });
-    let payload = serde_json::json!({
-        "reply_message": "",
-        "new_learning": "",
-        "media": [],
-        "runtime_id": update.runtime_id,
-        "runtime_status": &update.runtime_status,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "command_updates": command_updates,
-        "tool_call": {
-            "tool_name": COMMAND_RUN_TOOL_NAME,
-            "call_id": update.call_id,
-            "state": state,
-            "metadata": metadata,
-        }
-    });
-
-    crate::gateway_events::post_gateway_callback_detached(
-        "session.agent_message",
-        payload,
-        target_session_id,
-        update.runtime_id.to_string(),
-        "streamed_command_run_update",
-    );
+    publish_feed_event(
+        update.publisher,
+        SessionFeedEvent::ToolCallUpdated {
+            message_id: runtime_message_id(update.runtime_id),
+            part_id: runtime_tool_part_id(update.runtime_id, COMMAND_RUN_TOOL_NAME),
+            tool_name: COMMAND_RUN_TOOL_NAME.to_string(),
+            call_id: update.call_id.to_string(),
+            state,
+            metadata: Some(metadata),
+            runtime_status: Some(update.runtime_status),
+            context_tokens: None,
+            usage: None,
+            command_updates,
+            created_at,
+            updated_at,
+        },
+    )
 }
 
 fn command_update_payloads(
@@ -290,25 +283,32 @@ fn command_update_payloads(
     status: &str,
     created_at: i64,
     updated_at: i64,
-) -> Vec<Value> {
+) -> Vec<SessionFeedCommandUpdate> {
     let mut updates = Vec::new();
     for command in commands {
-        let command_id = command_identity(command, command_run_id);
-        updates.push(serde_json::json!({
-            "messageID": runtime_message_id(runtime_id),
-            "partID": runtime_tool_part_id(runtime_id, COMMAND_RUN_TOOL_NAME),
-            "runtimeID": runtime_id,
-            "commandRunID": command_run_id,
-            "commandID": command_id,
-            "providerToolCallID": command.get("provider_tool_call_id").cloned().unwrap_or(Value::Null),
-            "commandIndex": command.get("command_index").cloned().unwrap_or(Value::Null),
-            "eventSeq": command_event_seq(command, 20),
-            "status": if status == "completed" || status == "error" { status } else { "ready" },
-            "command": command,
-            "result": Value::Null,
-            "createdAt": created_at,
-            "updatedAt": updated_at,
-        }));
+        let command_id =
+            command_identity(command, command_run_id).unwrap_or_else(|| command_run_id.to_string());
+        updates.push(SessionFeedCommandUpdate {
+            message_id: runtime_message_id(runtime_id),
+            part_id: runtime_tool_part_id(runtime_id, COMMAND_RUN_TOOL_NAME),
+            command_run_id: command_run_id.to_string(),
+            command_id,
+            provider_tool_call_id: command
+                .get("provider_tool_call_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            command_index: command.get("command_index").and_then(Value::as_u64),
+            event_seq: Some(command_event_seq(command, 20)),
+            status: if status == "completed" || status == "error" {
+                status.to_string()
+            } else {
+                "ready".to_string()
+            },
+            command: command.clone(),
+            result: Value::Null,
+            created_at,
+            updated_at,
+        });
     }
     for result in results {
         let command = result.get("command").unwrap_or(&Value::Null);
@@ -316,29 +316,31 @@ fn command_update_payloads(
             .or_else(|| command_identity(command, command_run_id))
             .unwrap_or_else(|| command_run_id.to_string());
         let result_status = command_result_status(result, status);
-        updates.push(serde_json::json!({
-            "messageID": runtime_message_id(runtime_id),
-            "partID": runtime_tool_part_id(runtime_id, COMMAND_RUN_TOOL_NAME),
-            "runtimeID": runtime_id,
-            "commandRunID": command_run_id,
-            "commandID": command_id,
-            "providerToolCallID": result
+        updates.push(SessionFeedCommandUpdate {
+            message_id: runtime_message_id(runtime_id),
+            part_id: runtime_tool_part_id(runtime_id, COMMAND_RUN_TOOL_NAME),
+            command_run_id: command_run_id.to_string(),
+            command_id,
+            provider_tool_call_id: result
                 .get("provider_tool_call_id")
                 .or_else(|| command.get("provider_tool_call_id"))
-                .cloned()
-                .unwrap_or(Value::Null),
-            "commandIndex": result
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            command_index: result
                 .get("command_index")
                 .or_else(|| command.get("command_index"))
-                .cloned()
-                .unwrap_or(Value::Null),
-            "eventSeq": command_event_seq(result, status_event_rank(&result_status)),
-            "status": result_status,
-            "command": if command.is_null() { Value::Null } else { command.clone() },
-            "result": result,
-            "createdAt": created_at,
-            "updatedAt": updated_at,
-        }));
+                .and_then(Value::as_u64),
+            event_seq: Some(command_event_seq(result, status_event_rank(&result_status))),
+            status: result_status,
+            command: if command.is_null() {
+                Value::Null
+            } else {
+                command.clone()
+            },
+            result: result.clone(),
+            created_at,
+            updated_at,
+        });
     }
     updates
 }
@@ -393,29 +395,6 @@ fn status_event_rank(status: &str) -> i64 {
         "ready" => 20,
         _ => 10,
     }
-}
-
-fn gateway_callbacks_disabled() -> bool {
-    crate::manas::constants::gateway_callbacks_disabled()
-}
-
-fn gateway_callback_session_id(session_id: &str) -> String {
-    if planning_child_depth_from_env() > 0 {
-        if let Ok(parent_session_id) = std::env::var("TURA_PARENT_SESSION_ID") {
-            let parent_session_id = parent_session_id.trim();
-            if !parent_session_id.is_empty() {
-                return parent_session_id.to_string();
-            }
-        }
-    }
-    session_id.to_string()
-}
-
-fn planning_child_depth_from_env() -> usize {
-    std::env::var("TURA_PLANNING_DEPTH")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

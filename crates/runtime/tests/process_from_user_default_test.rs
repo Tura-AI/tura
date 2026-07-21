@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
+use lifecycle::{FileInput, SessionInput};
 use runtime::agent_router::{activate_agents_by_session_type, coding_agent_provider_name};
 use runtime::session::{activate_session_with_directory, create_session_with_directory};
-use runtime::state_machine::session_management::{FileInput, SessionInput};
 
 #[test]
 fn default_agent_registry_loads_coding_agent() {

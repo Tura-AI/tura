@@ -1,5 +1,9 @@
+#[path = "../support/typed_session.rs"]
+mod typed_session;
+
+use lifecycle::TaskPlan;
 use session_log::SessionLogStore;
-use session_log_contract::{ListSessionsRequest, UpsertSessionRequest};
+use session_log_contract::ListSessionsRequest;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus};
 use std::thread::JoinHandle;
@@ -74,7 +78,7 @@ impl DirectDbGuard {
 }
 
 #[test]
-fn concurrent_upserts_keep_pagination_consistent() {
+fn concurrent_typed_writes_keep_pagination_consistent() {
     let test_started = Instant::now();
     let db = DirectDbGuard::new();
     let store = SessionLogStore::open_default().expect("store");
@@ -93,9 +97,16 @@ fn concurrent_upserts_keep_pagination_consistent() {
             for index in 0..per_worker {
                 let sequence = worker * per_worker + index;
                 let session_id = format!("stress-{nonce}-{sequence}");
-                store
-                    .upsert_session(upsert(&session_id, &workspace, sequence as i64))
-                    .expect("upsert");
+                typed_session::create_with_message_in_store(
+                    &store,
+                    &session_id,
+                    &workspace,
+                    &format!("Stress {sequence}"),
+                    sequence as i64,
+                    "assistant",
+                    "concurrent typed write",
+                )
+                .expect("typed write");
             }
         }));
     }
@@ -103,8 +114,12 @@ fn concurrent_upserts_keep_pagination_consistent() {
     for worker in workers {
         join_thread_with_timeout(
             worker,
-            remaining_timeout(test_started, TEST_TIMEOUT, "concurrent upsert pressure"),
-            "concurrent upsert worker",
+            remaining_timeout(
+                test_started,
+                TEST_TIMEOUT,
+                "concurrent typed write pressure",
+            ),
+            "concurrent typed write worker",
         );
     }
 
@@ -121,7 +136,7 @@ fn concurrent_upserts_keep_pagination_consistent() {
     assert_eq!(sessions.len(), 50);
     assert!(
         started.elapsed() < Duration::from_secs(60),
-        "concurrent upsert smoke test took {:?}",
+        "concurrent typed write smoke test took {:?}",
         started.elapsed()
     );
 }
@@ -141,7 +156,7 @@ fn cross_process_writers_share_one_queued_local_database() {
         children.push(
             Command::new(&current_exe)
                 .args(["--exact", "cross_process_session_log_helper", "--nocapture"])
-                .env("SESSION_LOG_CROSS_PROCESS_MODE", "upsert")
+                .env("SESSION_LOG_CROSS_PROCESS_MODE", "write")
                 .env("SESSION_LOG_CROSS_PROCESS_SESSION_ID", session_id)
                 .env("SESSION_LOG_CROSS_PROCESS_WORKSPACE", &workspace)
                 .env("SESSION_LOG_DB_ROOT", db.root())
@@ -159,7 +174,7 @@ fn cross_process_writers_share_one_queued_local_database() {
                 "cross-process session_log pressure",
             )
             .min(CHILD_TIMEOUT),
-            "cross-process upsert helper",
+            "cross-process typed write helper",
         );
         assert!(status.success(), "helper exited with {status}");
     }
@@ -206,14 +221,7 @@ fn multi_workspace_rich_history_10_by_20_persists_2000_records() {
             let workspace = workspace.clone();
             let session_id = format!("rich-{nonce}-{workspace_index}-{task_index}");
             workers.push(std::thread::spawn(move || {
-                store
-                    .upsert_session(rich_upsert(
-                        &session_id,
-                        &workspace,
-                        workspace_index,
-                        task_index,
-                    ))
-                    .expect("rich upsert");
+                write_rich_session(&store, &session_id, &workspace, workspace_index, task_index);
             }));
         }
     }
@@ -279,11 +287,18 @@ fn cross_process_session_log_helper() {
     let store = SessionLogStore::open_default().expect("store");
     let workspace = std::env::var("SESSION_LOG_CROSS_PROCESS_WORKSPACE").expect("workspace");
 
-    if mode == "upsert" {
+    if mode == "write" {
         let session_id = std::env::var("SESSION_LOG_CROSS_PROCESS_SESSION_ID").expect("session id");
-        store
-            .upsert_session(upsert(&session_id, &workspace, 1))
-            .expect("upsert");
+        typed_session::create_with_message_in_store(
+            &store,
+            &session_id,
+            &workspace,
+            "Cross-process typed write",
+            1,
+            "assistant",
+            "cross-process typed write",
+        )
+        .expect("typed write");
         return;
     }
 
@@ -303,83 +318,46 @@ fn cross_process_session_log_helper() {
     assert_eq!(sessions.len() as u64, expected);
 }
 
-fn upsert(session_id: &str, workspace: &str, sequence: i64) -> UpsertSessionRequest {
-    UpsertSessionRequest {
-        session: serde_json::json!({
-            "id": session_id,
-            "name": format!("Stress {sequence}"),
-            "directory": workspace,
-            "created_at": sequence,
-            "updated_at": sequence,
-            "status": "idle",
-            "management": {
-                "session_id": session_id,
-                "session_name": format!("Stress {sequence}"),
-                "state": "created"
-            }
-        }),
-        parent_id: None,
-        messages: vec![serde_json::json!({
-            "id": format!("m-{sequence}"),
-            "role": "assistant",
-            "created_at": sequence,
-            "updated_at": sequence
-        })],
-        todos: vec![],
-    }
-}
-
-fn rich_upsert(
+fn write_rich_session(
+    store: &SessionLogStore,
     session_id: &str,
     workspace: &str,
     workspace_index: usize,
     task_index: usize,
-) -> UpsertSessionRequest {
+) {
     let sequence = (workspace_index * TASKS_PER_WORKSPACE + task_index) as i64;
-    UpsertSessionRequest {
-        session: serde_json::json!({
-            "id": session_id,
-            "name": format!("Rich Workspace {workspace_index} Task {task_index}"),
-            "directory": workspace,
-            "created_at": sequence,
-            "updated_at": 10_000 + sequence,
-            "status": "idle",
-            "management": {
-                "session_id": session_id,
-                "session_name": format!("Rich Workspace {workspace_index} Task {task_index}"),
-                "state": "created",
-                "task_plan": {
-                    "plan_summary": "multi workspace rich history pressure",
-                    "detailed_tasks": [{
-                        "id": format!("task-{workspace_index}-{task_index}"),
-                        "status": "done"
-                    }]
-                }
-            }
-        }),
-        parent_id: None,
-        messages: (0..RICH_RECORDS_PER_TASK)
-            .map(|record_index| {
-                let created = sequence * 100 + record_index as i64;
-                serde_json::json!({
-                    "id": format!("rich-message-{workspace_index}-{task_index}-{record_index}"),
-                    "session_id": session_id,
-                    "role": if record_index % 2 == 0 { "user" } else { "assistant" },
-                    "created_at": created,
-                    "updated_at": created,
-                    "parts": [{
-                        "type": "text",
-                        "text": rich_text_payload(workspace_index, task_index, record_index),
-                    }]
-                })
-            })
-            .collect(),
-        todos: vec![serde_json::json!({
-            "id": format!("todo-{workspace_index}-{task_index}"),
-            "content": "persist rich concurrent workspace history",
-            "status": "done"
-        })],
-    }
+    typed_session::create_in_store(
+        store,
+        session_id,
+        workspace,
+        &format!("Rich Workspace {workspace_index} Task {task_index}"),
+        sequence,
+        TaskPlan {
+            plan_summary: "multi workspace rich history pressure".to_string(),
+            ..TaskPlan::default()
+        },
+    )
+    .expect("create rich session");
+    let entries = (0..RICH_RECORDS_PER_TASK)
+        .map(|record_index| {
+            let created = sequence * 100 + record_index as i64;
+            typed_session::message_entry(
+                record_index as u64,
+                session_id,
+                &format!("rich-message-{workspace_index}-{task_index}-{record_index}"),
+                if record_index % 2 == 0 {
+                    "user"
+                } else {
+                    "assistant"
+                },
+                &rich_text_payload(workspace_index, task_index, record_index),
+                created,
+            )
+        })
+        .collect();
+    typed_session::persist_in_store(store, session_id, 0, entries)
+        .map(|next_sequence| assert_eq!(next_sequence, RICH_RECORDS_PER_TASK as u64))
+        .expect("persist rich session delta");
 }
 
 fn rich_text_payload(workspace_index: usize, task_index: usize, record_index: usize) -> String {

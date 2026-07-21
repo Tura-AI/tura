@@ -3,12 +3,12 @@ use chrono::Utc;
 use crate::gateway_events::{runtime_message_id, runtime_text_part_id};
 use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
 use crate::provider_flow::usage::runtime_cache_diagnostics;
-use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::RuntimeAggregate;
+use lifecycle::SessionManagement;
 
 pub(crate) fn accumulate_session_from_runtime(
     session: &mut SessionManagement,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     publish_runtime_text: bool,
 ) -> Result<(), String> {
     let now = Utc::now();
@@ -74,12 +74,10 @@ pub(crate) fn accumulate_session_from_runtime(
 #[cfg(test)]
 mod tests {
     use super::accumulate_session_from_runtime;
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{
-        RuntimeManagement, RuntimeProviderConfig, UsageReport,
-    };
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::{Duration, Utc};
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeProviderConfig, UsageReport};
+    use lifecycle::{SessionInput, SessionManagement};
     use std::path::PathBuf;
 
     #[test]
@@ -101,7 +99,7 @@ mod tests {
             "hello".to_string(),
             session_created_at,
         );
-        let mut runtime = RuntimeManagement::new(
+        let mut runtime = RuntimeAggregate::new(
             "runtime-provider-step".to_string(),
             session.session_id.clone(),
             "agent-provider-step".to_string(),
@@ -118,7 +116,9 @@ mod tests {
         runtime
             .mark_first_token(first_token_at)
             .expect("mark first token");
-        runtime.append_text("Visible assistant reply");
+        runtime
+            .append_text("Visible assistant reply")
+            .expect("fixture text should apply");
         runtime.finish_success(finished_at, None).expect("finish");
 
         accumulate_session_from_runtime(&mut session, &runtime, true).expect("accumulate");
@@ -154,7 +154,7 @@ mod tests {
             "hello".to_string(),
             session_created_at,
         );
-        let mut runtime = RuntimeManagement::new(
+        let mut runtime = RuntimeAggregate::new(
             "runtime-provider-usage".to_string(),
             session.session_id.clone(),
             "agent-provider-step".to_string(),

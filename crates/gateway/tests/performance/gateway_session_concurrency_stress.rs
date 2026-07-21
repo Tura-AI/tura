@@ -4,19 +4,26 @@
 //! the gateway session API, the real session_db IPC service, and a mock runtime
 //! router accepting concurrent turns.
 
+#[path = "../support/typed_session.rs"]
+mod typed_session;
+
 use anyhow::{anyhow, Context, Result};
+use axum::body::to_bytes;
 use axum::extract::{Json, Path, Query};
-use gateway::api::session::{create_session, list_messages, list_sessions, send_agent_message};
+use axum::response::IntoResponse;
+use gateway::api::session::{create_session, list_messages, list_sessions};
 use gateway::contracts::{
-    CreateSessionRequest, MessageListParams, SendAgentMessageRequest, SendMessageRequest,
-    SessionDirectoryParams, SessionListParams, SessionStatus,
+    CreateSessionRequest, MessageListParams, SendMessageRequest, SessionDirectoryParams,
+    SessionListParams, SessionStatus,
 };
 use gateway::session::MessageRole;
+use gateway::session_db_client::SessionDbClient;
+use gateway::session_feed::SessionFeedReducer;
 use gateway::session_store;
-use lifecycle::{RuntimeProjection, RuntimeState};
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use session_log::SessionLogStore;
-use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
+use session_log_contract::SessionLogCommand;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -76,20 +83,23 @@ async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
     for index in 0..SESSION_COUNT {
         let workspace_index = index / TASKS_PER_WORKSPACE;
         let workspace_string = workspace_strings[workspace_index].clone();
-        let Json(session) = create_session(
-            axum::http::HeaderMap::new(),
-            Query(SessionDirectoryParams { directory: None }),
-            Some(Json(CreateSessionRequest {
-                directory: Some(workspace_string.clone()),
-                model: Some("openai/gpt-stress".to_string()),
-                agent: Some("performance-stress-agent".to_string()),
-                session_type: Some("coding".to_string()),
-                model_variant: Some("low".to_string()),
-                auto_session_name: Some(false),
-                ..CreateSessionRequest::default()
-            })),
+        let session: gateway::contracts::Session = decode_json_response(
+            create_session(
+                axum::http::HeaderMap::new(),
+                Query(SessionDirectoryParams { directory: None }),
+                Some(Json(CreateSessionRequest {
+                    directory: Some(workspace_string.clone()),
+                    model: Some("openai/gpt-stress".to_string()),
+                    agent: Some("performance-stress-agent".to_string()),
+                    session_type: Some("coding".to_string()),
+                    model_variant: Some("low".to_string()),
+                    auto_session_name: Some(false),
+                    ..CreateSessionRequest::default()
+                })),
+            )
+            .await,
         )
-        .await;
+        .await?;
         sessions.push((index, workspace_index, workspace_string, session.id));
     }
 
@@ -199,7 +209,7 @@ async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
 
     for (_, _, _, session_id) in &sessions {
         let Json(messages) = list_messages(
-            Path(session_id.clone()),
+            Path::<String>(session_id.clone()),
             Query(MessageListParams {
                 limit: Some(EXPECTED_MESSAGES_PER_SESSION + 5),
                 ..MessageListParams::default()
@@ -237,18 +247,26 @@ async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
 
 async fn run_concurrent_session_turns(sessions: Vec<(usize, usize, String, String)>) -> Result<()> {
     let mut tasks = Vec::with_capacity(sessions.len());
-    for (session_index, workspace_index, workspace, session_id) in sessions {
+    for (session_index, workspace_index, _workspace, session_id) in sessions {
         tasks.push(tokio::spawn(async move {
             for turn in 0..ROUTER_TURNS_PER_SESSION {
-                let Json(reply) = gateway::api::session::send_message(
-                    Path(session_id.clone()),
-                    Json(SendMessageRequest {
-                        content: rich_text_payload(workspace_index, session_index, turn, "gateway prompt"),
-                        attachments: None,
-                        parent_id: None,
-                    }),
+                let reply: gateway::contracts::Message = decode_json_response(
+                    gateway::api::session::send_message(
+                        Path::<String>(session_id.clone()),
+                        Json(SendMessageRequest {
+                            content: rich_text_payload(
+                                workspace_index,
+                                session_index,
+                                turn,
+                                "gateway prompt",
+                            ),
+                            attachments: None,
+                            parent_id: None,
+                        }),
+                    )
+                    .await,
                 )
-                .await;
+                .await?;
                 assert_eq!(reply.session_id, session_id);
                 assert_eq!(reply.role, gateway::contracts::MessageRole::Assistant);
 
@@ -268,13 +286,16 @@ async fn run_concurrent_session_turns(sessions: Vec<(usize, usize, String, Strin
 
             }
 
-            let mut runtime_messages = Vec::with_capacity(MOCK_RUNTIME_WRITES_PER_SESSION);
+            let client = SessionDbClient::discover()?;
+            let mut reducer = SessionFeedReducer::new(session_store().clone());
+            let mut feed_cursor = 0;
+            let mut pending_messages = Vec::with_capacity(MOCK_RUNTIME_WRITES_PER_SESSION);
             for write in 0..MOCK_RUNTIME_WRITES_PER_SESSION {
                 let message_number = ROUTER_TURNS_PER_SESSION * 2 + write + 1;
                 let runtime_id = format!("mock-runtime-session-{session_index}-{write}");
                 let message_id = format!("{runtime_id}.message");
                 let part_id = format!("{runtime_id}.message");
-                runtime_messages.push(db_text_message(
+                pending_messages.push(db_text_message(
                     &session_id,
                     &message_id,
                     &part_id,
@@ -285,36 +306,22 @@ async fn run_concurrent_session_turns(sessions: Vec<(usize, usize, String, Strin
                 let flush_snapshot =
                     write % 4 == 0 || write + 1 == MOCK_RUNTIME_WRITES_PER_SESSION;
                 if flush_snapshot {
-                    upsert_runtime_snapshot_for_test(
+                    typed_session::persist_messages_via_service(
                         &session_id,
-                        &workspace,
-                        runtime_messages.clone(),
-                    )?;
-                    let Json(response) = send_agent_message(
-                        Path(session_id.clone()),
-                        Json(SendAgentMessageRequest {
-                            reply_message: String::new(),
-                            new_learning: String::new(),
-                            step_summary: None,
-                            media: Vec::new(),
-                            runtime_id: Some(runtime_id.clone()),
-                            tool_call: None,
-                            runtime_status: Some(finished_runtime_status(&runtime_id)),
-                            context_tokens: None,
-                            usage: None,
-                            command_updates: Vec::new(),
-                            created_at: 10_000 + message_number as i64,
-                            updated_at: 10_000 + message_number as i64,
-                        }),
+                        std::mem::take(&mut pending_messages),
                     )
-                    .await;
-                    assert!(response.ok);
-                    assert_eq!(response.session_id, session_id);
+                    .context("persist incremental runtime-owned stress messages")?;
+                    replay_new_session_feed(
+                        &client,
+                        &mut reducer,
+                        &session_id,
+                        &mut feed_cursor,
+                    )?;
                 }
 
                 if write % 4 == 0 {
                     let Json(messages) = list_messages(
-                        Path(session_id.clone()),
+                        Path::<String>(session_id.clone()),
                         Query(MessageListParams {
                             limit: Some(message_number),
                             ..MessageListParams::default()
@@ -338,39 +345,43 @@ async fn run_concurrent_session_turns(sessions: Vec<(usize, usize, String, Strin
     Ok(())
 }
 
-fn upsert_runtime_snapshot_for_test(
+async fn decode_json_response<T: DeserializeOwned>(response: impl IntoResponse) -> Result<T> {
+    let response = response.into_response();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .context("read gateway response body")?;
+    if !status.is_success() {
+        return Err(anyhow!(
+            "gateway returned {status}: {}",
+            String::from_utf8_lossy(&body)
+        ));
+    }
+    serde_json::from_slice(&body).context("decode gateway JSON response")
+}
+
+fn replay_new_session_feed(
+    client: &SessionDbClient,
+    reducer: &mut SessionFeedReducer,
     session_id: &str,
-    workspace: &str,
-    runtime_messages: Vec<Value>,
+    cursor: &mut u64,
 ) -> Result<()> {
-    let mut info = session_store()
-        .get_session_info(session_id)
-        .ok_or_else(|| anyhow!("missing session info for {session_id}"))?;
-    info.directory = Some(workspace.to_string());
-    let mut messages = session_store()
-        .get_messages(session_id)
-        .into_iter()
-        .map(|message| serde_json::to_value(message).context("gateway message json"))
-        .collect::<Result<Vec<_>>>()?;
-    messages.extend(runtime_messages);
-    info.message_count = messages.len();
-    info.updated_at = messages
-        .iter()
-        .filter_map(|message| message.get("updated_at").and_then(Value::as_i64))
-        .max()
-        .unwrap_or(info.updated_at);
-    let response =
-        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
-            session: serde_json::to_value(info).context("session info json")?,
-            parent_id: None,
-            messages,
-            todos: Vec::new(),
-        }))
-        .context("upsert runtime-owned stress snapshot")?;
-    match response {
-        SessionLogResponse::Ok => Ok(()),
-        SessionLogResponse::Error { error } => Err(anyhow!(error)),
-        other => Err(anyhow!("unexpected session_log upsert response: {other:?}")),
+    loop {
+        let (entries, next_cursor) =
+            client.read_session_feed(session_id.to_string(), *cursor, 1_000)?;
+        let count = entries.len();
+        for entry in entries {
+            reducer.apply(entry)?;
+        }
+        if next_cursor < *cursor {
+            return Err(anyhow!(
+                "session feed cursor moved backwards for {session_id}"
+            ));
+        }
+        *cursor = next_cursor;
+        if count < 1_000 {
+            return Ok(());
+        }
     }
 }
 
@@ -425,10 +436,6 @@ console.log(workspace, task, record);\n\
     )
 }
 
-fn finished_runtime_status(runtime_id: &str) -> RuntimeProjection {
-    RuntimeProjection::new(runtime_id.to_string(), RuntimeState::Finished)
-}
-
 async fn wait_until_async<F, Fut>(timeout: Duration, mut condition: F) -> Result<()>
 where
     F: FnMut() -> Fut,
@@ -460,6 +467,7 @@ impl EnvGuard {
             "TURA_PROJECT_ROOT",
             "TURA_CWD",
             "TURA_SESSION_DB_PROBE_TIMEOUT_MS",
+            "TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS",
         ];
         let previous = keys
             .iter()
@@ -470,7 +478,8 @@ impl EnvGuard {
         std::env::remove_var("TURA_DB_ROOT");
         std::env::set_var("TURA_PROJECT_ROOT", workspace);
         std::env::set_var("TURA_CWD", workspace);
-        std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "20");
+        std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "1000");
+        std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", "5000");
         Self { previous }
     }
 }
@@ -496,7 +505,7 @@ impl ServiceThread {
         let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
         wait_until_blocking(
             Duration::from_secs(10),
-            session_log::ipc::service_is_running,
+            session_log_contract::client::service_is_running,
         )?;
         Ok(Self {
             handle: Some(handle),
@@ -506,7 +515,7 @@ impl ServiceThread {
 
 impl Drop for ServiceThread {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -663,26 +672,27 @@ fn handle_mock_runtime_connection_inner(
         let session_id = request["payload"]["session_id"]
             .as_str()
             .ok_or_else(|| anyhow!("enqueue request missing session_id: {request}"))?;
-        let turn_id = request["payload"]["turn_id"]
+        let runtime_id = request["payload"]["runtime_id"]
             .as_str()
-            .ok_or_else(|| anyhow!("enqueue request missing turn_id: {request}"))?;
+            .ok_or_else(|| anyhow!("enqueue request missing runtime_id: {request}"))?;
         let prompt = request["payload"]["payload"]["prompt"]
             .as_str()
             .unwrap_or_default();
         std::thread::sleep(Duration::from_millis(2));
-        session_store().add_message_with_ids(
+        let message = session_store()
+            .add_message_with_ids(
+                session_id,
+                MessageRole::Assistant,
+                format!("mock runtime reply for {prompt}"),
+                Some(format!("assistant-{runtime_id}")),
+                Some(format!("assistant-part-{runtime_id}")),
+                None,
+            )
+            .context("mock runtime assistant message")?;
+        typed_session::persist_messages_via_service(
             session_id,
-            MessageRole::Assistant,
-            format!("mock runtime reply for {prompt}"),
-            Some(format!("assistant-{turn_id}")),
-            Some(format!("assistant-part-{turn_id}")),
-            None,
-        );
-        let workspace = session_store()
-            .get_session(session_id)
-            .and_then(|session| session.directory)
-            .unwrap_or_else(|| ".".to_string());
-        upsert_runtime_snapshot_for_test(session_id, &workspace, Vec::new())?;
+            vec![serde_json::to_value(message).context("mock runtime message projection")?],
+        )?;
         write_router_response(
             &mut writer,
             json!({

@@ -50,14 +50,7 @@ async fn gateway_prompt_business_flow_enqueues_router_turn_without_session_db_pr
     std::fs::create_dir_all(&workspace)?;
     let _env = EnvGuard::new(&home, &workspace);
     let service = ServiceThread::start()?;
-    let router = FakeRouter::start(
-        &home,
-        vec![RouterReply::Payload(json!({
-            "ok": true,
-            "accepted": true,
-            "worker_id": "mock-runtime-worker"
-        }))],
-    )?;
+    let router = FakeRouter::start(&home, vec![RouterReply::Completed])?;
 
     let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
@@ -99,7 +92,7 @@ async fn gateway_prompt_business_flow_enqueues_router_turn_without_session_db_pr
     let request = router.next_request(Duration::from_secs(10))?;
     assert_eq!(request["kind"], "call");
     assert_eq!(request["method"], "execution.enqueue_turn");
-    assert_eq!(request["payload"]["turn_id"], "router-turn-1");
+    assert_eq!(request["payload"]["runtime_id"], "router-turn-1");
     assert_eq!(request["payload"]["session_id"], session.id);
     assert_eq!(
         request["payload"]["payload"]["prompt"],
@@ -167,14 +160,7 @@ async fn gateway_prompt_business_flow_injects_generated_frontend_ids_when_client
     std::fs::create_dir_all(&workspace)?;
     let _env = EnvGuard::new(&home, &workspace);
     let service = ServiceThread::start()?;
-    let router = FakeRouter::start(
-        &home,
-        vec![RouterReply::Payload(json!({
-            "ok": true,
-            "accepted": true,
-            "worker_id": "generated-id-worker"
-        }))],
-    )?;
+    let router = FakeRouter::start(&home, vec![RouterReply::Completed])?;
 
     let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
@@ -217,7 +203,7 @@ async fn gateway_prompt_business_flow_injects_generated_frontend_ids_when_client
     assert!(!user_part.id.trim().is_empty());
     assert_eq!(request["kind"], "call");
     assert_eq!(request["method"], "execution.enqueue_turn");
-    assert_eq!(request["payload"]["turn_id"], user_part.id);
+    assert_eq!(request["payload"]["runtime_id"], user_part.id);
     assert_eq!(
         request["payload"]["payload"]["worker_env"]["TURA_FRONTEND_MESSAGE_ID"],
         user_message.id
@@ -250,14 +236,7 @@ async fn gateway_prompt_business_flow_routes_only_text_parts_and_keeps_first_tex
     std::fs::create_dir_all(&workspace)?;
     let _env = EnvGuard::new(&home, &workspace);
     let service = ServiceThread::start()?;
-    let router = FakeRouter::start(
-        &home,
-        vec![RouterReply::Payload(json!({
-            "ok": true,
-            "accepted": true,
-            "worker_id": "multipart-worker"
-        }))],
-    )?;
+    let router = FakeRouter::start(&home, vec![RouterReply::Completed])?;
 
     let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
@@ -309,7 +288,7 @@ async fn gateway_prompt_business_flow_routes_only_text_parts_and_keeps_first_tex
     let request = router.next_request(Duration::from_secs(10))?;
     assert_eq!(request["kind"], "call");
     assert_eq!(request["method"], "execution.enqueue_turn");
-    assert_eq!(request["payload"]["turn_id"], "first-text-turn");
+    assert_eq!(request["payload"]["runtime_id"], "first-text-turn");
     assert_eq!(
         request["payload"]["payload"]["prompt"],
         "Inspect the local screenshot context. Then continue with the saved workspace state."
@@ -365,18 +344,7 @@ async fn gateway_prompt_business_flow_repeated_turns_keep_session_stable_without
     let _env = EnvGuard::new(&home, &workspace);
     let service = ServiceThread::start()?;
     let turns = 6;
-    let router = FakeRouter::start(
-        &home,
-        (0..turns)
-            .map(|index| {
-                RouterReply::Payload(json!({
-                    "ok": true,
-                    "accepted": true,
-                    "worker_id": format!("repeated-worker-{index}")
-                }))
-            })
-            .collect(),
-    )?;
+    let router = FakeRouter::start(&home, (0..turns).map(|_| RouterReply::Completed).collect())?;
 
     let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
@@ -414,7 +382,7 @@ async fn gateway_prompt_business_flow_repeated_turns_keep_session_stable_without
         assert_eq!(request["kind"], "call");
         assert_eq!(request["method"], "execution.enqueue_turn");
         assert_eq!(
-            request["payload"]["turn_id"],
+            request["payload"]["runtime_id"],
             format!("repeated-turn-{index}")
         );
         assert_eq!(request["payload"]["session_id"], session.id);
@@ -430,7 +398,10 @@ async fn gateway_prompt_business_flow_repeated_turns_keep_session_stable_without
         wait_until(Duration::from_secs(10), || {
             session_store()
                 .get_session(&session.id)
-                .is_some_and(|session| session.status == SessionStatus::Idle)
+                .is_some_and(|session| {
+                    session.status == SessionStatus::Idle
+                        && session.message_count == index as usize + 1
+                })
         })?;
         assert_gateway_kept_canonical_session(&session.id)?;
     }

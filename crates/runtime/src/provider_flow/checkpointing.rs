@@ -2,22 +2,22 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::checkpoint::StreamedCommandCheckpoint;
-use crate::state_machine::runtime_management::RuntimeManagement;
+use lifecycle::RuntimeAggregate;
 use lifecycle::RuntimeState;
 
-pub(crate) fn turn_started(runtime: &RuntimeManagement) -> Result<(), String> {
+pub(crate) fn turn_started(runtime: &RuntimeAggregate) -> Result<(), String> {
     crate::checkpoint::checkpoint_turn_started(runtime)
 }
 
-pub(crate) fn provider_call_started(runtime: &RuntimeManagement) -> Result<(), String> {
+pub(crate) fn provider_call_started(runtime: &RuntimeAggregate) -> Result<(), String> {
     crate::checkpoint::checkpoint_provider_call_started(runtime)
 }
 
-pub(crate) fn provider_call_finished(runtime: &RuntimeManagement) -> Result<(), String> {
+pub(crate) fn provider_call_finished(runtime: &RuntimeAggregate) -> Result<(), String> {
     crate::checkpoint::checkpoint_provider_call_finished(runtime)
 }
 
-pub(crate) fn terminal_turn(runtime: &RuntimeManagement) -> Result<(), String> {
+pub(crate) fn terminal_turn(runtime: &RuntimeAggregate) -> Result<(), String> {
     match runtime.state {
         RuntimeState::Failed | RuntimeState::TimedOut => {
             crate::checkpoint::checkpoint_turn_failed(runtime)
@@ -27,7 +27,7 @@ pub(crate) fn terminal_turn(runtime: &RuntimeManagement) -> Result<(), String> {
     }
 }
 
-pub(crate) fn best_effort_turn_failed(runtime: &RuntimeManagement) {
+pub(crate) fn best_effort_turn_failed(runtime: &RuntimeAggregate) {
     let _ = crate::checkpoint::checkpoint_turn_failed(runtime);
 }
 
@@ -95,7 +95,7 @@ pub(crate) fn streamed_command_finished(
 ) -> Result<(), String> {
     crate::checkpoint::checkpoint_streamed_command_finished(StreamedCommandCheckpoint {
         session_id,
-        turn_id: runtime_id,
+        runtime_id,
         runtime_worker_id: runtime_id,
         command_run_id,
         index,

@@ -530,7 +530,6 @@ is reachable through `tura_gateway session-log ...` for diagnostics. Add
 
 | Command                                             | Input                                          |
 | --------------------------------------------------- | ---------------------------------------------- |
-| `tura_gateway session-log upsert-session`           | Session upsert JSON on stdin.                  |
 | `tura_gateway session-log list-workspaces`          | none.                                          |
 | `tura_gateway session-log get-session`              | `GetSessionRequest` JSON on stdin.             |
 | `tura_gateway session-log list-sessions`            | `ListSessionsRequest` JSON on stdin.           |

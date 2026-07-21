@@ -20,11 +20,12 @@ use crate::provider_flow::request_options::{
 };
 use crate::provider_flow::usage::usage_report_from_metrics;
 use crate::runtime::types::RuntimeQueueItem;
-use crate::state_machine::runtime_management::RuntimeManagement;
+use crate::runtime_event_writer::RuntimeEventWriter;
+use lifecycle::RuntimeAggregate;
 use lifecycle::{RuntimeState, SessionId};
 
 pub struct CallRuntimeInput {
-    pub runtime: RuntimeManagement,
+    pub runtime: RuntimeAggregate,
     pub messages: Vec<serde_json::Value>,
     pub tools: Vec<serde_json::Value>,
     pub provider_name: String,
@@ -40,7 +41,16 @@ pub async fn call_runtime(
     input: CallRuntimeInput,
     tura_settings: Arc<tura_llm_rust::Settings>,
     tura_config: Arc<tura_llm_rust::TuraConfig>,
-) -> Result<RuntimeManagement, String> {
+) -> Result<RuntimeAggregate, String> {
+    call_runtime_with_writer(input, tura_settings, tura_config, None).await
+}
+
+pub(crate) async fn call_runtime_with_writer(
+    input: CallRuntimeInput,
+    tura_settings: Arc<tura_llm_rust::Settings>,
+    tura_config: Arc<tura_llm_rust::TuraConfig>,
+    mut runtime_event_writer: Option<&mut RuntimeEventWriter>,
+) -> Result<RuntimeAggregate, String> {
     let mut runtime = input.runtime;
     tura_config.reload();
     let now = Utc::now();
@@ -94,6 +104,7 @@ pub async fn call_runtime(
     runtime
         .mark_waiting_first_token()
         .map_err(|e| format!("failed to mark runtime waiting for first token: {e}"))?;
+    flush_runtime_events(&mut runtime_event_writer, &mut runtime)?;
     let turn_started_start = Instant::now();
     checkpointing::turn_started(&runtime)?;
     profile_timings::log_elapsed(
@@ -155,7 +166,8 @@ pub async fn call_runtime(
             "tool_choice": call_options.tool_choice.clone(),
             "context_window": call_options.context_window,
         }
-    }));
+    }))?;
+    flush_runtime_events(&mut runtime_event_writer, &mut runtime)?;
     profile_timings::log_elapsed(
         "call_runtime.set_input",
         set_input_start,
@@ -188,6 +200,7 @@ pub async fn call_runtime(
                 allowed_command_run_commands: input.allowed_command_run_commands.clone(),
                 require_startup_task_state: input.require_startup_task_state,
             },
+            runtime_event_writer.as_deref_mut(),
         )
         .await
     } else {
@@ -197,10 +210,12 @@ pub async fn call_runtime(
             &tura_config,
             provider_messages,
             call_options,
+            runtime_event_writer.as_deref_mut(),
         )
         .await
     };
 
+    flush_runtime_events(&mut runtime_event_writer, &mut runtime)?;
     match call_result {
         Ok(()) => {
             checkpointing::provider_call_finished(&runtime)?;
@@ -235,11 +250,12 @@ fn active_model_context_window(
 }
 
 async fn call_runtime_non_streaming(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     route_config: &tura_llm_rust::RouteConfig,
     tura_config: &Arc<tura_llm_rust::TuraConfig>,
     messages: Vec<serde_json::Value>,
     options: tura_llm_rust::CallOptions,
+    mut runtime_event_writer: Option<&mut RuntimeEventWriter>,
 ) -> Result<(), String> {
     let started_at = Utc::now();
     let timeout_duration = runtime_timeout(runtime);
@@ -259,7 +275,8 @@ async fn call_runtime_non_streaming(
             error!(error = %message, "runtime call timed out");
             runtime.set_output(serde_json::json!({
                 "error": message
-            }));
+            }))?;
+            flush_runtime_events(&mut runtime_event_writer, runtime)?;
             finish_runtime_failure(
                 runtime,
                 finished_at,
@@ -267,11 +284,12 @@ async fn call_runtime_non_streaming(
                 message,
                 RuntimeState::TimedOut,
             )?;
+            flush_runtime_events(&mut runtime_event_writer, runtime)?;
         }
         Ok(Ok(response)) => {
             let finished_at = Utc::now();
-            runtime.set_output(response.content.clone());
-            apply_provider_response(runtime, &response.content, finished_at);
+            runtime.set_output(response.content.clone())?;
+            apply_provider_response(runtime, &response.content, finished_at)?;
 
             runtime
                 .mark_first_token(finished_at)
@@ -280,20 +298,34 @@ async fn call_runtime_non_streaming(
             let usage =
                 usage_report_from_metrics(response.metrics, started_at, finished_at, finished_at);
 
+            flush_runtime_events(&mut runtime_event_writer, runtime)?;
             runtime
                 .finish_success(finished_at, usage)
                 .map_err(|e| format!("failed to finish runtime success: {e}"))?;
+            flush_runtime_events(&mut runtime_event_writer, runtime)?;
         }
         Ok(Err(e)) => {
             let finished_at = Utc::now();
             error!(error = %e, "runtime call failed");
             runtime.set_output(serde_json::json!({
                 "error": e.to_string()
-            }));
+            }))?;
+            flush_runtime_events(&mut runtime_event_writer, runtime)?;
             finish_provider_call_failure(runtime, finished_at, &e, RuntimeState::Failed)?;
+            flush_runtime_events(&mut runtime_event_writer, runtime)?;
         }
     }
 
+    Ok(())
+}
+
+pub(crate) fn flush_runtime_events(
+    writer: &mut Option<&mut RuntimeEventWriter>,
+    runtime: &mut RuntimeAggregate,
+) -> Result<(), String> {
+    if let Some(writer) = writer.as_deref_mut() {
+        writer.flush(runtime)?;
+    }
     Ok(())
 }
 
@@ -330,9 +362,9 @@ pub async fn dequeue_runtime(
 #[cfg(test)]
 mod tests {
     use super::{call_runtime, CallRuntimeInput};
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
     use chrono::Utc;
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
     use serde_json::json;
     use std::collections::{BTreeSet, HashMap};
     use std::sync::Arc;
@@ -341,8 +373,8 @@ mod tests {
         Settings, TuraConfig,
     };
 
-    fn runtime() -> RuntimeManagement {
-        RuntimeManagement::new(
+    fn runtime() -> RuntimeAggregate {
+        RuntimeAggregate::new(
             "runtime-call-test".to_string(),
             "session-call-test".to_string(),
             "agent-call-test".to_string(),

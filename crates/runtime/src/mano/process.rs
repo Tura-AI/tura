@@ -2,14 +2,17 @@ use chrono::Utc;
 use tracing::{error, info};
 
 use crate::agent_router::{activate_agents_by_session_type, initialize_agent_state_machine};
-use crate::checkpoint::session_snapshot::persist_session_snapshot;
+use crate::checkpoint::session_snapshot::{persist_session_checkpoint, SessionDeltaWriter};
 use crate::manas::{process_manas_internal, ManasInput};
 use crate::mano::{ManoOverrides, ManoProcessResult};
+use crate::runtime_event_writer::RuntimeEventWriter;
 use crate::session_bootstrap::{
     bootstrap_orchestration_session, create_session_with_topic, initial_messages_for_session,
 };
+use crate::session_log_client::SessionLogClient;
 use crate::state_machine::agent_management::{AgentCapabilityItem, AgentManagement};
-use crate::state_machine::session_management::{SessionInput, SessionManagement};
+use lifecycle::{RuntimeId, SessionCommand, SessionInput, SessionManagement};
+use session_log_contract::{CreateSessionRequest, SessionLogCommand, SessionLogResponse};
 use std::path::PathBuf;
 
 pub struct OrchestrationConfig {
@@ -27,14 +30,20 @@ impl Default for OrchestrationConfig {
 }
 
 pub fn orchestrate(input: SessionInput) -> Result<ManoProcessResult, String> {
-    orchestrate_with_config(input, OrchestrationConfig::default())
+    orchestrate_with_config_and_session(input, OrchestrationConfig::default(), None, None, None)
 }
 
 pub fn orchestrate_for_session(
     input: SessionInput,
     session_id: String,
 ) -> Result<ManoProcessResult, String> {
-    orchestrate_with_config_and_session(input, OrchestrationConfig::default(), Some(session_id))
+    orchestrate_with_config_and_session(
+        input,
+        OrchestrationConfig::default(),
+        Some(session_id),
+        None,
+        None,
+    )
 }
 
 pub fn orchestrate_for_session_in_directory(
@@ -49,22 +58,39 @@ pub fn orchestrate_for_session_in_directory(
             ..OrchestrationConfig::default()
         },
         Some(session_id),
+        None,
+        None,
     )
 }
 
-pub fn orchestrate_with_config(
+pub fn orchestrate_for_session_with_lease_in_directory(
     input: SessionInput,
-    config: OrchestrationConfig,
+    session_id: String,
+    runtime_id: RuntimeId,
+    lease_id: String,
+    session_directory: PathBuf,
 ) -> Result<ManoProcessResult, String> {
-    orchestrate_with_config_and_session(input, config, None)
+    orchestrate_with_config_and_session(
+        input,
+        OrchestrationConfig {
+            session_directory: Some(session_directory),
+            ..OrchestrationConfig::default()
+        },
+        Some(session_id.clone()),
+        Some(runtime_id.clone()),
+        Some(RuntimeEventWriter::new(session_id, runtime_id, lease_id)?),
+    )
 }
 
 fn orchestrate_with_config_and_session(
     input: SessionInput,
     config: OrchestrationConfig,
     gateway_session_id: Option<String>,
+    initial_runtime_id: Option<RuntimeId>,
+    runtime_event_writer: Option<RuntimeEventWriter>,
 ) -> Result<ManoProcessResult, String> {
     let now = Utc::now();
+    let create_missing_session = runtime_event_writer.is_none();
 
     info!(
         user_input = %input.user_input,
@@ -112,8 +138,11 @@ fn orchestrate_with_config_and_session(
     );
 
     let initial_messages = initial_messages_for_session(&mut session)?;
-    persist_session_snapshot(&session)
-        .map_err(|err| format!("failed to persist initial gateway session: {err}"))?;
+    if create_missing_session {
+        ensure_canonical_session(&session)?;
+    }
+    let mut session_delta_writer = Some(SessionDeltaWriter::new(&session)?);
+    persist_session_checkpoint(&mut session_delta_writer, &session, "initial")?;
 
     let mut session_clone = session.clone();
 
@@ -122,6 +151,9 @@ fn orchestrate_with_config_and_session(
         session: &mut session_clone,
         initial_messages,
         redis_url: &config.redis_url,
+        initial_runtime_id,
+        runtime_event_writer,
+        session_delta_writer,
     };
 
     let manas_result =
@@ -145,6 +177,62 @@ fn orchestrate_with_config_and_session(
         agents: manas_result.agents,
         final_error: manas_result.final_error,
     })
+}
+
+fn ensure_canonical_session(session: &SessionManagement) -> Result<(), String> {
+    let client = SessionLogClient::discover().map_err(|error| {
+        format!(
+            "failed to discover session_log client for session {}: {error}",
+            session.session_id
+        )
+    })?;
+    if client
+        .get_session(session.session_id.clone())
+        .map_err(|error| {
+            format!(
+                "failed to query canonical session {}: {error}",
+                session.session_id
+            )
+        })?
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let directory = session.session_directory.to_string_lossy().to_string();
+    match client.call_typed_sync(SessionLogCommand::CreateSession(CreateSessionRequest {
+        command_id: format!("create:{}", session.session_id),
+        session_id: session.session_id.clone(),
+        creation_command: SessionCommand::CreateSession {
+            task_plan: session.task_plan.clone(),
+        },
+        copy_context: false,
+        workspace: directory.clone(),
+        session_directory: directory,
+        name: session.session_name.clone(),
+        created_at: session.session_created_at.timestamp_millis(),
+        model: None,
+        agent: session.input.agent.clone(),
+        session_type: "coding".to_string(),
+        kill_processes_on_start: false,
+        validator_enabled: false,
+        force_planning: false,
+        model_variant: None,
+        model_acceleration_enabled: false,
+        disable_permission_restrictions: session.disable_permission_restrictions,
+        use_last_tool_call_response: session.use_last_tool_call_response,
+        auto_session_name: session.auto_session_name,
+    }))? {
+        SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
+        SessionLogResponse::Error { error } => Err(format!(
+            "failed to create canonical session {}: {error}",
+            session.session_id
+        )),
+        other => Err(format!(
+            "unexpected session_log response while creating canonical session {}: {other:?}",
+            session.session_id
+        )),
+    }
 }
 
 fn apply_planning_capability_override(agents: &mut [AgentManagement], session: &SessionManagement) {
@@ -231,8 +319,8 @@ pub fn process_from_user_internal(
 mod tests {
     use super::*;
     use crate::context::{build_messages_from_session, USER_AGENT_CONTEXT_ROLE};
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
+    use lifecycle::{SessionInput, SessionManagement};
     use std::fs;
 
     #[test]

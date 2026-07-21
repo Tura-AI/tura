@@ -3,7 +3,7 @@
 use chrono::Utc;
 
 use crate::prompt_style::context_blocks;
-use crate::state_machine::session_management::{SessionManagement, TaskStatus};
+use lifecycle::{SessionManagement, TaskStatus};
 use lifecycle::{StartCondition, TaskStep};
 
 const TASK_STATUS_COMMAND: &str = "task_status";
@@ -183,10 +183,8 @@ fn task_is_user_action_todo(task: &TaskStep) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::context::build_messages_from_session;
-    use crate::state_machine::session_management::{
-        PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
-    };
     use chrono::Utc;
+    use lifecycle::{PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep};
     use serde_json::json;
     use std::path::PathBuf;
 

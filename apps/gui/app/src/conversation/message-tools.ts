@@ -452,10 +452,8 @@ function toolGroupId(part: MessagePart): string | undefined {
   const metadata = asRecord(part.metadata);
   return (
     stringField(state, "llm_call_id") ||
-    stringField(state, "turn_id") ||
     stringField(state, "response_id") ||
     stringField(metadata, "llm_call_id") ||
-    stringField(metadata, "turn_id") ||
     stringField(metadata, "response_id")
   );
 }

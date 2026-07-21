@@ -1,7 +1,7 @@
 use super::connection::{init_workspace_db, with_connection};
-use super::helpers::parse_json_field;
-use anyhow::{Context, Result};
-use lifecycle::{SessionAggregate, SessionProjection, SessionQuery};
+use super::helpers::{parse_json_field, replay_session_events};
+use anyhow::Result;
+use lifecycle::{SessionProjection, SessionQuery};
 use rusqlite::{params, OptionalExtension, Row};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -56,11 +56,10 @@ pub(super) fn load_workspace_session_payload(
     if !workspace_db_path.exists() {
         return Ok(None);
     }
-    let payload = with_connection(workspace_db_path, init_workspace_db, |conn| {
-        conn.query_row(
+    with_connection(workspace_db_path, init_workspace_db, |conn| {
+        let payload = conn.query_row(
             "SELECT workspace, name, parent_id, created_at, updated_at, last_user_message_at, state, status,
-                    message_count, task_management_json, management_json, session_json, todos_json,
-                    lifecycle_json
+                    message_count, task_management_json, management_json, session_json, todos_json
              FROM sessions
              WHERE session_id = ?1",
             params![session_id],
@@ -79,34 +78,13 @@ pub(super) fn load_workspace_session_payload(
                     row.get::<_, String>(10)?,
                     row.get::<_, String>(11)?,
                     row.get::<_, String>(12)?,
-                    row.get::<_, String>(13)?,
                 ))
             },
         )
-        .optional()
-        .map_err(Into::into)
-    })?;
-    payload
-        .map(
-            |(
-                workspace,
-                name,
-                parent_id,
-                created_at,
-                updated_at,
-                last_user_message_at,
-                state,
-                status,
-                message_count,
-                task_management_json,
-                management_json,
-                session_json,
-                todos_json,
-                lifecycle_json,
-            )| {
-                let lifecycle: SessionAggregate = serde_json::from_str(&lifecycle_json)
-                    .with_context(|| format!("invalid lifecycle_json for session {session_id}"))?;
-                Ok(WorkspacePayload {
+        .optional()?;
+        payload
+            .map(
+                |(
                     workspace,
                     name,
                     parent_id,
@@ -116,23 +94,40 @@ pub(super) fn load_workspace_session_payload(
                     state,
                     status,
                     message_count,
-                    task_management: parse_json_field(
-                        &task_management_json,
-                        "task_management_json",
-                        Some(session_id),
-                    )?,
-                    lifecycle_projection: lifecycle.query(SessionQuery::Lifecycle),
-                    management: parse_json_field(
-                        &management_json,
-                        "management_json",
-                        Some(session_id),
-                    )?,
-                    session: parse_json_field(&session_json, "session_json", Some(session_id))?,
-                    todos: parse_json_field(&todos_json, "todos_json", Some(session_id))?,
-                })
-            },
-        )
-        .transpose()
+                    task_management_json,
+                    management_json,
+                    session_json,
+                    todos_json,
+                )| {
+                    let lifecycle = replay_session_events(conn, session_id)?;
+                    Ok(WorkspacePayload {
+                        workspace,
+                        name,
+                        parent_id,
+                        created_at,
+                        updated_at,
+                        last_user_message_at,
+                        state,
+                        status,
+                        message_count,
+                        task_management: parse_json_field(
+                            &task_management_json,
+                            "task_management_json",
+                            Some(session_id),
+                        )?,
+                        lifecycle_projection: lifecycle.query(SessionQuery::Lifecycle),
+                        management: parse_json_field(
+                            &management_json,
+                            "management_json",
+                            Some(session_id),
+                        )?,
+                        session: parse_json_field(&session_json, "session_json", Some(session_id))?,
+                        todos: parse_json_field(&todos_json, "todos_json", Some(session_id))?,
+                    })
+                },
+            )
+            .transpose()
+    })
 }
 
 pub(super) fn load_workspace_session_summary_payload(

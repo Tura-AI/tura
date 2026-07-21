@@ -1,5 +1,8 @@
 use crate::CommandCheckpoint;
-use lifecycle::{SessionCommand, SessionEvent, SessionProjection};
+use lifecycle::{
+    ContextTokenStats, RuntimeAggregate, RuntimeEvent, RuntimeProjection, SessionCommand,
+    SessionEvent, SessionManagementDelta, SessionProjection, UsageReport,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -32,7 +35,8 @@ pub struct WorkspaceSummary {
     pub last_updated_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SessionSnapshot {
     pub session_id: String,
     pub workspace: String,
@@ -46,8 +50,7 @@ pub struct SessionSnapshot {
     pub status: Option<String>,
     pub message_count: u64,
     pub task_management: serde_json::Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lifecycle_projection: Option<SessionProjection>,
+    pub lifecycle_projection: SessionProjection,
     pub management: serde_json::Value,
     #[serde(default)]
     pub session: serde_json::Value,
@@ -81,30 +84,65 @@ pub struct SessionRecord {
     pub record: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertSessionRequest {
-    pub session: serde_json::Value,
-    #[serde(default)]
-    pub parent_id: Option<String>,
-    #[serde(default)]
-    pub messages: Vec<serde_json::Value>,
-    #[serde(default)]
-    pub todos: Vec<serde_json::Value>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SessionContextRecord {
+    pub sequence: u64,
+    pub raw_record: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct PersistSessionPayloadRequest {
+pub struct SessionRecordProjection {
     pub session_id: String,
-    pub records: Vec<serde_json::Value>,
-    pub todos: Vec<serde_json::Value>,
+    pub message_id: String,
+    pub role: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub record: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SessionDeltaEntry {
+    pub context: SessionContextRecord,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub projection: Option<SessionRecordProjection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PersistSessionDeltaRequest {
+    pub session_id: String,
+    pub management_sequence: u64,
+    pub management_delta: SessionManagementDelta,
+    pub retained_from_sequence: u64,
+    pub entries: Vec<SessionDeltaEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReadContextSliceRequest {
+    pub session_id: String,
+    pub max_estimated_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ContextSlice {
+    pub records: Vec<SessionContextRecord>,
+    pub retained_from_sequence: u64,
+    pub next_sequence: u64,
+    pub next_management_sequence: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSessionRequest {
+    pub command_id: String,
     pub session_id: String,
     pub creation_command: SessionCommand,
+    pub copy_context: bool,
     pub workspace: String,
     pub session_directory: String,
     pub name: String,
@@ -125,8 +163,56 @@ pub struct CreateSessionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ExecuteSessionCommandRequest {
+    pub command_id: String,
     pub session_id: String,
     pub session_command: SessionCommand,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub message_projection: Option<SessionRecordProjection>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SessionMetadataPatch {
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub name: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub model: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub agent: Option<String>,
+    pub clear_agent: bool,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub session_type: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub kill_processes_on_start: Option<bool>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub validator_enabled: Option<bool>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub force_planning: Option<bool>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub disable_permission_restrictions: Option<bool>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub use_last_tool_call_response: Option<bool>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub auto_session_name: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateSessionRequest {
+    pub command_id: String,
+    pub session_id: String,
+    pub metadata: SessionMetadataPatch,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub task_plan_patch: Option<lifecycle::SessionTaskPlanPatch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateSessionTodosRequest {
+    pub command_id: String,
+    pub session_id: String,
+    pub todos: Vec<serde_json::Value>,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -135,6 +221,237 @@ pub struct SessionCommandResult {
     pub event: SessionEvent,
     pub projection: SessionProjection,
     pub session_name: Option<String>,
+    pub message_count: u64,
+    pub last_user_message_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterRuntimeRequest {
+    pub runtime_id: String,
+    pub session_id: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub fallback_from_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ActivateRuntimeLeaseRequest {
+    pub runtime_id: String,
+    pub lease_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CommitRuntimeEventRequest {
+    pub runtime_id: String,
+    pub event_seq: u64,
+    pub expected_revision: u64,
+    pub lease_id: String,
+    pub idempotency_key: String,
+    pub event: RuntimeEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SessionFeedCommandUpdate {
+    pub message_id: String,
+    pub part_id: String,
+    pub command_run_id: String,
+    pub command_id: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub provider_tool_call_id: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub command_index: Option<u64>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub event_seq: Option<i64>,
+    pub status: String,
+    pub command: serde_json::Value,
+    pub result: serde_json::Value,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Durable frontend projection facts. Runtime and Session commands author them
+/// through the Session service, which owns ordering and replay; Gateway only
+/// reduces them into its cache and existing public event API.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SessionFeedEvent {
+    MessageUpserted {
+        message: SessionRecordProjection,
+    },
+    AssistantTextDelta {
+        message_id: String,
+        part_id: String,
+        delta: String,
+        created_at: i64,
+        updated_at: i64,
+    },
+    AgentMessage {
+        message_id: String,
+        part_id: String,
+        reply_message: String,
+        new_learning: String,
+        #[serde(deserialize_with = "Option::deserialize")]
+        runtime_status: Option<RuntimeProjection>,
+        #[serde(deserialize_with = "Option::deserialize")]
+        context_tokens: Option<ContextTokenStats>,
+        #[serde(deserialize_with = "Option::deserialize")]
+        usage: Option<UsageReport>,
+        created_at: i64,
+        updated_at: i64,
+    },
+    ToolCallUpdated {
+        message_id: String,
+        part_id: String,
+        tool_name: String,
+        call_id: String,
+        state: serde_json::Value,
+        #[serde(deserialize_with = "Option::deserialize")]
+        metadata: Option<serde_json::Value>,
+        #[serde(deserialize_with = "Option::deserialize")]
+        runtime_status: Option<RuntimeProjection>,
+        #[serde(deserialize_with = "Option::deserialize")]
+        context_tokens: Option<ContextTokenStats>,
+        #[serde(deserialize_with = "Option::deserialize")]
+        usage: Option<UsageReport>,
+        command_updates: Vec<SessionFeedCommandUpdate>,
+        created_at: i64,
+        updated_at: i64,
+    },
+    TodosUpdated {
+        todos: Vec<serde_json::Value>,
+        updated_at: i64,
+    },
+    SessionProjectionUpdated {
+        projection: SessionProjection,
+        #[serde(deserialize_with = "Option::deserialize")]
+        session_name: Option<String>,
+        updated_at: i64,
+    },
+    SessionSnapshotCreated {
+        snapshot: Box<SessionSnapshot>,
+    },
+    SessionSnapshotUpdated {
+        snapshot: Box<SessionSnapshot>,
+    },
+    SessionDeleted {},
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AppendSessionFeedEventRequest {
+    pub runtime_id: String,
+    pub target_session_id: String,
+    pub lease_id: String,
+    pub event_id: String,
+    pub event: SessionFeedEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReadSessionFeedRequest {
+    pub session_id: String,
+    pub after_cursor: u64,
+    pub limit: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SessionFeedEntry {
+    pub session_id: String,
+    pub cursor: u64,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub runtime_id: Option<String>,
+    pub event_id: String,
+    pub event: SessionFeedEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SessionFeedAppendOutcome {
+    Applied { cursor: u64 },
+    Duplicate { cursor: u64 },
+    RuntimeNotFound,
+    TargetSessionNotFound,
+    TargetWorkspaceMismatch,
+    StaleLease,
+    RuntimeTerminal,
+    EventIdConflict,
+    SessionOwnedEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReplayRuntimeRequest {
+    pub runtime_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeRegistrationOutcome {
+    Registered {
+        revision: u64,
+        next_event_seq: u64,
+        projection: SessionProjection,
+    },
+    AlreadyRegistered {
+        revision: u64,
+        next_event_seq: u64,
+        projection: SessionProjection,
+    },
+    SessionBusy {
+        active_runtime_id: String,
+    },
+    RuntimeIdConflict,
+    SessionNotFound,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeLeaseOutcome {
+    Activated,
+    AlreadyActive,
+    RuntimeNotFound,
+    RuntimeTerminal,
+    LeaseConflict,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeEventCommitOutcome {
+    Applied {
+        revision: u64,
+        next_event_seq: u64,
+        projection: RuntimeProjection,
+    },
+    Duplicate {
+        revision: u64,
+        next_event_seq: u64,
+    },
+    RuntimeNotFound,
+    StaleLease,
+    RuntimeTerminal,
+    OutOfOrder {
+        expected_event_seq: u64,
+        received_event_seq: u64,
+    },
+    RevisionConflict {
+        current_revision: u64,
+        expected_revision: u64,
+    },
+    InvalidEvent {
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeReplay {
+    pub aggregate: RuntimeAggregate,
+    pub revision: u64,
+    pub next_event_seq: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,13 +493,22 @@ pub struct DeleteWorkspaceRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "command", rename_all = "snake_case")]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionLogCommand {
     Health,
     CreateSession(CreateSessionRequest),
     ExecuteSessionCommand(ExecuteSessionCommandRequest),
-    PersistSessionPayload(PersistSessionPayloadRequest),
-    UpsertSession(UpsertSessionRequest),
+    UpdateSession(UpdateSessionRequest),
+    UpdateSessionTodos(UpdateSessionTodosRequest),
+    RegisterRuntime(RegisterRuntimeRequest),
+    ActivateRuntimeLease(ActivateRuntimeLeaseRequest),
+    CommitRuntimeEvent(CommitRuntimeEventRequest),
+    AppendSessionFeedEvent(AppendSessionFeedEventRequest),
+    ReadSessionFeed(ReadSessionFeedRequest),
+    SubscribeSessionFeed,
+    ReplayRuntime(ReplayRuntimeRequest),
+    PersistSessionDelta(Box<PersistSessionDeltaRequest>),
+    ReadContextSlice(ReadContextSliceRequest),
     ApplyCommandCheckpoint(Box<CommandCheckpoint>),
     GetSession(GetSessionRequest),
     ListWorkspaces,
@@ -196,11 +522,48 @@ pub enum SessionLogCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionLogResponse {
     Ok,
     SessionCommandApplied {
         result: Box<SessionCommandResult>,
+    },
+    SessionUpdated {
+        session: Box<SessionSnapshot>,
+    },
+    SessionTodosUpdated {
+        todos: Vec<serde_json::Value>,
+        cursor: u64,
+    },
+    RuntimeRegistered {
+        result: RuntimeRegistrationOutcome,
+    },
+    RuntimeLeaseActivated {
+        result: RuntimeLeaseOutcome,
+    },
+    RuntimeEventCommitted {
+        result: RuntimeEventCommitOutcome,
+    },
+    SessionFeedEventAppended {
+        result: SessionFeedAppendOutcome,
+    },
+    SessionFeed {
+        entries: Vec<SessionFeedEntry>,
+        next_cursor: u64,
+    },
+    SessionFeedSubscribed,
+    SessionFeedEvent {
+        entry: Box<SessionFeedEntry>,
+    },
+    RuntimeReplayed {
+        runtime: Option<Box<RuntimeReplay>>,
+    },
+    SessionDeltaPersisted {
+        next_sequence: u64,
+        next_management_sequence: u64,
+    },
+    ContextSlice {
+        context: ContextSlice,
     },
     Workspaces {
         workspaces: Vec<WorkspaceSummary>,
@@ -230,11 +593,15 @@ mod tests {
     use super::{
         CreateSessionRequest, DeleteSessionRequest, DeleteWorkspaceRequest,
         ExecuteSessionCommandRequest, GetSessionRequest, ListSessionRecordsRequest,
-        ListSessionsRequest, MarkSessionInterruptedRequest, Page, PersistSessionPayloadRequest,
-        SessionCommandResult, SessionLogCommand, SessionLogResponse, SessionRecord,
-        SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
+        ListSessionsRequest, MarkSessionInterruptedRequest, Page, PersistSessionDeltaRequest,
+        RegisterRuntimeRequest, SessionCommandResult, SessionFeedEvent, SessionLogCommand,
+        SessionLogResponse, SessionMetadataPatch, SessionRecord, SessionSnapshot,
+        UpdateSessionRequest, WorkspaceSummary,
     };
-    use lifecycle::{SessionAggregate, SessionCommand, SessionEvent, SessionQuery};
+    use lifecycle::{
+        SessionAggregate, SessionCommand, SessionEvent, SessionInput, SessionManagement,
+        SessionQuery,
+    };
     use serde_json::json;
 
     #[test]
@@ -255,12 +622,6 @@ mod tests {
 
     #[test]
     fn request_defaults_keep_optional_payloads_empty() {
-        let upsert: UpsertSessionRequest =
-            serde_json::from_value(json!({ "session": { "id": "session" } })).expect("upsert");
-        assert_eq!(upsert.parent_id, None);
-        assert!(upsert.messages.is_empty());
-        assert!(upsert.todos.is_empty());
-
         let list: ListSessionsRequest =
             serde_json::from_value(json!({ "workspace": "workspace" })).expect("list sessions");
         assert_eq!(list.page, 0);
@@ -270,6 +631,24 @@ mod tests {
             serde_json::from_value(json!({ "session_id": "session" })).expect("records");
         assert_eq!(records.page, 0);
         assert_eq!(records.page_size, 50);
+
+        let register = RegisterRuntimeRequest {
+            runtime_id: "runtime-retry".to_string(),
+            session_id: "session".to_string(),
+            fallback_from_id: Some("runtime-failed".to_string()),
+        };
+        let value = serde_json::to_value(&register).expect("register runtime request");
+        assert_eq!(value["fallback_from_id"], "runtime-failed");
+        assert_eq!(
+            serde_json::from_value::<RegisterRuntimeRequest>(value)
+                .expect("register runtime round trip"),
+            register
+        );
+        assert!(serde_json::from_value::<RegisterRuntimeRequest>(json!({
+            "runtime_id": "runtime",
+            "session_id": "session"
+        }))
+        .is_err());
     }
 
     #[test]
@@ -277,13 +656,19 @@ mod tests {
         let commands = [
             SessionLogCommand::Health,
             SessionLogCommand::ExecuteSessionCommand(ExecuteSessionCommandRequest {
+                command_id: "command".to_string(),
                 session_id: "session".to_string(),
                 session_command: SessionCommand::SubmitUserInput,
+                message_projection: None,
             }),
-            SessionLogCommand::PersistSessionPayload(PersistSessionPayloadRequest {
+            SessionLogCommand::UpdateSession(UpdateSessionRequest {
+                command_id: "update-command".to_string(),
                 session_id: "session".to_string(),
-                records: vec![json!({ "id": "message", "role": "assistant" })],
-                todos: vec![json!({ "id": "todo" })],
+                metadata: SessionMetadataPatch {
+                    name: Some("Updated".to_string()),
+                    ..SessionMetadataPatch::default()
+                },
+                task_plan_patch: None,
             }),
             SessionLogCommand::GetSession(GetSessionRequest {
                 session_id: "session".to_string(),
@@ -315,11 +700,6 @@ mod tests {
                     json!({ "command": "submit_user_input" })
                 );
             }
-            if command_name == "persist_session_payload" {
-                assert_eq!(value["session_id"], "session");
-                assert_eq!(value["records"][0]["id"], "message");
-                assert_eq!(value["todos"][0]["id"], "todo");
-            }
             let round_trip: SessionLogCommand =
                 serde_json::from_value(value).expect("command round trip");
             assert_eq!(
@@ -327,6 +707,51 @@ mod tests {
                 std::mem::discriminant(&command)
             );
         }
+    }
+
+    #[test]
+    fn boxed_session_delta_keeps_the_flat_wire_contract() {
+        let now =
+            serde_json::from_value(json!("2026-07-20T00:00:00Z")).expect("valid session timestamp");
+        let management = SessionManagement::new(
+            "session".to_string(),
+            "Session".to_string(),
+            "C:/workspace".into(),
+            false,
+            Vec::<String>::new(),
+            SessionInput {
+                user_input: "hello".to_string(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "goal".to_string(),
+            now,
+        );
+        let command =
+            SessionLogCommand::PersistSessionDelta(Box::new(PersistSessionDeltaRequest {
+                session_id: "session".to_string(),
+                management_sequence: 0,
+                management_delta: SessionManagement::persistence_delta(None, &management),
+                retained_from_sequence: 0,
+                entries: Vec::new(),
+            }));
+
+        let value = serde_json::to_value(&command).expect("session delta command json");
+        assert_eq!(value["command"], "persist_session_delta");
+        assert_eq!(value["session_id"], "session");
+        assert_eq!(value["management_sequence"], 0);
+        assert_eq!(value["management_delta"]["session_name"], "Session");
+        assert_eq!(value["retained_from_sequence"], 0);
+        assert!(value.get("payload").is_none());
+
+        let round_trip: SessionLogCommand =
+            serde_json::from_value(value).expect("session delta command round trip");
+        assert!(matches!(
+            round_trip,
+            SessionLogCommand::PersistSessionDelta(payload) if payload.session_id == "session"
+        ));
     }
 
     #[test]
@@ -356,7 +781,8 @@ mod tests {
                 status: Some("idle".to_string()),
                 message_count: 1,
                 task_management: json!({}),
-                lifecycle_projection: None,
+                lifecycle_projection: SessionAggregate::new("session".to_string())
+                    .query(SessionQuery::Lifecycle),
                 management: json!({ "state": "created" }),
                 session: json!({ "id": "session" }),
                 todos: Vec::new(),
@@ -384,6 +810,8 @@ mod tests {
                     projection: SessionAggregate::new("session".to_string())
                         .query(SessionQuery::Lifecycle),
                     session_name: Some("Session".to_string()),
+                    message_count: 0,
+                    last_user_message_at: None,
                 }),
             },
             workspaces,
@@ -405,12 +833,38 @@ mod tests {
     }
 
     #[test]
+    fn session_snapshot_requires_canonical_lifecycle_projection() {
+        let value = json!({
+            "session_id": "session",
+            "workspace": "workspace",
+            "name": "Session",
+            "parent_id": null,
+            "created_at": 1,
+            "updated_at": 2,
+            "state": "created",
+            "status": "idle",
+            "message_count": 0,
+            "task_management": {},
+            "management": {},
+            "session": {},
+            "todos": []
+        });
+
+        let error = serde_json::from_value::<SessionSnapshot>(value)
+            .expect_err("snapshot without a canonical lifecycle projection must fail");
+
+        assert!(error.to_string().contains("lifecycle_projection"));
+    }
+
+    #[test]
     fn typed_session_mutations_reject_extra_fields() {
         let create = CreateSessionRequest {
+            command_id: "create:session".to_string(),
             session_id: "session".to_string(),
             creation_command: SessionCommand::CreateSession {
                 task_plan: lifecycle::TaskPlan::default(),
             },
+            copy_context: false,
             workspace: "C:/workspace".to_string(),
             session_directory: "C:/workspace".to_string(),
             name: "Session".to_string(),
@@ -429,22 +883,82 @@ mod tests {
         };
         let value = serde_json::to_value(create).expect("create json");
         assert!(serde_json::from_value::<CreateSessionRequest>(value).is_ok());
+        assert!(serde_json::from_value::<CreateSessionRequest>(json!({
+            "session_id": "session",
+            "creation_command": {
+                "command": "create_session",
+                "task_plan": lifecycle::TaskPlan::default()
+            },
+            "copy_context": false,
+            "workspace": "C:/workspace",
+            "session_directory": "C:/workspace",
+            "name": "Session",
+            "created_at": 1,
+            "model": null,
+            "agent": null,
+            "session_type": "coding",
+            "kill_processes_on_start": false,
+            "validator_enabled": false,
+            "force_planning": false,
+            "model_variant": null,
+            "model_acceleration_enabled": false,
+            "disable_permission_restrictions": false,
+            "use_last_tool_call_response": false,
+            "auto_session_name": true
+        }))
+        .is_err());
         assert!(
             serde_json::from_value::<ExecuteSessionCommandRequest>(json!({
+                "session_id": "session",
+                "session_command": { "command": "submit_user_input" }
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ExecuteSessionCommandRequest>(json!({
+                "command_id": "command",
                 "session_id": "session",
                 "session_command": { "command": "submit_user_input" },
                 "extra": true
             }))
             .is_err()
         );
-        assert!(
-            serde_json::from_value::<PersistSessionPayloadRequest>(json!({
+        assert!(serde_json::from_value::<UpdateSessionRequest>(json!({
+            "command_id": "update",
+            "session_id": "session",
+            "metadata": { "extra": true },
+            "task_plan_patch": null
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<SessionFeedEvent>(json!({
+            "event": "session_snapshot_created",
+            "snapshot": {
                 "session_id": "session",
-                "records": [],
+                "workspace": "C:/workspace",
+                "name": "Session",
+                "parent_id": null,
+                "created_at": 1,
+                "updated_at": 2,
+                "state": "created",
+                "status": "idle",
+                "message_count": 0,
+                "task_management": {},
+                "lifecycle_projection": {
+                    "session_id": "session",
+                    "state": "created",
+                    "parent_id": null,
+                    "task_plan": {},
+                    "pending_user_inputs": [],
+                    "cancelled": false,
+                    "runtime_ids": [],
+                    "active_runtime_id": null
+                },
+                "management": {},
+                "session": {},
                 "todos": [],
-                "lifecycle": { "state": "running" }
-            }))
-            .is_err()
-        );
+                "extra": true
+            }
+        }))
+        .is_err());
     }
 }

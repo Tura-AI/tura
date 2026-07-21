@@ -19,9 +19,10 @@ use crate::provider_flow::streamed_command_run::{
     streamed_command_result_record, StreamedCommandEvent, StreamedCommandRunUpdate,
 };
 use crate::router_command_run::execute_command_value_results;
-use crate::state_machine::runtime_management::{RuntimeManagement, ToolCallRecord};
+use crate::runtime_event_writer::RuntimeFeedPublisher;
 use crate::tool_callback_sanitizer::sanitize_tool_callback_result;
 use lifecycle::RuntimeProjection;
+use lifecycle::{RuntimeAggregate, ToolCallRecord};
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
 
@@ -121,6 +122,7 @@ pub(crate) struct SpawnStreamedCommandRunTask {
     pub(crate) started_at: DateTime<Utc>,
     pub(crate) state: StreamedCommandRunState,
     pub(crate) runtime_status: RuntimeProjection,
+    pub(crate) feed_publisher: Option<RuntimeFeedPublisher>,
     pub(crate) require_startup_task_state: bool,
 }
 
@@ -193,7 +195,7 @@ pub(crate) fn spawn_streamed_command_run_task(
                     halted_before_finish = true;
                     input.state.cancelled.store(true, Ordering::SeqCst);
                 }
-                publish_streamed_command_run_update(StreamedCommandRunUpdate {
+                if let Err(error) = publish_streamed_command_run_update(StreamedCommandRunUpdate {
                     session_id: &input.session_id,
                     runtime_id: &input.runtime_id,
                     provider: &input.provider,
@@ -204,7 +206,16 @@ pub(crate) fn spawn_streamed_command_run_task(
                     started_at: input.started_at,
                     ended_at: None,
                     runtime_status: input.runtime_status.clone(),
-                });
+                    publisher: input.feed_publisher.as_ref(),
+                }) {
+                    tracing::warn!(
+                        session_id = %input.session_id,
+                        runtime_id = %input.runtime_id,
+                        error = %error,
+                        "failed to publish streamed command completion"
+                    );
+                    input.state.cancelled.store(true, Ordering::SeqCst);
+                }
             }
 
             if input.state.should_stop_accepting_commands() {
@@ -272,7 +283,7 @@ pub(crate) fn spawn_streamed_command_run_task(
         let checkpoint_ack_failed = input.state.cancelled.load(Ordering::SeqCst);
         if !streamed_commands.is_empty() {
             let finished_at = Utc::now();
-            publish_streamed_command_run_update(StreamedCommandRunUpdate {
+            if let Err(error) = publish_streamed_command_run_update(StreamedCommandRunUpdate {
                 session_id: &input.session_id,
                 runtime_id: &input.runtime_id,
                 provider: &input.provider,
@@ -287,7 +298,16 @@ pub(crate) fn spawn_streamed_command_run_task(
                 started_at: input.started_at,
                 ended_at: Some(finished_at),
                 runtime_status: input.runtime_status.clone(),
-            });
+                publisher: input.feed_publisher.as_ref(),
+            }) {
+                tracing::warn!(
+                    session_id = %input.session_id,
+                    runtime_id = %input.runtime_id,
+                    error = %error,
+                    "failed to publish final streamed command state"
+                );
+                input.state.cancelled.store(true, Ordering::SeqCst);
+            }
             let command_run_status = if halted_before_finish || checkpoint_ack_failed {
                 "error"
             } else {
@@ -448,7 +468,7 @@ fn prepare_stream_command(
             "failed to persist command_ready checkpoint"
         );
     }
-    publish_streamed_command_run_update(StreamedCommandRunUpdate {
+    if let Err(error) = publish_streamed_command_run_update(StreamedCommandRunUpdate {
         session_id: &input.session_id,
         runtime_id: &input.runtime_id,
         provider: &input.provider,
@@ -459,7 +479,17 @@ fn prepare_stream_command(
         started_at: input.started_at,
         ended_at: None,
         runtime_status: input.runtime_status.clone(),
-    });
+        publisher: input.feed_publisher.as_ref(),
+    }) {
+        tracing::warn!(
+            session_id = %input.session_id,
+            runtime_id = %input.runtime_id,
+            error = %error,
+            "failed to publish queued streamed command"
+        );
+        input.state.cancelled.store(true, Ordering::SeqCst);
+        return None;
+    }
     Some(QueuedStreamCommand {
         tool_call_id,
         command_id,
@@ -641,7 +671,7 @@ fn start_stream_command(
         "",
         command_started_at,
     ));
-    publish_streamed_command_run_update(StreamedCommandRunUpdate {
+    if let Err(error) = publish_streamed_command_run_update(StreamedCommandRunUpdate {
         session_id: &input.session_id,
         runtime_id: &input.runtime_id,
         provider: &input.provider,
@@ -652,7 +682,16 @@ fn start_stream_command(
         started_at: input.started_at,
         ended_at: None,
         runtime_status: input.runtime_status.clone(),
-    });
+        publisher: input.feed_publisher.as_ref(),
+    }) {
+        tracing::warn!(
+            session_id = %input.session_id,
+            runtime_id = %input.runtime_id,
+            error = %error,
+            "failed to publish streamed command start"
+        );
+        input.state.cancelled.store(true, Ordering::SeqCst);
+    }
 }
 
 fn append_ordered_results(
@@ -799,47 +838,47 @@ fn record_completed_results(
 }
 
 pub(crate) fn apply_cancelled_streamed_command_run_result(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     commands: &[Value],
     events: &[Value],
     results: &[Value],
     finished_at: DateTime<Utc>,
-) {
+) -> Result<(), String> {
     runtime.set_output(cancelled_streamed_command_run_output(
         commands, events, results,
-    ));
-    runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at));
+    ))?;
+    runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at))
 }
 
 pub(crate) fn apply_startup_apply_patch_discarded_streamed_command_run_result(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     commands: &[Value],
     events: &[Value],
     results: &[Value],
     finished_at: DateTime<Utc>,
-) {
+) -> Result<(), String> {
     runtime.set_output(streamed_command_run_output(
         commands, events, results, false,
-    ));
-    runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at));
+    ))?;
+    runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at))
 }
 
 pub(crate) fn ensure_streamed_command_run_tool_record(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     commands: &[Value],
     finished_at: DateTime<Utc>,
-) {
+) -> Result<(), String> {
     if commands.is_empty()
         || runtime
             .tool_call
             .iter()
             .any(|record| record.tool_called_name == COMMAND_RUN_TOOL_NAME)
     {
-        return;
+        return Ok(());
     }
     let mut record = streamed_command_run_tool_record(commands, finished_at);
     record.provider_metadata = streamed_command_run_provider_metadata(commands);
-    runtime.push_tool_call(record);
+    runtime.push_tool_call(record)
 }
 
 fn cancelled_streamed_command_run_output(
@@ -917,10 +956,10 @@ mod tests {
         spawn_streamed_command_run_task, streamed_command_already_seen,
         SpawnStreamedCommandRunTask, StreamedCommandRunState,
     };
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
     use chrono::Utc;
     use lifecycle::RuntimeState;
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
     use serde_json::json;
     use serde_json::Value;
     use std::sync::{
@@ -956,8 +995,8 @@ mod tests {
         assert!(!streamed_command_already_seen(&commands, "call_2", 0));
     }
 
-    fn runtime() -> RuntimeManagement {
-        RuntimeManagement::new(
+    fn runtime() -> RuntimeAggregate {
+        RuntimeAggregate::new(
             "runtime-call-test".to_string(),
             "session-call-test".to_string(),
             "agent-call-test".to_string(),
@@ -996,7 +1035,8 @@ mod tests {
             &events,
             &results,
             finished_at,
-        );
+        )
+        .expect("cancelled streamed result should apply");
 
         let output = runtime.output.as_ref().expect("output should be set");
         assert_eq!(
@@ -1027,7 +1067,8 @@ mod tests {
             "provider_tool_call_id": "call_streamed_command_run"
         })];
 
-        ensure_streamed_command_run_tool_record(&mut runtime, &commands, finished_at);
+        ensure_streamed_command_run_tool_record(&mut runtime, &commands, finished_at)
+            .expect("streamed tool record should apply");
 
         assert_eq!(runtime.tool_call.len(), 1);
         assert_eq!(runtime.tool_call[0].tool_called_name, "command_run");
@@ -1050,21 +1091,24 @@ mod tests {
         let mut runtime = runtime();
         let finished_at = runtime.created_at;
         let commands = vec![json!({ "provider_tool_call_id": "call_streamed_command_run" })];
-        runtime.push_tool_call(crate::state_machine::runtime_management::ToolCallRecord {
-            tool_called_name: "command_run".to_string(),
-            tool_called_input: json!({ "commands": [] }),
-            provider_metadata: Some(json!({ "id": "call_existing" })),
-            tool_received_at: finished_at,
-            tool_executed_at: finished_at,
-            tool_calldata_received_at: finished_at,
-            tool_reported_success: false,
-            agent_reported_success: false,
-            agent_reported_helpful: false,
-            agent_reported_summary: String::new(),
-            validator_reported_success: None,
-        });
+        runtime
+            .push_tool_call(lifecycle::ToolCallRecord {
+                tool_called_name: "command_run".to_string(),
+                tool_called_input: json!({ "commands": [] }),
+                provider_metadata: Some(json!({ "id": "call_existing" })),
+                tool_received_at: finished_at,
+                tool_executed_at: finished_at,
+                tool_calldata_received_at: finished_at,
+                tool_reported_success: false,
+                agent_reported_success: false,
+                agent_reported_helpful: false,
+                agent_reported_summary: String::new(),
+                validator_reported_success: None,
+            })
+            .expect("existing tool record should apply");
 
-        ensure_streamed_command_run_tool_record(&mut runtime, &commands, finished_at);
+        ensure_streamed_command_run_tool_record(&mut runtime, &commands, finished_at)
+            .expect("duplicate check should succeed");
 
         assert_eq!(runtime.tool_call.len(), 1);
         assert_eq!(
@@ -1094,6 +1138,7 @@ mod tests {
             started_at: Utc::now(),
             state,
             runtime_status: runtime().lifecycle_projection(),
+            feed_publisher: None,
             require_startup_task_state: false,
         });
 
@@ -1164,6 +1209,7 @@ mod tests {
             started_at: Utc::now(),
             state,
             runtime_status: runtime().lifecycle_projection(),
+            feed_publisher: None,
             require_startup_task_state: false,
         });
 
@@ -1250,6 +1296,7 @@ mod tests {
             started_at: Utc::now(),
             state,
             runtime_status: runtime().lifecycle_projection(),
+            feed_publisher: None,
             require_startup_task_state: false,
         });
 
@@ -1288,6 +1335,7 @@ mod tests {
             started_at: Utc::now(),
             state,
             runtime_status: runtime().lifecycle_projection(),
+            feed_publisher: None,
             require_startup_task_state: true,
         });
 

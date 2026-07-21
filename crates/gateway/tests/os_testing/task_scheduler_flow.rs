@@ -207,7 +207,12 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         false,
     );
 
-    execute_scheduler_command(&idle.id, SessionCommand::RuntimeStarted);
+    execute_scheduler_command(
+        &idle.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-idle-seed".to_string(),
+        },
+    );
 
     let _ = update_session_task_management(
         Path(idle.id.clone()),
@@ -232,7 +237,12 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         }),
     )
     .await;
-    execute_scheduler_command(&idle.id, SessionCommand::RuntimeCompleted);
+    execute_scheduler_command(
+        &idle.id,
+        SessionCommand::RuntimeCompleted {
+            runtime_id: "runtime-idle-seed".to_string(),
+        },
+    );
     let _ = update_session_task_management(
         Path(done.id.clone()),
         Json(UpdateSessionTaskManagementRequest {
@@ -257,7 +267,12 @@ async fn gateway_task_scheduler_business_flow_claims_session_idle_question_once(
         }),
     )
     .await;
-    execute_scheduler_command(&busy.id, SessionCommand::RuntimeStarted);
+    execute_scheduler_command(
+        &busy.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-busy-seed".to_string(),
+        },
+    );
 
     run_due_task_scheduler_tick_for_business_test();
 
@@ -419,7 +434,18 @@ async fn gateway_task_scheduler_business_flow_survives_edits_between_ticks() {
         }),
     )
     .await;
-    execute_scheduler_command(&session.id, SessionCommand::RuntimeCompleted);
+    execute_scheduler_command(
+        &session.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-second-due".to_string(),
+        },
+    );
+    execute_scheduler_command(
+        &session.id,
+        SessionCommand::RuntimeCompleted {
+            runtime_id: "runtime-second-due".to_string(),
+        },
+    );
 
     run_due_task_scheduler_tick_for_business_test();
     assert_eq!(
@@ -488,7 +514,18 @@ async fn gateway_task_scheduler_business_flow_repeats_polling_cycles_without_dup
 
     for (index, summary) in summaries.iter().enumerate() {
         let due = Utc::now() - chrono::Duration::seconds(10);
-        execute_scheduler_command(&session.id, SessionCommand::RuntimeCompleted);
+        execute_scheduler_command(
+            &session.id,
+            SessionCommand::RuntimeStarted {
+                runtime_id: format!("runtime-polling-cycle-{index}"),
+            },
+        );
+        execute_scheduler_command(
+            &session.id,
+            SessionCommand::RuntimeCompleted {
+                runtime_id: format!("runtime-polling-cycle-{index}"),
+            },
+        );
         set_polling_task_due(&session.id, summary, due).await;
 
         run_due_task_scheduler_tick_for_business_test();
@@ -913,8 +950,6 @@ fn gateway_task_scheduler_business_flow_hydrates_persisted_due_task_after_store_
             "start_at": due.to_rfc3339()
         })),
     );
-    upsert_runtime_owned_scheduler_snapshot(&writer, &session.id, &workspace)?;
-
     let recovered = SessionStore::new();
     recovered.hydrate_directory(Some(workspace.to_string_lossy().to_string()));
     let hydrated = recovered
@@ -946,7 +981,7 @@ fn gateway_task_scheduler_business_flow_hydrates_persisted_due_task_after_store_
 
     service.shutdown(Duration::from_secs(5))?;
     wait_for_scheduler_condition(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }

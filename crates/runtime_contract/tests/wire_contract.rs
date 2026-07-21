@@ -1,5 +1,5 @@
 use runtime_contract::{
-    CallContext, GatewayCallbackFrame, WorkerEnvelope, GATEWAY_CALLBACK_KIND, WORKER_KIND_CALL,
+    CallContext, RunAgentRequest, RuntimeWorkerResponse, WorkerEnvelope, WORKER_KIND_CALL,
     WORKER_KIND_HEALTH_CHECK,
 };
 use serde_json::json;
@@ -22,15 +22,46 @@ fn worker_envelopes_preserve_the_existing_wire_shape() {
 }
 
 #[test]
-fn gateway_callback_frame_preserves_kind_method_and_nested_payload() {
-    let frame = GatewayCallbackFrame::new(
-        "session.agent_stream",
-        "session-1",
-        json!({ "delta": "hi" }),
+fn run_agent_request_is_strict_and_defaults_optional_worker_inputs() {
+    let request: RunAgentRequest = serde_json::from_value(json!({
+        "runtime_id": "runtime-1",
+        "lease_id": "lease-1",
+        "session_id": "session-1",
+        "prompt": "hello"
+    }))
+    .expect("run-agent request");
+    assert_eq!(request.runtime_id, "runtime-1");
+    assert_eq!(request.lease_id, "lease-1");
+    assert_eq!(request.session_id.as_deref(), Some("session-1"));
+    assert_eq!(request.prompt.as_deref(), Some("hello"));
+    assert!(!request.no_op_manual);
+    assert!(!request.return_log);
+    assert!(request.worker_env.is_empty());
+    assert!(serde_json::from_value::<RunAgentRequest>(json!({
+        "runtime_id": "runtime-1",
+        "turn_id": "legacy"
+    }))
+    .is_err());
+}
+#[test]
+fn runtime_worker_response_rejects_unknown_fields_and_uses_typed_state() {
+    let response: RuntimeWorkerResponse = serde_json::from_value(json!({
+        "ok": true,
+        "session_id": "session-1",
+        "session_state": "completed",
+        "message_count": 3,
+        "turn_started_at_ms": 42,
+        "final_text": "done",
+        "session_log": []
+    }))
+    .expect("runtime response");
+    assert_eq!(
+        response.session_state,
+        Some(lifecycle::SessionState::Completed)
     );
-    let encoded = serde_json::to_value(frame).expect("callback frame");
-    assert_eq!(encoded["kind"], GATEWAY_CALLBACK_KIND);
-    assert_eq!(encoded["method"], "session.agent_stream");
-    assert_eq!(encoded["payload"]["session_id"], "session-1");
-    assert_eq!(encoded["payload"]["body"]["delta"], "hi");
+    assert!(serde_json::from_value::<RuntimeWorkerResponse>(json!({
+        "ok": true,
+        "legacy_status": "done"
+    }))
+    .is_err());
 }

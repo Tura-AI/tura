@@ -4,14 +4,14 @@ use chrono::{DateTime, Utc};
 use lifecycle::RuntimeState;
 use std::time::Duration;
 
-use crate::state_machine::runtime_management::{RuntimeError, RuntimeManagement, UsageReport};
+use lifecycle::{RuntimeAggregate, RuntimeError, UsageReport};
 
-pub(crate) fn runtime_timeout(runtime: &RuntimeManagement) -> std::time::Duration {
+pub(crate) fn runtime_timeout(runtime: &RuntimeAggregate) -> std::time::Duration {
     std::time::Duration::from_millis(runtime.provider.base.time_out_ms.max(1_000))
 }
 
 pub(crate) fn finish_runtime_failure(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     finished_at: DateTime<Utc>,
     error_code: &str,
     error_text: String,
@@ -28,7 +28,7 @@ pub(crate) fn finish_runtime_failure(
 }
 
 pub(crate) fn finish_runtime_failure_with_usage(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     finished_at: DateTime<Utc>,
     error_code: &str,
     error_text: String,
@@ -50,7 +50,7 @@ pub(crate) fn finish_runtime_failure_with_usage(
 }
 
 pub(crate) fn finish_provider_call_failure(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     finished_at: DateTime<Utc>,
     error: &tura_llm_rust::TuraError,
     terminal_state: RuntimeState,
@@ -77,7 +77,7 @@ struct RuntimeFailurePolicy {
 }
 
 fn finish_runtime_failure_with_policy(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     finished_at: DateTime<Utc>,
     error_code: &str,
     error_text: String,
@@ -122,7 +122,7 @@ fn provider_retry_wait_override(retry_count: u8) -> Option<Duration> {
         .map(Duration::from_millis)
 }
 
-pub(crate) fn runtime_failure_allows_retry(runtime: &RuntimeManagement) -> bool {
+pub(crate) fn runtime_failure_allows_retry(runtime: &RuntimeAggregate) -> bool {
     runtime.state == RuntimeState::Failed
         && runtime
             .error
@@ -131,7 +131,7 @@ pub(crate) fn runtime_failure_allows_retry(runtime: &RuntimeManagement) -> bool 
             .unwrap_or(false)
 }
 
-pub(crate) fn runtime_failure_text(runtime: &RuntimeManagement) -> Option<String> {
+pub(crate) fn runtime_failure_text(runtime: &RuntimeAggregate) -> Option<String> {
     runtime
         .error
         .as_ref()
@@ -148,12 +148,10 @@ pub(crate) fn runtime_failure_text(runtime: &RuntimeManagement) -> Option<String
 
 #[cfg(test)]
 mod tests {
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{
-        RuntimeError, RuntimeManagement, RuntimeProviderConfig,
-    };
     use chrono::Utc;
     use lifecycle::RuntimeState;
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeError, RuntimeProviderConfig};
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -237,9 +235,9 @@ mod tests {
     fn retry_allowed_failed_runtime_uses_provider_retry_path() {
         let mut runtime = runtime_for_retry_test("retryable-runtime");
         runtime
-            .transition(RuntimeState::Failed)
-            .expect("mark runtime failed");
-        runtime.error = Some(RuntimeError {
+            .finish_failure(
+                runtime.created_at,
+                RuntimeError {
             error_code: Some("CALL_FAILED".to_string()),
             error_text: Some(
                 "all providers failed: openai:gpt-5.1 => network error: error decoding response body"
@@ -248,7 +246,11 @@ mod tests {
             retry_allowed: true,
             fallback_allowed: true,
             fallback_to_id: None,
-        });
+                },
+                RuntimeState::Failed,
+                None,
+            )
+            .expect("mark runtime failed");
 
         assert!(super::runtime_failure_allows_retry(&runtime));
         assert_eq!(
@@ -261,15 +263,19 @@ mod tests {
     fn non_retryable_failed_runtime_does_not_use_provider_retry_path() {
         let mut runtime = runtime_for_retry_test("non-retryable-runtime");
         runtime
-            .transition(RuntimeState::Failed)
+            .finish_failure(
+                runtime.created_at,
+                RuntimeError {
+                    error_code: Some("CALL_FAILED".to_string()),
+                    error_text: Some("provider rejected invalid request".to_string()),
+                    retry_allowed: false,
+                    fallback_allowed: false,
+                    fallback_to_id: None,
+                },
+                RuntimeState::Failed,
+                None,
+            )
             .expect("mark runtime failed");
-        runtime.error = Some(RuntimeError {
-            error_code: Some("CALL_FAILED".to_string()),
-            error_text: Some("provider rejected invalid request".to_string()),
-            retry_allowed: false,
-            fallback_allowed: false,
-            fallback_to_id: None,
-        });
 
         assert!(!super::runtime_failure_allows_retry(&runtime));
         assert_eq!(
@@ -278,10 +284,10 @@ mod tests {
         );
     }
 
-    fn runtime_for_retry_test(runtime_id: &str) -> RuntimeManagement {
+    fn runtime_for_retry_test(runtime_id: &str) -> RuntimeAggregate {
         let now = Utc::now();
         let provider = "openai".to_string();
-        RuntimeManagement::new(
+        RuntimeAggregate::new(
             runtime_id.to_string(),
             "session-for-retry-test".to_string(),
             "session-for-retry-test".to_string(),

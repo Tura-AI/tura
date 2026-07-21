@@ -10,7 +10,8 @@ use crate::prompt_style::{
     context_blocks, runtime_prompt_manual, tail_injection, task_status, user_new_command,
     PromptBuilder,
 };
-use crate::state_machine::session_management::{ContextTokenStats, SessionManagement};
+use lifecycle::ContextTokenStats;
+use lifecycle::SessionManagement;
 use lifecycle::{PlanStatus, StartCondition, TaskStep};
 
 pub(crate) struct TurnMessages {
@@ -133,9 +134,6 @@ fn record_user_new_commands(session: &mut SessionManagement, commands: &[String]
 }
 
 pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
-    if super::constants::gateway_callbacks_disabled() {
-        return Vec::new();
-    }
     fetch_user_commands_from_router(session_id).unwrap_or_default()
 }
 
@@ -244,10 +242,8 @@ mod tests {
         push_no_tool_task_status_retry_message, record_user_new_commands,
     };
     use crate::context::{build_messages_from_session, compact_session_context};
-    use crate::state_machine::session_management::{
-        PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
-    };
     use chrono::Utc;
+    use lifecycle::{PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep};
     use std::path::PathBuf;
 
     fn test_session(user_input: &str) -> SessionManagement {

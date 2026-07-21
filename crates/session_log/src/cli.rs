@@ -1,6 +1,7 @@
 use std::io::Read;
 
 use crate::{file_queue, ipc, SessionLogStore};
+use session_log_contract::client::{call_service, service_is_running};
 use session_log_contract::{
     DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionRecordsRequest,
     ListSessionsRequest, MarkSessionInterruptedRequest, SessionLogCommand, SessionLogResponse,
@@ -20,7 +21,6 @@ pub fn run() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("session_log requires a command"))?;
 
     let parsed = match command.as_str() {
-        "upsert-session" => SessionLogCommand::UpsertSession(read_json()?),
         "list-workspaces" => SessionLogCommand::ListWorkspaces,
         "get-session" => SessionLogCommand::GetSession(read_json::<GetSessionRequest>()?),
         "list-sessions" => SessionLogCommand::ListSessions(read_json::<ListSessionsRequest>()?),
@@ -37,8 +37,8 @@ pub fn run() -> anyhow::Result<()> {
         other => anyhow::bail!("unknown session_log command: {other}"),
     };
 
-    let response = if !admin && ipc::service_is_running() {
-        ipc::call_service(&parsed)?
+    let response = if !admin && service_is_running() {
+        call_service(&parsed)?
     } else {
         // Direct path: tests/admin inspection only.
         let store = SessionLogStore::open_default()?;

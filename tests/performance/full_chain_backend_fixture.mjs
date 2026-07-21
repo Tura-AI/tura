@@ -579,12 +579,11 @@ export class BackendStressHarness {
     );
   }
 
-  async upsertHistoricalSession(workspace, workspaceIndex, taskIndex) {
+  async seedHistoricalSession(workspace, workspaceIndex, taskIndex) {
     const sessionId = `historical-w${workspaceIndex}-t${taskIndex}-${this.runId}`.replace(/[^a-zA-Z0-9_.:-]/g, "-");
     const sessionName = `E2E-STRESS historical workspace ${workspaceIndex} task ${taskIndex}`;
     const createdAt = Date.now() - 60_000 + workspaceIndex * 1_000 + taskIndex * 10;
     const updatedAt = createdAt + this.config.turnsPerSession * 2_000;
-    const management = this.historicalManagement({ sessionId, sessionName, workspace, createdAt, updatedAt });
     const messages = [];
     for (let turn = 0; turn < this.config.turnsPerSession; turn += 1) {
       const currentMarker = marker(workspaceIndex, taskIndex, turn);
@@ -601,9 +600,9 @@ export class BackendStressHarness {
         ),
       );
     }
-    const taskManagement = {
+    const taskPlan = {
       plan_summary: sessionName,
-      tasks: [
+      detailed_tasks: [
         {
           task_id: `task-${workspaceIndex}-${taskIndex}`,
           step: 0,
@@ -613,77 +612,73 @@ export class BackendStressHarness {
         },
       ],
     };
-    const session = {
-      id: sessionId,
+    const created = await this.callSessionDb({
+      command: "create_session",
+      command_id: `create:${sessionId}`,
+      session_id: sessionId,
+      creation_command: { command: "create_session", task_plan: taskPlan },
+      copy_context: false,
+      workspace,
+      session_directory: workspace,
       name: sessionName,
-      directory: workspace,
       created_at: createdAt,
-      updated_at: updatedAt,
       model: "openai/mock-coder",
       agent: "direct-text-only",
       session_type: "coding",
-      auto_session_name: false,
       kill_processes_on_start: false,
       validator_enabled: false,
       force_planning: false,
       model_variant: "default",
       model_acceleration_enabled: false,
       disable_permission_restrictions: true,
-      status: "idle",
-      message_count: messages.length,
-      task_management: taskManagement,
-      management,
-    };
-    await this.callSessionDb({
-      command: "upsert_session",
-      session,
-      parent_id: null,
-      messages,
-      todos: [],
-    });
-    return { workspaceIndex, taskIndex, workspace, sessionId, mode: "historical" };
-  }
-
-  historicalManagement({ sessionId, sessionName, workspace, createdAt, updatedAt }) {
-    return {
-      session_id: sessionId,
-      session_name: sessionName,
-      auto_session_name: false,
-      session_directory: workspace,
-      session_uses_docker: false,
-      task_type: [],
-      session_capabilities: [],
-      session_current_turn: this.config.turnsPerSession,
-      session_log: [],
-      session_created_at: new Date(createdAt).toISOString(),
-      session_last_update_at: new Date(updatedAt).toISOString(),
-      session_started_at: new Date(createdAt).toISOString(),
-      input: {
-        user_input: `Historical pressure seed for ${sessionName}`,
-        file_input: [],
-        agent: "direct-text-only",
-        runtime_context: null,
-        planning_mode_override: null,
-      },
-      user_goal: sessionName,
-      current_objective: sessionName,
-      task_plan: {
-        plan_summary: sessionName,
-        detailed_tasks: [],
-      },
-      state: "completed",
       use_last_tool_call_response: false,
-      is_child_session: false,
-      disable_permission_restrictions: true,
-      planning_enabled: false,
-      reflection_enabled: false,
-      op_manual_enabled: true,
-      no_op_manual: false,
-      goal_mode: false,
-      last_goal_user_input: "",
-      context_tokens: { input: 0, limit: 255000 },
-      runtime_usage: { total_tokens: 0 },
-    };
+      auto_session_name: false,
+    });
+    assert.equal(created.kind, "session_command_applied", `create historical session failed: ${JSON.stringify(created)}`);
+    const loaded = await this.callSessionDb({ command: "get_session", session_id: sessionId });
+    assert.equal(loaded.kind, "session", `load historical session failed: ${JSON.stringify(loaded)}`);
+    assert.ok(loaded.session?.management, `historical session management missing: ${JSON.stringify(loaded)}`);
+    const context = await this.callSessionDb({
+      command: "read_context_slice",
+      session_id: sessionId,
+      max_estimated_tokens: 1,
+    });
+    assert.equal(context.kind, "context_slice", `load historical context failed: ${JSON.stringify(context)}`);
+    const management = loaded.session.management;
+    management.session_last_update_at = new Date(updatedAt).toISOString();
+    management.session_last_user_message_at = new Date(updatedAt).toISOString();
+    management.session_log_retention = { ...(management.session_log_retention || {}), omitted_entries: 0 };
+    const persisted = await this.callSessionDb({
+      command: "persist_session_delta",
+      session_id: sessionId,
+      management_sequence: context.context.next_management_sequence,
+      management_delta: {
+        session_last_update_at: management.session_last_update_at,
+        session_last_user_message_at: management.session_last_user_message_at,
+        session_log_retention: management.session_log_retention,
+      },
+      retained_from_sequence: 0,
+      entries: messages.map((record, sequence) => ({
+        context: {
+          sequence,
+          raw_record: JSON.stringify({ id: record.id, role: record.role }),
+        },
+        projection: {
+          session_id: sessionId,
+          message_id: record.id,
+          role: record.role,
+          created_at: record.created_at,
+          updated_at: record.updated_at,
+          record,
+        },
+      })),
+    });
+    assert.equal(
+      persisted.kind,
+      "session_delta_persisted",
+      `persist historical session failed: ${JSON.stringify(persisted)}`,
+    );
+    return { workspaceIndex, taskIndex, workspace, sessionId, mode: "historical" };
   }
 
   async waitForRecords(gatewayUrl, sessionId, expected, currentMarker, timeoutMs) {
@@ -742,14 +737,14 @@ export class BackendStressHarness {
       });
     });
 
-    await this.timed("session-db-upsert-historical-sessions", async () => {
+    await this.timed("session-db-seed-historical-sessions", async () => {
       if (historicalCoordinates.length === 0) return;
       await this.waitForSessionDbReady(this.boundedTimeout(10_000, "session_db readiness"));
       const historicalSessions = await mapLimit(
         historicalCoordinates,
         this.config.createSessionConcurrency,
         async ({ workspaceIndex, taskIndex }) =>
-          this.upsertHistoricalSession(workspaces[workspaceIndex], workspaceIndex, taskIndex),
+          this.seedHistoricalSession(workspaces[workspaceIndex], workspaceIndex, taskIndex),
       );
       for (const session of historicalSessions) sessions.push(this.trackDiagnosticSession(session));
     });

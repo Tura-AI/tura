@@ -289,6 +289,11 @@ pub async fn run_server_until_shutdown(
 
     let addr = local_bind_addr(port);
     let router = build_router();
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let (session_feed, session_feed_done) =
+        tokio::task::spawn_blocking(crate::session_feed::start_session_feed_tailer)
+            .await
+            .map_err(|error| format!("session feed startup task failed: {error}"))??;
     api::session::start_task_scheduler();
     api::provider::start_provider_auth_scheduler();
 
@@ -297,7 +302,6 @@ pub async fn run_server_until_shutdown(
 
     start_openai_oauth_callback_server(port).await;
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
     let gateway_url = format!("http://{addr}");
     if let Err(error) =
         tura_path::write_active_gateway_url_for_home(tura_path::instance_home(), &gateway_url)
@@ -308,9 +312,19 @@ pub async fn run_server_until_shutdown(
         "⏱️ Gateway startup ready in {:.2}s",
         startup_started.elapsed().as_secs_f64()
     );
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    let serve_result = axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = shutdown => {}
+                _ = session_feed_done => {}
+            }
+        })
+        .await;
+    let session_feed_result = tokio::task::spawn_blocking(move || session_feed.shutdown())
+        .await
+        .map_err(|error| format!("session feed shutdown task failed: {error}"))?;
+    serve_result?;
+    session_feed_result?;
 
     Ok(())
 }

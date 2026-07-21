@@ -2,12 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+
+use lifecycle::SessionState;
 
 pub const WORKER_KIND_CALL: &str = "call";
 pub const WORKER_KIND_HEALTH_CHECK: &str = "health_check";
-pub const GATEWAY_CALLBACK_KIND: &str = "gateway.callback";
-pub const GATEWAY_AGENT_MESSAGE_METHOD: &str = "session.agent_message";
-pub const GATEWAY_AGENT_STREAM_METHOD: &str = "session.agent_stream";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CallContext {
@@ -51,28 +51,61 @@ impl WorkerEnvelope {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GatewayCallbackPayload {
-    pub session_id: String,
-    pub body: Value,
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RunAgentRequest {
+    pub runtime_id: String,
+    pub lease_id: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub directory: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub session_type: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub input: Option<Value>,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub depth: Option<usize>,
+    #[serde(default)]
+    pub runtime_context: Option<String>,
+    #[serde(default)]
+    pub planning_mode_override: Option<bool>,
+    #[serde(default)]
+    pub no_op_manual: bool,
+    #[serde(default)]
+    pub return_log: bool,
+    #[serde(default)]
+    pub worker_env: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GatewayCallbackFrame {
-    pub kind: String,
-    pub method: String,
-    pub payload: GatewayCallbackPayload,
-}
-
-impl GatewayCallbackFrame {
-    pub fn new(method: impl Into<String>, session_id: impl Into<String>, body: Value) -> Self {
-        Self {
-            kind: GATEWAY_CALLBACK_KIND.to_string(),
-            method: method.into(),
-            payload: GatewayCallbackPayload {
-                session_id: session_id.into(),
-                body,
-            },
-        }
-    }
+#[serde(deny_unknown_fields)]
+pub struct RuntimeWorkerResponse {
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_state: Option<SessionState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_started_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub session_log: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Value>,
 }

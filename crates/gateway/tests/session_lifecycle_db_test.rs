@@ -6,12 +6,12 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use gateway::api::session::{delete_session, fork_session};
 use gateway::contracts::{ForkSessionRequest, Session};
-use gateway::session::MessageRole;
 use gateway::session_store;
 use lifecycle::SessionCommand;
 use session_log_contract::{
-    GetSessionRequest, ListSessionRecordsRequest, SessionLogCommand, SessionLogResponse,
-    SessionRecord, SessionSnapshot,
+    GetSessionRequest, ListSessionRecordsRequest, PersistSessionDeltaRequest, SessionContextRecord,
+    SessionDeltaEntry, SessionLogCommand, SessionLogResponse, SessionRecord,
+    SessionRecordProjection, SessionSnapshot,
 };
 use support::TestSessionDb;
 
@@ -34,6 +34,7 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
         false,
     );
     let source_task_plan = source_info.management.task_plan.clone();
+    let mut source_management = source_info.management.clone();
     let source = session_store()
         .create_canonical_session(
             source_info,
@@ -42,11 +43,9 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
             },
         )
         .map_err(anyhow::Error::msg)?;
-    session_store().add_message(
-        &source.id,
-        MessageRole::User,
-        "persist this context before fork".to_string(),
-    );
+    source_management.session_log.clear();
+    source_management.session_log_retention.omitted_entries = 0;
+    persist_source_message(&source.id, source_management)?;
 
     let response = fork_session(
         Path(source.id.clone()),
@@ -93,11 +92,68 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_persisted_session(session_id: &str) -> anyhow::Result<Option<Box<SessionSnapshot>>> {
-    let response =
-        session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
+fn persist_source_message(
+    session_id: &str,
+    management: lifecycle::SessionManagement,
+) -> anyhow::Result<()> {
+    let message_id = "source-user-message";
+    let record = serde_json::json!({
+        "id": message_id,
+        "session_id": session_id,
+        "role": "user",
+        "parent_id": null,
+        "parts": [{
+            "id": "source-user-part",
+            "type": "text",
+            "content": "persist this context before fork",
+            "text": "persist this context before fork",
+            "metadata": null,
+            "call_id": null,
+            "tool": null,
+            "state": null
+        }],
+        "created_at": 10,
+        "updated_at": 11
+    });
+    let response = session_log_contract::client::call_service(
+        &SessionLogCommand::PersistSessionDelta(Box::new(PersistSessionDeltaRequest {
             session_id: session_id.to_string(),
-        }))?;
+            management_sequence: 0,
+            management_delta: lifecycle::SessionManagement::persistence_delta(None, &management),
+            retained_from_sequence: 0,
+            entries: vec![SessionDeltaEntry {
+                context: SessionContextRecord {
+                    sequence: 0,
+                    raw_record: r#"{"role":"user","content":"persist this context before fork"}"#
+                        .to_string(),
+                },
+                projection: Some(SessionRecordProjection {
+                    session_id: session_id.to_string(),
+                    message_id: message_id.to_string(),
+                    role: "user".to_string(),
+                    created_at: 10,
+                    updated_at: 11,
+                    record,
+                }),
+            }],
+        })),
+    )?;
+    match response {
+        SessionLogResponse::SessionDeltaPersisted {
+            next_sequence: 1,
+            next_management_sequence: 1,
+        } => Ok(()),
+        SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
+        other => anyhow::bail!("unexpected session delta response: {other:?}"),
+    }
+}
+
+fn get_persisted_session(session_id: &str) -> anyhow::Result<Option<Box<SessionSnapshot>>> {
+    let response = session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))?;
     match response {
         SessionLogResponse::Session { session } => Ok(session),
         SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
@@ -106,13 +162,13 @@ fn get_persisted_session(session_id: &str) -> anyhow::Result<Option<Box<SessionS
 }
 
 fn list_persisted_records(session_id: &str) -> anyhow::Result<Vec<SessionRecord>> {
-    let response = session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
-        ListSessionRecordsRequest {
+    let response = session_log_contract::client::call_service(
+        &SessionLogCommand::ListSessionRecords(ListSessionRecordsRequest {
             session_id: session_id.to_string(),
             page: 0,
             page_size: 50,
-        },
-    ))?;
+        }),
+    )?;
     match response {
         SessionLogResponse::Records { records, .. } => Ok(records),
         SessionLogResponse::Error { error } => anyhow::bail!("{error}"),

@@ -1,9 +1,7 @@
 use anyhow::{Context, Result};
-use lifecycle::{
-    PlanStatus, SessionAggregate, SessionProjection, SessionState, TaskPlan, TaskStep,
-};
+use lifecycle::{SessionAggregate, SessionEvent, SessionProjection, SessionState, TaskPlan};
+use rusqlite::{params, Connection};
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -36,120 +34,11 @@ pub(super) fn i64_at(value: &Value, path: &[&str]) -> Option<i64> {
         .and_then(Value::as_i64)
 }
 
-pub(super) fn millis_at(value: &Value, path: &[&str]) -> Option<i64> {
-    string_at(value, path).and_then(|text| {
-        chrono::DateTime::parse_from_rfc3339(&text)
-            .ok()
-            .map(|value| value.timestamp_millis())
-    })
-}
-
-pub(super) fn management_task_management(management: &Value) -> Option<Value> {
-    let task_plan = management.get("task_plan")?;
-    let tasks = task_plan
-        .get("detailed_tasks")
-        .cloned()
-        .unwrap_or(Value::Null);
-    Some(serde_json::json!({
-        "plan_summary": task_plan.get("plan_summary").cloned().unwrap_or(Value::String(String::new())),
-        "tasks": tasks,
-    }))
-}
-
 pub(super) fn task_management_value(task_plan: &TaskPlan) -> Value {
     serde_json::json!({
         "plan_summary": task_plan.plan_summary,
         "tasks": task_plan.detailed_tasks,
     })
-}
-
-pub(super) fn legacy_session_aggregate(
-    session_id: &str,
-    state: SessionState,
-    parent_id: Option<String>,
-    management: &Value,
-    task_management: Option<&Value>,
-) -> Result<SessionAggregate> {
-    let task_plan = management
-        .get("task_plan")
-        .cloned()
-        .or_else(|| task_management.map(task_plan_from_projection))
-        .map(parse_legacy_task_plan)
-        .transpose()
-        .with_context(|| format!("invalid task plan for session {session_id}"))?
-        .unwrap_or_default();
-    let mut aggregate = SessionAggregate::new(session_id.to_string());
-    aggregate.state = state;
-    aggregate.parent_id = parent_id;
-    aggregate.task_plan = task_plan;
-    aggregate.cancelled = state == SessionState::Cancelled;
-    Ok(aggregate)
-}
-
-fn task_plan_from_projection(task_management: &Value) -> Value {
-    serde_json::json!({
-        "plan_summary": task_management
-            .get("plan_summary")
-            .cloned()
-            .unwrap_or_else(|| Value::String(String::new())),
-        "detailed_tasks": task_management
-            .get("tasks")
-            .cloned()
-            .unwrap_or_else(|| Value::Array(Vec::new())),
-    })
-}
-
-fn parse_legacy_task_plan(value: Value) -> Result<TaskPlan, serde_json::Error> {
-    match serde_json::from_value::<TaskPlan>(value.clone()) {
-        Ok(task_plan) => Ok(task_plan),
-        Err(canonical_error) => serde_json::from_value::<LegacyTaskPlan>(value)
-            .map(TaskPlan::from)
-            .map_err(|_| canonical_error),
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyTaskPlan {
-    #[serde(default)]
-    plan_summary: String,
-    #[serde(default)]
-    detailed_tasks: Vec<LegacyTaskStep>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyTaskStep {
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    step: String,
-    #[serde(default)]
-    status: PlanStatus,
-    #[serde(default)]
-    deliverables: Vec<String>,
-}
-
-impl From<LegacyTaskPlan> for TaskPlan {
-    fn from(legacy: LegacyTaskPlan) -> Self {
-        Self {
-            plan_summary: legacy.plan_summary,
-            detailed_tasks: legacy
-                .detailed_tasks
-                .into_iter()
-                .enumerate()
-                .map(|(index, task)| TaskStep {
-                    task_id: task.id,
-                    step: index as u64 + 1,
-                    task_summary: task.step.clone(),
-                    step_task: task.step,
-                    status: task.status,
-                    step_deliverable_description: task.deliverables.join("\n"),
-                    ..TaskStep::default()
-                })
-                .collect(),
-        }
-    }
 }
 
 pub(super) fn apply_lifecycle_projection(
@@ -181,16 +70,53 @@ pub(super) fn apply_lifecycle_projection(
     Ok(task_management)
 }
 
-pub(super) fn session_state_from_management(
-    management: &Value,
+pub(super) fn replay_session_events(
+    conn: &Connection,
     session_id: &str,
-) -> Result<SessionState> {
-    let value = management
-        .get("state")
-        .cloned()
-        .with_context(|| format!("session management state missing for session {session_id}"))?;
-    serde_json::from_value(value)
-        .with_context(|| format!("invalid canonical session state for session {session_id}"))
+) -> Result<SessionAggregate> {
+    let mut statement = conn.prepare(
+        "SELECT event_seq, event_json FROM session_events
+         WHERE session_id = ?1 ORDER BY event_seq",
+    )?;
+    let rows = statement.query_map(params![session_id], |row| {
+        Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut events = Vec::new();
+    for (expected, row) in rows.enumerate() {
+        let (event_seq, event_json) = row?;
+        if event_seq != expected as u64 {
+            anyhow::bail!(
+                "session {session_id} event sequence is not contiguous: expected {expected}, found {event_seq}"
+            );
+        }
+        events.push(
+            serde_json::from_str::<SessionEvent>(&event_json)
+                .with_context(|| format!("invalid session event {event_seq} for {session_id}"))?,
+        );
+    }
+    if events.is_empty() {
+        anyhow::bail!("session {session_id} has no canonical lifecycle events");
+    }
+    SessionAggregate::replay(session_id.to_string(), events)
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("invalid canonical lifecycle history for session {session_id}"))
+}
+
+pub(super) fn append_session_event(
+    conn: &Connection,
+    session_id: &str,
+    event: &SessionEvent,
+) -> Result<u64> {
+    let event_seq = conn.query_row(
+        "SELECT COALESCE(MAX(event_seq) + 1, 0) FROM session_events WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get::<_, u64>(0),
+    )?;
+    conn.execute(
+        "INSERT INTO session_events(session_id, event_seq, event_json) VALUES (?1, ?2, ?3)",
+        params![session_id, event_seq, serde_json::to_string(event)?],
+    )?;
+    Ok(event_seq + 1)
 }
 
 pub(super) fn session_state_text(state: SessionState) -> Result<String> {
@@ -206,15 +132,6 @@ pub(super) fn set_object_string(value: &mut Value, key: &str, next: &str) {
     }
     if let Some(object) = value.as_object_mut() {
         object.insert(key.to_string(), Value::String(next.to_string()));
-    }
-}
-
-pub(super) fn set_object_i64(value: &mut Value, key: &str, next: i64) {
-    if !value.is_object() {
-        *value = serde_json::json!({});
-    }
-    if let Some(object) = value.as_object_mut() {
-        object.insert(key.to_string(), Value::Number(next.into()));
     }
 }
 

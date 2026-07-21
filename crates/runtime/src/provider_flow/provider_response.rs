@@ -1,30 +1,30 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::state_machine::runtime_management::{RuntimeManagement, ToolCallRecord};
+use lifecycle::{RuntimeAggregate, ToolCallRecord};
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
 
 pub(crate) fn apply_provider_response(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     content: &Value,
     now: DateTime<Utc>,
-) {
-    apply_provider_response_with_options(runtime, content, now, false);
+) -> Result<(), String> {
+    apply_provider_response_with_options(runtime, content, now, false)
 }
 
 pub(crate) fn apply_provider_response_with_options(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     content: &Value,
     now: DateTime<Utc>,
     suppress_command_run_tool_calls: bool,
-) {
+) -> Result<(), String> {
     let content = tura_llm_rust::normalize_response_content(content);
 
     if let Some(text) = tura_llm_rust::extract_response_text(&content)
         .map(|text| tura_llm_rust::strip_thought_blocks(&text))
     {
-        runtime.append_text(&text);
+        runtime.append_text(text)?;
     }
 
     for tool_call in tura_llm_rust::extract_tool_calls(&content) {
@@ -43,20 +43,21 @@ pub(crate) fn apply_provider_response_with_options(
             agent_reported_helpful: false,
             agent_reported_summary: String::new(),
             validator_reported_success: None,
-        });
+        })?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::apply_provider_response_with_options;
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
     use chrono::Utc;
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
     use serde_json::json;
 
-    fn runtime() -> RuntimeManagement {
-        RuntimeManagement::new(
+    fn runtime() -> RuntimeAggregate {
+        RuntimeAggregate::new(
             "runtime-provider-response-test".to_string(),
             "session-provider-response-test".to_string(),
             "agent-provider-response-test".to_string(),
@@ -99,7 +100,8 @@ mod tests {
             }]
         });
 
-        apply_provider_response_with_options(&mut runtime, &content, now, true);
+        apply_provider_response_with_options(&mut runtime, &content, now, true)
+            .expect("provider response should apply");
 
         assert_eq!(runtime.text, "visible text");
         assert!(runtime.tool_call.is_empty());

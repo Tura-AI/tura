@@ -1,9 +1,7 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use runtime::state_machine::session_management::{
-    SessionInput, SessionManagement, StartCondition, TaskStep,
-};
+use lifecycle::{SessionInput, SessionManagement, StartCondition, TaskStep};
 
 #[test]
 fn task_management_json_exposes_start_condition_for_gateway_and_gui() {

@@ -1,5 +1,3 @@
-pub type IpcNotificationSender =
-    tokio::sync::mpsc::UnboundedSender<router_contract::IpcNotification>;
 #[path = "services/manager.rs"]
 pub mod manager;
 #[path = "services/models.rs"]

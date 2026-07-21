@@ -9,17 +9,71 @@ use crate::path::normalize_workspace;
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 use session_log_contract::{
-    GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionRecord,
-    SessionSnapshot, SessionSummary, WorkspaceSummary,
+    ContextSlice, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page,
+    ReadContextSliceRequest, SessionContextRecord, SessionRecord, SessionSnapshot, SessionSummary,
+    WorkspaceSummary,
 };
 use std::path::Path;
-use std::time::Duration;
-
-const STALE_RUNNING_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 
 impl SessionLogStore {
+    pub fn read_context_slice(&self, request: ReadContextSliceRequest) -> Result<ContextSlice> {
+        if request.max_estimated_tokens == 0 {
+            anyhow::bail!("context token budget must be greater than zero");
+        }
+        let workspace_db_path = self
+            .workspace_db_path_for_session(&request.session_id)?
+            .ok_or_else(|| anyhow::anyhow!("session {} not found", request.session_id))?;
+        self.with_workspace_connection(&workspace_db_path, |conn| {
+            let (next_sequence, retained_from_sequence, next_management_sequence) = conn
+                .query_row(
+                    "SELECT next_context_sequence, retained_from_sequence, next_management_sequence
+                 FROM sessions WHERE session_id = ?1",
+                    params![request.session_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, u64>(0)?,
+                            row.get::<_, u64>(1)?,
+                            row.get::<_, u64>(2)?,
+                        ))
+                    },
+                )?;
+            let mut statement = conn.prepare(
+                "SELECT sequence, record_json FROM session_context_records
+                 WHERE session_id = ?1 AND sequence >= ?2 AND sequence < ?3
+                 ORDER BY sequence DESC",
+            )?;
+            let byte_budget = request.max_estimated_tokens.saturating_mul(4);
+            let mut rows = statement.query(params![
+                request.session_id,
+                retained_from_sequence,
+                next_sequence
+            ])?;
+            let mut selected_bytes = 0_u64;
+            let mut records = Vec::new();
+            while let Some(row) = rows.next()? {
+                let raw_record = row.get::<_, String>(1)?;
+                let record_bytes = raw_record.len() as u64;
+                if !records.is_empty() && selected_bytes.saturating_add(record_bytes) > byte_budget
+                {
+                    break;
+                }
+                selected_bytes = selected_bytes.saturating_add(record_bytes);
+                records.push(SessionContextRecord {
+                    sequence: row.get(0)?,
+                    raw_record,
+                });
+            }
+            records.reverse();
+            Ok(ContextSlice {
+                records,
+                retained_from_sequence,
+                next_sequence,
+                next_management_sequence,
+            })
+        })
+    }
+
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
-        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         self.with_index_connection(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT workspace, COUNT(*), COALESCE(MAX(updated_at), 0)
@@ -45,7 +99,6 @@ impl SessionLogStore {
         &self,
         request: ListSessionsRequest,
     ) -> Result<(Page, Vec<SessionSnapshot>)> {
-        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         let workspace = normalize_workspace(&request.workspace);
         let page_size = request.page_size.clamp(1, 500);
         let (page, total, index_rows) = self.with_index_connection(|conn| {
@@ -92,7 +145,6 @@ impl SessionLogStore {
         &self,
         request: ListSessionsRequest,
     ) -> Result<(Page, Vec<SessionSummary>)> {
-        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         let workspace = normalize_workspace(&request.workspace);
         let page_size = request.page_size.clamp(1, 500);
         let (page, total, index_rows) = self.with_index_connection(|conn| {
@@ -136,11 +188,10 @@ impl SessionLogStore {
     }
 
     pub fn get_session(&self, request: GetSessionRequest) -> Result<Option<SessionSnapshot>> {
-        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
-        self.get_session_without_stale_sweep(&request.session_id)
+        self.get_session_canonical(&request.session_id)
     }
 
-    pub(super) fn get_session_without_stale_sweep(
+    pub(super) fn get_session_canonical(
         &self,
         session_id: &str,
     ) -> Result<Option<SessionSnapshot>> {
@@ -164,7 +215,6 @@ impl SessionLogStore {
         &self,
         request: ListSessionRecordsRequest,
     ) -> Result<(Page, Vec<SessionRecord>)> {
-        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         let workspace_db_path = self.with_index_connection(|conn| {
             conn.query_row(
                 "SELECT workspace_db_path FROM sessions WHERE session_id = ?1",
@@ -265,7 +315,7 @@ impl SessionLogStore {
             status: workspace_payload.status,
             message_count: workspace_payload.message_count as u64,
             task_management: workspace_payload.task_management,
-            lifecycle_projection: Some(workspace_payload.lifecycle_projection),
+            lifecycle_projection: workspace_payload.lifecycle_projection,
             management: workspace_payload.management,
             session: workspace_payload.session,
             todos: workspace_payload.todos,

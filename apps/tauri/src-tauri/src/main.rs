@@ -2,6 +2,7 @@
 
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -37,8 +38,13 @@ struct NativeInputFile {
 static PENDING_MAIN_WINDOW_ARGS: OnceLock<Mutex<Option<Vec<String>>>> = OnceLock::new();
 
 fn main() {
+    trace_gui_lifecycle("primary_start", serde_json::json!({}));
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            trace_gui_lifecycle(
+                "second_instance_received",
+                serde_json::json!({ "args": args }),
+            );
             remember_gateway_url_from_args(&args);
             restore_main_window_from_args(app, args);
         }))
@@ -48,6 +54,7 @@ fn main() {
             }
         })
         .setup(|app| {
+            trace_gui_lifecycle("primary_setup", serde_json::json!({}));
             let args = std::env::args().skip(1).collect::<Vec<_>>();
             remember_gateway_url_from_args(&args);
             remember_active_gateway_url_if_unset();
@@ -75,6 +82,10 @@ fn restore_main_window_from_args(app: &tauri::AppHandle, args: Vec<String>) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        trace_gui_lifecycle(
+            "window_restored",
+            serde_json::json!({ "source": "instance" }),
+        );
     }
 }
 
@@ -89,6 +100,29 @@ fn restore_main_window_from_pending_args(webview: &tauri::Webview, base_url: Url
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+    trace_gui_lifecycle(
+        "window_restored",
+        serde_json::json!({ "source": "page_load" }),
+    );
+}
+
+fn trace_gui_lifecycle(event: &str, details: serde_json::Value) {
+    let Some(path) = std::env::var_os("TURA_GUI_LIFECYCLE_TRACE") else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let record = serde_json::json!({
+        "event": event,
+        "pid": std::process::id(),
+        "details": details,
+    });
+    let _ = writeln!(file, "{record}");
 }
 
 fn queue_main_window_restore(args: Vec<String>) -> bool {
@@ -219,11 +253,15 @@ fn start_gateway(
     gateway_url: String,
     gateway_url_explicit: Option<bool>,
 ) -> Result<StartGatewayResponse, String> {
-    start_gateway_with_launcher(
+    let result = start_gateway_with_launcher(
         &gateway_url,
         gateway_url_explicit.unwrap_or(false),
         launch_gateway_process,
-    )
+    );
+    if let Err(error) = &result {
+        trace_gui_lifecycle("gateway_error", serde_json::json!({ "error": error }));
+    }
+    result
 }
 
 fn start_gateway_with_launcher(
@@ -311,6 +349,10 @@ fn connected_gateway_response(
         write_active_gateway_url(instance_home, endpoint)?;
     }
     remember_gateway_url(&endpoint.url());
+    trace_gui_lifecycle(
+        "gateway_connected",
+        serde_json::json!({ "gateway_url": endpoint.url(), "status": status }),
+    );
     Ok(StartGatewayResponse {
         ok: true,
         status,
@@ -989,40 +1031,45 @@ fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<GatewayIdentity> {
         stream.write_all(request.as_bytes()).ok()?;
         let mut response = String::new();
         stream.read_to_string(&mut response).ok()?;
-        if !response.starts_with("HTTP/1.1 200") || !response.contains("\"healthy\":true") {
-            return None;
-        }
-        let identity = response
-            .split("\r\n\r\n")
-            .nth(1)
-            .and_then(|body| serde_json::from_str::<serde_json::Value>(body.trim()).ok())
-            .map(|value| {
-                let root = value
-                    .get("root")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let home = value
-                    .get("home")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let pid = value
-                    .get("pid")
-                    .and_then(serde_json::Value::as_u64)
-                    .and_then(|value| u32::try_from(value).ok());
-                let process_start_time = value
-                    .get("process_start_time")
-                    .and_then(serde_json::Value::as_u64);
-                GatewayIdentity {
-                    root,
-                    home,
-                    pid,
-                    process_start_time,
-                }
-            })
-            .unwrap_or_default();
-        Some(identity)
+        gateway_identity_from_http_response(&response)
+    })
+}
+
+fn gateway_identity_from_http_response(response: &str) -> Option<GatewayIdentity> {
+    let (status_line, _) = response.split_once("\r\n")?;
+    let mut status_parts = status_line.split_ascii_whitespace();
+    if !matches!(status_parts.next(), Some("HTTP/1.0" | "HTTP/1.1"))
+        || status_parts.next() != Some("200")
+    {
+        return None;
+    }
+    let (_, body) = response.split_once("\r\n\r\n")?;
+    let value = serde_json::from_str::<serde_json::Value>(body.trim()).ok()?;
+    if value.get("healthy").and_then(serde_json::Value::as_bool) != Some(true) {
+        return None;
+    }
+    let root = value
+        .get("root")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let home = value
+        .get("home")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let pid = value
+        .get("pid")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
+    let process_start_time = value
+        .get("process_start_time")
+        .and_then(serde_json::Value::as_u64);
+    Some(GatewayIdentity {
+        root,
+        home,
+        pid,
+        process_start_time,
     })
 }
 
@@ -1444,6 +1491,44 @@ mod tests {
                 explicit_port: Some(4101),
             }
         );
+    }
+
+    #[test]
+    fn gateway_health_parser_accepts_standard_json_whitespace() {
+        let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"healthy\": true, \"root\": \"C:/repo\", \"home\": \"C:/home\", \"pid\": 42, \"process_start_time\": 7}";
+        let identity = gateway_identity_from_http_response(response).expect("healthy identity");
+
+        assert_eq!(identity.root, "C:/repo");
+        assert_eq!(identity.home, "C:/home");
+        assert_eq!(identity.pid, Some(42));
+        assert_eq!(identity.process_start_time, Some(7));
+        assert!(
+            gateway_identity_from_http_response("HTTP/1.1 200 OK\r\n\r\n{\"healthy\": false}")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn gateway_health_parser_accepts_http_1_0_success() {
+        let response =
+            "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"healthy\":true}";
+
+        assert!(gateway_identity_from_http_response(response).is_some());
+    }
+
+    #[test]
+    fn gateway_health_parser_rejects_non_success_and_unsupported_versions() {
+        for status_line in [
+            "HTTP/1.0 503 Service Unavailable",
+            "HTTP/1.1 2000 Invalid",
+            "HTTP/2 200 OK",
+        ] {
+            let response = format!("{status_line}\r\n\r\n{{\"healthy\":true}}");
+            assert!(
+                gateway_identity_from_http_response(&response).is_none(),
+                "accepted invalid gateway health status line: {status_line}"
+            );
+        }
     }
 
     #[test]

@@ -16,6 +16,7 @@ use std::{
     io::Write,
     path::Path,
     process::Stdio,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 use sysinfo::{Pid, System};
@@ -27,6 +28,7 @@ use tura_router::process_scope::{
 
 const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 const PID_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
+static COMMAND_RUN_SCOPE_LOCK: Mutex<()> = Mutex::new(());
 
 #[tokio::test]
 async fn process_scope_management_kills_worker_and_spawned_child_tree() -> Result<()> {
@@ -139,11 +141,13 @@ fn process_scope_management_command_run_strategy_covers_all_os_families() {
 
 #[test]
 fn process_scope_management_command_run_timeout_kills_spawned_child_tree() -> Result<()> {
+    let _scope_guard = command_run_scope_guard()?;
     let temp = tempfile::tempdir().context("temp command_run process-scope workspace")?;
     let pid_file = temp.path().join("command-run-child.pid");
     let child_tree_script = temp.path().join("command_run_child_tree.py");
     write_command_run_child_tree_script(&child_tree_script, &pid_file)?;
     let command_line = command_run_child_tree_command(&child_tree_script)?;
+    warm_command_run_shell(temp.path())?;
     let started = Instant::now();
 
     let output = command_run::execute(
@@ -179,11 +183,13 @@ fn process_scope_management_command_run_timeout_kills_spawned_child_tree() -> Re
 #[test]
 fn process_scope_management_command_run_success_preserves_background_child_until_router_shutdown(
 ) -> Result<()> {
+    let _scope_guard = command_run_scope_guard()?;
     let temp = tempfile::tempdir().context("temp command_run background workspace")?;
     let pid_file = temp.path().join("command-run-background-child.pid");
     let script = temp.path().join("command_run_background_child.py");
     write_command_run_background_child_script(&script, &pid_file)?;
-    let command_line = command_run_child_tree_command(&script)?;
+    let command_line = command_run_background_child_command(&script)?;
+    warm_command_run_shell(temp.path())?;
 
     let output = command_run::execute(
         &json!({
@@ -235,6 +241,35 @@ fn command_run_output_text(output: &serde_json::Value) -> String {
         .join("\n")
 }
 
+fn command_run_scope_guard() -> Result<std::sync::MutexGuard<'static, ()>> {
+    Ok(COMMAND_RUN_SCOPE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()))
+}
+
+fn warm_command_run_shell(workspace: &Path) -> Result<()> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let output = command_run::execute(
+        &json!({
+            "commands": [{
+                "command": "shell_command",
+                "command_line": json!({
+                    "command": "Write-Output tura-shell-ready",
+                    "timeout_ms": 30000
+                }).to_string()
+            }]
+        }),
+        workspace,
+    );
+    let _ = code_tools::shell_executor::terminate_retained_shell_process_scopes();
+    if output["results"][0]["success"] == true {
+        return Ok(());
+    }
+    bail!("command_run shell warmup failed: {output}")
+}
+
 fn command_run_child_tree_command(script: &Path) -> Result<String> {
     let (python, args) = python_command()?;
     let mut parts = Vec::new();
@@ -247,6 +282,23 @@ fn command_run_child_tree_command(script: &Path) -> Result<String> {
     parts.extend(args.iter().map(|arg| shell_single_quoted(arg)));
     parts.push(shell_single_quoted(&script.display().to_string()));
     Ok(parts.join(" "))
+}
+
+fn command_run_background_child_command(script: &Path) -> Result<String> {
+    if !cfg!(windows) {
+        return command_run_child_tree_command(script);
+    }
+    let (python, mut args) = python_command()?;
+    args.push(script.display().to_string());
+    let arguments = args
+        .iter()
+        .map(|argument| shell_single_quoted(argument))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!(
+        "Start-Process -FilePath {} -ArgumentList @({arguments}) -NoNewWindow",
+        shell_single_quoted(&python),
+    ))
 }
 
 fn shell_single_quoted(value: &str) -> String {

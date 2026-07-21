@@ -1,14 +1,16 @@
-use crate::state_machine::agent_management::{AgentId, ProviderConfig};
-use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
-use crate::state_machine::session_management::ContextTokenStats;
+use crate::state_machine::agent_management::AgentId;
 use chrono::Utc;
+use lifecycle::{ContextTokenStats, ProviderConfig};
+use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
 use lifecycle::{RuntimeId, SessionId};
 
 use super::call_runtime::route_by_name;
 use super::types::RuntimeQueueItem;
 
 pub struct CreateRuntimeInput {
+    pub runtime_id: RuntimeId,
     pub session_id: SessionId,
+    pub fallback_from_id: Option<RuntimeId>,
     pub agent_id: AgentId,
     pub messages: Vec<serde_json::Value>,
     pub tools: Vec<serde_json::Value>,
@@ -20,8 +22,8 @@ pub struct CreateRuntimeInput {
 
 pub async fn create_runtime(
     input: CreateRuntimeInput,
-) -> Result<(RuntimeManagement, RuntimeQueueItem), String> {
-    let runtime_id = generate_runtime_id();
+) -> Result<(RuntimeAggregate, RuntimeQueueItem), String> {
+    let runtime_id = input.runtime_id;
     let now = Utc::now();
 
     let runtime_provider_config = runtime_provider_config_from_tura(
@@ -30,14 +32,15 @@ pub async fn create_runtime(
         input.thinking,
     )?;
 
-    let mut runtime = RuntimeManagement::new(
+    let mut runtime = RuntimeAggregate::new_with_fallback(
         runtime_id.clone(),
         input.session_id.clone(),
         input.agent_id.clone(),
         runtime_provider_config.clone(),
         now,
-    );
-    runtime.context_tokens = input.context_tokens;
+        input.fallback_from_id,
+    )?;
+    runtime.update_context_tokens(input.context_tokens)?;
 
     let queue_item = RuntimeQueueItem {
         runtime_id,
@@ -173,7 +176,7 @@ pub async fn enqueue_runtime(queue_item: RuntimeQueueItem, redis_url: &str) -> R
     Ok(())
 }
 
-fn generate_runtime_id() -> RuntimeId {
+pub(crate) fn generate_runtime_id() -> RuntimeId {
     format!(
         "runtime-{:x}",
         Utc::now().timestamp_nanos_opt().unwrap_or_default()

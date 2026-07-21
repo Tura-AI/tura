@@ -3,9 +3,9 @@ use std::time::Instant;
 use tracing::info;
 
 use crate::profile_timings;
-use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::SessionManagement;
 use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
+use lifecycle::RuntimeAggregate;
+use lifecycle::SessionManagement;
 
 use super::compaction::context_compaction_messages;
 use super::types::ContextState;
@@ -13,7 +13,7 @@ use super::USER_AGENT_CONTEXT_ROLE;
 #[derive(Debug, Clone)]
 pub struct ContextInput {
     pub session: SessionManagement,
-    pub runtime: RuntimeManagement,
+    pub runtime: RuntimeAggregate,
     pub additional_messages: Vec<serde_json::Value>,
 }
 
@@ -554,12 +554,12 @@ mod tests {
     };
     use crate::context::USER_AGENT_CONTEXT_ROLE;
     use crate::context::{compact_session_context, compact_session_context_automatically};
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
-    use crate::state_machine::session_management::{
+    use chrono::{Duration, Utc};
+    use lifecycle::{
         PlanStatus, PollInterval, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
-    use chrono::{Duration, Utc};
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -587,10 +587,10 @@ mod tests {
         )
     }
 
-    fn runtime(session: &SessionManagement) -> RuntimeManagement {
+    fn runtime(session: &SessionManagement) -> RuntimeAggregate {
         let now = Utc::now();
         let provider_name = crate::agent_router::coding_agent_provider_name();
-        RuntimeManagement::new(
+        RuntimeAggregate::new(
             "runtime-test".to_string(),
             session.session_id.clone(),
             "agent-test".to_string(),

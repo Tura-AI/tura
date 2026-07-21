@@ -43,9 +43,8 @@ pub fn validate_configurable_values(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::tools::manifest::{
-        ConfigurableEntry, LimitsSection, PathsSection, RuntimeSection,
-    };
+    use crate::registry::tools::manifest::{LimitsSection, PathsSection, RuntimeSection};
+    use router_contract::ConfigurableEntry;
     use serde_json::json;
 
     #[test]

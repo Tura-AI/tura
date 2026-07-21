@@ -1,10 +1,11 @@
 mod process;
 
 use crate::state_machine::agent_management::AgentManagement;
-use crate::state_machine::session_management::{SessionInput, SessionManagement};
+use lifecycle::RuntimeId;
+use lifecycle::{SessionInput, SessionManagement};
 pub use process::{
     orchestrate, orchestrate_for_session, orchestrate_for_session_in_directory,
-    process_from_user_internal,
+    orchestrate_for_session_with_lease_in_directory, process_from_user_internal,
 };
 use std::path::PathBuf;
 
@@ -41,6 +42,22 @@ pub fn process_from_gateway_session_in_directory(
     session_directory: PathBuf,
 ) -> Result<ManoProcessResult, String> {
     orchestrate_for_session_in_directory(input, session_id, session_directory)
+}
+
+pub fn process_from_gateway_session_with_lease_in_directory(
+    session_id: String,
+    runtime_id: RuntimeId,
+    lease_id: String,
+    input: SessionInput,
+    session_directory: PathBuf,
+) -> Result<ManoProcessResult, String> {
+    orchestrate_for_session_with_lease_in_directory(
+        input,
+        session_id,
+        runtime_id,
+        lease_id,
+        session_directory,
+    )
 }
 
 pub fn process_from_user_with_overrides(

@@ -1,8 +1,11 @@
-use router_contract::{IpcNotification, IpcRequest, IpcResponse, RouterEndpoint, RunAgentRequest};
+use router_contract::{
+    CancelRuntimeRequest, EnqueueTurnRequest, IpcRequest, IpcResponse, ListCommandsRequest,
+    PatchToolRequest, ProbeSessionsRequest, RouterEndpoint,
+};
 use serde_json::json;
 
 #[test]
-fn router_ipc_request_response_and_notification_shapes_are_stable() {
+fn router_ipc_request_and_response_shapes_are_stable() {
     assert_eq!(
         serde_json::to_value(IpcRequest::health_check("health-1", 20_000)).expect("health request"),
         json!({
@@ -21,21 +24,6 @@ fn router_ipc_request_response_and_notification_shapes_are_stable() {
             "ok": true,
             "payload": { "status": "ok" },
             "error": null
-        })
-    );
-    assert_eq!(
-        serde_json::to_value(IpcNotification::new(
-            "request-1",
-            "gateway.callback",
-            "session.agent_stream",
-            json!({ "session_id": "session-1" })
-        ))
-        .expect("notification"),
-        json!({
-            "request_id": "request-1",
-            "kind": "gateway.callback",
-            "method": "session.agent_stream",
-            "payload": { "session_id": "session-1" }
         })
     );
 }
@@ -60,14 +48,38 @@ fn router_endpoint_shape_is_stable() {
 }
 
 #[test]
-fn run_agent_defaults_match_the_existing_request_contract() {
-    let request: RunAgentRequest = serde_json::from_value(json!({
+fn runtime_routing_requests_reject_extra_fields() {
+    assert!(serde_json::from_value::<EnqueueTurnRequest>(json!({
+        "runtime_id": "runtime-1",
         "session_id": "session-1",
-        "prompt": "hello"
+        "payload": {},
+        "turn_id": "legacy"
     }))
-    .expect("run-agent request");
-    assert_eq!(request.session_id.as_deref(), Some("session-1"));
-    assert_eq!(request.prompt.as_deref(), Some("hello"));
-    assert!(!request.return_log);
-    assert!(request.worker_env.is_empty());
+    .is_err());
+    assert!(serde_json::from_value::<CancelRuntimeRequest>(json!({
+        "session_id": "session-1",
+        "runtime_id": "runtime-1",
+        "extra": true
+    }))
+    .is_err());
+    assert!(serde_json::from_value::<ProbeSessionsRequest>(json!({
+        "session_ids": ["session-1"],
+        "extra": true
+    }))
+    .is_err());
+}
+
+#[test]
+fn registry_requests_reject_extra_fields() {
+    assert!(serde_json::from_value::<ListCommandsRequest>(json!({
+        "directory": null,
+        "legacy": true
+    }))
+    .is_err());
+    assert!(serde_json::from_value::<PatchToolRequest>(json!({
+        "repo_root": "C:/repo",
+        "tool_id": "read_media",
+        "patch": { "enabled": true, "legacy": true }
+    }))
+    .is_err());
 }

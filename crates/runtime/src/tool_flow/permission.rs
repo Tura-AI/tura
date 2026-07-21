@@ -1,12 +1,12 @@
-use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::tool_router::execute_tool::ToolExecutionResult;
+use lifecycle::RuntimeAggregate;
 
 use crate::manas::constants::{APPROVAL_POLICY_ENV, COMMAND_RUN_TOOL};
 
 pub(crate) fn permission_denial_for_tool(
     tool_name: &str,
     arguments: &serde_json::Value,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
 ) -> Option<ToolExecutionResult> {
     if !should_request_permission(tool_name) {
         return None;
@@ -23,7 +23,7 @@ pub(crate) fn permission_denial_for_tool(
 }
 
 pub(crate) fn request_command_run_sandbox_bypass(
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     reason: &str,
 ) -> Result<bool, String> {
     Err(format!(

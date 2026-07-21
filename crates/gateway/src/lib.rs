@@ -13,6 +13,7 @@ pub mod router_process;
 pub mod runtime;
 pub mod session;
 pub mod session_db_client;
+pub mod session_feed;
 pub mod session_log_writer;
 pub mod simple_runtime;
 pub mod tray;
@@ -89,7 +90,7 @@ pub(crate) mod test_support {
                     };
                     panic!("session_db test service did not become reachable: {detail}");
                 }
-                if session_log::ipc::service_is_running() {
+                if session_log_contract::client::service_is_running() {
                     return Self {
                         _guard: guard,
                         _env: env,
@@ -101,15 +102,16 @@ pub(crate) mod test_support {
             }
             panic!(
                 "session_db test service did not become reachable within 10s; addr_path={}",
-                session_log::ipc::service_addr_path().display()
+                session_log_contract::client::service_addr_path().display()
             );
         }
     }
 
     impl Drop for SessionDbTestService {
         fn drop(&mut self) {
-            let _ =
-                session_log::ipc::call_service(&session_log_contract::SessionLogCommand::Shutdown);
+            let _ = session_log_contract::client::call_service(
+                &session_log_contract::SessionLogCommand::Shutdown,
+            );
             if let Some(handle) = self.handle.take() {
                 let _ = handle.join();
             }

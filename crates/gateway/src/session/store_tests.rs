@@ -1,6 +1,9 @@
 use super::*;
 use crate::test_support::SessionDbTestService;
-use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
+use session_log_contract::{
+    GetSessionRequest, PersistSessionDeltaRequest, ReadContextSliceRequest, SessionContextRecord,
+    SessionDeltaEntry, SessionLogCommand, SessionLogResponse, SessionRecordProjection,
+};
 
 fn create_canonical_test_session(store: &SessionStore, directory: String) -> ApiSession {
     let info = store.build_session_info(
@@ -25,424 +28,6 @@ fn execute_test_command(store: &SessionStore, session_id: &str, command: Session
     store
         .execute_canonical_session_command_with_status_event(session_id, command)
         .expect("canonical test command should succeed");
-}
-
-#[test]
-fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxiliary_records() {
-    let now = chrono::Utc::now();
-    let session_id = format!("hydrate-mixed-records-{}", uuid::Uuid::new_v4());
-    let workspace = std::env::temp_dir()
-        .join(format!("hydrate-mixed-records-{}", uuid::Uuid::new_v4()))
-        .to_string_lossy()
-        .to_string();
-    let management = runtime::state_machine::session_management::SessionManagement::new(
-        session_id.clone(),
-        "mixed records".to_string(),
-        PathBuf::from(&workspace),
-        false,
-        "coding".to_string(),
-        runtime::state_machine::session_management::SessionInput {
-            user_input: "hello".to_string(),
-            file_input: Vec::new(),
-            agent: Some("thinking".to_string()),
-            runtime_context: None,
-            planning_mode_override: None,
-        },
-        "hello".to_string(),
-        now,
-    );
-    let info = SessionInfo::from_management(&management);
-    let snapshot = SessionSnapshot {
-        session_id: session_id.clone(),
-        workspace,
-        name: Some("mixed records".to_string()),
-        parent_id: None,
-        created_at: 1,
-        updated_at: 10,
-        last_user_message_at: Some(1),
-        state: Some("completed".to_string()),
-        status: Some("idle".to_string()),
-        message_count: 6,
-        task_management: serde_json::json!({}),
-        lifecycle_projection: None,
-        management: serde_json::to_value(&management).expect("management json"),
-        session: serde_json::to_value(&info).expect("session json"),
-        todos: vec![serde_json::json!({"id": "todo-1"})],
-    };
-    let records = vec![
-        session_record(
-            &session_id,
-            "user-1",
-            "user",
-            1,
-            message_record(&session_id, "user-1", "user", "hello", 1),
-        ),
-        session_record(
-            &session_id,
-            "assistant-1",
-            "assistant",
-            2,
-            message_record(&session_id, "assistant-1", "assistant", "hi", 2),
-        ),
-        session_record(
-            &session_id,
-            "system-1",
-            "system",
-            3,
-            message_record(&session_id, "system-1", "system", "guardrail", 3),
-        ),
-        session_record(
-            &session_id,
-            "runtime-usage",
-            "runtime",
-            4,
-            serde_json::json!({
-                "id": "runtime-usage",
-                "role": "runtime",
-                "type": "runtime_usage",
-                "usage": {"total_tokens": 3}
-            }),
-        ),
-        session_record(
-            &session_id,
-            "user-agent-context",
-            "user-agent",
-            5,
-            serde_json::json!({
-                "id": "user-agent-context",
-                "role": "user-agent",
-                "content": "<environment_context>internal</environment_context>"
-            }),
-        ),
-        session_record(
-            &session_id,
-            "legacy-dirty-shape",
-            "assistant",
-            6,
-            serde_json::json!({
-                "id": "legacy-dirty-shape",
-                "role": "assistant",
-                "content": "legacy simple content without parts"
-            }),
-        ),
-    ];
-
-    let persisted =
-        persisted_record_from_session_log(snapshot, records).expect("hydrate persisted session");
-
-    assert_eq!(persisted.messages.len(), 3);
-    assert_eq!(
-        persisted
-            .messages
-            .iter()
-            .map(|message| message.id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["user-1", "assistant-1", "system-1"]
-    );
-    assert_eq!(persisted.messages[1].parts[0].text.as_deref(), Some("hi"));
-    assert_eq!(persisted.todos.len(), 1);
-}
-
-#[test]
-fn persisted_session_log_hydration_restores_canonical_lifecycle_projection() {
-    let now = chrono::Utc::now();
-    let session_id = format!("hydrate-lifecycle-{}", uuid::Uuid::new_v4());
-    let workspace = std::env::temp_dir()
-        .join(format!("hydrate-lifecycle-{}", uuid::Uuid::new_v4()))
-        .to_string_lossy()
-        .to_string();
-    let management = runtime::state_machine::session_management::SessionManagement::new(
-        session_id.clone(),
-        "canonical lifecycle".to_string(),
-        PathBuf::from(&workspace),
-        false,
-        "coding".to_string(),
-        runtime::state_machine::session_management::SessionInput {
-            user_input: "cancel this run".to_string(),
-            file_input: Vec::new(),
-            agent: Some("thinking".to_string()),
-            runtime_context: None,
-            planning_mode_override: None,
-        },
-        "cancel this run".to_string(),
-        now,
-    );
-    let info = SessionInfo::from_management(&management);
-    let mut aggregate = lifecycle::SessionAggregate::new(session_id.clone());
-    aggregate
-        .execute(SessionCommand::RuntimeStarted)
-        .expect("fixture runtime should start");
-    aggregate
-        .execute(SessionCommand::CancelSession)
-        .expect("fixture runtime should cancel");
-    let projection = aggregate.query(lifecycle::SessionQuery::Lifecycle);
-    let snapshot = SessionSnapshot {
-        session_id,
-        workspace,
-        name: Some("canonical lifecycle".to_string()),
-        parent_id: None,
-        created_at: 1,
-        updated_at: 2,
-        last_user_message_at: Some(1),
-        state: Some("created".to_string()),
-        status: Some("idle".to_string()),
-        message_count: 0,
-        task_management: serde_json::json!({}),
-        lifecycle_projection: Some(projection.clone()),
-        management: serde_json::to_value(&management).expect("management json"),
-        session: serde_json::to_value(&info).expect("session json"),
-        todos: Vec::new(),
-    };
-
-    let persisted =
-        persisted_record_from_session_log(snapshot, Vec::new()).expect("hydrate lifecycle");
-
-    assert_eq!(persisted.info.management.lifecycle_projection(), projection);
-    assert_eq!(persisted.info.status, SessionStatusMano::Error);
-}
-
-#[test]
-fn persisted_session_log_hydration_preserves_command_run_runtime_state_over_event_drift() {
-    let now = chrono::Utc::now();
-    let session_id = format!("hydrate-command-run-{}", uuid::Uuid::new_v4());
-    let workspace = std::env::temp_dir()
-        .join(format!("hydrate-command-run-{}", uuid::Uuid::new_v4()))
-        .to_string_lossy()
-        .to_string();
-    let management = runtime::state_machine::session_management::SessionManagement::new(
-        session_id.clone(),
-        "command run drift".to_string(),
-        PathBuf::from(&workspace),
-        false,
-        "coding".to_string(),
-        runtime::state_machine::session_management::SessionInput {
-            user_input: "run commands".to_string(),
-            file_input: Vec::new(),
-            agent: Some("thinking".to_string()),
-            runtime_context: None,
-            planning_mode_override: None,
-        },
-        "run commands".to_string(),
-        now,
-    );
-    let info = SessionInfo::from_management(&management);
-    let runtime_start = 1_781_514_293_670_i64;
-    let runtime_end = runtime_start + 2_000;
-    let snapshot = SessionSnapshot {
-        session_id: session_id.clone(),
-        workspace,
-        name: Some("command run drift".to_string()),
-        parent_id: None,
-        created_at: runtime_start,
-        updated_at: runtime_end,
-        last_user_message_at: Some(runtime_start),
-        state: Some("completed".to_string()),
-        status: Some("idle".to_string()),
-        message_count: 3,
-        task_management: serde_json::json!({}),
-        lifecycle_projection: None,
-        management: serde_json::to_value(&management).expect("management json"),
-        session: serde_json::to_value(&info).expect("session json"),
-        todos: Vec::new(),
-    };
-    let records = vec![
-        session_record(
-            &session_id,
-            "command-run-message",
-            "assistant",
-            runtime_start,
-            serde_json::json!({
-                "id": "command-run-message",
-                "session_id": session_id,
-                "role": "assistant",
-                "parent_id": null,
-                "created_at": runtime_start,
-                "updated_at": runtime_end,
-                "parts": [{
-                    "id": "command-run-part",
-                    "type": "tool",
-                    "content": null,
-                    "text": null,
-                    "metadata": {
-                        "kind": "mano_tool_call",
-                        "transient": true,
-                        "streaming_partial": false
-                    },
-                    "call_id": "runtime-1-streamed-command-run",
-                    "tool": "command_run",
-                    "state": {
-                        "status": "completed",
-                        "time": {
-                            "start": runtime_start,
-                            "end": runtime_end
-                        },
-                        "input": {
-                            "commands": [{
-                                "step": 1,
-                                "command_type": "shell_command",
-                                "command_line": "npm test"
-                            }]
-                        },
-                        "output": {
-                            "streamed_command_run_result": {
-                                "results": [{
-                                    "step": 1,
-                                    "command_type": "shell_command",
-                                    "command_line": "npm test",
-                                    "success": true
-                                }]
-                            }
-                        }
-                    }
-                }]
-            }),
-        ),
-        session_record(
-            &session_id,
-            "command-run-aux-ready",
-            "event",
-            runtime_start + 7,
-            serde_json::json!({
-                "id": "command-run-aux-ready",
-                "role": "event",
-                "type": "streamed_command_event",
-                "status": "running",
-                "timestamp": runtime_start + 7,
-                "command_line": "npm test"
-            }),
-        ),
-        session_record(
-            &session_id,
-            "command-run-aux-finished",
-            "event",
-            runtime_end - 3,
-            serde_json::json!({
-                "id": "command-run-aux-finished",
-                "role": "event",
-                "type": "streamed_command_event",
-                "status": "error",
-                "timestamp": runtime_end - 3,
-                "command_line": "npm test"
-            }),
-        ),
-    ];
-
-    let persisted =
-        persisted_record_from_session_log(snapshot, records).expect("hydrate persisted session");
-
-    assert_eq!(persisted.messages.len(), 1);
-    let part = &persisted.messages[0].parts[0];
-    let state = part.state.as_ref().expect("command_run state");
-    assert_eq!(state["status"], "completed");
-    assert_eq!(state["time"]["start"], runtime_start);
-    assert_eq!(state["time"]["end"], runtime_end);
-}
-
-#[test]
-fn session_log_hydration_prefers_top_level_idle_state_over_stale_embedded_busy_state() {
-    let now = chrono::Utc::now();
-    let session_id = format!("hydrate-stale-busy-{}", uuid::Uuid::new_v4());
-    let workspace = std::env::temp_dir()
-        .join(format!("hydrate-stale-busy-{}", uuid::Uuid::new_v4()))
-        .to_string_lossy()
-        .to_string();
-    let mut management = runtime::state_machine::session_management::SessionManagement::new(
-        session_id.clone(),
-        "stale embedded busy".to_string(),
-        PathBuf::from(&workspace),
-        false,
-        "coding".to_string(),
-        runtime::state_machine::session_management::SessionInput {
-            user_input: "finish normally".to_string(),
-            file_input: Vec::new(),
-            agent: Some("direct-text-only".to_string()),
-            runtime_context: None,
-            planning_mode_override: None,
-        },
-        "finish normally".to_string(),
-        now,
-    );
-    management
-        .transition(SessionState::Running, now)
-        .expect("test fixture should enter running state");
-    let mut stale_info = SessionInfo::from_management(&management);
-    stale_info.status = SessionStatusMano::Busy;
-    let snapshot = SessionSnapshot {
-        session_id: session_id.clone(),
-        workspace,
-        name: Some("stale embedded busy".to_string()),
-        parent_id: None,
-        created_at: 1,
-        updated_at: 20,
-        last_user_message_at: Some(1),
-        state: Some("created".to_string()),
-        status: Some("idle".to_string()),
-        message_count: 2,
-        task_management: serde_json::json!({}),
-        lifecycle_projection: None,
-        management: serde_json::json!({
-            "session_id": session_id,
-            "state": "created"
-        }),
-        session: serde_json::to_value(&stale_info).expect("stale session json"),
-        todos: Vec::new(),
-    };
-    let records = vec![
-        session_record(
-            &snapshot.session_id,
-            "msg_runtime_user",
-            "user",
-            1,
-            message_record(
-                &snapshot.session_id,
-                "msg_runtime_user",
-                "user",
-                "visible user request",
-                1,
-            ),
-        ),
-        session_record(
-            &snapshot.session_id,
-            "msg_runtime_assistant",
-            "assistant",
-            2,
-            message_record(
-                &snapshot.session_id,
-                "msg_runtime_assistant",
-                "assistant",
-                "visible assistant reply",
-                2,
-            ),
-        ),
-    ];
-
-    let persisted =
-        persisted_record_from_session_log(snapshot, records).expect("hydrate persisted session");
-
-    assert_eq!(persisted.info.status, SessionStatusMano::Idle);
-    assert_eq!(persisted.info.management.state, SessionState::Created);
-    assert_eq!(persisted.messages.len(), 2);
-    assert!(persisted
-        .messages
-        .iter()
-        .any(|message| message.role == MessageRole::Assistant));
-}
-
-fn session_record(
-    session_id: &str,
-    message_id: &str,
-    role: &str,
-    created_at: i64,
-    record: serde_json::Value,
-) -> SessionRecord {
-    SessionRecord {
-        session_id: session_id.to_string(),
-        message_id: message_id.to_string(),
-        role: role.to_string(),
-        created_at,
-        updated_at: created_at,
-        record,
-    }
 }
 
 fn message_record(
@@ -472,59 +57,107 @@ fn message_record(
     })
 }
 
-fn upsert_runtime_owned_session_for_test(
+fn persist_runtime_owned_session_for_test(
     store: &SessionStore,
     session_id: &str,
-    parent_id: Option<String>,
+    _parent_id: Option<String>,
 ) {
-    let info = store
-        .get_session_info(session_id)
-        .unwrap_or_else(|| panic!("session {session_id} should exist before test DB upsert"));
     let messages = store
         .get_messages(session_id)
         .into_iter()
         .map(|message| serde_json::to_value(message).expect("message json"))
         .collect::<Vec<_>>();
-    let response =
-        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
-            session: serde_json::to_value(info).expect("session json"),
-            parent_id,
-            messages,
-            todos: store.get_todos(session_id),
-        }))
-        .expect("session_log upsert should reach test service");
-    match response {
-        SessionLogResponse::Ok => {}
-        SessionLogResponse::Error { error } => {
-            panic!("session_log upsert failed: {error}")
+    persist_session_messages_for_test(store, session_id, None, messages);
+}
+
+fn persist_session_messages_for_test(
+    _store: &SessionStore,
+    session_id: &str,
+    _parent_id: Option<String>,
+    messages: Vec<serde_json::Value>,
+) {
+    let snapshot = match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))
+    .expect("session_log get should reach test service")
+    {
+        SessionLogResponse::Session {
+            session: Some(session),
+        } => session,
+        SessionLogResponse::Session { session: None } => {
+            panic!("session {session_id} should exist before test DB delta")
         }
-        other => panic!("unexpected session_log upsert response: {other:?}"),
+        SessionLogResponse::Error { error } => panic!("session_log get failed: {error}"),
+        other => panic!("unexpected session_log get response: {other:?}"),
+    };
+    let mut management: lifecycle::SessionManagement =
+        serde_json::from_value(snapshot.management).expect("canonical session management");
+    management.session_log.clear();
+    management.session_log_retention.omitted_entries = 0;
+    let context = match session_log_contract::client::call_service(
+        &SessionLogCommand::ReadContextSlice(ReadContextSliceRequest {
+            session_id: session_id.to_string(),
+            max_estimated_tokens: u64::MAX,
+        }),
+    )
+    .expect("session_log context read should reach test service")
+    {
+        SessionLogResponse::ContextSlice { context } => context,
+        SessionLogResponse::Error { error } => panic!("session_log context read failed: {error}"),
+        other => panic!("unexpected session_log context response: {other:?}"),
+    };
+    let previous_management = (context.next_management_sequence > 0).then_some(&management);
+    let entries = messages
+        .into_iter()
+        .enumerate()
+        .map(|(sequence, record)| test_delta_entry(sequence as u64, record))
+        .collect();
+    let response = session_log_contract::client::call_service(
+        &SessionLogCommand::PersistSessionDelta(Box::new(PersistSessionDeltaRequest {
+            session_id: session_id.to_string(),
+            management_sequence: context.next_management_sequence,
+            management_delta: lifecycle::SessionManagement::persistence_delta(
+                previous_management,
+                &management,
+            ),
+            retained_from_sequence: 0,
+            entries,
+        })),
+    )
+    .expect("session_log delta should reach test service");
+    match response {
+        SessionLogResponse::SessionDeltaPersisted { .. } => {}
+        SessionLogResponse::Error { error } => {
+            panic!("session_log delta failed: {error}")
+        }
+        other => panic!("unexpected session_log delta response: {other:?}"),
     }
 }
 
-fn upsert_session_messages_for_test(
-    store: &SessionStore,
-    session_id: &str,
-    parent_id: Option<String>,
-    messages: Vec<serde_json::Value>,
-) {
-    let info = store
-        .get_session_info(session_id)
-        .unwrap_or_else(|| panic!("session {session_id} should exist before test DB upsert"));
-    let response =
-        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
-            session: serde_json::to_value(info).expect("session json"),
-            parent_id,
-            messages,
-            todos: store.get_todos(session_id),
-        }))
-        .expect("session_log upsert should reach test service");
-    match response {
-        SessionLogResponse::Ok => {}
-        SessionLogResponse::Error { error } => {
-            panic!("session_log upsert failed: {error}")
-        }
-        other => panic!("unexpected session_log upsert response: {other:?}"),
+fn test_delta_entry(sequence: u64, record: serde_json::Value) -> SessionDeltaEntry {
+    let message_id = record["id"].as_str().expect("test message id").to_string();
+    let role = record["role"].as_str().unwrap_or("runtime").to_string();
+    let created_at = record["created_at"].as_i64().unwrap_or_default();
+    let updated_at = record["updated_at"].as_i64().unwrap_or(created_at);
+    let session_id = record["session_id"]
+        .as_str()
+        .expect("test message session id")
+        .to_string();
+    SessionDeltaEntry {
+        context: SessionContextRecord {
+            sequence,
+            raw_record: serde_json::json!({ "id": message_id, "role": role }).to_string(),
+        },
+        projection: Some(SessionRecordProjection {
+            session_id,
+            message_id,
+            role,
+            created_at,
+            updated_at,
+            record,
+        }),
     }
 }
 
@@ -537,11 +170,10 @@ fn update_session_status_updates_stored_status() {
     let mut info = store
         .get_session_info(&session.id)
         .expect("session info should exist");
-    info.management.context_tokens =
-        runtime::state_machine::session_management::ContextTokenStats {
-            input: 12_345,
-            limit: 76_800,
-        };
+    info.management.context_tokens = lifecycle::ContextTokenStats {
+        input: 12_345,
+        limit: 76_800,
+    };
     info.management.runtime_usage = serde_json::json!({
         "total_tokens": 99,
         "total_cost": 0.034,
@@ -550,15 +182,25 @@ fn update_session_status_updates_stored_status() {
     store.replace_management(&session.id, info.management);
     let mut cursor = store.event_cursor();
 
-    execute_test_command(&store, &session.id, SessionCommand::RuntimeStarted);
+    execute_test_command(
+        &store,
+        &session.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-status-event".to_string(),
+        },
+    );
     let updated = store
         .get_session(&session.id)
         .expect("session should exist");
     assert_eq!(updated.status, ApiSessionStatus::Busy);
-    let event = store
+    let updated_event = store
         .next_event(&mut cursor)
-        .expect("status event should exist");
-    match event {
+        .expect("session update event should exist");
+    assert!(matches!(updated_event, GlobalEvent::SessionUpdated { .. }));
+    let status_event = store
+        .next_event(&mut cursor)
+        .expect("status event should follow the session update");
+    match status_event {
         GlobalEvent::SessionStatus { properties } => {
             assert_eq!(properties.session_id, session.id);
             assert_eq!(properties.updated_at, updated.updated_at);
@@ -573,7 +215,13 @@ fn update_session_status_updates_stored_status() {
         other => panic!("unexpected event: {other:?}"),
     }
 
-    execute_test_command(&store, &session.id, SessionCommand::RuntimeCompleted);
+    execute_test_command(
+        &store,
+        &session.id,
+        SessionCommand::RuntimeCompleted {
+            runtime_id: "runtime-status-event".to_string(),
+        },
+    );
     let updated = store
         .get_session(&session.id)
         .expect("session should exist");
@@ -771,7 +419,13 @@ fn user_commands_are_shared_from_parent_to_child_sessions() {
             Some("read files".to_string()),
         )
         .expect("canonical child should be registered");
-    execute_test_command(&store, &session.id, SessionCommand::RuntimeStarted);
+    execute_test_command(
+        &store,
+        &session.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-child-cancel".to_string(),
+        },
+    );
     execute_test_command(
         &store,
         &session.id,
@@ -845,7 +499,7 @@ fn hydrated_child_session_keeps_parent_mapping() {
             Some("read files".to_string()),
         )
         .expect("canonical child should be created");
-    upsert_runtime_owned_session_for_test(&store, "child-1", Some(parent.id.clone()));
+    persist_runtime_owned_session_for_test(&store, "child-1", Some(parent.id.clone()));
 
     let hydrated = SessionStore::new();
     hydrated.hydrate_directory(Some(directory));
@@ -961,19 +615,9 @@ fn cancellation_scope_includes_root_and_descendants_from_child() {
 
 #[test]
 fn update_session_title_persists_to_management_name() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     let updated = store
         .update_session(
@@ -998,19 +642,9 @@ fn update_session_title_persists_to_management_name() {
 
 #[test]
 fn update_session_task_management_persists_and_lists_status() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     let updated = store
         .update_session(
@@ -1058,19 +692,9 @@ fn update_session_task_management_persists_and_lists_status() {
 
 #[test]
 fn session_display_name_prefers_auto_session_name_over_plan_summary() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     let planned = store
         .update_session(
@@ -1122,19 +746,9 @@ fn session_display_name_prefers_auto_session_name_over_plan_summary() {
 
 #[test]
 fn auto_session_name_can_be_disabled_for_task_summary_patches() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     let updated = store
         .update_session_auto_session_name(&session.id, false)
@@ -1166,19 +780,9 @@ fn auto_session_name_can_be_disabled_for_task_summary_patches() {
 
 #[test]
 fn scheduled_task_patch_clears_previous_polling_interval() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     store
         .update_session(
@@ -1229,19 +833,9 @@ fn scheduled_task_patch_clears_previous_polling_interval() {
 
 #[test]
 fn single_task_patch_defaults_nonce_to_session_step_zero() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     let updated = store
         .update_session(
@@ -1271,19 +865,9 @@ fn single_task_patch_defaults_nonce_to_session_step_zero() {
 
 #[test]
 fn multi_task_patch_matches_task_id_and_creates_defaulted_tasks() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     let planned = store
         .update_session(
@@ -1372,19 +956,9 @@ fn multi_task_patch_matches_task_id_and_creates_defaulted_tasks() {
 
 #[test]
 fn multi_task_patch_reorders_tasks_by_request_order() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     store
         .update_session(
@@ -1444,19 +1018,9 @@ fn multi_task_patch_reorders_tasks_by_request_order() {
 
 #[test]
 fn task_management_patch_accepts_all_contract_enums() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
     for status in [
         "todo",
@@ -1521,18 +1085,7 @@ fn invalid_task_management_patch_keeps_previous_state() {
     let root = std::env::temp_dir().join(format!("tura-invalid-task-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, directory.clone());
     let valid = store
         .update_session(
             &session.id,
@@ -1596,7 +1149,7 @@ fn invalid_task_management_patch_keeps_previous_state() {
         )
         .expect("invalid date remains non-fatal");
     assert_eq!(invalid_date.task_management, previous_task_management);
-    upsert_runtime_owned_session_for_test(&store, &session.id, None);
+    persist_runtime_owned_session_for_test(&store, &session.id, None);
 
     let hydrated = SessionStore::new();
     hydrated.hydrate_directory(Some(directory));
@@ -1667,18 +1220,7 @@ fn reopened_session_hydrates_frontend_user_message() {
     let root = std::env::temp_dir().join(format!("tura-reopen-user-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, directory.clone());
 
     store
         .add_message_with_ids(
@@ -1700,7 +1242,7 @@ fn reopened_session_hydrates_frontend_user_message() {
             None,
         )
         .expect("assistant message should be stored");
-    upsert_runtime_owned_session_for_test(&store, &session.id, None);
+    persist_runtime_owned_session_for_test(&store, &session.id, None);
 
     let reopened = SessionStore::new();
     reopened.hydrate_directory(Some(directory));
@@ -1732,18 +1274,7 @@ fn frontend_messages_filter_system_role_from_session_db_projection() {
     let root = std::env::temp_dir().join(format!("tura-system-filter-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, directory.clone());
 
     store
         .add_message_with_ids(
@@ -1775,7 +1306,7 @@ fn frontend_messages_filter_system_role_from_session_db_projection() {
             None,
         )
         .expect("assistant message should be stored");
-    upsert_runtime_owned_session_for_test(&store, &session.id, None);
+    persist_runtime_owned_session_for_test(&store, &session.id, None);
 
     let reopened = SessionStore::new();
     reopened.hydrate_directory(Some(directory));
@@ -1794,7 +1325,7 @@ fn frontend_messages_filter_system_role_from_session_db_projection() {
         .iter()
         .any(|message| message.id == "msg_visible_assistant"));
     assert!(reopened
-        .get_session_db_messages(&session.id)
+        .get_messages(&session.id)
         .iter()
         .any(|message| message.role == MessageRole::System));
 
@@ -1808,7 +1339,13 @@ fn idle_status_refreshes_session_db_message_cache_after_runtime_write() {
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
     let session = create_canonical_test_session(&store, directory);
-    execute_test_command(&store, &session.id, SessionCommand::RuntimeStarted);
+    execute_test_command(
+        &store,
+        &session.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-message-refresh".to_string(),
+        },
+    );
 
     let user = message_record(
         &session.id,
@@ -1817,7 +1354,10 @@ fn idle_status_refreshes_session_db_message_cache_after_runtime_write() {
         "visible user request before runtime completion",
         1,
     );
-    upsert_session_messages_for_test(&store, &session.id, None, vec![user.clone()]);
+    persist_session_messages_for_test(&store, &session.id, None, vec![user]);
+    store
+        .refresh_messages_from_session_db(&session.id)
+        .expect("seed stale cache from session DB");
 
     let cached_before_completion = store.get_frontend_messages(&session.id);
     assert_eq!(cached_before_completion.len(), 1);
@@ -1830,9 +1370,16 @@ fn idle_status_refreshes_session_db_message_cache_after_runtime_write() {
         "visible assistant reply after runtime completion",
         2,
     );
-    upsert_session_messages_for_test(&store, &session.id, None, vec![user, assistant]);
-
-    execute_test_command(&store, &session.id, SessionCommand::RuntimeCompleted);
+    let assistant = serde_json::from_value(assistant).expect("typed assistant message");
+    store
+        .execute_canonical_session_command_with_message(
+            &session.id,
+            SessionCommand::RuntimeCompleted {
+                runtime_id: "runtime-message-refresh".to_string(),
+            },
+            assistant,
+        )
+        .expect("atomically complete runtime with assistant message");
 
     let refreshed_after_idle = store.get_frontend_messages(&session.id);
     assert!(
@@ -1849,100 +1396,12 @@ fn idle_status_refreshes_session_db_message_cache_after_runtime_write() {
 }
 
 #[test]
-fn copy_session_context_reuses_conversation_without_sharing_message_ids() {
-    let store = SessionStore::new();
-    let source = store.create_session(
-        Some("C:/workspace".to_string()),
-        Some("openai/gpt-5".to_string()),
-        Some("thinking".to_string()),
-        Some("coding".to_string()),
-        false,
-        true,
-        false,
-        Some("high".to_string()),
-        true,
-        false,
-    );
-    let target = store.create_session(
-        source.directory.clone(),
-        source.model.clone(),
-        source.agent.clone(),
-        source.session_type.clone(),
-        false,
-        true,
-        false,
-        source.model_variant.clone(),
-        source.model_acceleration_enabled,
-        false,
-    );
-
-    let user = store
-        .add_message(
-            &source.id,
-            MessageRole::User,
-            "reuse this context".to_string(),
-        )
-        .expect("user message should be stored");
-    let assistant = store
-        .add_message(
-            &source.id,
-            MessageRole::Assistant,
-            "context answer".to_string(),
-        )
-        .expect("assistant message should be stored");
-    store.set_todos(&source.id, vec![serde_json::json!({"id": "todo-1"})]);
-
-    assert!(store.copy_session_context(&source.id, &target.id));
-
-    let copied_session = store
-        .get_session(&target.id)
-        .expect("target session should exist");
-    assert_eq!(
-        copied_session.parent_id.as_deref(),
-        Some(source.id.as_str())
-    );
-    assert_eq!(copied_session.message_count, 2);
-    assert_eq!(
-        store.list_child_session_ids(&source.id),
-        vec![target.id.clone()]
-    );
-    assert_eq!(
-        store.get_todos(&target.id),
-        vec![serde_json::json!({"id": "todo-1"})]
-    );
-
-    let copied = store.get_messages(&target.id);
-    assert_eq!(copied.len(), 2);
-    assert_eq!(copied[0].session_id, target.id);
-    assert_eq!(copied[1].session_id, target.id);
-    assert_ne!(copied[0].id, user.id);
-    assert_ne!(copied[1].id, assistant.id);
-    assert_eq!(
-        copied[0].parts[0].text.as_deref(),
-        Some("reuse this context")
-    );
-    assert_eq!(copied[1].parts[0].text.as_deref(), Some("context answer"));
-    assert_eq!(copied[1].parent_id.as_deref(), Some(copied[0].id.as_str()));
-}
-
-#[test]
 fn user_messages_preserve_and_hydrate_pending_task_management_state() {
     let _service = SessionDbTestService::start();
     let root = std::env::temp_dir().join(format!("tura-message-task-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
-    let session = store.create_session(
-        Some(directory.clone()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, directory.clone());
     let start_at = (Utc::now() + chrono::Duration::hours(2)).to_rfc3339();
     let scheduled = store
         .update_session(
@@ -1979,7 +1438,7 @@ fn user_messages_preserve_and_hydrate_pending_task_management_state() {
         .get_session(&session.id)
         .expect("session should remain available");
     assert_eq!(after_message.task_management, previous_task_management);
-    upsert_runtime_owned_session_for_test(&store, &session.id, None);
+    persist_runtime_owned_session_for_test(&store, &session.id, None);
 
     let hydrated = SessionStore::new();
     hydrated.hydrate_directory(Some(directory));
@@ -1987,14 +1446,14 @@ fn user_messages_preserve_and_hydrate_pending_task_management_state() {
         .get_session(&session.id)
         .expect("hydrated session should exist");
     assert_eq!(persisted.task_management, previous_task_management);
-    let info = hydrated
-        .get_session_info(&session.id)
-        .expect("hydrated session info should exist");
-    assert!(info
-        .management
-        .session_log
+    assert!(hydrated
+        .get_frontend_messages(&session.id)
         .iter()
-        .any(|entry| entry.contains("保持计划等待")));
+        .any(|message| message.parts.iter().any(|part| {
+            part.text
+                .as_deref()
+                .is_some_and(|text| text.contains("保持计划等待"))
+        })));
 
     let _ = std::fs::remove_dir_all(root);
 }
@@ -2047,7 +1506,13 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
             "start_at": due
         })),
     );
-    execute_test_command(&store, &busy.id, SessionCommand::RuntimeStarted);
+    execute_test_command(
+        &store,
+        &busy.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-busy-scheduled".to_string(),
+        },
+    );
     store.update_session(
         &done.id,
         None,
@@ -2122,6 +1587,44 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
     expected_ids.sort_unstable();
 
     assert_eq!(claimed_ids, expected_ids);
+    let (_, durable_records) = SessionDbClient::discover()
+        .expect("session DB client")
+        .list_session_records(scheduled.id.clone(), 0, 10)
+        .expect("read durable scheduler message");
+    assert_eq!(
+        durable_records.len(),
+        1,
+        "a successful scheduler claim must commit its user message to Session DB"
+    );
+    let (durable_feed, durable_cursor) = SessionDbClient::discover()
+        .expect("session DB client")
+        .read_session_feed(scheduled.id.clone(), 0, 10)
+        .expect("read durable scheduler feed");
+    assert_eq!(
+        durable_feed.last().map(|entry| entry.cursor),
+        Some(durable_cursor)
+    );
+    assert!(durable_feed.iter().any(|entry| matches!(
+        entry.event,
+        session_log_contract::SessionFeedEvent::MessageUpserted { .. }
+    )));
+    let scheduled_messages = store.get_messages(&scheduled.id);
+    assert_eq!(
+        scheduled_messages.len(),
+        1,
+        "a successful scheduler claim must already include its durable user message"
+    );
+    let scheduled_message = &scheduled_messages[0];
+    assert_eq!(scheduled_message.role, MessageRole::User);
+    assert!(scheduled_message.parts.iter().any(|part| {
+        part.text
+            .as_deref()
+            .is_some_and(|text| text.contains("due scheduled"))
+            && part.metadata.as_ref().is_some_and(|metadata| {
+                metadata.get("kind") == Some(&serde_json::json!("task_scheduler"))
+                    && metadata.get("start_condition") == Some(&serde_json::json!("scheduled_task"))
+            })
+    }));
     assert_eq!(
         store
             .get_session(&scheduled.id)
@@ -2129,7 +1632,20 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
             .task_management["status"],
         "doing"
     );
-    execute_test_command(&store, &scheduled.id, SessionCommand::RuntimeCompleted);
+    execute_test_command(
+        &store,
+        &scheduled.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-scheduled-complete".to_string(),
+        },
+    );
+    execute_test_command(
+        &store,
+        &scheduled.id,
+        SessionCommand::RuntimeCompleted {
+            runtime_id: "runtime-scheduled-complete".to_string(),
+        },
+    );
     assert!(
         store
             .claim_due_task_runs(now + chrono::Duration::minutes(1))
@@ -2165,20 +1681,10 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
 
 #[test]
 fn new_session_idle_task_added_while_idle_waits_for_user_action() {
+    let _service = SessionDbTestService::start();
     let store = SessionStore::new();
     let now = Utc::now();
-    let session = store.create_session(
-        Some("C:/workspace".to_string()),
-        None,
-        None,
-        Some("coding".to_string()),
-        false,
-        false,
-        false,
-        None,
-        false,
-        false,
-    );
+    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
     store.update_session(
         &session.id,
         None,
@@ -2212,7 +1718,13 @@ fn new_session_idle_task_added_while_busy_runs_after_idle_edge() {
     let store = SessionStore::new();
     let now = Utc::now();
     let session = create_canonical_test_session(&store, "C:/workspace".to_string());
-    execute_test_command(&store, &session.id, SessionCommand::RuntimeStarted);
+    execute_test_command(
+        &store,
+        &session.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-session-idle".to_string(),
+        },
+    );
     store.update_session(
         &session.id,
         None,
@@ -2232,7 +1744,13 @@ fn new_session_idle_task_added_while_busy_runs_after_idle_edge() {
 
     assert!(store.claim_due_task_runs(now).is_empty());
 
-    execute_test_command(&store, &session.id, SessionCommand::RuntimeCompleted);
+    execute_test_command(
+        &store,
+        &session.id,
+        SessionCommand::RuntimeCompleted {
+            runtime_id: "runtime-session-idle".to_string(),
+        },
+    );
 
     let claimed = store.claim_due_task_runs(now);
     assert_eq!(claimed.len(), 1);
@@ -2284,7 +1802,7 @@ fn scheduler_claim_persists_next_polling_start() {
     .expect("start_at should parse")
     .with_timezone(&Utc);
     assert!(next_start > now);
-    upsert_runtime_owned_session_for_test(&store, &session.id, None);
+    persist_runtime_owned_session_for_test(&store, &session.id, None);
 
     let hydrated = SessionStore::new();
     hydrated.hydrate_directory(Some(directory));
@@ -2295,7 +1813,19 @@ fn scheduler_claim_persists_next_polling_start() {
         persisted.task_management["start_at"],
         updated.task_management["start_at"]
     );
-    execute_test_command(&store, &session.id, SessionCommand::RuntimeCompleted);
+    let runtime_id = "runtime-polling".to_string();
+    execute_test_command(
+        &store,
+        &session.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: runtime_id.clone(),
+        },
+    );
+    execute_test_command(
+        &store,
+        &session.id,
+        SessionCommand::RuntimeCompleted { runtime_id },
+    );
     assert!(
         store.claim_due_task_runs(now).is_empty(),
         "polling task should not be reclaimed until its next start_at is due"
@@ -2307,13 +1837,13 @@ fn scheduler_claim_persists_next_polling_start() {
 #[test]
 fn api_session_exposes_runtime_context_token_stats() {
     let now = chrono::Utc::now();
-    let mut management = runtime::state_machine::session_management::SessionManagement::new(
+    let mut management = lifecycle::SessionManagement::new(
         "context-token-session".to_string(),
         "context token session".to_string(),
         PathBuf::from("C:/workspace/context-token-session"),
         false,
         "coding".to_string(),
-        runtime::state_machine::session_management::SessionInput {
+        lifecycle::SessionInput {
             user_input: "track context".to_string(),
             file_input: Vec::new(),
             agent: Some("fast".to_string()),
@@ -2323,7 +1853,7 @@ fn api_session_exposes_runtime_context_token_stats() {
         "track context".to_string(),
         now,
     );
-    management.context_tokens = runtime::state_machine::session_management::ContextTokenStats {
+    management.context_tokens = lifecycle::ContextTokenStats {
         input: 12_345,
         limit: 76_800,
     };
@@ -2333,4 +1863,105 @@ fn api_session_exposes_runtime_context_token_stats() {
 
     assert_eq!(session.context_tokens.input, 12_345);
     assert_eq!(session.context_tokens.limit, 76_800);
+}
+
+#[test]
+fn local_then_feed_projection_update_emits_public_events_once() {
+    let store = SessionStore::new();
+    let session_id = store
+        .list_sessions()
+        .into_iter()
+        .next()
+        .expect("default session")
+        .id;
+    let mut projection = store
+        .session_lifecycle_projection(&session_id)
+        .expect("default lifecycle projection");
+    projection.state = lifecycle::SessionState::Running;
+    let mut cursor = store.event_cursor();
+
+    let local = store
+        .write_replaced_projection_cache(projection.clone(), None, None)
+        .expect("local projection cache write");
+    store.publish_session_updated(&local);
+    let feed = store
+        .write_reduced_projection_cache(projection, None, 123)
+        .expect("feed projection cache write");
+    store.publish_session_updated(&feed);
+
+    assert!(local.changed);
+    assert!(!feed.changed);
+    assert_eq!(
+        store
+            .get_session(&session_id)
+            .expect("timestamp-converged session")
+            .updated_at,
+        123
+    );
+    let events = std::iter::from_fn(|| store.next_event(&mut cursor)).collect::<Vec<_>>();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, GlobalEvent::SessionUpdated { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, GlobalEvent::SessionStatus { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn feed_then_local_projection_update_preserves_feed_timestamp_and_emits_once() {
+    let store = SessionStore::new();
+    let session_id = store
+        .list_sessions()
+        .into_iter()
+        .next()
+        .expect("default session")
+        .id;
+    let mut projection = store
+        .session_lifecycle_projection(&session_id)
+        .expect("default lifecycle projection");
+    projection.state = lifecycle::SessionState::Running;
+    let mut cursor = store.event_cursor();
+
+    let feed = store
+        .write_reduced_projection_cache(projection.clone(), None, 456)
+        .expect("feed projection cache write");
+    store.publish_session_updated(&feed);
+    let local = store
+        .write_replaced_projection_cache(projection, None, None)
+        .expect("local projection cache write");
+    store.publish_session_updated(&local);
+
+    assert!(feed.changed);
+    assert!(!local.changed);
+    assert_eq!(local.session.updated_at, 456);
+    assert_eq!(
+        store
+            .get_session(&session_id)
+            .expect("feed-owned timestamp")
+            .updated_at,
+        456
+    );
+    let events = std::iter::from_fn(|| store.next_event(&mut cursor)).collect::<Vec<_>>();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, GlobalEvent::SessionUpdated { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, GlobalEvent::SessionStatus { .. }))
+            .count(),
+        1
+    );
 }

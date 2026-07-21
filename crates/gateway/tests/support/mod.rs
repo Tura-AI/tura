@@ -38,7 +38,7 @@ impl TestSessionDb {
                 };
                 anyhow::bail!(detail);
             }
-            if session_log::ipc::service_is_running() {
+            if session_log_contract::client::service_is_running() {
                 return Ok(Self {
                     _env: env,
                     _root: root,
@@ -59,7 +59,7 @@ impl TestSessionDb {
 
 impl Drop for TestSessionDb {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

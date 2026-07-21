@@ -5,10 +5,16 @@
 
 use anyhow::{anyhow, Result};
 use serde_json::json;
+use session_log_contract::client::{
+    call_service, service_addr_path, service_is_running, unreachable_owner_lock_message,
+};
 use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -18,24 +24,39 @@ const SESSION_DB_STARTUP_POLL: Duration = Duration::from_millis(50);
 #[derive(Clone)]
 pub struct SessionDbService {
     child: Arc<Mutex<Option<Child>>>,
+    lifecycle: Arc<Mutex<()>>,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 impl SessionDbService {
     pub fn new() -> Self {
         Self {
             child: Arc::new(Mutex::new(None)),
+            lifecycle: Arc::new(Mutex::new(())),
+            shutdown_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn start(&self) -> Result<serde_json::Value> {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| anyhow!("session_db lifecycle lock poisoned"))?;
+        self.start_locked()
+    }
+
+    fn start_locked(&self) -> Result<serde_json::Value> {
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            return Err(anyhow!("session_db lifecycle is shutting down"));
+        }
         if self.is_ready() {
             return Ok(self.status_payload("running"));
         }
         self.kill_managed_child();
-        if session_log::ipc::service_is_running() {
+        if service_is_running() {
             return Ok(self.status_payload("running"));
         }
-        if let Some(message) = session_log::service::unreachable_owner_lock_message() {
+        if let Some(message) = unreachable_owner_lock_message() {
             return Err(anyhow!(message));
         }
         let service_bin = session_db_binary()
@@ -65,8 +86,15 @@ impl SessionDbService {
     }
 
     pub fn restart(&self) -> Result<serde_json::Value> {
-        self.stop();
-        self.start()
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| anyhow!("session_db lifecycle lock poisoned"))?;
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            return Err(anyhow!("session_db lifecycle is shutting down"));
+        }
+        self.stop_locked();
+        self.start_locked()
     }
 
     pub fn status(&self) -> serde_json::Value {
@@ -78,10 +106,21 @@ impl SessionDbService {
     }
 
     pub fn stop(&self) {
+        let Ok(_lifecycle) = self.lifecycle.lock() else {
+            return;
+        };
+        self.stop_locked();
+    }
+
+    pub fn shutdown(&self) {
+        self.shutdown_requested.store(true, Ordering::SeqCst);
+        self.stop();
+    }
+
+    fn stop_locked(&self) {
         let child = self.child.lock().ok().and_then(|mut guard| guard.take());
-        if session_log::ipc::service_is_running() {
-            let _ =
-                session_log::ipc::call_service(&session_log_contract::SessionLogCommand::Shutdown);
+        if service_is_running() {
+            let _ = call_service(&session_log_contract::SessionLogCommand::Shutdown);
         }
         if let Some(mut child) = child {
             if !wait_for_child_exit(&mut child, std::time::Duration::from_secs(10)) {
@@ -89,7 +128,7 @@ impl SessionDbService {
                 let _ = child.wait();
             }
         }
-        let _ = std::fs::remove_file(session_log::ipc::service_addr_path());
+        let _ = std::fs::remove_file(service_addr_path());
     }
 
     fn is_ready(&self) -> bool {
@@ -98,13 +137,13 @@ impl SessionDbService {
         };
         match guard.as_mut() {
             Some(child) => match child.try_wait() {
-                Ok(None) => session_log::ipc::service_is_running(),
+                Ok(None) => service_is_running(),
                 Ok(Some(_)) | Err(_) => {
                     *guard = None;
-                    session_log::ipc::service_is_running()
+                    service_is_running()
                 }
             },
-            None => session_log::ipc::service_is_running(),
+            None => service_is_running(),
         }
     }
 
@@ -120,7 +159,7 @@ impl SessionDbService {
     fn wait_until_running(&self, timeout: Duration) -> Result<()> {
         let started = Instant::now();
         loop {
-            if session_log::ipc::service_is_running() {
+            if service_is_running() {
                 return Ok(());
             }
             {
@@ -131,7 +170,7 @@ impl SessionDbService {
                 if let Some(child) = guard.as_mut() {
                     if let Some(status) = child.try_wait()? {
                         *guard = None;
-                        let detail = session_log::service::unreachable_owner_lock_message()
+                        let detail = unreachable_owner_lock_message()
                             .map(|message| format!("; {message}"))
                             .unwrap_or_default();
                         return Err(anyhow!(
@@ -141,7 +180,7 @@ impl SessionDbService {
                 }
             }
             if started.elapsed() >= timeout {
-                let detail = session_log::service::unreachable_owner_lock_message()
+                let detail = unreachable_owner_lock_message()
                     .map(|message| format!("; {message}"))
                     .unwrap_or_default();
                 return Err(anyhow!(
@@ -221,6 +260,7 @@ fn find_repo_root(path: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{find_repo_root, resolve_binary, SessionDbService};
+    use session_log_contract::client::service_addr_path;
     use std::io::{BufRead, Write};
     use std::net::TcpListener;
     use std::path::PathBuf;
@@ -232,6 +272,26 @@ mod tests {
 
         assert_eq!(payload["status"], "running");
         assert!(payload["pid"].is_null());
+    }
+
+    #[test]
+    fn shutdown_is_terminal_for_later_start_and_restart_requests() -> anyhow::Result<()> {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let home = tempfile::tempdir()?;
+        let _env = EnvGuard::set_home(home.path());
+        let service = SessionDbService::new();
+
+        service.shutdown();
+
+        let error = service
+            .start()
+            .expect_err("shutdown session_db service must not restart");
+        assert!(error.to_string().contains("lifecycle is shutting down"));
+        let error = service
+            .restart()
+            .expect_err("shutdown session_db service must reject explicit restart");
+        assert!(error.to_string().contains("lifecycle is shutting down"));
+        Ok(())
     }
 
     #[test]
@@ -247,7 +307,7 @@ mod tests {
             Ok(())
         });
 
-        let path = session_log::ipc::service_addr_path();
+        let path = service_addr_path();
         std::fs::create_dir_all(path.parent().expect("service addr parent"))?;
         std::fs::write(
             &path,
@@ -294,7 +354,7 @@ mod tests {
             Ok(())
         });
 
-        let path = session_log::ipc::service_addr_path();
+        let path = service_addr_path();
         std::fs::create_dir_all(path.parent().expect("service addr parent"))?;
         std::fs::write(
             &path,

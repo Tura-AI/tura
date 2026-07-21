@@ -1,20 +1,21 @@
 use crate::prompt_style::{runtime_fallback, tool_progress};
-use crate::state_machine::session_management::SessionManagement;
-use runtime_contract::GatewayCallbackFrame;
+use lifecycle::SessionManagement;
 use std::io::Write;
 use tracing::warn;
 
-use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::final_response::summarize_tool_results_for_user;
 use crate::manas::tool_catalog::env_flag;
-use crate::state_machine::runtime_management::{RuntimeManagement, UsageReport};
-use crate::state_machine::session_management::ContextTokenStats;
+use crate::runtime_event_writer::RuntimeFeedPublisher;
+use lifecycle::ContextTokenStats;
 use lifecycle::RuntimeProjection;
+use lifecycle::{RuntimeAggregate, UsageReport};
+use session_log_contract::SessionFeedEvent;
 
 pub(crate) fn publish_runtime_failure_message(
     session: &SessionManagement,
     runtime_id: &str,
     error: &str,
+    publisher: Option<&RuntimeFeedPublisher>,
 ) {
     let reply_message = summarize_tool_results_for_user(session).map_or_else(
         || runtime_fallback::no_tool_results_runtime_failed(error),
@@ -22,11 +23,12 @@ pub(crate) fn publish_runtime_failure_message(
     );
     emit_cli_agent_message(&reply_message);
 
-    if let Err(publish_error) = publish_gateway_agent_message(
+    if let Err(publish_error) = publish_agent_message(
         &session.session_id,
         runtime_id,
         reply_message,
         tool_progress::runtime_failed_after_tool_execution(error),
+        publisher,
     ) {
         warn!(
             session_id = %session.session_id,
@@ -55,7 +57,7 @@ fn emit_cli_agent_message(reply_message: &str) {
 
 /// Canonical frontend message id for a runtime-owned assistant turn.
 ///
-/// Runtime callbacks, live overlays, and persisted session snapshots all derive
+/// Runtime feed events, live overlays, and persisted session snapshots all derive
 /// the same id from `runtime_id` so one provider call has one assistant message.
 pub(crate) fn runtime_message_id(runtime_id: &str) -> String {
     format!("{runtime_id}.message")
@@ -73,35 +75,36 @@ pub(crate) fn runtime_tool_part_id(runtime_id: &str, tool_name: &str) -> String 
 
 /// Publish one incremental assistant text delta to the gateway, which re-emits it
 /// as a `message.part.delta` so the frontend renders tokens as they arrive.
-pub(crate) async fn publish_streamed_agent_text(
-    session_id: &str,
-    runtime: &RuntimeManagement,
+pub(crate) fn publish_streamed_agent_text(
+    runtime: &RuntimeAggregate,
     delta: &str,
-) {
-    if gateway_callbacks_disabled() || delta.is_empty() {
-        return;
+    publisher: Option<&RuntimeFeedPublisher>,
+) -> Result<(), String> {
+    if delta.is_empty() {
+        return Ok(());
     }
-    let target_session_id = gateway_callback_session_id(session_id);
     let (created_at, _) = runtime.assistant_message_timestamps();
-    let payload = serde_json::json!({
-        "delta": delta,
-        "runtime_id": &runtime.runtime_id,
-        "created_at": created_at,
-        "updated_at": chrono::Utc::now().timestamp_millis(),
-        "context_tokens": runtime.context_tokens,
-        "usage": runtime.usage.clone(),
-    });
-    publish_gateway_callback_ipc("session.agent_stream", &target_session_id, payload);
+    publish_feed_event(
+        publisher,
+        SessionFeedEvent::AssistantTextDelta {
+            message_id: runtime_message_id(&runtime.runtime_id),
+            part_id: runtime_text_part_id(&runtime.runtime_id),
+            delta: delta.to_string(),
+            created_at,
+            updated_at: chrono::Utc::now().timestamp_millis(),
+        },
+    )
 }
 
-pub(crate) fn publish_gateway_agent_message(
+pub(crate) fn publish_agent_message(
     session_id: &str,
     runtime_id: &str,
     reply_message: String,
     new_learning: String,
+    publisher: Option<&RuntimeFeedPublisher>,
 ) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp_millis();
-    publish_gateway_agent_message_with_sync(GatewayAgentMessageSync {
+    publish_agent_message_event(AgentMessageEvent {
         session_id,
         runtime_id,
         reply_message,
@@ -111,17 +114,19 @@ pub(crate) fn publish_gateway_agent_message(
         usage: None,
         created_at: now,
         updated_at: now,
+        publisher,
     })
 }
 
-pub(crate) fn publish_gateway_agent_message_from_runtime(
+pub(crate) fn publish_agent_message_from_runtime(
     session_id: &str,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     reply_message: String,
     new_learning: String,
+    publisher: Option<&RuntimeFeedPublisher>,
 ) -> Result<(), String> {
     let (created_at, updated_at) = runtime.assistant_message_timestamps();
-    publish_gateway_agent_message_with_sync(GatewayAgentMessageSync {
+    publish_agent_message_event(AgentMessageEvent {
         session_id,
         runtime_id: &runtime.runtime_id,
         reply_message,
@@ -131,10 +136,11 @@ pub(crate) fn publish_gateway_agent_message_from_runtime(
         usage: runtime.usage.clone(),
         created_at,
         updated_at,
+        publisher,
     })
 }
 
-struct GatewayAgentMessageSync<'a> {
+struct AgentMessageEvent<'a> {
     session_id: &'a str,
     runtime_id: &'a str,
     reply_message: String,
@@ -144,66 +150,35 @@ struct GatewayAgentMessageSync<'a> {
     usage: Option<UsageReport>,
     created_at: i64,
     updated_at: i64,
+    publisher: Option<&'a RuntimeFeedPublisher>,
 }
 
-fn publish_gateway_agent_message_with_sync(
-    message: GatewayAgentMessageSync<'_>,
+fn publish_agent_message_event(message: AgentMessageEvent<'_>) -> Result<(), String> {
+    let _ = message.session_id;
+    publish_feed_event(
+        message.publisher,
+        SessionFeedEvent::AgentMessage {
+            message_id: runtime_message_id(message.runtime_id),
+            part_id: runtime_text_part_id(message.runtime_id),
+            reply_message: message.reply_message,
+            new_learning: message.new_learning,
+            runtime_status: message.runtime_status,
+            context_tokens: message.context_tokens,
+            usage: message.usage,
+            created_at: message.created_at,
+            updated_at: message.updated_at,
+        },
+    )
+}
+
+pub(crate) fn publish_feed_event(
+    publisher: Option<&RuntimeFeedPublisher>,
+    event: SessionFeedEvent,
 ) -> Result<(), String> {
-    if gateway_callbacks_disabled() {
-        return Ok(());
-    }
-
-    let target_session_id = gateway_callback_session_id(message.session_id);
-    let payload = serde_json::json!({
-        "reply_message": message.reply_message,
-        "new_learning": message.new_learning,
-        "media": [],
-        "runtime_id": message.runtime_id,
-        "runtime_status": message.runtime_status,
-        "context_tokens": message.context_tokens,
-        "usage": message.usage,
-        "created_at": message.created_at,
-        "updated_at": message.updated_at,
-    });
-    publish_gateway_callback_ipc("session.agent_message", &target_session_id, payload);
-    Ok(())
+    publisher.map_or(Ok(()), |publisher| publisher.publish(event))
 }
 
-pub(crate) fn post_gateway_callback_detached(
-    method: &'static str,
-    payload: serde_json::Value,
-    session_id: String,
-    runtime_id: String,
-    context: &'static str,
-) {
-    let _ = (runtime_id, context);
-    publish_gateway_callback_ipc(method, &session_id, payload);
-}
-
-pub(crate) fn publish_gateway_callback_ipc(
-    method: &str,
-    session_id: &str,
-    body: serde_json::Value,
-) {
-    let frame = GatewayCallbackFrame::new(method, session_id, body);
-    let encoded = match serde_json::to_string(&frame) {
-        Ok(encoded) => encoded,
-        Err(error) => {
-            warn!(method, session_id, error = %error, "failed to encode gateway callback IPC frame");
-            return;
-        }
-    };
-    let mut stdout = std::io::stdout().lock();
-    if let Err(error) = stdout.write_all(encoded.as_bytes()) {
-        warn!(method, session_id, error = %error, "failed to write gateway callback IPC frame");
-        return;
-    }
-    if let Err(error) = stdout.write_all(b"\n").and_then(|_| stdout.flush()) {
-        warn!(method, session_id, error = %error, "failed to flush gateway callback IPC frame");
-    }
-}
-
-pub(super) fn gateway_callback_session_id(session_id: &str) -> String {
+pub(crate) fn frontend_session_id(session_id: &str) -> String {
     if planning_child_depth_from_env() > 0 {
         if let Ok(parent_session_id) = std::env::var("TURA_PARENT_SESSION_ID") {
             let parent_session_id = parent_session_id.trim();
@@ -241,68 +216,54 @@ mod tests {
     }
 
     #[test]
-    fn callback_session_id_uses_parent_only_for_planning_child_depth() {
+    fn frontend_session_id_uses_parent_only_for_planning_child_depth() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_gateway_env();
 
         std::env::set_var("TURA_PARENT_SESSION_ID", " parent-session ");
-        assert_eq!(
-            gateway_callback_session_id("child-session"),
-            "child-session"
-        );
+        assert_eq!(frontend_session_id("child-session"), "child-session");
 
         std::env::set_var("TURA_PLANNING_DEPTH", "1");
-        assert_eq!(
-            gateway_callback_session_id("child-session"),
-            "parent-session"
-        );
+        assert_eq!(frontend_session_id("child-session"), "parent-session");
 
         std::env::set_var("TURA_PARENT_SESSION_ID", "   ");
-        assert_eq!(
-            gateway_callback_session_id("child-session"),
-            "child-session"
-        );
+        assert_eq!(frontend_session_id("child-session"), "child-session");
 
         std::env::set_var("TURA_PLANNING_DEPTH", "2");
         std::env::set_var("TURA_PARENT_SESSION_ID", "execute-parent");
-        assert_eq!(
-            gateway_callback_session_id("child-session"),
-            "execute-parent"
-        );
+        assert_eq!(frontend_session_id("child-session"), "execute-parent");
 
         std::env::set_var("TURA_PLANNING_DEPTH", "not-a-number");
-        assert_eq!(
-            gateway_callback_session_id("child-session"),
-            "child-session"
-        );
+        assert_eq!(frontend_session_id("child-session"), "child-session");
     }
 
     #[test]
-    fn publish_gateway_agent_message_returns_ok_when_callbacks_are_disabled() {
+    fn publish_agent_message_without_a_feed_is_a_noop() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_gateway_env();
-        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
 
-        let result = publish_gateway_agent_message(
+        let result = publish_agent_message(
             "session-1",
             "runtime-1",
             "reply".to_string(),
             "learning".to_string(),
+            None,
         );
 
         assert_eq!(result, Ok(()));
     }
 
     #[test]
-    fn publish_gateway_agent_message_uses_the_worker_callback_contract() {
+    fn publish_agent_message_without_a_feed_is_repeatable() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_gateway_env();
 
-        let result = publish_gateway_agent_message(
+        let result = publish_agent_message(
             "session-1",
             "runtime-42",
             "visible reply".to_string(),
             "new learning".to_string(),
+            None,
         );
         assert_eq!(result, Ok(()));
     }
@@ -311,7 +272,6 @@ mod tests {
         for key in [
             "TURA_PARENT_SESSION_ID",
             "TURA_PLANNING_DEPTH",
-            "TURA_GATEWAY_CALLBACKS",
             "TURA_CLI_LIVE_JSONL",
         ] {
             std::env::remove_var(key);

@@ -7,8 +7,8 @@ use anyhow::{anyhow, Result};
 use session_log_contract::{SessionLogCommand, SessionLogResponse};
 
 pub fn write_session_log(command: SessionLogCommand) -> Result<()> {
-    if session_log::ipc::service_is_running() {
-        match session_log::ipc::call_service(&command) {
+    if session_log_contract::client::service_is_running() {
+        match session_log_contract::client::call_service(&command) {
             Ok(SessionLogResponse::Ok) => return Ok(()),
             Ok(SessionLogResponse::Error { error }) => {
                 return Err(anyhow!("session_log write failed: {error}"));
@@ -24,6 +24,6 @@ pub fn write_session_log(command: SessionLogCommand) -> Result<()> {
         }
     }
 
-    session_log::file_queue::enqueue_command(&command)?;
+    session_log_contract::client::enqueue_command(&command)?;
     Ok(())
 }

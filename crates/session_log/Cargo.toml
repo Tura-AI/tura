@@ -54,8 +54,8 @@ serde_json.workspace = true
 tracing.workspace = true
 tura_path.workspace = true
 session_log_contract.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 sysinfo.workspace = true
 tempfile.workspace = true
-uuid.workspace = true

@@ -7,6 +7,9 @@ use std::time::{Duration, Instant};
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[path = "../support/typed_session.rs"]
+mod typed_session;
+
 const WORKSPACE_COUNT: usize = 10;
 const TASKS_PER_WORKSPACE: usize = 20;
 const RUNTIME_COUNT: usize = WORKSPACE_COUNT * TASKS_PER_WORKSPACE;
@@ -66,7 +69,15 @@ async fn session_log_queue_pressure_impl() -> Result<()> {
     wait_until(DRAIN_TIMEOUT, || {
         pressure_sessions_visible(&client, &summaries, &home)
     })
-    .await?;
+    .await
+    .with_context(|| {
+        format!(
+            "session queue pressure did not drain: pending={} processing={} failed={}",
+            queue_file_count(&home, "pending").unwrap_or(usize::MAX),
+            queue_file_count(&home, "processing").unwrap_or(usize::MAX),
+            queue_file_count(&home, "failed").unwrap_or(usize::MAX)
+        )
+    })?;
     let drain_elapsed = drain_started.elapsed();
 
     for workspace_index in 0..WORKSPACE_COUNT {
@@ -106,7 +117,7 @@ async fn session_log_queue_pressure_impl() -> Result<()> {
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })
     .await?;
     Ok(())
@@ -117,14 +128,20 @@ fn write_runtime_snapshots(
     workspace_index: usize,
     workspace: &str,
 ) -> Result<RuntimeSummary> {
-    let client = SessionLogClient::discover()?;
     let session_id = format!("queue-pressure-session-{runtime_index}");
     let runtime_id = format!("queue-pressure-runtime-{runtime_index}");
-    let mut messages = Vec::with_capacity(EXPECTED_MESSAGES_PER_RUNTIME);
+    let name = format!("Runtime Queue Pressure {runtime_index}");
+    let management = typed_session::initial_management(&session_id, workspace, &name, 1);
+    typed_session::enqueue_create(typed_session::root_create_request(
+        &session_id,
+        workspace,
+        &name,
+        1,
+    ))?;
 
     for write in 0..WRITES_PER_RUNTIME {
         let message_id = format!("{runtime_id}-message-{write}");
-        messages.push(message_payload(
+        let message = message_payload(
             &session_id,
             &message_id,
             "assistant",
@@ -135,27 +152,18 @@ fn write_runtime_snapshots(
                 "runtime queued write",
             ),
             write as i64,
-        ));
-        client.upsert_session(
-            session_payload(
-                &session_id,
-                workspace,
-                &format!("Runtime Queue Pressure {runtime_index}"),
-                "running",
-                write as i64,
-            ),
-            None,
-            messages.clone(),
-            vec![json!({
-                "id": format!("{runtime_id}-todo"),
-                "status": "running",
-                "write": write
-            })],
+        );
+        typed_session::enqueue_delta_from_management(
+            &session_id,
+            write as u64,
+            (write > 0).then_some(&management),
+            &management,
+            typed_session::entries_from_messages(write as u64, vec![message])?,
         )?;
     }
 
     let summary_message_id = format!("{runtime_id}-summary");
-    messages.push(message_payload(
+    let summary = message_payload(
         &session_id,
         &summary_message_id,
         "assistant",
@@ -166,22 +174,13 @@ fn write_runtime_snapshots(
             "runtime summary",
         ),
         10_000 + runtime_index as i64,
-    ));
-    client.upsert_session(
-        session_payload(
-            &session_id,
-            workspace,
-            &format!("Runtime Queue Pressure {runtime_index}"),
-            "created",
-            10_000 + runtime_index as i64,
-        ),
-        None,
-        messages,
-        vec![json!({
-            "id": format!("{runtime_id}-summary-todo"),
-            "status": "done",
-            "summary_message_id": summary_message_id
-        })],
+    );
+    typed_session::enqueue_delta_from_management(
+        &session_id,
+        WRITES_PER_RUNTIME as u64,
+        Some(&management),
+        &management,
+        typed_session::entries_from_messages(WRITES_PER_RUNTIME as u64, vec![summary])?,
     )?;
 
     Ok(RuntimeSummary {
@@ -230,28 +229,6 @@ fn pressure_sessions_visible(
     })
 }
 
-fn session_payload(
-    session_id: &str,
-    workspace: &str,
-    name: &str,
-    state: &str,
-    updated_at: i64,
-) -> Value {
-    json!({
-        "id": session_id,
-        "name": name,
-        "directory": workspace,
-        "created_at": 1,
-        "updated_at": updated_at,
-        "status": if state == "running" { "running" } else { "idle" },
-        "management": {
-            "session_id": session_id,
-            "session_name": name,
-            "state": state
-        }
-    })
-}
-
 fn message_payload(
     session_id: &str,
     message_id: &str,
@@ -292,15 +269,19 @@ let record = {record_index};\n\
 }
 
 fn pending_queue_files(home: &Path) -> Result<usize> {
-    let pending = home
+    queue_file_count(home, "pending")
+}
+
+fn queue_file_count(home: &Path, state: &str) -> Result<usize> {
+    let directory = home
         .join("db")
         .join("session_log")
         .join("message_queue")
-        .join("pending");
-    if !pending.exists() {
+        .join(state);
+    if !directory.exists() {
         return Ok(0);
     }
-    Ok(std::fs::read_dir(&pending)?
+    Ok(std::fs::read_dir(&directory)?
         .flatten()
         .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
         .count())
@@ -368,7 +349,7 @@ impl ServiceThread {
         let handle = std::thread::spawn(session_log::service::run_socket_service);
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(10) {
-            if session_log::ipc::service_is_running() {
+            if session_log_contract::client::service_is_running() {
                 return Ok(Self {
                     handle: Some(handle),
                 });
@@ -386,7 +367,7 @@ impl ServiceThread {
 
 impl Drop for ServiceThread {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

@@ -1,45 +1,19 @@
 //! Command registry owned by the router.
 
-use serde::{Deserialize, Serialize};
+use router_contract::{CommandSpec, ExecuteCommandRequest, ExecuteCommandResponse};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default)]
 pub struct CommandRegistry;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandSpec {
-    pub name: String,
-    pub description: String,
-    pub agent: Option<String>,
-    pub model: Option<String>,
-    pub source: String,
-    pub template: Option<String>,
-    pub subtask: bool,
-    pub hints: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecuteCommandRequest {
-    pub command: String,
-    pub args: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecuteCommandResponse {
-    pub output: String,
-}
-
 impl CommandRegistry {
     pub fn list(&self, directory: Option<&str>) -> Vec<CommandSpec> {
         discover_commands(directory)
     }
 
-    pub fn execute(
-        &self,
-        directory: Option<&str>,
-        payload: ExecuteCommandRequest,
-    ) -> ExecuteCommandResponse {
+    pub fn execute(&self, payload: ExecuteCommandRequest) -> ExecuteCommandResponse {
+        let directory = payload.directory.as_deref();
         let command_name = payload.command.trim().trim_start_matches('/').to_string();
         let command = discover_commands(directory)
             .into_iter()
@@ -229,13 +203,11 @@ mod tests {
             .expect("hello command should be discovered");
         assert_eq!(command.description, "Say hello");
 
-        let response = registry.execute(
-            root.to_str(),
-            ExecuteCommandRequest {
-                command: "/hello".to_string(),
-                args: Some(vec!["Ada".to_string(), "Lovelace".to_string()]),
-            },
-        );
+        let response = registry.execute(ExecuteCommandRequest {
+            directory: root.to_str().map(str::to_string),
+            command: "/hello".to_string(),
+            args: Some(vec!["Ada".to_string(), "Lovelace".to_string()]),
+        });
         assert!(response.output.contains("Hello Ada"));
         assert!(response.output.contains("Ada Lovelace"));
 
@@ -274,13 +246,11 @@ mod tests {
         assert!(command.subtask);
         assert_eq!(command.hints, vec!["compile", "test"]);
 
-        let response = registry.execute(
-            root.to_str(),
-            ExecuteCommandRequest {
-                command: "build".to_string(),
-                args: Some(vec!["workspace".to_string()]),
-            },
-        );
+        let response = registry.execute(ExecuteCommandRequest {
+            directory: root.to_str().map(str::to_string),
+            command: "build".to_string(),
+            args: Some(vec!["workspace".to_string()]),
+        });
         assert_eq!(response.output, "Build workspace");
 
         let _ = fs::remove_dir_all(root);

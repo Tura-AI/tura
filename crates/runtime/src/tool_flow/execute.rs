@@ -2,14 +2,15 @@ use chrono::Utc;
 use tracing::error;
 
 use crate::runtime::types::ToolCallData;
+use crate::runtime_event_writer::RuntimeFeedPublisher;
 use crate::state_machine::agent_management::AgentManagement;
-use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::SessionManagement;
 use crate::tool_flow::command_run_result::{
     apply_task_attribution_to_streamed_result, record_streamed_command_events,
 };
 use crate::tool_flow::task_status::apply_tool_result_session_state_update;
 use crate::tool_router::execute_tool::{execute_tool, ExecuteToolInput, ToolExecutionResult};
+use lifecycle::RuntimeAggregate;
+use lifecycle::SessionManagement;
 
 use crate::gateway_events::{
     publish_step_summary, publish_task_plan_todos, publish_tool_call_record,
@@ -28,8 +29,9 @@ pub(crate) fn execute_tool_calls(
     tool_calls: &[ToolCallData],
     agent: Option<&AgentManagement>,
     session: &mut SessionManagement,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     _redis_url: &str,
+    publisher: Option<&RuntimeFeedPublisher>,
 ) -> Result<Vec<ToolExecutionResult>, String> {
     let mut results = Vec::new();
     let require_startup_task_state = session.task_type.is_empty();
@@ -76,8 +78,9 @@ pub(crate) fn execute_tool_calls(
                 &execution_tool_call,
                 execution_arguments.clone(),
                 tool_started_at,
+                publisher,
             );
-            publish_step_summary(session, runtime, &execution_tool_call);
+            publish_step_summary(session, runtime, &execution_tool_call, publisher);
         }
         if startup_apply_patch_discarded && command_run_arguments_are_empty(&execution_arguments) {
             let execution_result = ToolExecutionResult {
@@ -96,6 +99,7 @@ pub(crate) fn execute_tool_calls(
                 true,
                 None,
                 tool_started_at,
+                publisher,
             );
             results.push(execution_result);
             continue;
@@ -112,6 +116,7 @@ pub(crate) fn execute_tool_calls(
                 false,
                 blocked_result.error.as_deref(),
                 tool_started_at,
+                publisher,
             );
             results.push(blocked_result);
             continue;
@@ -136,7 +141,7 @@ pub(crate) fn execute_tool_calls(
                     &tool_call.tool_name,
                     &mut execution_result.result,
                 ) {
-                    publish_task_plan_todos(session);
+                    publish_task_plan_todos(session, publisher);
                     execution_result.success = command_run_result_success(&execution_result.result);
                     execution_result.error = command_run_result_error(&execution_result.result);
                 }
@@ -149,6 +154,7 @@ pub(crate) fn execute_tool_calls(
                     execution_result.success,
                     execution_result.error.as_deref(),
                     tool_started_at,
+                    publisher,
                 );
                 results.push(execution_result);
                 continue;
@@ -221,7 +227,7 @@ pub(crate) fn execute_tool_calls(
                     &tool_call.tool_name,
                     &mut execution_result.result,
                 ) {
-                    publish_task_plan_todos(session);
+                    publish_task_plan_todos(session, publisher);
                     execution_result.success = command_run_result_success(&execution_result.result);
                     execution_result.error = command_run_result_error(&execution_result.result);
                 }
@@ -234,6 +240,7 @@ pub(crate) fn execute_tool_calls(
                     execution_result.success,
                     execution_result.error.as_deref(),
                     tool_started_at,
+                    publisher,
                 );
                 results.push(execution_result);
             }
@@ -248,6 +255,7 @@ pub(crate) fn execute_tool_calls(
                     false,
                     Some(e.as_str()),
                     tool_started_at,
+                    publisher,
                 );
                 results.push(ToolExecutionResult {
                     tool_name: tool_call.tool_name.clone(),
@@ -263,7 +271,7 @@ pub(crate) fn execute_tool_calls(
     Ok(results)
 }
 
-fn streamed_command_run_result(runtime: &RuntimeManagement) -> Option<serde_json::Value> {
+fn streamed_command_run_result(runtime: &RuntimeAggregate) -> Option<serde_json::Value> {
     runtime
         .output
         .as_ref()?
@@ -406,14 +414,14 @@ mod tests {
         startup_apply_patch_was_discarded, streamed_command_run_arguments,
         streamed_command_run_result,
     };
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
     use crate::tool_router::execute_tool::ToolExecutionResult;
     use chrono::Utc;
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
     use serde_json::json;
 
-    fn runtime_with_output(output: serde_json::Value) -> RuntimeManagement {
-        let mut runtime = RuntimeManagement::new(
+    fn runtime_with_output(output: serde_json::Value) -> RuntimeAggregate {
+        let mut runtime = RuntimeAggregate::new(
             "runtime-tool-flow".to_string(),
             "session-tool-flow".to_string(),
             "agent-tool-flow".to_string(),
@@ -436,7 +444,9 @@ mod tests {
             },
             Utc::now(),
         );
-        runtime.set_output(output);
+        runtime
+            .set_output(output)
+            .expect("fixture output should apply");
         runtime
     }
 

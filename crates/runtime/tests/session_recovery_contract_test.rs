@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use chrono::Utc;
 use lifecycle::SessionState;
-use runtime::state_machine::session_management::{SessionInput, SessionManagement};
+use lifecycle::{SessionInput, SessionManagement};
 
 fn persisted_session_value(state: SessionState) -> serde_json::Value {
     let now = Utc::now();

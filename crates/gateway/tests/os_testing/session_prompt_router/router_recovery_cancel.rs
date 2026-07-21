@@ -11,14 +11,7 @@ async fn gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_betw
     std::fs::create_dir_all(&workspace)?;
     let _env = EnvGuard::new(&home, &workspace);
     let service = ServiceThread::start()?;
-    let first_router = FakeRouter::start(
-        &home,
-        vec![RouterReply::Payload(json!({
-            "ok": true,
-            "accepted": true,
-            "worker_id": "first-router-worker"
-        }))],
-    )?;
+    let first_router = FakeRouter::start(&home, vec![RouterReply::Completed])?;
 
     let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
@@ -50,7 +43,10 @@ async fn gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_betw
     .into_response();
     assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
     let first_request = first_router.next_request(Duration::from_secs(10))?;
-    assert_eq!(first_request["payload"]["turn_id"], "stale-router-turn-1");
+    assert_eq!(
+        first_request["payload"]["runtime_id"],
+        "stale-router-turn-1"
+    );
     wait_until(Duration::from_secs(10), || {
         session_store()
             .get_session(&session.id)
@@ -58,14 +54,7 @@ async fn gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_betw
     })?;
 
     drop(first_router);
-    let second_router = FakeRouter::start(
-        &home,
-        vec![RouterReply::Payload(json!({
-            "ok": true,
-            "accepted": true,
-            "worker_id": "second-router-worker"
-        }))],
-    )?;
+    let second_router = FakeRouter::start(&home, vec![RouterReply::Completed])?;
 
     let response = prompt_async(
         Path(session.id.clone()),
@@ -84,7 +73,10 @@ async fn gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_betw
     .into_response();
     assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
     let second_request = second_router.next_request(Duration::from_secs(10))?;
-    assert_eq!(second_request["payload"]["turn_id"], "stale-router-turn-2");
+    assert_eq!(
+        second_request["payload"]["runtime_id"],
+        "stale-router-turn-2"
+    );
     assert_eq!(second_request["payload"]["session_id"], session.id);
     assert_eq!(
         second_request["payload"]["payload"]["prompt"],
@@ -129,15 +121,16 @@ async fn gateway_prompt_business_flow_cancel_after_router_enqueue_preserves_user
     std::fs::create_dir_all(&workspace)?;
     let _env = EnvGuard::new(&home, &workspace);
     let service = ServiceThread::start()?;
+    let (release_reply, wait_for_release) = mpsc::channel();
     let router = FakeRouter::start(
         &home,
-        vec![RouterReply::DelayedPayload(
+        vec![RouterReply::GatedPayload(
             json!({
                 "ok": true,
                 "accepted": true,
                 "worker_id": "cancel-race-worker"
             }),
-            Duration::from_millis(250),
+            Arc::new(StdMutex::new(wait_for_release)),
         )],
     )?;
 
@@ -169,9 +162,16 @@ async fn gateway_prompt_business_flow_cancel_after_router_enqueue_preserves_user
     .await
     .into_response();
     assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
+    assert!(
+        session_store()
+            .get_todos(&session.id)
+            .iter()
+            .any(|todo| { todo.get("status").and_then(Value::as_str) == Some("in_progress") }),
+        "prompt handoff should create an in-progress todo before router dispatch"
+    );
 
     let request = router.next_request(Duration::from_secs(10))?;
-    assert_eq!(request["payload"]["turn_id"], "cancel-race-turn");
+    assert_eq!(request["payload"]["runtime_id"], "cancel-race-turn");
     execute_canonical_test_command(&session.id, SessionCommand::CancelSession);
 
     wait_until(Duration::from_secs(10), || {
@@ -180,6 +180,17 @@ async fn gateway_prompt_business_flow_cancel_after_router_enqueue_preserves_user
             && todos
                 .iter()
                 .all(|todo| todo.get("status").and_then(Value::as_str) == Some("cancelled"))
+    })?;
+    let cancelled_todo_cursor = session_store()
+        .todo_cursor_for_business_test(&session.id)
+        .context("cancelled todo cursor should exist")?;
+    release_reply
+        .send(())
+        .context("release delayed fake router reply")?;
+    wait_until(Duration::from_secs(10), || {
+        session_store()
+            .todo_cursor_for_business_test(&session.id)
+            .is_some_and(|cursor| cursor > cancelled_todo_cursor)
     })?;
     assert!(
         session_store()

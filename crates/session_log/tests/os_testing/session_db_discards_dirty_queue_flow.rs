@@ -1,18 +1,21 @@
-//! Business E2E: dirty session_db queue data must never prevent the owner from
-//! starting. Malformed durable queue rows are deleted, malformed file queue
-//! items are quarantined, and clean writes still work through the live service.
+//! Business E2E: dirty session_db file queue data must never prevent the owner
+//! from starting. Malformed items are quarantined and clean writes still work.
+
+#[path = "../support/typed_session.rs"]
+mod typed_session;
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde_json::json;
-use session_log::{file_queue, SessionLogStore};
+use lifecycle::TaskPlan;
+use session_log::SessionLogStore;
+use session_log_contract::client::{enqueue_command, open_session_feed_subscription};
 use session_log_contract::{
-    GetSessionRequest, SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
+    GetSessionRequest, SessionFeedEvent, SessionLogCommand, SessionLogResponse,
 };
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{mpsc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -39,39 +42,69 @@ fn session_db_start_quarantines_dirty_file_queue_items_and_accepts_clean_writes(
     ]);
 
     let store = SessionLogStore::open_default()?;
-    insert_dirty_sqlite_queue_rows(&home, &workspace_key)?;
     let dirty_file = write_dirty_file_queue_item(&home)?;
 
     let mut service = SessionDbGuard::start(&repo, &home, &workspace)?;
     wait_until(
         Duration::from_secs(30),
-        session_log::ipc::service_is_running,
+        session_log_contract::client::service_is_running,
     )
     .context("session_db did not publish a reachable socket")?;
     call_service_with_retry(&SessionLogCommand::ListWorkspaces, Duration::from_secs(30))
         .context("session_db did not become ready for data-path reads")?;
 
-    assert_eq!(pending_sqlite_queue_count(&home)?, 0);
     wait_until(Duration::from_secs(10), || !dirty_file.exists())
         .context("dirty file queue item stayed pending")?;
     assert_failed_file_queue_contains(&home, &dirty_file)?;
 
-    assert_ok(
-        call_service_with_retry(
-            &SessionLogCommand::UpsertSession(upsert_request("clean-direct", &workspace_key, 10)),
-            Duration::from_secs(30),
-        )?,
-        "direct clean write",
-    )?;
-    file_queue::enqueue_command(&SessionLogCommand::UpsertSession(upsert_request(
-        "clean-file-queue",
+    typed_session::create_via_service(
+        "clean-direct",
         &workspace_key,
-        20,
-    )))?;
+        "Dirty Queue clean-direct",
+        10,
+        TaskPlan::default(),
+    )?;
+    let mut subscription = open_session_feed_subscription()?;
+    let cancellation = subscription.cancellation_handle()?;
+    let (feed_sender, feed_receiver) = mpsc::channel();
+    let feed_reader = thread::spawn(move || {
+        while let Ok(Some(entry)) = subscription.next_entry() {
+            if feed_sender.send(entry).is_err() {
+                return;
+            }
+        }
+    });
+    enqueue_command(&SessionLogCommand::CreateSession(
+        typed_session::create_request(
+            "clean-file-queue",
+            &workspace_key,
+            "Dirty Queue clean-file-queue",
+            20,
+            TaskPlan::default(),
+        ),
+    ))?;
     wait_until(Duration::from_secs(10), || {
         session_visible("clean-file-queue").unwrap_or(false)
     })
     .context("clean file queue write was not drained")?;
+    let queued_feed = feed_receiver
+        .recv_timeout(Duration::from_secs(10))
+        .context("queued create did not reach the online session feed")?;
+    assert_eq!(queued_feed.session_id, "clean-file-queue");
+    assert!(matches!(
+        queued_feed.event,
+        SessionFeedEvent::SessionSnapshotCreated { .. }
+    ));
+    assert!(
+        feed_receiver
+            .recv_timeout(Duration::from_millis(200))
+            .is_err(),
+        "queued create should publish exactly one feed entry"
+    );
+    cancellation.cancel()?;
+    feed_reader
+        .join()
+        .map_err(|_| anyhow!("session feed reader panicked"))?;
 
     assert!(session_visible("clean-direct")?);
     assert!(store
@@ -85,24 +118,6 @@ fn session_db_start_quarantines_dirty_file_queue_items_and_accepts_clean_writes(
     Ok(())
 }
 
-fn insert_dirty_sqlite_queue_rows(home: &Path, workspace: &str) -> Result<()> {
-    let index_db = home.join("db").join("session_log").join("index.sqlite3");
-    let conn = rusqlite::Connection::open(&index_db)
-        .with_context(|| format!("open index db {}", index_db.display()))?;
-    let bad_state = serde_json::to_string(&upsert_request("dirty-state", workspace, 1))?
-        .replace("\"state\":\"created\"", "\"state\":\"Created\"");
-    conn.execute(
-        "INSERT INTO session_write_queue(
-            idempotency_key, session_id, event_type, payload_json, status, retry_count, created_at
-        ) VALUES
-            ('dirty-json', 'dirty-json', 'upsert_session', '{not-json', 'pending', 0, 1),
-            ('dirty-state', 'dirty-state', 'upsert_session', ?1, 'pending', 0, 2),
-            ('dirty-event', 'dirty-event', 'unknown_event', '{}', 'pending', 0, 3)",
-        rusqlite::params![bad_state],
-    )?;
-    Ok(())
-}
-
 fn write_dirty_file_queue_item(home: &Path) -> Result<PathBuf> {
     let pending = home
         .join("db")
@@ -113,17 +128,6 @@ fn write_dirty_file_queue_item(home: &Path) -> Result<PathBuf> {
     let path = pending.join("00000000000000000001-1-00000000000000000001.json");
     std::fs::write(&path, "{not-json")?;
     Ok(path)
-}
-
-fn pending_sqlite_queue_count(home: &Path) -> Result<i64> {
-    let index_db = home.join("db").join("session_log").join("index.sqlite3");
-    let conn = rusqlite::Connection::open(&index_db)?;
-    conn.query_row(
-        "SELECT COUNT(*) FROM session_write_queue WHERE status = 'pending'",
-        [],
-        |row| row.get(0),
-    )
-    .map_err(Into::into)
 }
 
 fn assert_failed_file_queue_contains(home: &Path, dirty_file: &Path) -> Result<()> {
@@ -148,48 +152,15 @@ fn assert_failed_file_queue_contains(home: &Path, dirty_file: &Path) -> Result<(
     Ok(())
 }
 
-fn upsert_request(session_id: &str, workspace: &str, tick: i64) -> UpsertSessionRequest {
-    UpsertSessionRequest {
-        session: json!({
-            "id": session_id,
-            "name": format!("Dirty Queue {session_id}"),
-            "directory": workspace,
-            "created_at": tick,
-            "updated_at": tick,
-            "status": "idle",
-            "management": {
-                "session_id": session_id,
-                "session_name": format!("Dirty Queue {session_id}"),
-                "state": "created"
-            }
-        }),
-        parent_id: None,
-        messages: vec![json!({
-            "id": format!("message-{session_id}"),
-            "role": "assistant",
-            "created_at": tick,
-            "updated_at": tick,
-            "content": format!("content for {session_id}")
-        })],
-        todos: Vec::new(),
-    }
-}
-
 fn session_visible(session_id: &str) -> Result<bool> {
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id: session_id.to_string(),
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))? {
         SessionLogResponse::Session { session } => Ok(session.is_some()),
         SessionLogResponse::Error { error } => bail!("get session returned error: {error}"),
         other => bail!("unexpected get session response: {other:?}"),
-    }
-}
-
-fn assert_ok(response: SessionLogResponse, context: &str) -> Result<()> {
-    match response {
-        SessionLogResponse::Ok => Ok(()),
-        SessionLogResponse::Error { error } => bail!("{context} returned error: {error}"),
-        other => bail!("{context} returned unexpected response: {other:?}"),
     }
 }
 
@@ -200,7 +171,7 @@ fn call_service_with_retry(
     let started = Instant::now();
     let mut last_error = None;
     while started.elapsed() < timeout {
-        match session_log::ipc::call_service(command) {
+        match session_log_contract::client::call_service(command) {
             Ok(response) => return Ok(response),
             Err(error) => {
                 last_error = Some(error);

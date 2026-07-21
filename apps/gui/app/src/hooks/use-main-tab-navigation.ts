@@ -9,9 +9,17 @@ export function useMainTabNavigation(options: {
   openBlankSession: () => void;
   openSession: (sessionId: string) => Promise<void>;
   loadFiles: (path?: string) => Promise<void>;
+  e2eFixture?: string;
 }) {
-  const { state, setState, refreshProviderSurface, openBlankSession, openSession, loadFiles } =
-    options;
+  const {
+    state,
+    setState,
+    refreshProviderSurface,
+    openBlankSession,
+    openSession,
+    loadFiles,
+    e2eFixture,
+  } = options;
 
   function openSettings(section: SettingsSection = state().settingsSection) {
     setState((previous) => ({
@@ -22,7 +30,9 @@ export function useMainTabNavigation(options: {
       settingsSection: section,
       settingsNotice: undefined,
     }));
-    void refreshProviderSurface();
+    if (!e2eFixture) {
+      void refreshProviderSurface();
+    }
   }
 
   function closeSettings() {

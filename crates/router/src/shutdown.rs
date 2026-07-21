@@ -24,7 +24,7 @@ pub(crate) fn start_idle_shutdown_monitor(state: AppState) {
                     .manager
                     .stop_workers_with_prefix("runtime_worker:")
                     .await;
-                state.session_db.stop();
+                state.session_db.shutdown();
                 let stopped_background = mark_router_shutting_down(&state);
                 eprintln!(
                     "router idle shutdown: stopped {stopped} runtime workers, {stopped_background} background process scopes, and session_db"

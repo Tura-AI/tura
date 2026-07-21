@@ -1,13 +1,13 @@
 use chrono::Utc;
 use lifecycle::SessionState;
+use lifecycle::{ProviderConfig, ToolChoice};
+use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
+use lifecycle::{SessionInput, SessionManagement};
 use runtime::context::{
     accumulate_message, accumulate_tool_result, accumulate_tool_result_with_provider_metadata,
     build_context, build_messages_from_session, user_input_content_matches,
     user_input_content_value, ContextInput,
 };
-use runtime::state_machine::agent_management::{ProviderConfig, ToolChoice};
-use runtime::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
-use runtime::state_machine::session_management::{SessionInput, SessionManagement};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -31,9 +31,9 @@ fn business_session(user_input: &str) -> SessionManagement {
     )
 }
 
-fn business_runtime(session: &SessionManagement) -> RuntimeManagement {
+fn business_runtime(session: &SessionManagement) -> RuntimeAggregate {
     let provider_name = runtime::agent_router::coding_agent_provider_name();
-    RuntimeManagement::new(
+    RuntimeAggregate::new(
         "runtime-context-business".to_string(),
         session.session_id.clone(),
         "agent-context-business".to_string(),
@@ -262,8 +262,12 @@ fn context_business_flow_tracks_tool_result_sequence_and_last_response() {
 fn context_business_flow_uses_runtime_text_and_reasoning_when_session_history_is_empty() {
     let session = business_session("");
     let mut runtime = business_runtime(&session);
-    runtime.text = "assistant fallback answer".to_string();
-    runtime.reasoning = Some("private reasoning summary".to_string());
+    runtime
+        .append_text("assistant fallback answer")
+        .expect("fixture text should apply");
+    runtime
+        .update_reasoning(Some("private reasoning summary".to_string()), None)
+        .expect("fixture reasoning should apply");
 
     let output = build_context(ContextInput {
         runtime,
@@ -286,8 +290,12 @@ fn context_business_flow_keeps_runtime_reasoning_out_of_non_empty_messages_but_r
     accumulate_message(&mut session, "assistant", json!("previous response"))
         .expect("assistant history");
     let mut runtime = business_runtime(&session);
-    runtime.text = "new answer should not be injected over existing history".to_string();
-    runtime.reasoning = Some("reasoning retained for state only".to_string());
+    runtime
+        .append_text("new answer should not be injected over existing history")
+        .expect("fixture text should apply");
+    runtime
+        .update_reasoning(Some("reasoning retained for state only".to_string()), None)
+        .expect("fixture reasoning should apply");
 
     let output = build_context(ContextInput {
         runtime,

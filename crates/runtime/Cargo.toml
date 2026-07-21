@@ -115,13 +115,11 @@ redis.workspace = true
 provider = { workspace = true }
 agents = { workspace = true }
 personas = { workspace = true }
-router = { workspace = true }
 router_contract.workspace = true
 runtime_contract.workspace = true
 tura_path = { workspace = true }
 tools = { workspace = true }
 reqwest.workspace = true
-session_log = { workspace = true }
 session_log_contract.workspace = true
 uuid.workspace = true
 sysinfo.workspace = true
@@ -130,3 +128,4 @@ sysinfo.workspace = true
 tokio-test.workspace = true
 tempfile.workspace = true
 rusqlite.workspace = true
+session_log = { workspace = true }

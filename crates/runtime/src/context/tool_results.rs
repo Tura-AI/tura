@@ -2,7 +2,7 @@ use super::char_budget::{
     context_output_byte_budget, formatted_truncate_text, truncate_middle_with_char_budget,
     COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS, CONTEXT_OUTPUT_MAX_CHARS,
 };
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 
 use super::media::{command_run_media_content_items_for_context, strip_read_media_payload_data};
 

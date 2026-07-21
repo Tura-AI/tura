@@ -1,5 +1,5 @@
 use crate::prompt_style::runtime_fallback;
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 
 use crate::gateway_events::summarize_single_tool_output;
 

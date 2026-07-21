@@ -5,6 +5,7 @@
 
 use crate::contracts::{
     GlobalEvent, Session as ApiSession, SessionContextTokens, SessionStatus as ApiSessionStatus,
+    UpdateSessionRequest as ApiUpdateSessionRequest,
 };
 use crate::session::config::{load_config, merge_config, TuraSessionConfig};
 use crate::session::manager::{
@@ -15,13 +16,13 @@ use crate::session::manager::{
 use crate::session_db_client::SessionDbClient;
 use chrono::{DateTime, Utc};
 use lifecycle::{
-    PlanStatus, PollInterval, RuntimeProjection, SessionCommand, SessionEvent, SessionProjection,
-    SessionState, StartCondition, TaskStep,
+    PlanStatus, PollInterval, SessionCommand, SessionEvent, SessionProjection, StartCondition,
+    TaskStep,
 };
 use parking_lot::RwLock;
 use session_log_contract::{
-    CreateSessionRequest as CreateSessionDbRequest, PersistSessionPayloadRequest,
-    SessionCommandResult, SessionRecord, SessionSnapshot,
+    CreateSessionRequest as CreateSessionDbRequest, SessionCommandResult, SessionMetadataPatch,
+    SessionRecordProjection, SessionSnapshot, UpdateSessionRequest as UpdateSessionDbRequest,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
@@ -29,7 +30,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Message {
     pub id: String,
     pub session_id: String,
@@ -48,7 +49,7 @@ pub enum MessageRole {
     System,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MessagePart {
     pub id: String,
     #[serde(rename = "type")]
@@ -71,11 +72,9 @@ struct LiveMessageOverlay {
 pub struct SessionStore {
     sessions: Arc<RwLock<HashMap<String, SessionInfo>>>,
     messages: Arc<RwLock<HashMap<String, Vec<Message>>>>,
-    session_db_messages: Arc<RwLock<HashMap<String, Vec<Message>>>>,
-    session_db_loaded: Arc<RwLock<HashSet<String>>>,
-    session_db_refresh_needed: Arc<RwLock<HashSet<String>>>,
     live_messages: Arc<RwLock<HashMap<String, Vec<LiveMessageOverlay>>>>,
     todos: Arc<RwLock<HashMap<String, Vec<serde_json::Value>>>>,
+    todo_cursors: Arc<RwLock<HashMap<String, u64>>>,
     children: Arc<RwLock<HashMap<String, Vec<String>>>>,
     current_session_id: Arc<RwLock<Option<String>>>,
     events: Arc<RwLock<EventLog>>,
@@ -93,6 +92,18 @@ struct EventLogEntry {
     event: GlobalEvent,
 }
 
+fn session_event_ends_runtime(event: &SessionEvent) -> bool {
+    matches!(
+        event,
+        SessionEvent::RuntimeCompleted { .. }
+            | SessionEvent::RuntimeFailed { .. }
+            | SessionEvent::RuntimeCancelled { .. }
+            | SessionEvent::RuntimeEnded { .. }
+            | SessionEvent::SessionInterrupted { .. }
+            | SessionEvent::SessionCancelled { .. }
+    )
+}
+
 impl EventLog {
     fn new() -> Self {
         Self {
@@ -102,19 +113,18 @@ impl EventLog {
     }
 }
 
-#[derive(Debug, Clone)]
-struct PersistedSessionRecord {
-    info: SessionInfo,
-    parent_id: Option<String>,
-    messages: Vec<Message>,
-    todos: Vec<serde_json::Value>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduledTaskRun {
     pub session_id: String,
     pub task_summary: String,
     pub start_condition: StartCondition,
+    pub prompt: serde_json::Value,
+}
+
+pub(crate) struct ProjectionCacheWrite {
+    pub(crate) session: ApiSession,
+    pub(crate) changed: bool,
+    pub(crate) inserted: bool,
 }
 
 #[path = "store_task_management.rs"]
@@ -139,20 +149,22 @@ impl Default for SessionStore {
 
 impl SessionStore {
     pub fn new() -> Self {
-        let store = Self {
+        let store = Self::empty();
+        store.init_default_session();
+        store
+    }
+
+    pub(crate) fn empty() -> Self {
+        Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             messages: Arc::new(RwLock::new(HashMap::new())),
-            session_db_messages: Arc::new(RwLock::new(HashMap::new())),
-            session_db_loaded: Arc::new(RwLock::new(HashSet::new())),
-            session_db_refresh_needed: Arc::new(RwLock::new(HashSet::new())),
             live_messages: Arc::new(RwLock::new(HashMap::new())),
             todos: Arc::new(RwLock::new(HashMap::new())),
+            todo_cursors: Arc::new(RwLock::new(HashMap::new())),
             children: Arc::new(RwLock::new(HashMap::new())),
             current_session_id: Arc::new(RwLock::new(None)),
             events: Arc::new(RwLock::new(EventLog::new())),
-        };
-        store.init_default_session();
-        store
+        }
     }
 
     fn init_default_session(&self) {
@@ -198,142 +210,9 @@ impl SessionStore {
                 return;
             }
         };
-        let mut page = 0;
-        const PAGE_SIZE: u64 = 500;
-        loop {
-            let (page_info, sessions) = match client.list_sessions(
-                directory.clone(),
-                page,
-                PAGE_SIZE,
-            ) {
-                Ok(result) => result,
-                Err(err) => {
-                    tracing::warn!(directory, error = %err, "failed to hydrate sessions from session_log");
-                    return;
-                }
-            };
-            for snapshot in sessions {
-                let records = match client.list_session_records(
-                    snapshot.session_id.clone(),
-                    0,
-                    10_000,
-                ) {
-                    Ok((_, records)) => records,
-                    Err(err) => {
-                        tracing::warn!(session_id = %snapshot.session_id, error = %err, "failed to hydrate session records from session_log");
-                        Vec::new()
-                    }
-                };
-                if let Err(err) = self.load_persisted_session(snapshot, records) {
-                    tracing::warn!(error = %err, "failed to load persisted session");
-                }
-            }
-            if (page_info.page + 1) * page_info.page_size >= page_info.total {
-                break;
-            }
-            page += 1;
+        if let Err(err) = crate::session_feed::replay_directory(&client, self.clone(), &directory) {
+            tracing::warn!(directory, error = %err, "failed to replay typed Session feed");
         }
-    }
-
-    #[cfg_attr(test, allow(dead_code))]
-    fn hydrate_directory_background(&self, directory: Option<String>) {
-        let Some(directory) = directory else {
-            return;
-        };
-        let store = self.clone();
-        std::thread::spawn(move || {
-            store.hydrate_directory(Some(directory));
-        });
-    }
-
-    fn load_persisted_session(
-        &self,
-        snapshot: SessionSnapshot,
-        records: Vec<SessionRecord>,
-    ) -> Result<(), String> {
-        let mut record = persisted_record_from_session_log(snapshot, records)?;
-        record.info.message_count = record.messages.len();
-        record.info.use_last_tool_call_response = default_use_last_tool_call_response_for_session(
-            record.info.session_type.as_deref().unwrap_or("coding"),
-            record.info.agent.as_deref(),
-        );
-        record.info.management.use_last_tool_call_response =
-            record.info.use_last_tool_call_response;
-        let session_id = record.info.id.clone();
-        self.session_db_messages
-            .write()
-            .insert(session_id.clone(), record.messages.clone());
-        self.session_db_loaded.write().insert(session_id.clone());
-
-        if self.sessions.read().contains_key(&session_id) {
-            return Ok(());
-        }
-
-        self.sessions
-            .write()
-            .insert(session_id.clone(), record.info);
-        self.messages
-            .write()
-            .insert(session_id.clone(), record.messages);
-        self.todos.write().insert(session_id.clone(), record.todos);
-        if let Some(parent_id) = record.parent_id.filter(|value| !value.trim().is_empty()) {
-            let mut children = self.children.write();
-            let entry = children.entry(parent_id).or_default();
-            if !entry.iter().any(|id| id == &session_id) {
-                entry.push(session_id);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn refresh_session_db_cache(&self, session_id: &str) -> Result<Vec<Message>, String> {
-        let client = SessionDbClient::discover()
-            .map_err(|err| format!("failed to discover session_log client: {err}"))?;
-        let Some(snapshot) = client
-            .get_session(session_id.to_string())
-            .map_err(|err| format!("failed to read session snapshot from session_log: {err}"))?
-        else {
-            self.session_db_messages.write().remove(session_id);
-            self.session_db_loaded
-                .write()
-                .insert(session_id.to_string());
-            self.session_db_refresh_needed.write().remove(session_id);
-            return Ok(Vec::new());
-        };
-        let (_, records) = client
-            .list_session_records(session_id.to_string(), 0, 10_000)
-            .map_err(|err| format!("failed to read session records from session_log: {err}"))?;
-        let mut record = persisted_record_from_session_log(snapshot, records)?;
-        record.info.message_count = record.messages.len();
-        record.info.use_last_tool_call_response = default_use_last_tool_call_response_for_session(
-            record.info.session_type.as_deref().unwrap_or("coding"),
-            record.info.agent.as_deref(),
-        );
-        record.info.management.use_last_tool_call_response =
-            record.info.use_last_tool_call_response;
-        let messages = record.messages.clone();
-
-        self.sessions
-            .write()
-            .insert(session_id.to_string(), record.info);
-        self.session_db_messages
-            .write()
-            .insert(session_id.to_string(), messages.clone());
-        self.todos
-            .write()
-            .insert(session_id.to_string(), record.todos);
-        self.session_db_loaded
-            .write()
-            .insert(session_id.to_string());
-        self.session_db_refresh_needed.write().remove(session_id);
-        if let Some(parent_id) = record.parent_id.filter(|value| !value.trim().is_empty()) {
-            let mut children = self.children.write();
-            let entry = children.entry(parent_id).or_default();
-            if !entry.iter().any(|id| id == session_id) {
-                entry.push(session_id.to_string());
-            }
-        }
-        Ok(messages)
     }
 
     fn persist_active_config(&self, session: &ApiSession) {
@@ -395,30 +274,169 @@ impl SessionStore {
 
     pub fn insert_projection_cache(
         &self,
+        info: SessionInfo,
+        projection: SessionProjection,
+        session_name: Option<String>,
+        message_count: u64,
+        last_user_message_at: Option<i64>,
+    ) -> ApiSession {
+        self.write_projection_cache(
+            info,
+            projection,
+            session_name,
+            message_count,
+            last_user_message_at,
+            false,
+        )
+        .session
+    }
+
+    fn write_projection_cache(
+        &self,
         mut info: SessionInfo,
         projection: SessionProjection,
         session_name: Option<String>,
-    ) -> ApiSession {
+        message_count: u64,
+        last_user_message_at: Option<i64>,
+        only_if_absent: bool,
+    ) -> ProjectionCacheWrite {
         let session_id = projection.session_id.clone();
         let parent_id = projection.parent_id.clone();
+        let mut sessions = self.sessions.write();
+        if only_if_absent {
+            if let Some(current) = sessions.get(&session_id) {
+                return ProjectionCacheWrite {
+                    session: api_session_from_info(
+                        current,
+                        current.management.lifecycle_projection().parent_id,
+                    ),
+                    changed: false,
+                    inserted: false,
+                };
+            }
+        }
+        let previous = sessions.get(&session_id).map(|current| {
+            api_session_from_info(current, current.management.lifecycle_projection().parent_id)
+        });
         info.id.clone_from(&session_id);
         info.management.replace_lifecycle_projection(projection);
         if let Some(session_name) = session_name {
             info.management.session_name = session_name;
         }
+        info.message_count = message_count as usize;
+        info.last_user_message_at = last_user_message_at;
         info.status = SessionStatusMano::from_state(info.management.state);
         let session = api_session_from_info(&info, parent_id.clone());
-        self.sessions.write().insert(session_id.clone(), info);
+        sessions.insert(session_id.clone(), info);
+        drop(sessions);
         self.messages.write().entry(session_id.clone()).or_default();
         self.todos.write().entry(session_id.clone()).or_default();
+        {
+            let mut current_session_id = self.current_session_id.write();
+            if current_session_id.is_none() {
+                current_session_id.replace(session_id.clone());
+            }
+        }
         self.replace_parent_cache(&session_id, parent_id);
-        session
+        ProjectionCacheWrite {
+            changed: previous.as_ref() != Some(&session),
+            inserted: previous.is_none(),
+            session,
+        }
+    }
+
+    pub fn insert_snapshot_projection_cache(
+        &self,
+        snapshot: &SessionSnapshot,
+    ) -> Result<ApiSession, String> {
+        Ok(self.write_snapshot_projection_cache(snapshot)?.session)
+    }
+
+    pub(crate) fn write_snapshot_projection_cache(
+        &self,
+        snapshot: &SessionSnapshot,
+    ) -> Result<ProjectionCacheWrite, String> {
+        let info = session_info_from_snapshot(snapshot)?;
+        let write = self.write_projection_cache(
+            info,
+            snapshot.lifecycle_projection.clone(),
+            snapshot.name.clone(),
+            snapshot.message_count,
+            snapshot.last_user_message_at,
+            false,
+        );
+        let mut cursors = self.todo_cursors.write();
+        self.todos
+            .write()
+            .insert(snapshot.session_id.clone(), snapshot.todos.clone());
+        cursors.remove(&snapshot.session_id);
+        Ok(write)
+    }
+
+    pub(crate) fn write_feed_snapshot_projection_cache(
+        &self,
+        snapshot: &SessionSnapshot,
+        cursor: u64,
+    ) -> Result<ProjectionCacheWrite, String> {
+        let write = self.write_updated_snapshot_projection_cache(snapshot)?;
+        self.apply_todos_projection_at_cursor(
+            &snapshot.session_id,
+            cursor,
+            snapshot.todos.clone(),
+            false,
+        );
+        Ok(write)
+    }
+
+    pub(crate) fn write_updated_snapshot_projection_cache(
+        &self,
+        snapshot: &SessionSnapshot,
+    ) -> Result<ProjectionCacheWrite, String> {
+        let info = session_info_from_snapshot(snapshot)?;
+        Ok(self.write_projection_cache(
+            info,
+            snapshot.lifecycle_projection.clone(),
+            snapshot.name.clone(),
+            snapshot.message_count,
+            snapshot.last_user_message_at,
+            false,
+        ))
+    }
+
+    pub fn reduce_snapshot_projection_cache(
+        &self,
+        snapshot: &SessionSnapshot,
+    ) -> Result<Option<ApiSession>, String> {
+        let write = self.write_snapshot_projection_cache(snapshot)?;
+        Ok(write.changed.then_some(write.session))
     }
 
     pub fn create_canonical_session(
         &self,
         info: SessionInfo,
         creation_command: SessionCommand,
+    ) -> Result<ApiSession, String> {
+        self.create_canonical_session_with_context(info, creation_command, false)
+    }
+
+    pub fn create_canonical_fork(
+        &self,
+        info: SessionInfo,
+        parent_id: String,
+        copy_context: bool,
+    ) -> Result<ApiSession, String> {
+        self.create_canonical_session_with_context(
+            info,
+            SessionCommand::ForkSession { parent_id },
+            copy_context,
+        )
+    }
+
+    fn create_canonical_session_with_context(
+        &self,
+        info: SessionInfo,
+        creation_command: SessionCommand,
+        copy_context: bool,
     ) -> Result<ApiSession, String> {
         let workspace = info.directory.clone().unwrap_or_else(|| {
             info.management
@@ -427,8 +445,10 @@ impl SessionStore {
                 .to_string()
         });
         let request = CreateSessionDbRequest {
+            command_id: format!("create:{}", info.id),
             session_id: info.id.clone(),
             creation_command,
+            copy_context,
             workspace,
             session_directory: info
                 .management
@@ -455,7 +475,23 @@ impl SessionStore {
         let result = SessionDbClient::discover()
             .and_then(|client| client.create_session(request))
             .map_err(|error| format!("failed to create canonical session: {error}"))?;
-        Ok(self.insert_projection_cache(info, result.projection, result.session_name))
+        let write = self.write_projection_cache(
+            info,
+            result.projection,
+            result.session_name,
+            result.message_count,
+            result.last_user_message_at,
+            true,
+        );
+        self.publish_session_created(&write);
+        Ok(write.session)
+    }
+
+    pub fn delete_canonical_session(&self, session_id: &str) -> Result<Option<ApiSession>, String> {
+        SessionDbClient::discover()
+            .and_then(|client| client.delete_session(session_id.to_string()))
+            .map_err(|error| format!("failed to delete canonical session: {error}"))?;
+        Ok(self.remove_session_projection(session_id))
     }
 
     pub fn apply_initial_task_management(
@@ -480,12 +516,33 @@ impl SessionStore {
                     .ok_or_else(|| format!("session {session_id} not found"));
             }
         };
-        self.execute_canonical_session_command(
+        self.execute_canonical_session_update(
             session_id,
-            SessionCommand::ApplyTaskPlanPatch { patch },
-        )?;
-        self.get_session(session_id)
-            .ok_or_else(|| format!("session {session_id} projection cache is missing"))
+            SessionMetadataPatch::default(),
+            Some(patch),
+        )
+    }
+
+    fn execute_canonical_session_update(
+        &self,
+        session_id: &str,
+        metadata: SessionMetadataPatch,
+        task_plan_patch: Option<lifecycle::SessionTaskPlanPatch>,
+    ) -> Result<ApiSession, String> {
+        let snapshot = SessionDbClient::discover()
+            .and_then(|client| {
+                client.update_session(UpdateSessionDbRequest {
+                    command_id: uuid::Uuid::new_v4().to_string(),
+                    session_id: session_id.to_string(),
+                    metadata,
+                    task_plan_patch,
+                })
+            })
+            .map_err(|error| format!("failed to update canonical session: {error}"))?;
+        let write = self.write_updated_snapshot_projection_cache(&snapshot)?;
+        self.persist_active_config(&write.session);
+        self.publish_session_updated(&write);
+        Ok(write.session)
     }
 
     pub fn register_canonical_child_session(
@@ -548,27 +605,56 @@ impl SessionStore {
         let result = SessionDbClient::discover()
             .and_then(|client| client.execute_session_command(session_id.to_string(), command))
             .map_err(|error| format!("failed to execute canonical session command: {error}"))?;
-        if matches!(&result.event, SessionEvent::SessionDeleted) {
-            self.delete_session(session_id);
-        } else if self
-            .replace_projection_cache(result.projection.clone(), result.session_name.clone())
-            .is_none()
-        {
+        let refresh_error = session_event_ends_runtime(&result.event)
+            .then(|| self.refresh_messages_from_session_db(session_id))
+            .transpose()
+            .err();
+        let Some(write) = self.write_replaced_projection_cache(
+            result.projection.clone(),
+            result.session_name.clone(),
+            None,
+        ) else {
             return Err(format!(
                 "session {session_id} command succeeded but projection cache is missing"
             ));
+        };
+        if matches!(&result.event, SessionEvent::SessionCancelled { .. }) {
+            self.finish_todos(session_id, false);
         }
-        if matches!(
-            &result.event,
-            SessionEvent::RuntimeCompleted { .. }
-                | SessionEvent::RuntimeFailed { .. }
-                | SessionEvent::SessionCancelled { .. }
-        ) {
-            self.session_db_refresh_needed
-                .write()
-                .insert(session_id.to_string());
+        self.publish_session_updated(&write);
+        if let Some(error) = refresh_error {
+            return Err(error);
         }
         Ok(result)
+    }
+
+    pub fn register_runtime(
+        &self,
+        session_id: &str,
+        runtime_id: &str,
+    ) -> Result<session_log_contract::RuntimeRegistrationOutcome, String> {
+        let outcome = SessionDbClient::discover()
+            .and_then(|client| {
+                client.register_runtime(runtime_id.to_string(), session_id.to_string())
+            })
+            .map_err(|error| format!("failed to register runtime: {error}"))?;
+        let projection = match &outcome {
+            session_log_contract::RuntimeRegistrationOutcome::Registered { projection, .. }
+            | session_log_contract::RuntimeRegistrationOutcome::AlreadyRegistered {
+                projection,
+                ..
+            } => Some(projection.clone()),
+            _ => None,
+        };
+        if let Some(projection) = projection {
+            let Some(write) = self.write_replaced_projection_cache(projection, None, None) else {
+                return Err(format!(
+                    "session {session_id} runtime registration succeeded but projection cache is missing"
+                ));
+            };
+            self.publish_session_updated(&write);
+        }
+        Ok(outcome)
     }
 
     pub fn execute_canonical_session_command_with_status_event(
@@ -576,14 +662,62 @@ impl SessionStore {
         session_id: &str,
         command: SessionCommand,
     ) -> Result<SessionCommandResult, String> {
-        let previous = self
-            .session_lifecycle_projection(session_id)
-            .map(|projection| projection.state);
-        let result = self.execute_canonical_session_command(session_id, command)?;
-        if previous != Some(result.projection.state) {
-            self.push_current_session_status_event(session_id);
+        self.execute_canonical_session_command(session_id, command)
+    }
+
+    pub fn execute_canonical_session_command_with_message(
+        &self,
+        command_session_id: &str,
+        command: SessionCommand,
+        message: Message,
+    ) -> Result<(SessionCommandResult, Message), String> {
+        let message_projection = SessionRecordProjection {
+            session_id: message.session_id.clone(),
+            message_id: message.id.clone(),
+            role: match message.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::System => "system",
+            }
+            .to_string(),
+            created_at: message.created_at,
+            updated_at: message.updated_at,
+            record: serde_json::to_value(&message)
+                .map_err(|error| format!("failed to encode typed message projection: {error}"))?,
+        };
+        let result = SessionDbClient::discover()
+            .and_then(|client| {
+                client.execute_session_command_with_message(
+                    command_session_id.to_string(),
+                    command,
+                    Some(message_projection),
+                )
+            })
+            .map_err(|error| format!("failed to execute canonical session command: {error}"))?;
+        let refresh_error = if session_event_ends_runtime(&result.event) {
+            self.refresh_messages_from_session_db(command_session_id)
+                .err()
+        } else {
+            self.upsert_feed_message(&message.session_id, message.clone());
+            None
+        };
+        if refresh_error.is_some() {
+            self.upsert_feed_message(&message.session_id, message.clone());
         }
-        Ok(result)
+        let Some(write) = self.write_replaced_projection_cache(
+            result.projection.clone(),
+            result.session_name.clone(),
+            None,
+        ) else {
+            return Err(format!(
+                "session {command_session_id} command succeeded but projection cache is missing"
+            ));
+        };
+        self.publish_session_updated(&write);
+        if let Some(error) = refresh_error {
+            return Err(error);
+        }
+        Ok((result, message))
     }
 
     pub fn replace_projection_cache(
@@ -591,20 +725,92 @@ impl SessionStore {
         projection: SessionProjection,
         session_name: Option<String>,
     ) -> Option<ApiSession> {
+        self.write_replaced_projection_cache(projection, session_name, None)
+            .map(|write| write.session)
+    }
+
+    fn write_replaced_projection_cache(
+        &self,
+        projection: SessionProjection,
+        session_name: Option<String>,
+        updated_at: Option<i64>,
+    ) -> Option<ProjectionCacheWrite> {
         let session_id = projection.session_id.clone();
         let parent_id = projection.parent_id.clone();
         let mut sessions = self.sessions.write();
         let info = sessions.get_mut(&session_id)?;
-        info.management.replace_lifecycle_projection(projection);
+        let changed = info.management.lifecycle_projection() != projection
+            || session_name
+                .as_ref()
+                .is_some_and(|name| info.management.session_name != *name);
+        if changed {
+            info.management.replace_lifecycle_projection(projection);
+        }
         if let Some(session_name) = session_name {
             info.management.session_name = session_name;
         }
         info.status = SessionStatusMano::from_state(info.management.state);
-        info.updated_at = Utc::now().timestamp_millis();
+        if let Some(updated_at) = updated_at {
+            info.updated_at = updated_at;
+            if let Some(updated_at) = DateTime::<Utc>::from_timestamp_millis(updated_at) {
+                info.management.session_last_update_at = updated_at;
+            }
+        } else if changed {
+            info.updated_at = Utc::now().timestamp_millis();
+            if let Some(updated_at) = DateTime::<Utc>::from_timestamp_millis(info.updated_at) {
+                info.management.session_last_update_at = updated_at;
+            }
+        }
         let session = api_session_from_info(info, parent_id.clone());
         drop(sessions);
         self.replace_parent_cache(&session_id, parent_id);
-        Some(session)
+        Some(ProjectionCacheWrite {
+            session,
+            changed,
+            inserted: false,
+        })
+    }
+
+    pub fn reduce_projection_cache(
+        &self,
+        projection: SessionProjection,
+        session_name: Option<String>,
+        updated_at: i64,
+    ) -> Option<ApiSession> {
+        self.write_replaced_projection_cache(projection, session_name, Some(updated_at))
+            .and_then(|write| write.changed.then_some(write.session))
+    }
+
+    pub(crate) fn write_reduced_projection_cache(
+        &self,
+        projection: SessionProjection,
+        session_name: Option<String>,
+        updated_at: i64,
+    ) -> Option<ProjectionCacheWrite> {
+        self.write_replaced_projection_cache(projection, session_name, Some(updated_at))
+    }
+
+    pub(crate) fn publish_session_created(&self, write: &ProjectionCacheWrite) {
+        if write.inserted {
+            self.push_event(GlobalEvent::SessionCreated {
+                properties: crate::contracts::SessionCreatedProperties {
+                    session_id: write.session.id.clone(),
+                    info: write.session.clone(),
+                },
+            });
+        }
+    }
+
+    pub(crate) fn publish_session_updated(&self, write: &ProjectionCacheWrite) {
+        if write.changed {
+            self.push_event(GlobalEvent::SessionUpdated {
+                properties: crate::contracts::SessionUpdatedProperties {
+                    session_id: write.session.id.clone(),
+                    info: write.session.clone(),
+                },
+            });
+            self.push_current_session_status_event(&write.session.id);
+        }
     }
 
     fn replace_parent_cache(&self, session_id: &str, parent_id: Option<String>) {
@@ -690,8 +896,6 @@ impl SessionStore {
         model_acceleration_enabled: bool,
         disable_permission_restrictions: bool,
     ) -> SessionInfo {
-        #[cfg(not(test))]
-        self.hydrate_directory_background(directory.clone());
         let persisted_config = directory.as_deref().map(load_config).unwrap_or_default();
         let model = model.or(persisted_config.model.clone());
         let agent = agent.or(persisted_config.active_agent.clone());
@@ -773,68 +977,126 @@ impl SessionStore {
         disable_permission_restrictions: Option<bool>,
         task_management: Option<serde_json::Value>,
     ) -> Option<ApiSession> {
-        if let Some(task_management) = task_management {
-            if let Err(error) = self.execute_task_management_patch(session_id, task_management) {
-                tracing::warn!(
-                    session_id,
-                    error,
-                    "canonical task management patch rejected"
-                );
-                return None;
-            }
-        }
-        let parent_id = self.parent_for_child(session_id);
-        let mut sessions = self.sessions.write();
-        let info = sessions.get_mut(session_id)?;
-        let has_model_override = model.is_some();
+        self.execute_api_session_update(
+            session_id,
+            title,
+            model,
+            agent,
+            session_type,
+            kill_processes_on_start,
+            validator_enabled,
+            force_planning,
+            disable_permission_restrictions,
+            task_management,
+            None,
+        )
+        .map_err(|error| {
+            tracing::warn!(session_id, error, "canonical session update rejected");
+        })
+        .ok()
+    }
 
-        if let Some(title) = title
+    pub fn update_session_from_request(
+        &self,
+        session_id: &str,
+        payload: ApiUpdateSessionRequest,
+    ) -> Result<ApiSession, String> {
+        self.execute_api_session_update(
+            session_id,
+            payload.title.or(payload.name),
+            payload.model,
+            payload.agent,
+            payload.session_type,
+            payload.kill_processes_on_start,
+            payload.validator_enabled,
+            payload.force_planning,
+            payload.disable_permission_restrictions,
+            payload.task_management,
+            payload.auto_session_name,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "internal adapter preserves the existing optional HTTP patch fields"
+    )]
+    fn execute_api_session_update(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+        model: Option<String>,
+        agent: Option<String>,
+        session_type: Option<String>,
+        kill_processes_on_start: Option<bool>,
+        validator_enabled: Option<bool>,
+        force_planning: Option<bool>,
+        disable_permission_restrictions: Option<bool>,
+        task_management: Option<serde_json::Value>,
+        auto_session_name: Option<bool>,
+    ) -> Result<ApiSession, String> {
+        let current = self
+            .sessions
+            .read()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("session {session_id} not found"))?;
+        let name = title
             .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-        {
-            info.management.session_name = title;
-        }
-
-        if let Some(model) = model {
-            info.model = Some(model);
-        }
-
-        if agent.is_some() || session_type.is_some() {
+            .filter(|value| !value.is_empty());
+        let agent_or_type_changed = agent.is_some() || session_type.is_some();
+        let (next_agent, next_type, use_last_tool_call_response) = if agent_or_type_changed {
             let next_type =
-                normalize_session_type(session_type, agent.as_deref().or(info.agent.as_deref()));
-            info.session_type = Some(next_type.clone());
-            info.agent = agent.or_else(|| agent_for_session_type(&next_type));
-            info.use_last_tool_call_response =
-                default_use_last_tool_call_response_for_session(&next_type, info.agent.as_deref());
-            info.management.use_last_tool_call_response = info.use_last_tool_call_response;
-        }
-        if !has_model_override {
-            if let Some(provider) = runtime_provider_for_session(
-                info.session_type.as_deref().unwrap_or("coding"),
-                info.agent.as_deref(),
-            ) {
-                info.model = Some(provider);
+                normalize_session_type(session_type, agent.as_deref().or(current.agent.as_deref()));
+            let next_agent = agent.or_else(|| agent_for_session_type(&next_type));
+            let use_last_tool_call_response =
+                default_use_last_tool_call_response_for_session(&next_type, next_agent.as_deref());
+            (
+                Some(next_agent),
+                Some(next_type),
+                Some(use_last_tool_call_response),
+            )
+        } else {
+            (None, None, None)
+        };
+        let model = model.or_else(|| {
+            agent_or_type_changed.then(|| {
+                runtime_provider_for_session(
+                    next_type.as_deref().unwrap_or("coding"),
+                    next_agent.as_ref().and_then(|agent| agent.as_deref()),
+                )
+            })?
+        });
+        let task_plan_patch = task_management.and_then(|task_management| {
+            match parse_task_management_patch(task_management, Utc::now()) {
+                Ok(patch) => Some(patch),
+                Err(error) => {
+                    tracing::warn!(session_id, error, "invalid task management patch ignored");
+                    None
+                }
             }
-        }
-        if let Some(kill_processes_on_start) = kill_processes_on_start {
-            info.kill_processes_on_start = kill_processes_on_start;
-        }
-        if let Some(validator_enabled) = validator_enabled {
-            info.validator_enabled = validator_enabled;
-        }
-        if let Some(force_planning) = force_planning {
-            info.force_planning = force_planning;
-        }
-        if let Some(disable_permission_restrictions) = disable_permission_restrictions {
-            info.disable_permission_restrictions = disable_permission_restrictions;
-            info.management.disable_permission_restrictions = disable_permission_restrictions;
-        }
-        info.updated_at = Utc::now().timestamp_millis();
-
-        let session = api_session_from_info(info, parent_id);
-        drop(sessions);
-        self.persist_active_config(&session);
-        Some(session)
+        });
+        let (agent, clear_agent) = match next_agent {
+            Some(Some(agent)) => (Some(agent), false),
+            Some(None) => (None, true),
+            None => (None, false),
+        };
+        self.execute_canonical_session_update(
+            session_id,
+            SessionMetadataPatch {
+                name,
+                model,
+                agent,
+                clear_agent,
+                session_type: next_type,
+                kill_processes_on_start,
+                validator_enabled,
+                force_planning,
+                disable_permission_restrictions,
+                use_last_tool_call_response,
+                auto_session_name,
+            },
+            task_plan_patch,
+        )
     }
 
     pub fn update_session_auto_session_name(
@@ -842,38 +1104,44 @@ impl SessionStore {
         session_id: &str,
         auto_session_name: bool,
     ) -> Option<ApiSession> {
-        let parent_id = self.parent_for_child(session_id);
-        let mut sessions = self.sessions.write();
-        let info = sessions.get_mut(session_id)?;
-        info.management.auto_session_name = auto_session_name;
-        info.updated_at = Utc::now().timestamp_millis();
-        let session = api_session_from_info(info, parent_id);
-        drop(sessions);
-        Some(session)
+        self.execute_canonical_session_update(
+            session_id,
+            SessionMetadataPatch {
+                auto_session_name: Some(auto_session_name),
+                ..SessionMetadataPatch::default()
+            },
+            None,
+        )
+        .ok()
     }
 
     pub fn delete_session(&self, session_id: &str) -> bool {
-        if self.sessions.write().remove(session_id).is_some() {
-            self.messages.write().remove(session_id);
-            self.session_db_messages.write().remove(session_id);
-            self.session_db_loaded.write().remove(session_id);
-            self.session_db_refresh_needed.write().remove(session_id);
-            self.live_messages.write().remove(session_id);
-            self.todos.write().remove(session_id);
-            self.children.write().remove(session_id);
-            for child_ids in self.children.write().values_mut() {
+        self.remove_session_projection(session_id).is_some()
+    }
+
+    pub(crate) fn remove_session_projection(&self, session_id: &str) -> Option<ApiSession> {
+        let parent_id = self.parent_for_child(session_id);
+        let info = self.sessions.write().remove(session_id)?;
+        let session = api_session_from_info(&info, parent_id);
+        self.messages.write().remove(session_id);
+        self.live_messages.write().remove(session_id);
+        let mut todo_cursors = self.todo_cursors.write();
+        self.todos.write().remove(session_id);
+        todo_cursors.remove(session_id);
+        {
+            let mut children = self.children.write();
+            children.remove(session_id);
+            for child_ids in children.values_mut() {
                 child_ids.retain(|child_id| child_id != session_id);
             }
-
-            let mut current = self.current_session_id.write();
-            if *current == Some(session_id.to_string()) {
-                let sessions = self.sessions.read();
-                *current = sessions.keys().next().cloned();
-            }
-            true
-        } else {
-            false
         }
+
+        let replacement_current = self.sessions.read().keys().next().cloned();
+        let mut current = self.current_session_id.write();
+        if current.as_deref() == Some(session_id) {
+            *current = replacement_current;
+        }
+        Some(session)
     }
 
     pub fn attach_child_session(
@@ -894,26 +1162,6 @@ impl SessionStore {
             }
         }
         self.get_session(child_session_id)
-    }
-
-    pub fn session_payload_request(
-        &self,
-        session_id: &str,
-    ) -> Result<PersistSessionPayloadRequest, String> {
-        if !self.sessions.read().contains_key(session_id) {
-            return Err(format!("session {session_id} not found"));
-        }
-        let records = self
-            .get_messages(session_id)
-            .into_iter()
-            .map(serde_json::to_value)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("failed to serialize messages for {session_id}: {error}"))?;
-        Ok(PersistSessionPayloadRequest {
-            session_id: session_id.to_string(),
-            records,
-            todos: self.get_todos(session_id),
-        })
     }
 
     pub fn get_current_session(&self) -> Option<ApiSession> {
@@ -957,11 +1205,10 @@ impl SessionStore {
         {
             return false;
         }
-        info.management.context_tokens =
-            runtime::state_machine::session_management::ContextTokenStats {
-                input: context_tokens.input,
-                limit: context_tokens.limit,
-            };
+        info.management.context_tokens = lifecycle::ContextTokenStats {
+            input: context_tokens.input,
+            limit: context_tokens.limit,
+        };
         info.updated_at = Utc::now().timestamp_millis();
         true
     }
@@ -987,36 +1234,56 @@ impl SessionStore {
     }
 
     pub fn claim_due_task_runs(&self, now: DateTime<Utc>) -> Vec<ScheduledTaskRun> {
-        let candidate_ids = self
+        let candidates = self
             .sessions
             .read()
             .values()
             .filter(|info| matches!(info.status, SessionStatusMano::Idle))
-            .filter(|info| {
+            .filter_map(|info| {
                 info.management
                     .task_plan
                     .detailed_tasks
                     .iter()
-                    .any(|task| task.scheduler_eligible(now))
+                    .find(|task| task.scheduler_eligible(now))
+                    .map(|task| {
+                        (
+                            info.id.clone(),
+                            task.task_id.clone(),
+                            task.display_summary(&info.management.task_plan.plan_summary),
+                            task.start_condition,
+                        )
+                    })
             })
-            .map(|info| info.id.clone())
             .collect::<Vec<_>>();
         let mut claimed = Vec::new();
-        for session_id in candidate_ids {
-            match self.execute_canonical_session_command(
+        for (session_id, task_id, task_summary, start_condition) in candidates {
+            let (prompt, message) =
+                self.build_scheduler_message(&session_id, &task_summary, start_condition);
+            match self.execute_canonical_session_command_with_message(
                 &session_id,
-                SessionCommand::StartScheduledTask { now },
+                SessionCommand::StartScheduledTask {
+                    task_id,
+                    task_summary: task_summary.clone(),
+                    start_condition,
+                    now,
+                },
+                message,
             ) {
-                Ok(result) => match result.event {
+                Ok((result, _)) => match result.event {
                     SessionEvent::ScheduledTaskClaimed {
-                        task_summary,
-                        start_condition,
+                        task_summary: claimed_summary,
+                        start_condition: claimed_condition,
                         ..
-                    } => claimed.push(ScheduledTaskRun {
-                        session_id,
-                        task_summary,
-                        start_condition,
-                    }),
+                    } if claimed_summary == task_summary
+                        && claimed_condition == start_condition =>
+                    {
+                        claimed.push(ScheduledTaskRun {
+                            session_id,
+                            task_summary,
+                            start_condition,
+                            prompt,
+                        })
+                    }
                     event => tracing::warn!(
                         session_id,
                         event = ?event,
@@ -1031,43 +1298,54 @@ impl SessionStore {
             }
         }
 
-        for session_id in claimed.iter().map(|run| run.session_id.clone()) {
-            let (context_tokens, usage) = if let Some(session) = self.get_session(&session_id) {
-                let context_tokens = session.context_tokens;
-                let usage = session.usage.clone();
-                self.push_event(GlobalEvent::SessionUpdated {
-                    properties: crate::contracts::SessionUpdatedProperties {
-                        session_id: session_id.clone(),
-                        info: session,
-                    },
-                });
-                (context_tokens, usage)
-            } else {
-                let context_tokens = crate::contracts::SessionContextTokens::default();
-                (
-                    context_tokens,
-                    crate::contracts::SessionUsage::new(context_tokens, serde_json::Value::Null),
-                )
-            };
-            self.push_event(GlobalEvent::SessionStatus {
-                properties: crate::contracts::SessionStatusProperties {
-                    session_id,
-                    updated_at: now.timestamp_millis(),
-                    status: serde_json::json!({ "type": "busy" }),
-                    context_tokens,
-                    usage,
-                },
-            });
-        }
-
         claimed
     }
 
-    pub fn replace_management(
+    fn build_scheduler_message(
         &self,
         session_id: &str,
-        management: runtime::state_machine::session_management::SessionManagement,
-    ) {
+        task_summary: &str,
+        start_condition: StartCondition,
+    ) -> (serde_json::Value, Message) {
+        let trigger = match start_condition {
+            StartCondition::SessionIdle => "session became idle",
+            StartCondition::ScheduledTask => "scheduled start time arrived",
+            StartCondition::PollingTask => "polling interval became due",
+            StartCondition::UserAction => "user action",
+        };
+        let part_id = format!("part_scheduler_{}", Uuid::new_v4());
+        let text = format!("Continue the pending task because the {trigger}: {task_summary}");
+        let prompt = serde_json::json!({
+            "parts": [{
+                "id": part_id,
+                "type": "text",
+                "text": text,
+            }],
+            "source": "task_scheduler",
+        });
+        let message = self.build_message_with_parts(
+            session_id,
+            MessageRole::User,
+            vec![MessagePart {
+                id: part_id,
+                part_type: "text".to_string(),
+                content: Some(text.clone()),
+                text: Some(text),
+                metadata: None,
+                call_id: None,
+                tool: None,
+                state: None,
+            }],
+            None,
+            Some(serde_json::json!({
+                "kind": "task_scheduler",
+                "start_condition": start_condition,
+            })),
+        );
+        (prompt, message)
+    }
+
+    pub fn replace_management(&self, session_id: &str, management: lifecycle::SessionManagement) {
         if let Some(info) = self.sessions.write().get_mut(session_id) {
             info.management = management;
             info.updated_at = Utc::now().timestamp_millis();
@@ -1201,14 +1479,6 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
     }
 }
 
-fn last_user_message_at_in_messages(messages: &[Message]) -> Option<i64> {
-    messages
-        .iter()
-        .filter(|message| message.role == MessageRole::User)
-        .map(|message| message.updated_at.max(message.created_at))
-        .max()
-}
-
 fn session_task_start_at(info: &SessionInfo) -> Option<i64> {
     info.management
         .task_plan
@@ -1234,133 +1504,36 @@ fn session_usage_from_info(
     crate::contracts::SessionUsage::new(context_tokens, info.management.runtime_usage.clone())
 }
 
-fn persisted_record_from_session_log(
-    snapshot: SessionSnapshot,
-    records: Vec<SessionRecord>,
-) -> Result<PersistedSessionRecord, String> {
-    let mut info = serde_json::from_value::<SessionInfo>(snapshot.session.clone())
-        .or_else(|_| {
-            serde_json::from_value(snapshot.management.clone())
-                .map(|management| SessionInfo::from_management(&management))
-        })
-        .map_err(|err| format!("invalid session_log session snapshot: {err}"))?;
-    if let Ok(management) = serde_json::from_value(snapshot.management.clone()) {
-        info.management = management;
-    }
-    apply_session_log_snapshot_lifecycle(&mut info, &snapshot);
-    info.id = snapshot.session_id.clone();
-    info.created_at = snapshot.created_at;
-    info.updated_at = snapshot.updated_at;
-    info.last_user_message_at = snapshot.last_user_message_at;
-    if let Some(last_user_message_at) = snapshot
-        .last_user_message_at
-        .and_then(DateTime::<Utc>::from_timestamp_millis)
-    {
-        info.management.session_last_user_message_at = last_user_message_at;
-    }
-    if !snapshot.workspace.trim().is_empty() {
-        info.directory = Some(snapshot.workspace);
-    }
-    info.message_count = snapshot.message_count as usize;
-
-    // Only user/assistant/system records are conversation messages. The runtime
-    // also persists auxiliary records (log / tool / runtime / event checkpoints)
-    // that are not `Message`s; skip any record that does not deserialize rather
-    // than failing the whole session load (a single such record must not make a
-    // session invisible to the gateway).
-    let messages = records
-        .into_iter()
-        .filter_map(|record| match serde_json::from_value::<Message>(record.record) {
-            Ok(message) => Some(message),
-            Err(err) => {
-                tracing::debug!(error = %err, "skipping non-message session_log record during hydration");
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-
-    Ok(PersistedSessionRecord {
-        info,
-        parent_id: snapshot.parent_id,
-        messages,
-        todos: snapshot.todos,
-    })
-}
-
-fn apply_session_log_snapshot_lifecycle(info: &mut SessionInfo, snapshot: &SessionSnapshot) {
-    if let Some(projection) = snapshot.lifecycle_projection.clone() {
-        info.status = SessionStatusMano::from_state(projection.state);
-        info.management.replace_lifecycle_projection(projection);
-    } else if let Some(state) = snapshot.state.as_deref().and_then(session_state_from_text) {
-        info.management.restore_state(state);
-        info.status = SessionStatusMano::from_state(state);
-    } else if let Some(status) = snapshot
-        .status
-        .as_deref()
-        .and_then(session_status_from_text)
-    {
-        info.status = status;
-        info.management
-            .restore_state(representative_state_for_status(
-                status,
-                info.management.state,
-            ));
-    } else {
-        info.status = SessionStatusMano::from_state(info.management.state);
-    }
+fn apply_canonical_lifecycle_projection(info: &mut SessionInfo, snapshot: &SessionSnapshot) {
+    let projection = snapshot.lifecycle_projection.clone();
+    info.status = SessionStatusMano::from_state(projection.state);
+    info.management.replace_lifecycle_projection(projection);
 
     if let Some(created_at) = DateTime::<Utc>::from_timestamp_millis(snapshot.created_at) {
         info.management.session_created_at = created_at;
     }
+
     if let Some(updated_at) = DateTime::<Utc>::from_timestamp_millis(snapshot.updated_at) {
         info.management.session_last_update_at = updated_at;
     }
 }
 
-fn session_state_from_text(value: &str) -> Option<SessionState> {
-    serde_json::from_value(serde_json::Value::String(value.trim().to_ascii_lowercase())).ok()
-}
-
-fn session_status_from_text(value: &str) -> Option<SessionStatusMano> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "idle" => Some(SessionStatusMano::Idle),
-        "busy" => Some(SessionStatusMano::Busy),
-        "error" => Some(SessionStatusMano::Error),
-        _ => None,
+fn session_info_from_snapshot(snapshot: &SessionSnapshot) -> Result<SessionInfo, String> {
+    let mut info = serde_json::from_value::<SessionInfo>(snapshot.session.clone())
+        .map_err(|error| format!("invalid typed Session snapshot: {error}"))?;
+    apply_canonical_lifecycle_projection(&mut info, snapshot);
+    info.id.clone_from(&snapshot.session_id);
+    info.created_at = snapshot.created_at;
+    info.updated_at = snapshot.updated_at;
+    info.last_user_message_at = snapshot.last_user_message_at;
+    if !snapshot.workspace.trim().is_empty() {
+        info.directory = Some(snapshot.workspace.clone());
     }
-}
-
-fn representative_state_for_status(
-    status: SessionStatusMano,
-    current: SessionState,
-) -> SessionState {
-    match status {
-        SessionStatusMano::Idle
-            if matches!(current, SessionState::Created | SessionState::Completed) =>
-        {
-            current
-        }
-        SessionStatusMano::Idle => SessionState::Created,
-        SessionStatusMano::Busy
-            if matches!(current, SessionState::Running | SessionState::Paused) =>
-        {
-            current
-        }
-        SessionStatusMano::Busy => SessionState::Running,
-        SessionStatusMano::Error
-            if matches!(
-                current,
-                SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted
-            ) =>
-        {
-            current
-        }
-        SessionStatusMano::Error => SessionState::Failed,
-    }
+    Ok(info)
 }
 
 lazy_static::lazy_static! {
-    pub static ref SESSION_STORE: SessionStore = SessionStore::new();
+    pub static ref SESSION_STORE: SessionStore = SessionStore::empty();
 }
 
 pub fn session_store() -> &'static SessionStore {

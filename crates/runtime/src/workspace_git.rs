@@ -1,47 +1,11 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 
-use crate::state_machine::session_management::SessionManagement;
 use lifecycle::PlanStatus;
-use tracing::warn;
-
+use lifecycle::SessionManagement;
 const TURA_GIT_USER_NAME: &str = "Tura";
 const TURA_GIT_USER_EMAIL: &str = "tura@local.invalid";
-const TURA_EXCLUDE_LINES: &[&str] = &[".tura/", "sessions/"];
-
-pub fn ensure_workspace_git_repo(workspace: impl AsRef<Path>) -> Result<(), String> {
-    let workspace = workspace.as_ref();
-    if workspace.as_os_str().is_empty() {
-        return Err("workspace path is empty".to_string());
-    }
-    fs::create_dir_all(workspace).map_err(|error| {
-        format!(
-            "failed to create workspace directory {}: {error}",
-            workspace.display()
-        )
-    })?;
-
-    let git_marker = workspace.join(".git");
-    if !git_marker.exists() {
-        if let Err(error) = run_git(workspace, &["init"]) {
-            warn!(
-                directory = %workspace.display(),
-                error = %error,
-                "failed to initialize workspace git repository; continuing without git checkpoints"
-            );
-            return Ok(());
-        }
-    }
-    if let Err(error) = ensure_tura_git_exclude(workspace) {
-        warn!(
-            directory = %workspace.display(),
-            error = %error,
-            "failed to update workspace git exclude; continuing without git exclude setup"
-        );
-    }
-    Ok(())
-}
+pub use tura_path::workspace_git::ensure_workspace_git_repo;
 
 pub fn commit_session_checkpoint(
     session: &SessionManagement,
@@ -85,51 +49,6 @@ pub fn commit_session_checkpoint(
     let output = run_git(workspace, &["rev-parse", "HEAD"])?;
     let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok((!hash.is_empty()).then_some(hash))
-}
-
-fn ensure_tura_git_exclude(workspace: &Path) -> Result<(), String> {
-    let output = run_git(workspace, &["rev-parse", "--git-path", "info/exclude"])?;
-    let raw_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if raw_path.is_empty() {
-        return Ok(());
-    }
-    let exclude_path = if Path::new(&raw_path).is_absolute() {
-        PathBuf::from(raw_path)
-    } else {
-        workspace.join(raw_path)
-    };
-    if let Some(parent) = exclude_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "failed to create git exclude directory {}: {error}",
-                parent.display()
-            )
-        })?;
-    }
-    let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
-    let existing_lines = existing.lines().map(str::trim).collect::<Vec<_>>();
-    let missing = TURA_EXCLUDE_LINES
-        .iter()
-        .copied()
-        .filter(|line| !existing_lines.iter().any(|existing| existing == line))
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let mut updated = existing;
-    if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push('\n');
-    }
-    for line in missing {
-        updated.push_str(line);
-        updated.push('\n');
-    }
-    fs::write(&exclude_path, updated).map_err(|error| {
-        format!(
-            "failed to update git exclude {}: {error}",
-            exclude_path.display()
-        )
-    })
 }
 
 fn run_git(workspace: &Path, args: &[&str]) -> Result<Output, String> {
@@ -195,10 +114,8 @@ fn truncate_for_subject(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{commit_session_checkpoint, ensure_workspace_git_repo};
-    use crate::state_machine::session_management::{
-        PlanStatus, SessionInput, SessionManagement, TaskStep,
-    };
     use chrono::Utc;
+    use lifecycle::{PlanStatus, SessionInput, SessionManagement, TaskStep};
     use std::process::Command;
 
     #[test]

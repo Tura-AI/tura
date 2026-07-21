@@ -1,0 +1,83 @@
+{
+  "schema": "tura.runtime-session-direct-switch-evidence.v1",
+  "phase": 2,
+  "scope": "canonical typed session lifecycle production-flow cutover",
+  "frozen_phase0": {
+    "reference_commit": "cdfe91bce2ed4fb62b4dcf276e6ee8ace40264df",
+    "capture": "tests/equivalence/runtime_session/reference/runtime-session.json",
+    "capture_sha256": "B7EB5C62DF3C0474DA7CF535F5723A24731D80756D2B5D3F058E6919439C366B",
+    "inventory": "tests/equivalence/runtime_session/reference/inventory.json",
+    "inventory_sha256": "AD1298D725DD9EB068BC354643A6387C0A9BA5FE51AA27A16DFC0F91CB4B5A78",
+    "policy": "Frozen historical evidence is hash-gated and is not regenerated during the direct switch."
+  },
+  "canonical_write_boundary": {
+    "create": "session_log_contract::CreateSessionRequest",
+    "lifecycle": "session_log_contract::ExecuteSessionCommandRequest",
+    "context": "session_log_contract::PersistSessionDeltaRequest",
+    "owner": "lifecycle::SessionAggregate",
+    "schema_policy": "Noncanonical existing databases and queued payloads are rejected rather than migrated through a compatibility reader."
+  },
+  "canonical_read_boundary": {
+    "snapshot_projection": "session_log_contract::SessionSnapshot::lifecycle_projection is required",
+    "gateway_hydration": "Gateway restores lifecycle state only from the typed SessionProjection and never from state/status strings.",
+    "cli_busy_check": "The CLI reads recoverable-running state directly from the typed SessionProjection."
+  },
+  "approved_differences": [
+    {
+      "path": [
+        "store",
+        "snapshot",
+        "task_management"
+      ],
+      "reason": "The Phase 0 fixture injected an arbitrary weakly typed object. The direct-switch fixture creates a typed task plan and interruption changes its doing task to waiting_user.",
+      "expected_candidate": {
+        "plan_summary": "Fixed store task",
+        "tasks": [
+          {
+            "task_id": "task-fixed",
+            "step": 1,
+            "sub_session_id": "",
+            "start_at": "2026-07-19T00:00:00Z",
+            "poll_interval": {
+              "m": 0,
+              "d": 0,
+              "h": 0,
+              "s": 0
+            },
+            "start_condition": "user_action",
+            "status": "waiting_user",
+            "task_summary": "Fixed store task",
+            "step_task": "Capture canonical store state",
+            "step_turn": 0,
+            "step_tool": "",
+            "step_context": "",
+            "step_agent_name": "",
+            "step_deliverable_description": "",
+            "step_deliverable_path": ""
+          }
+        ]
+      }
+    },
+    {
+      "path": [
+        "store",
+        "snapshot",
+        "todos"
+      ],
+      "reason": "The Phase 0 fixture injected an arbitrary todo outside the lifecycle owner. The canonical create path starts with no legacy todos.",
+      "expected_candidate": []
+    }
+  ],
+  "gate_policy": {
+    "determinism": "The candidate capture must remain raw-byte identical across two executions.",
+    "compatibility": "After validating the two approved candidate values, every other captured JSON value must equal the frozen Phase 0 reference.",
+    "inventory": "A current AST inventory is generated as evidence but the frozen Phase 0 inventory remains unchanged."
+  },
+  "verification": {
+    "local": "Formatting, parser, diff, and static reference checks only; compilation and tests are intentionally delegated to CI by user instruction.",
+    "remote": [
+      ".github/workflows/ci.yml: CI",
+      ".github/workflows/os-worker-tests.yml: OS Worker Tests"
+    ]
+  }
+}

@@ -3,16 +3,18 @@ use lifecycle::RuntimeProjection;
 use std::time::Instant;
 use tracing::warn;
 
-use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::tool_catalog::env_flag;
 use crate::profile_timings;
 use crate::prompt_style::{runtime_fallback, tool_progress};
 use crate::runtime::types::ToolCallData;
-use crate::state_machine::runtime_management::{RuntimeManagement, UsageReport};
-use crate::state_machine::session_management::{ContextTokenStats, SessionManagement};
+use crate::runtime_event_writer::RuntimeFeedPublisher;
 use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
+use lifecycle::SessionManagement;
+use lifecycle::{ContextTokenStats, RuntimeAggregate, UsageReport};
+use session_log_contract::SessionFeedEvent;
 
-use super::agent_message::{gateway_callback_session_id, publish_gateway_agent_message};
+use super::agent_message::{publish_agent_message, publish_feed_event};
+use super::{runtime_message_id, runtime_tool_part_id};
 
 pub(crate) fn summarize_single_tool_output(tool_name: &str, output: &serde_json::Value) -> String {
     if let Some(markdown) = first_summary_markdown(output) {
@@ -130,8 +132,9 @@ fn compact_command_output(output: &str) -> String {
 
 pub(crate) fn publish_step_summary(
     session: &SessionManagement,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     tool_call: &ToolCallData,
+    publisher: Option<&RuntimeFeedPublisher>,
 ) {
     let Some(step_summary) = extract_tool_argument_string(&tool_call.arguments, "step_summary")
     else {
@@ -143,11 +146,12 @@ pub(crate) fn publish_step_summary(
         eprintln!("step: {}", step_summary.trim());
     }
 
-    if let Err(error) = publish_gateway_agent_message(
+    if let Err(error) = publish_agent_message(
         &session.session_id,
         &runtime.runtime_id,
         message,
         tool_progress::calling_tool(&tool_call.tool_name),
+        publisher,
     ) {
         warn!(
             session_id = %session.session_id,
@@ -160,9 +164,9 @@ pub(crate) fn publish_step_summary(
 
 pub(crate) fn publish_runtime_usage_record(
     session: &SessionManagement,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
+    publisher: Option<&RuntimeFeedPublisher>,
 ) {
-    let target_session_id = gateway_callback_session_id(&session.session_id);
     let runtime_output = runtime
         .output
         .as_ref()
@@ -171,7 +175,6 @@ pub(crate) fn publish_runtime_usage_record(
     let metadata = serde_json::json!({
         "runtime_id": runtime.runtime_id,
         "session_id": session.session_id,
-        "target_session_id": target_session_id,
         "provider": runtime.provider,
         "usage": runtime.usage,
         "status": format!("{:?}", runtime.call_result_status()),
@@ -192,7 +195,7 @@ pub(crate) fn publish_runtime_usage_record(
     let (created_at, updated_at) = runtime.assistant_message_timestamps();
 
     if let Err(error) = publish_gateway_tool_message(GatewayToolMessage {
-        session_id: &target_session_id,
+        session_id: &session.session_id,
         runtime_id: &runtime.runtime_id,
         tool_name: "runtime",
         call_id: runtime.runtime_id.clone(),
@@ -203,10 +206,10 @@ pub(crate) fn publish_runtime_usage_record(
         usage: runtime.usage.clone(),
         created_at,
         updated_at,
+        publisher,
     }) {
         warn!(
             session_id = %session.session_id,
-            target_session_id = %target_session_id,
             runtime_id = %runtime.runtime_id,
             error = %error,
             "failed to publish runtime usage record"
@@ -220,13 +223,14 @@ pub(crate) fn publish_runtime_usage_record(
 )]
 pub(crate) fn publish_tool_call_record(
     session: &SessionManagement,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     tool_call: &ToolCallData,
     input: serde_json::Value,
     output: &serde_json::Value,
     success: bool,
     error: Option<&str>,
     started_at: chrono::DateTime<Utc>,
+    publisher: Option<&RuntimeFeedPublisher>,
 ) {
     let total_start = Instant::now();
     let sanitized_output = sanitize_tool_callback_output(output);
@@ -336,7 +340,7 @@ pub(crate) fn publish_tool_call_record(
 
     let publish_start = Instant::now();
     let publish_result = publish_gateway_tool_message(GatewayToolMessage {
-        session_id: &gateway_callback_session_id(&session.session_id),
+        session_id: &session.session_id,
         runtime_id: &runtime.runtime_id,
         tool_name: &tool_call.tool_name,
         call_id,
@@ -347,6 +351,7 @@ pub(crate) fn publish_tool_call_record(
         usage: runtime.usage.clone(),
         created_at: message_created_at,
         updated_at: ended_at.timestamp_millis(),
+        publisher,
     });
     profile_timings::log_elapsed(
         "publish_tool_call_record.publish_gateway_tool_message",
@@ -382,10 +387,11 @@ pub(crate) fn publish_tool_call_record(
 
 pub(crate) fn publish_tool_call_started(
     session: &SessionManagement,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     tool_call: &ToolCallData,
     input: serde_json::Value,
     started_at: chrono::DateTime<Utc>,
+    publisher: Option<&RuntimeFeedPublisher>,
 ) {
     let (message_created_at, _) = runtime.assistant_message_timestamps();
     let call_id = stable_tool_call_id(&runtime.runtime_id, &tool_call.tool_name, &input);
@@ -410,7 +416,7 @@ pub(crate) fn publish_tool_call_started(
     });
 
     if let Err(error) = publish_gateway_tool_message(GatewayToolMessage {
-        session_id: &gateway_callback_session_id(&session.session_id),
+        session_id: &session.session_id,
         runtime_id: &runtime.runtime_id,
         tool_name: &tool_call.tool_name,
         call_id,
@@ -421,6 +427,7 @@ pub(crate) fn publish_tool_call_started(
         usage: runtime.usage.clone(),
         created_at: message_created_at,
         updated_at: started_at.timestamp_millis(),
+        publisher,
     }) {
         warn!(
             session_id = %session.session_id,
@@ -495,36 +502,31 @@ struct GatewayToolMessage<'a> {
     usage: Option<UsageReport>,
     created_at: i64,
     updated_at: i64,
+    publisher: Option<&'a RuntimeFeedPublisher>,
 }
 
 fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), String> {
-    if gateway_callbacks_disabled() {
-        return Ok(());
-    }
-
     let total_start = Instant::now();
     let profiling = profile_timings::enabled();
-    let target_session_id = gateway_callback_session_id(message.session_id);
     let payload_start = Instant::now();
-    let payload = serde_json::json!({
-        "reply_message": "",
-        "new_learning": "",
-        "media": [],
-        "runtime_id": message.runtime_id,
-        "runtime_status": message.runtime_status,
-        "context_tokens": message.context_tokens,
-        "usage": message.usage,
-        "created_at": message.created_at,
-        "updated_at": message.updated_at,
-        "tool_call": {
-            "tool_name": message.tool_name,
-            "call_id": message.call_id,
-            "state": message.state,
-            "metadata": message.metadata,
-        }
-    });
+    let event = SessionFeedEvent::ToolCallUpdated {
+        message_id: runtime_message_id(message.runtime_id),
+        part_id: runtime_tool_part_id(message.runtime_id, message.tool_name),
+        tool_name: message.tool_name.to_string(),
+        call_id: message.call_id,
+        state: message.state,
+        metadata: Some(message.metadata),
+        runtime_status: message.runtime_status,
+        context_tokens: message.context_tokens,
+        usage: message.usage,
+        command_updates: Vec::new(),
+        created_at: message.created_at,
+        updated_at: message.updated_at,
+    };
     let payload_bytes = if profiling {
-        profile_timings::json_bytes(&payload)
+        serde_json::to_value(&event)
+            .map(|value| profile_timings::json_bytes(&value))
+            .unwrap_or(0)
     } else {
         0
     };
@@ -532,31 +534,15 @@ fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), S
         "publish_gateway_tool_message.payload",
         payload_start,
         serde_json::json!({
-            "target_session_id": target_session_id,
+            "target_session_id": message.session_id,
             "runtime_id": message.runtime_id,
             "tool_name": message.tool_name,
             "payload_bytes": payload_bytes,
         }),
     );
 
-    let spawn_start = Instant::now();
     let runtime_id = message.runtime_id.to_string();
-    crate::gateway_events::post_gateway_callback_detached(
-        "session.agent_message",
-        payload,
-        target_session_id,
-        runtime_id.clone(),
-        "tool_message",
-    );
-    profile_timings::log_elapsed(
-        "publish_gateway_tool_message.detached_spawn",
-        spawn_start,
-        serde_json::json!({
-            "runtime_id": runtime_id,
-            "tool_name": message.tool_name,
-            "payload_bytes": payload_bytes,
-        }),
-    );
+    publish_feed_event(message.publisher, event)?;
     profile_timings::log_elapsed(
         "publish_gateway_tool_message.total",
         total_start,
@@ -569,8 +555,11 @@ fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), S
     Ok(())
 }
 
-pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
-    if gateway_callbacks_disabled() || session.task_plan.detailed_tasks.is_empty() {
+pub(crate) fn publish_task_plan_todos(
+    session: &SessionManagement,
+    publisher: Option<&RuntimeFeedPublisher>,
+) {
+    if session.task_plan.detailed_tasks.is_empty() {
         return;
     }
 
@@ -581,12 +570,12 @@ pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
         .enumerate()
         .map(|(index, task)| {
             let status = match task.status {
-                crate::state_machine::session_management::TaskStatus::Todo => "todo",
-                crate::state_machine::session_management::TaskStatus::WaitingUser => "waiting_user",
-                crate::state_machine::session_management::TaskStatus::Doing => "doing",
-                crate::state_machine::session_management::TaskStatus::Question => "question",
-                crate::state_machine::session_management::TaskStatus::Done => "done",
-                crate::state_machine::session_management::TaskStatus::Archived => "archived",
+                lifecycle::TaskStatus::Todo => "todo",
+                lifecycle::TaskStatus::WaitingUser => "waiting_user",
+                lifecycle::TaskStatus::Doing => "doing",
+                lifecycle::TaskStatus::Question => "question",
+                lifecycle::TaskStatus::Done => "done",
+                lifecycle::TaskStatus::Archived => "archived",
             };
             let content = first_non_empty([
                 task.task_summary.as_str(),
@@ -603,14 +592,15 @@ pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
         })
         .collect::<Vec<_>>();
 
-    let target_session_id = gateway_callback_session_id(&session.session_id);
-    crate::gateway_events::post_gateway_callback_detached(
-        "session.todos",
-        serde_json::Value::Array(todos),
-        target_session_id,
-        "task-plan".to_string(),
-        "task_plan_todos",
-    );
+    if let Err(error) = publish_feed_event(
+        publisher,
+        SessionFeedEvent::TodosUpdated {
+            todos,
+            updated_at: Utc::now().timestamp_millis(),
+        },
+    ) {
+        warn!(session_id = %session.session_id, error = %error, "failed to publish task plan todos");
+    }
 }
 
 fn first_non_empty<const N: usize>(items: [&str; N]) -> Option<String> {

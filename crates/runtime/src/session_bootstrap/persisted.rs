@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::session_log_client::SessionLogClient;
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 
 pub(crate) fn load_persisted_gateway_session(
     directory: &Path,
@@ -24,7 +24,40 @@ pub(crate) fn load_persisted_gateway_session(
     {
         return Ok(None);
     }
-    decode_persisted_management(session_id, snapshot.management).map(Some)
+    let mut management = decode_persisted_management(session_id, snapshot.management)?;
+    let context = SessionLogClient::discover()
+        .map_err(|err| format!("failed to discover session_log: {err}"))?
+        .read_context_slice(
+            session_id.to_string(),
+            management.context_tokens.limit.max(1),
+        )?;
+    let window_from_sequence = context
+        .records
+        .first()
+        .map(|record| record.sequence)
+        .unwrap_or(context.next_sequence);
+    if window_from_sequence < context.retained_from_sequence {
+        return Err(format!(
+            "persisted context for {session_id} starts before canonical retention"
+        ));
+    }
+    if context
+        .records
+        .iter()
+        .enumerate()
+        .any(|(index, record)| record.sequence != window_from_sequence.saturating_add(index as u64))
+    {
+        return Err(format!(
+            "persisted context for {session_id} contains a sequence gap"
+        ));
+    }
+    management.session_log = context
+        .records
+        .into_iter()
+        .map(|record| record.raw_record)
+        .collect();
+    management.session_log_retention.omitted_entries = window_from_sequence;
+    Ok(Some(management))
 }
 
 fn decode_persisted_management(
@@ -48,7 +81,7 @@ fn normalize_workspace(value: &str) -> String {
 }
 
 fn ensure_session_db_owner_for_persisted_reads() {
-    if session_log::ipc::service_is_running() {
+    if session_log_contract::client::service_is_running() {
         return;
     }
     for addr in router_addrs_for_current_home() {
@@ -76,7 +109,7 @@ fn router_addrs_for_current_home() -> Vec<String> {
 }
 
 fn router_addr_from_file() -> Option<String> {
-    let path = session_log::path::default_db_dir().join("router.addr");
+    let path = session_log_contract::client::default_db_dir().join("router.addr");
     let raw = std::fs::read_to_string(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
     let version = value
@@ -97,12 +130,12 @@ fn router_addr_from_file() -> Option<String> {
 fn wait_for_session_db_service(timeout: Duration) -> bool {
     let started = Instant::now();
     while started.elapsed() < timeout {
-        if session_log::ipc::service_is_running() {
+        if session_log_contract::client::service_is_running() {
             return true;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    session_log::ipc::service_is_running()
+    session_log_contract::client::service_is_running()
 }
 
 fn router_health_check(addr: &str) -> Result<(), String> {
@@ -158,9 +191,9 @@ fn router_health_check(addr: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{decode_persisted_management, router_addr_from_file, router_health_check};
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
     use lifecycle::SessionState;
+    use lifecycle::{SessionInput, SessionManagement};
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::path::PathBuf;
@@ -273,7 +306,7 @@ mod tests {
     fn router_addr_from_file_reads_current_home_endpoint() {
         let temp = tempfile::tempdir().expect("temp home");
         let _env = EnvGuard::set_home(temp.path());
-        let db_dir = session_log::path::default_db_dir();
+        let db_dir = session_log_contract::client::default_db_dir();
         std::fs::create_dir_all(&db_dir).expect("db dir");
         std::fs::write(
             db_dir.join("router.addr"),

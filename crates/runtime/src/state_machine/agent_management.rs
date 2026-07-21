@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use lifecycle::ProviderConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -38,37 +39,6 @@ pub struct AgentCapabilityItem {
 
 fn default_capability_directory() -> PathBuf {
     PathBuf::from("crates/tools/src")
-}
-
-/// LLM/provider configuration used by the agent.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProviderConfig {
-    /// Legacy internal LLM route name. Prefer `default_model_tier` for new agent config.
-    pub tura_llm_name: String,
-    /// Default model tier used when the agent has no explicit current model.
-    #[serde(default)]
-    pub default_model_tier: Option<String>,
-    /// Explicit provider/model selection, written as `provider/model`.
-    #[serde(default)]
-    pub current_model: Option<String>,
-    /// Whether streaming is enabled.
-    pub stream: bool,
-    /// Sampling temperature.
-    pub temperature: f32,
-    /// Max output tokens allowed for a call.
-    pub max_tokens: u32,
-    /// Tool selection policy.
-    pub tool_choice: ToolChoice,
-    /// Call timeout in milliseconds.
-    pub time_out_ms: u64,
-}
-
-/// Tool selection mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolChoice {
-    Auto,
-    Strict,
-    Disable,
 }
 
 /// Validation configuration for an agent deliverable.
@@ -223,8 +193,9 @@ impl AgentManagement {
 #[cfg(test)]
 mod tests {
     use super::{AgentCapabilityItem, AgentManagement, AgentPromptItem};
-    use super::{AgentState, ProviderConfig, ToolChoice, ValidatorConfig};
+    use super::{AgentState, ValidatorConfig};
     use chrono::{Duration, Utc};
+    use lifecycle::{ProviderConfig, ToolChoice};
     use std::path::PathBuf;
 
     fn provider_config() -> ProviderConfig {

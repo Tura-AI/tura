@@ -178,7 +178,7 @@ fn collect_test_items(items: &[syn::Item], relative: &str, rows: &mut Vec<TestRo
 
 fn collect_fields(repo: &Path, parsed: &[(PathBuf, String, syn::File)]) -> Vec<FieldRow> {
     let targets = [
-        "RuntimeManagement",
+        "RuntimeAggregate",
         "SessionManagement",
         "RuntimeState",
         "SessionState",

@@ -566,24 +566,6 @@ fn shell_display_output(text: &str) -> &str {
     text
 }
 
-pub(crate) fn final_message_text(session_log: &[String]) -> String {
-    for value in session_log
-        .iter()
-        .rev()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
-    {
-        if value.get("role").and_then(Value::as_str) == Some("assistant") {
-            if let Some(text) = value.get("content").and_then(Value::as_str) {
-                let text = clean_agent_message(text);
-                if !text.trim().is_empty() {
-                    return text;
-                }
-            }
-        }
-    }
-    "Tura session completed.".to_string()
-}
-
 fn clean_agent_message(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() || looks_like_tool_payload(trimmed) {
@@ -621,8 +603,8 @@ pub(crate) fn emit_jsonl(value: &Value) -> Result<(), String> {
 mod tests {
     use super::{
         aggregate_runtime_usage, clean_agent_message, command_output, display_command,
-        file_changes, final_message_text, flatten_command_results, shell_display_output,
-        thread_started_event, turn_completed_event, turn_log_summary,
+        file_changes, flatten_command_results, shell_display_output, thread_started_event,
+        turn_completed_event, turn_log_summary,
     };
     use crate::tura_exec::cli::CliConfig;
     use serde_json::{json, Value};
@@ -729,21 +711,6 @@ mod tests {
         );
         assert_eq!(clean_agent_message(r#"{"reply_message":"hidden"}"#), "");
         assert_eq!(clean_agent_message(""), "");
-    }
-
-    #[test]
-    fn final_message_text_uses_last_nonempty_assistant_after_cleaning() {
-        let log = vec![
-            json!({"role": "assistant", "content": "first"}).to_string(),
-            json!({"role": "assistant", "content": "{\"commands\":[]}"}).to_string(),
-            json!({"role": "assistant", "content": " final answer "}).to_string(),
-        ];
-
-        assert_eq!(final_message_text(&log), "final answer");
-        assert_eq!(
-            final_message_text(&["bad json".to_string()]),
-            "Tura session completed."
-        );
     }
 
     #[test]
