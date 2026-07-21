@@ -1,10 +1,10 @@
 use super::connection::{init_workspace_db, with_connection};
 use super::helpers::{
-    bounded_page, management_task_management, millis_at, millis_to_rfc3339, parse_json_field,
-    remove_sqlite_files, session_state_from_management, session_state_text, string_at,
+    bounded_page, millis_to_rfc3339, parse_json_field, remove_sqlite_files, session_state_text,
+    string_at, task_management_value,
 };
 use super::payload::load_workspace_session_payload;
-use lifecycle::{SessionAggregate, SessionState, TaskPlan};
+use lifecycle::{SessionAggregate, SessionEvent, SessionState, TaskPlan};
 use rusqlite::params;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -33,17 +33,45 @@ fn insert_workspace_session(
         "status": state.ui_status(),
         "management": management
     });
-    let mut aggregate = SessionAggregate::new(session_id.to_string());
-    aggregate.state = state;
-    aggregate.task_plan =
+    let task_plan =
         serde_json::from_value::<TaskPlan>(management["task_plan"].clone()).expect("task plan");
+    let mut events = vec![SessionEvent::SessionCreated {
+        task_plan: task_plan.clone(),
+    }];
+    if state != SessionState::Created {
+        events.push(SessionEvent::RuntimeStarted {
+            runtime_id: "runtime-fixture".to_string(),
+            state: SessionState::Running,
+        });
+    }
+    match state {
+        SessionState::Created | SessionState::Running => {}
+        SessionState::Paused => events.push(SessionEvent::RuntimeStateApplied { state }),
+        SessionState::Completed => events.push(SessionEvent::RuntimeCompleted {
+            runtime_id: "runtime-fixture".to_string(),
+            state,
+        }),
+        SessionState::Failed => events.push(SessionEvent::RuntimeFailed {
+            runtime_id: "runtime-fixture".to_string(),
+            state,
+        }),
+        SessionState::Cancelled => events.push(SessionEvent::RuntimeCancelled {
+            runtime_id: "runtime-fixture".to_string(),
+            state,
+        }),
+        SessionState::Interrupted => {
+            events.push(SessionEvent::SessionInterrupted { state, task_plan })
+        }
+    }
+    let aggregate = SessionAggregate::replay(session_id.to_string(), events.clone())
+        .expect("fixture events should replay");
     with_connection(db_path, init_workspace_db, |conn| {
         conn.execute(
             "INSERT INTO sessions(
                     session_id, workspace, name, parent_id, created_at, updated_at,
                     state, status, message_count, task_management_json, management_json,
-                    session_json, todos_json, lifecycle_json
-                ) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    session_json, todos_json
+                ) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 session_id,
                 "C:/workspace",
@@ -53,45 +81,39 @@ fn insert_workspace_session(
                 state_text,
                 state.ui_status(),
                 0_i64,
-                serde_json::to_string(
-                    &management_task_management(&management).expect("task management")
-                )
-                .expect("task json"),
+                serde_json::to_string(&task_management_value(&aggregate.task_plan))
+                    .expect("task json"),
                 serde_json::to_string(&management).expect("management json"),
                 serde_json::to_string(&session).expect("session json"),
                 "[]",
-                serde_json::to_string(&aggregate).expect("lifecycle json"),
             ],
         )?;
+        for (event_seq, event) in events.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO session_events(session_id, event_seq, event_json)
+                 VALUES (?1, ?2, ?3)",
+                params![
+                    session_id,
+                    event_seq as u64,
+                    serde_json::to_string(event).expect("event json")
+                ],
+            )?;
+        }
         Ok(())
     })
     .expect("insert workspace session");
 }
 
 #[test]
-fn state_text_and_management_state_use_canonical_snake_case_only() {
+fn state_text_uses_canonical_snake_case() {
     assert_eq!(
         session_state_text(SessionState::Interrupted).expect("state text"),
         "interrupted"
     );
-    assert_eq!(
-        session_state_from_management(&json!({"state":"running"}), "s1").expect("running state"),
-        SessionState::Running
-    );
-
-    let missing = session_state_from_management(&json!({}), "s1")
-        .expect_err("missing state should fail")
-        .to_string();
-    assert!(missing.contains("session management state missing for session s1"));
-
-    let invalid = session_state_from_management(&json!({"state":"Running"}), "s1")
-        .expect_err("PascalCase is not an internal state")
-        .to_string();
-    assert!(invalid.contains("invalid canonical session state for session s1"));
 }
 
 #[test]
-fn workspace_schema_migration_backfills_canonical_lifecycle() {
+fn workspace_schema_rejects_pre_canonical_database() {
     let dir = tempfile::tempdir().expect("tempdir");
     let db_path = dir.path().join("legacy-workspace.sqlite3");
     let conn = rusqlite::Connection::open(&db_path).expect("legacy db");
@@ -114,70 +136,26 @@ fn workspace_schema_migration_backfills_canonical_lifecycle() {
         );",
     )
     .expect("legacy schema");
-    let management = json!({
-        "session_id": "legacy-session",
-        "state": "cancelled",
-        "task_plan": {
-            "plan_summary": "Migrated plan",
-            "detailed_tasks": [{
-                "id": "migrated-task",
-                "step": "Migrate the stored task",
-                "status": "done",
-                "deliverables": ["migration report"]
-            }]
-        }
-    });
-    conn.execute(
-        "INSERT INTO sessions(
-            session_id, workspace, name, parent_id, created_at, updated_at,
-            state, status, task_management_json, management_json, session_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        params![
-            "legacy-session",
-            "C:/legacy-workspace",
-            "Legacy",
-            "legacy-parent",
-            1_i64,
-            2_i64,
-            "cancelled",
-            "error",
-            r#"{"plan_summary":"Migrated plan","tasks":[{"task_id":"migrated-task"}]}"#,
-            serde_json::to_string(&management).expect("management json"),
-            serde_json::to_string(&json!({"id":"legacy-session","management":management}))
-                .expect("session json"),
-        ],
-    )
-    .expect("legacy row");
+    let error = init_workspace_db(&conn)
+        .expect_err("pre-canonical schema must be rejected")
+        .to_string();
+    assert!(error.contains("incompatible workspace session database schema"));
+    assert!(error.contains("start with a clean canonical database"));
+}
 
-    init_workspace_db(&conn).expect("migrate legacy schema");
-    let lifecycle_json: String = conn
-        .query_row(
-            "SELECT lifecycle_json FROM sessions WHERE session_id = 'legacy-session'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("migrated lifecycle");
-    let aggregate: SessionAggregate =
-        serde_json::from_str(&lifecycle_json).expect("canonical aggregate");
-    assert_eq!(aggregate.session_id, "legacy-session");
-    assert_eq!(aggregate.state, SessionState::Cancelled);
-    assert_eq!(aggregate.parent_id.as_deref(), Some("legacy-parent"));
-    assert_eq!(aggregate.task_plan.plan_summary, "Migrated plan");
-    assert_eq!(
-        aggregate.task_plan.detailed_tasks[0].task_id,
-        "migrated-task"
-    );
-    assert_eq!(aggregate.task_plan.detailed_tasks[0].step, 1);
-    assert_eq!(
-        aggregate.task_plan.detailed_tasks[0].task_summary,
-        "Migrate the stored task"
-    );
-    assert_eq!(
-        aggregate.task_plan.detailed_tasks[0].step_deliverable_description,
-        "migration report"
-    );
-    assert!(aggregate.pending_user_inputs.is_empty());
-    assert!(aggregate.cancelled);
+#[test]
+fn workspace_schema_requires_runtime_fallback_source_column() {
+    let conn = rusqlite::Connection::open_in_memory().expect("workspace db");
+    init_workspace_db(&conn).expect("initialize canonical workspace schema");
+    conn.execute_batch("ALTER TABLE runtimes DROP COLUMN fallback_from_id;")
+        .expect("remove fallback column to model the previous schema");
+
+    let error = init_workspace_db(&conn)
+        .expect_err("workspace schema without runtime fallback source must be rejected")
+        .to_string();
+    assert!(error.contains("incompatible workspace session database schema"));
+    assert!(error.contains("table runtimes has columns"));
+    assert!(error.contains("fallback_from_id"));
 }
 
 #[test]
@@ -238,28 +216,11 @@ fn load_workspace_payload_reports_json_corruption_with_session_context() {
 }
 
 #[test]
-fn helper_extractors_cover_nested_strings_millis_and_task_management() {
-    let value = json!({
-        "a": { "b": "text" },
-        "time": "2026-06-12T01:02:03.004Z",
-        "task_plan": {
-            "plan_summary": "Keep it tidy",
-            "detailed_tasks": [{"title": "one"}]
-        }
-    });
+fn helper_extractors_cover_nested_strings() {
+    let value = json!({ "a": { "b": "text" } });
 
     assert_eq!(string_at(&value, &["a", "b"]).as_deref(), Some("text"));
     assert_eq!(string_at(&value, &["a", "missing"]), None);
-    assert_eq!(millis_at(&value, &["time"]), Some(1_781_226_123_004));
-    assert_eq!(
-        millis_at(&json!({"time":"not a timestamp"}), &["time"]),
-        None
-    );
-
-    let task = management_task_management(&value).expect("task management");
-    assert_eq!(task["plan_summary"], "Keep it tidy");
-    assert_eq!(task["tasks"][0]["title"], "one");
-    assert!(management_task_management(&json!({})).is_none());
 }
 
 #[test]

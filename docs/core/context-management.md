@@ -106,7 +106,9 @@ view that helps it move.
 The implementation lives mostly under
 [`crates/runtime/src/context`](../../crates/runtime/src/context), with session
 state fields defined in
-[`crates/runtime/src/state_machine/session_management.rs`](../../crates/runtime/src/state_machine/session_management.rs).
+[`crates/lifecycle/src/session_management.rs`](../../crates/lifecycle/src/session_management.rs)
+and lifecycle transitions owned by
+[`crates/lifecycle/src/session.rs`](../../crates/lifecycle/src/session.rs).
 
 ## Design goals
 

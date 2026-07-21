@@ -93,20 +93,36 @@ def wait_for_gui(process: subprocess.Popen | None) -> None:
     raise TimeoutError(f"Timed out waiting for {GUI_URL}")
 
 
+def stop_gui_server(process: subprocess.Popen | None) -> None:
+    if not process or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
 def main() -> int:
     failures: list[tuple[str, int]] = []
-    for script in LOCAL_E2E:
-        path = GUI / "tests" / "e2e" / "business" / script
-        print(f"[gui:e2e] {script}", flush=True)
-        env = os.environ.copy()
-        if script in SHARED_GUI_E2E:
-            gui_process = start_gui_server()
-            wait_for_gui(gui_process)
-            env["TURA_GUI_URL"] = GUI_URL
-        result = subprocess.run([sys.executable, str(path)], cwd=ROOT, env=env, check=False)
-        if result.returncode != 0:
-            failures.append((script, result.returncode))
-            break
+    gui_process: subprocess.Popen | None = None
+    try:
+        for script in LOCAL_E2E:
+            path = GUI / "tests" / "e2e" / "business" / script
+            print(f"[gui:e2e] {script}", flush=True)
+            env = os.environ.copy()
+            if script in SHARED_GUI_E2E:
+                if gui_process is None:
+                    gui_process = start_gui_server()
+                wait_for_gui(gui_process)
+                env["TURA_GUI_URL"] = GUI_URL
+            result = subprocess.run([sys.executable, str(path)], cwd=ROOT, env=env, check=False)
+            if result.returncode != 0:
+                failures.append((script, result.returncode))
+                break
+    finally:
+        stop_gui_server(gui_process)
     if failures:
         print(f"[gui:e2e] failures: {failures}", file=sys.stderr)
         return 1

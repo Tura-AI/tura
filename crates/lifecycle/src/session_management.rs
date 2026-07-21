@@ -5,8 +5,6 @@ use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 
-use super::agent_management::AgentName;
-
 /// UTC timestamp with millisecond precision.
 ///
 /// `chrono::DateTime<Utc>` already stores sub-second precision. When serialized,
@@ -14,10 +12,12 @@ use super::agent_management::AgentName;
 /// `2026-04-08T12:34:56.789Z`.
 pub type UtcDateTimeMs = DateTime<Utc>;
 
-pub use lifecycle::{PlanStatus, PollInterval, StartCondition, TaskPlan, TaskStep};
-use lifecycle::{
-    SessionAggregate, SessionCommand, SessionId, SessionProjection, SessionQuery, SessionState,
+use crate::{
+    ContextTokenStats, PlanStatus, SessionAggregate, SessionCommand, SessionId, SessionProjection,
+    SessionQuery, SessionState, TaskPlan, TaskStep,
 };
+
+pub type AgentName = String;
 
 /// Natural-language session name.
 pub type SessionName = String;
@@ -85,7 +85,7 @@ pub struct SessionInput {
 
 pub type TaskStatus = PlanStatus;
 
-pub const DEFAULT_CONTEXT_TOKEN_LIMIT: u64 = 260_000;
+pub const SESSION_CONTEXT_TOKEN_LIMIT: u64 = crate::DEFAULT_CONTEXT_TOKEN_LIMIT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SessionLogCompactionPoint {
@@ -110,27 +110,6 @@ pub struct SessionLogRetention {
     /// Boundary recorded when the latest context compaction trimmed history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_compaction: Option<SessionLogCompactionPoint>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContextTokenStats {
-    #[serde(default)]
-    pub input: u64,
-    #[serde(default = "default_context_token_limit")]
-    pub limit: u64,
-}
-
-impl Default for ContextTokenStats {
-    fn default() -> Self {
-        Self {
-            input: 0,
-            limit: DEFAULT_CONTEXT_TOKEN_LIMIT,
-        }
-    }
-}
-
-fn default_context_token_limit() -> u64 {
-    DEFAULT_CONTEXT_TOKEN_LIMIT
 }
 
 /// Root session state object.
@@ -193,6 +172,57 @@ pub struct SessionManagement {
     pub context_tokens: ContextTokenStats,
     /// Latest terminal provider token/cost report for the session.
     pub runtime_usage: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionManagementDelta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<SessionName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_session_name: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<SessionTaskType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_capabilities: Option<SessionCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_current_turn: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_log_retention: Option<SessionLogRetention>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_last_update_at: Option<UtcDateTimeMs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_last_user_message_at: Option<UtcDateTimeMs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_started_at: Option<UtcDateTimeMs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<SessionInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_goal: Option<UserGoal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_objective: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_last_tool_call_response: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_child_session: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_permission_restrictions: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflection_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op_manual_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_op_manual: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_mode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_goal_user_input: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<ContextTokenStats>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_usage: Option<serde_json::Value>,
 }
 
 impl<'de> Deserialize<'de> for SessionManagement {
@@ -261,6 +291,8 @@ impl<'de> Deserialize<'de> for SessionManagement {
                 task_plan: wire.task_plan.clone(),
                 pending_user_inputs: Vec::new(),
                 cancelled: false,
+                runtime_ids: Vec::new(),
+                active_runtime_id: None,
             },
             session_name: wire.session_name,
             auto_session_name: wire.auto_session_name,
@@ -378,6 +410,80 @@ fn no_op_manual_enabled_from_env() -> bool {
 }
 
 impl SessionManagement {
+    pub fn persistence_delta(
+        previous: Option<&SessionManagement>,
+        current: &SessionManagement,
+    ) -> SessionManagementDelta {
+        macro_rules! changed {
+            ($field:ident) => {
+                previous
+                    .filter(|previous| previous.$field == current.$field)
+                    .map(|_| None)
+                    .unwrap_or_else(|| Some(current.$field.clone()))
+            };
+        }
+
+        SessionManagementDelta {
+            session_name: changed!(session_name),
+            auto_session_name: changed!(auto_session_name),
+            task_type: changed!(task_type),
+            session_capabilities: changed!(session_capabilities),
+            session_current_turn: changed!(session_current_turn),
+            session_log_retention: changed!(session_log_retention),
+            session_last_update_at: changed!(session_last_update_at),
+            session_last_user_message_at: changed!(session_last_user_message_at),
+            session_started_at: changed!(session_started_at),
+            input: changed!(input),
+            user_goal: changed!(user_goal),
+            current_objective: changed!(current_objective),
+            use_last_tool_call_response: changed!(use_last_tool_call_response),
+            is_child_session: changed!(is_child_session),
+            disable_permission_restrictions: changed!(disable_permission_restrictions),
+            planning_enabled: changed!(planning_enabled),
+            reflection_enabled: changed!(reflection_enabled),
+            op_manual_enabled: changed!(op_manual_enabled),
+            no_op_manual: changed!(no_op_manual),
+            goal_mode: changed!(goal_mode),
+            last_goal_user_input: changed!(last_goal_user_input),
+            context_tokens: changed!(context_tokens),
+            runtime_usage: changed!(runtime_usage),
+        }
+    }
+
+    pub fn apply_persistence_delta(&mut self, delta: SessionManagementDelta) {
+        macro_rules! apply {
+            ($field:ident) => {
+                if let Some(value) = delta.$field {
+                    self.$field = value;
+                }
+            };
+        }
+
+        apply!(session_name);
+        apply!(auto_session_name);
+        apply!(task_type);
+        apply!(session_capabilities);
+        apply!(session_current_turn);
+        apply!(session_log_retention);
+        apply!(session_last_update_at);
+        apply!(session_last_user_message_at);
+        apply!(session_started_at);
+        apply!(input);
+        apply!(user_goal);
+        apply!(current_objective);
+        apply!(use_last_tool_call_response);
+        apply!(is_child_session);
+        apply!(disable_permission_restrictions);
+        apply!(planning_enabled);
+        apply!(reflection_enabled);
+        apply!(op_manual_enabled);
+        apply!(no_op_manual);
+        apply!(goal_mode);
+        apply!(last_goal_user_input);
+        apply!(context_tokens);
+        apply!(runtime_usage);
+    }
+
     pub fn lifecycle_projection(&self) -> SessionProjection {
         self.lifecycle.query(SessionQuery::Lifecycle)
     }
@@ -391,6 +497,8 @@ impl SessionManagement {
             task_plan: projection.task_plan,
             pending_user_inputs: projection.pending_user_inputs,
             cancelled: projection.cancelled,
+            runtime_ids: projection.runtime_ids,
+            active_runtime_id: projection.active_runtime_id,
         };
     }
 
@@ -626,15 +734,15 @@ impl SessionManagement {
     }
 
     pub fn task_plan_summary_json(&self) -> serde_json::Value {
-        crate::session_state::task_plan::task_plan_summary_json(self)
+        crate::session_projection::task_plan_summary_json(self)
     }
 
     pub fn task_plan_detail_json(&self) -> serde_json::Value {
-        crate::session_state::task_plan::task_plan_detail_json(self)
+        crate::session_projection::task_plan_detail_json(self)
     }
 
     pub fn task_management_json(&self) -> serde_json::Value {
-        crate::session_state::task_plan::task_management_json(self)
+        crate::session_projection::task_management_json(self)
     }
 }
 
@@ -676,11 +784,43 @@ fn normalize_task_type_values(values: impl IntoIterator<Item = String>) -> Sessi
 }
 
 fn normalize_session_capability(value: &str) -> Option<String> {
-    let capability = code_tools::commands::canonical_command(value.trim());
+    let capability = canonical_capability(value);
     if capability.is_empty() || capability == "command_run" {
         return None;
     }
     Some(capability)
+}
+
+fn canonical_capability(value: &str) -> String {
+    let value = value.trim().to_ascii_lowercase().replace('-', "_");
+    match value.as_str() {
+        "bash" | "zsh" | "shell" | "shells" | "shell_command" | "shll" | "shall" => {
+            active_shell_command_name().to_string()
+        }
+        "read_media" | "view_media" | "inspect_media" => "read_media".to_string(),
+        "web_discover" | "web_search" | "web_fetch" | "discover_web" | "search_web" => {
+            "web_discover".to_string()
+        }
+        "generate_media" | "image_gen" | "generate_image" | "text_to_image" | "t2i" => {
+            "generate_media".to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
+fn active_shell_command_name() -> &'static str {
+    match std::env::var("TURA_COMMAND_RUN_SHELL")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("bash") => "bash",
+        Some("zsh") => "zsh",
+        Some("shell") | Some("shell_command") | Some("shll") | Some("shall") => "shell_command",
+        _ if cfg!(windows) => "shell_command",
+        _ if cfg!(target_os = "macos") => "zsh",
+        _ => "bash",
+    }
 }
 
 fn normalize_session_capabilities<I, S>(values: I) -> SessionCapabilities
@@ -780,8 +920,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{PlanStatus, SessionInput, SessionManagement, TaskStep};
+    use crate::{SessionState, StartCondition};
     use chrono::Utc;
-    use lifecycle::SessionState;
     use std::ffi::OsString;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -865,14 +1005,14 @@ mod tests {
                 now,
             ),
             vec![
-                code_tools::commands::active_shell_command_name().to_string(),
+                super::active_shell_command_name().to_string(),
                 "read_media".to_string()
             ]
         );
         assert_eq!(
             session.session_capabilities,
             vec![
-                code_tools::commands::active_shell_command_name().to_string(),
+                super::active_shell_command_name().to_string(),
                 "read_media".to_string()
             ]
         );
@@ -883,7 +1023,7 @@ mod tests {
         assert_eq!(
             session.session_capabilities,
             vec![
-                code_tools::commands::active_shell_command_name().to_string(),
+                super::active_shell_command_name().to_string(),
                 "read_media".to_string()
             ],
             "task_type changes must not remove capabilities from the active context"
@@ -910,7 +1050,7 @@ mod tests {
         assert_eq!(
             decoded.session_capabilities,
             vec![
-                code_tools::commands::active_shell_command_name().to_string(),
+                super::active_shell_command_name().to_string(),
                 "read_media".to_string()
             ]
         );
@@ -1013,7 +1153,7 @@ mod tests {
         session.task_plan.detailed_tasks.push(TaskStep {
             task_id: "task-1".to_string(),
             step: 1,
-            start_condition: super::StartCondition::SessionIdle,
+            start_condition: StartCondition::SessionIdle,
             task_summary: "Fix issue".to_string(),
             step_deliverable_description: "Verified patch".to_string(),
             status: PlanStatus::Doing,
@@ -1038,14 +1178,14 @@ mod tests {
         session.task_plan.detailed_tasks.push(TaskStep {
             task_id: "idle".to_string(),
             step: 1,
-            start_condition: super::StartCondition::SessionIdle,
+            start_condition: StartCondition::SessionIdle,
             task_summary: "Wait for idle".to_string(),
             ..TaskStep::default()
         });
         session.task_plan.detailed_tasks.push(TaskStep {
             task_id: "timer".to_string(),
             step: 2,
-            start_condition: super::StartCondition::ScheduledTask,
+            start_condition: StartCondition::ScheduledTask,
             task_summary: "Run later".to_string(),
             ..TaskStep::default()
         });

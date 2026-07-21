@@ -121,6 +121,7 @@ class SessionTaskGateway(ThreadingHTTPServer):
                 },
             ),
             session("archived-alpha", "已归档工作项", self.alpha, "idle", task("已归档工作项", "archived", "archived-task")),
+            session("delete-target", "Disposable delete target", self.alpha, "idle", task("Disposable delete target", "todo", "delete-target-task")),
             session("beta-seed", "Beta seed task", self.beta, "idle", task("Beta seed task", "todo", "beta-seed-task")),
         ]
         self.messages = {
@@ -909,6 +910,32 @@ async def run_flow():
         initial = await page_metrics(page)
         results.append({"name": "initial-plan", "ok": len(initial["boardColumns"]) >= 4 and "Alpha workspace task hub" in initial["body"], "metrics": initial})
 
+        await click_tab(page, "Session")
+        delete_row = page.locator('.session-row[title="Disposable delete target"]')
+        await delete_row.hover()
+        await delete_row.locator(".session-row-action").click()
+        delete_dialog = page.locator(".name-dialog")
+        await delete_dialog.wait_for(state="visible")
+        await delete_dialog.locator("button.secondary").click()
+        await delete_dialog.wait_for(state="hidden")
+        results.append(
+            {
+                "name": "session-delete-cancel-keeps-session-visible",
+                "ok": await delete_row.count() == 1,
+            }
+        )
+        await delete_row.hover()
+        await delete_row.locator(".session-row-action").click()
+        await delete_dialog.wait_for(state="visible")
+        await delete_dialog.locator("button.primary").click()
+        await delete_row.wait_for(state="detached")
+        results.append(
+            {
+                "name": "session-delete-confirm-removes-session",
+                "ok": await delete_row.count() == 0,
+            }
+        )
+
         await click_tab(page, "New session")
         await shot(page, "02-new-session")
         await open_workspace_picker(page)
@@ -995,6 +1022,12 @@ async def run_flow():
         [
             {"name": "gateway-create-session-called", "ok": "session.create" in record_types, "records": records["records"]},
             {"name": "gateway-prompt-async-called", "ok": "session.prompt_async" in record_types, "records": records["records"]},
+            {
+                "name": "session-delete-confirm-calls-gateway-once",
+                "ok": record_types.count("session.delete") == 1
+                and "delete-target" in payload_text,
+                "records": records["records"],
+            },
             {
                 "name": "attachments-saved-under-selected-workspace",
                 "ok": len(saved_input_paths) == 2

@@ -1,27 +1,29 @@
 //! Runtime turn checkpoint helpers.
 
-use crate::state_machine::runtime_management::RuntimeManagement;
+use lifecycle::RuntimeAggregate;
+use session_log_contract::CheckpointType;
 
 use super::command_run::{checkpoint_runtime_event, RuntimeCheckpoint};
 
 fn checkpoint_runtime_state_event(
-    runtime: &RuntimeManagement,
-    event_type: &str,
+    runtime: &RuntimeAggregate,
+    checkpoint_type: CheckpointType,
     provider_call_id: Option<&str>,
     command_run_id: Option<&str>,
     command_id: Option<&str>,
     event_seq: Option<i64>,
 ) -> Result<(), String> {
-    let payload = runtime_state_checkpoint_payload(runtime, event_type);
+    let event_type = checkpoint_type.as_str();
+    let payload = runtime_state_checkpoint_payload(runtime, checkpoint_type);
     if let Err(error) = checkpoint_runtime_event(RuntimeCheckpoint {
         session_id: &runtime.session_id,
-        turn_id: &runtime.runtime_id,
+        runtime_id: &runtime.runtime_id,
         runtime_worker_id: &runtime.runtime_id,
         provider_call_id,
         command_run_id,
         command_id,
         event_seq,
-        event_type,
+        checkpoint_type,
         payload,
         started_at: None,
         finished_at: None,
@@ -38,35 +40,46 @@ fn checkpoint_runtime_state_event(
 }
 
 fn runtime_state_checkpoint_payload(
-    runtime: &RuntimeManagement,
-    event_type: &str,
+    runtime: &RuntimeAggregate,
+    checkpoint_type: CheckpointType,
 ) -> serde_json::Value {
+    let event_type = checkpoint_type.as_str();
     let mut payload = serde_json::json!({
         "event_type": event_type,
         "runtime_state": runtime.state,
         "call_result_status": runtime.call_result_status(),
     });
-    if event_includes_usage(event_type) {
+    if event_includes_usage(checkpoint_type) {
         payload["usage"] = serde_json::to_value(&runtime.usage).unwrap_or(serde_json::Value::Null);
     }
     payload
 }
 
-fn event_includes_usage(event_type: &str) -> bool {
+fn event_includes_usage(checkpoint_type: CheckpointType) -> bool {
     matches!(
-        event_type,
-        "provider_call_finished" | "turn_finished" | "turn_failed" | "turn_interrupted"
+        checkpoint_type,
+        CheckpointType::ProviderCallFinished
+            | CheckpointType::TurnFinished
+            | CheckpointType::TurnFailed
+            | CheckpointType::TurnInterrupted
     )
 }
 
-pub fn checkpoint_turn_started(runtime: &RuntimeManagement) -> Result<(), String> {
-    checkpoint_runtime_state_event(runtime, "turn_started", None, None, None, Some(1))
-}
-
-pub fn checkpoint_provider_call_started(runtime: &RuntimeManagement) -> Result<(), String> {
+pub fn checkpoint_turn_started(runtime: &RuntimeAggregate) -> Result<(), String> {
     checkpoint_runtime_state_event(
         runtime,
-        "provider_call_started",
+        CheckpointType::TurnStarted,
+        None,
+        None,
+        None,
+        Some(1),
+    )
+}
+
+pub fn checkpoint_provider_call_started(runtime: &RuntimeAggregate) -> Result<(), String> {
+    checkpoint_runtime_state_event(
+        runtime,
+        CheckpointType::ProviderCallStarted,
         Some(&runtime.runtime_id),
         None,
         None,
@@ -74,10 +87,10 @@ pub fn checkpoint_provider_call_started(runtime: &RuntimeManagement) -> Result<(
     )
 }
 
-pub fn checkpoint_provider_call_finished(runtime: &RuntimeManagement) -> Result<(), String> {
+pub fn checkpoint_provider_call_finished(runtime: &RuntimeAggregate) -> Result<(), String> {
     checkpoint_runtime_state_event(
         runtime,
-        "provider_call_finished",
+        CheckpointType::ProviderCallFinished,
         Some(&runtime.runtime_id),
         None,
         None,
@@ -85,35 +98,60 @@ pub fn checkpoint_provider_call_finished(runtime: &RuntimeManagement) -> Result<
     )
 }
 
-pub fn checkpoint_turn_finished(runtime: &RuntimeManagement) -> Result<(), String> {
-    checkpoint_runtime_state_event(runtime, "turn_finished", None, None, None, Some(4))
+pub fn checkpoint_turn_finished(runtime: &RuntimeAggregate) -> Result<(), String> {
+    checkpoint_runtime_state_event(
+        runtime,
+        CheckpointType::TurnFinished,
+        None,
+        None,
+        None,
+        Some(4),
+    )
 }
 
-pub fn checkpoint_turn_failed(runtime: &RuntimeManagement) -> Result<(), String> {
-    checkpoint_runtime_state_event(runtime, "turn_failed", None, None, None, Some(4))
+pub fn checkpoint_turn_failed(runtime: &RuntimeAggregate) -> Result<(), String> {
+    checkpoint_runtime_state_event(
+        runtime,
+        CheckpointType::TurnFailed,
+        None,
+        None,
+        None,
+        Some(4),
+    )
 }
 
-pub fn checkpoint_turn_interrupted(runtime: &RuntimeManagement) -> Result<(), String> {
-    checkpoint_runtime_state_event(runtime, "turn_interrupted", None, None, None, Some(4))
+pub fn checkpoint_turn_interrupted(runtime: &RuntimeAggregate) -> Result<(), String> {
+    checkpoint_runtime_state_event(
+        runtime,
+        CheckpointType::TurnInterrupted,
+        None,
+        None,
+        None,
+        Some(4),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{RuntimeProviderConfig, UsageReport};
     use chrono::Utc;
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeProviderConfig, UsageReport};
 
     #[test]
     fn event_usage_inclusion_matches_terminal_checkpoint_contract() {
-        for event in ["turn_started", "provider_call_started", "command_ready"] {
+        for event in [
+            CheckpointType::TurnStarted,
+            CheckpointType::ProviderCallStarted,
+            CheckpointType::CommandReady,
+        ] {
             assert!(!event_includes_usage(event), "{event}");
         }
         for event in [
-            "provider_call_finished",
-            "turn_finished",
-            "turn_failed",
-            "turn_interrupted",
+            CheckpointType::ProviderCallFinished,
+            CheckpointType::TurnFinished,
+            CheckpointType::TurnFailed,
+            CheckpointType::TurnInterrupted,
         ] {
             assert!(event_includes_usage(event), "{event}");
         }
@@ -132,7 +170,8 @@ mod tests {
             .mark_first_token(runtime.created_at)
             .expect("mark first token");
 
-        let payload = runtime_state_checkpoint_payload(&runtime, "provider_call_started");
+        let payload =
+            runtime_state_checkpoint_payload(&runtime, CheckpointType::ProviderCallStarted);
 
         assert_eq!(payload["event_type"], "provider_call_started");
         assert_eq!(payload["runtime_state"], "Streaming");
@@ -149,10 +188,7 @@ mod tests {
         runtime
             .mark_waiting_first_token()
             .expect("mark waiting first token");
-        runtime
-            .finish_success(runtime.created_at, None)
-            .expect("finish runtime");
-        runtime.usage = Some(UsageReport {
+        let usage = UsageReport {
             input_tokens: 10,
             output_tokens: 5,
             total_tokens: 15,
@@ -168,15 +204,18 @@ mod tests {
             latency_ms: 123,
             time_to_first_token_ms: 45,
             token_per_second: 9.5,
-        });
+        };
+        runtime
+            .finish_success(runtime.created_at, Some(usage))
+            .expect("finish runtime");
 
-        let finished = runtime_state_checkpoint_payload(&runtime, "turn_finished");
+        let finished = runtime_state_checkpoint_payload(&runtime, CheckpointType::TurnFinished);
         assert_eq!(finished["usage"]["input_tokens"], 10);
         assert_eq!(finished["usage"]["total_tokens"], 15);
         assert_eq!(finished["usage"]["currency"], "USD");
 
-        runtime.usage = None;
-        let failed = runtime_state_checkpoint_payload(&runtime, "turn_failed");
+        let failed =
+            runtime_state_checkpoint_payload(&runtime_fixture(), CheckpointType::TurnFailed);
         assert_eq!(failed["usage"], serde_json::Value::Null);
     }
 
@@ -192,8 +231,8 @@ mod tests {
         assert_eq!(checkpoint_turn_interrupted(&runtime), Ok(()));
     }
 
-    fn runtime_fixture() -> RuntimeManagement {
-        RuntimeManagement::new(
+    fn runtime_fixture() -> RuntimeAggregate {
+        RuntimeAggregate::new(
             "runtime-1".to_string(),
             "session-1".to_string(),
             "agent-1".to_string(),

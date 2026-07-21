@@ -1,14 +1,17 @@
 use anyhow::{anyhow, Context, Result};
 use lifecycle::{SessionCommand, SessionEvent};
 use serde_json::{json, Value};
+use session_log_contract::client::call_service;
 use session_log_contract::{ExecuteSessionCommandRequest, SessionLogCommand, SessionLogResponse};
 
 pub fn take(input: &Value) -> Result<Value> {
     let session_id = normalized_session_id(input)?;
-    let response = session_log::ipc::call_service(&SessionLogCommand::ExecuteSessionCommand(
+    let response = call_service(&SessionLogCommand::ExecuteSessionCommand(
         ExecuteSessionCommandRequest {
+            command_id: uuid::Uuid::new_v4().to_string(),
             session_id: session_id.clone(),
             session_command: SessionCommand::ConsumeQueuedUserInputs,
+            message_projection: None,
         },
     ))
     .with_context(|| format!("failed to consume queued inputs for session {session_id}"))?;
@@ -79,6 +82,8 @@ mod tests {
                     },
                     projection,
                     session_name: None,
+                    message_count: 0,
+                    last_user_message_at: None,
                 }),
             },
         )

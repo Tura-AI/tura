@@ -1,12 +1,20 @@
 use std::sync::atomic::Ordering;
 
+use lifecycle::RuntimeState;
+use lifecycle::SessionInput;
 use lifecycle::SessionState;
 use runtime::mano;
-use runtime::state_machine::session_management::SessionInput;
 use serde_json::Value;
+use session_log_contract::{
+    ActivateRuntimeLeaseRequest, GetSessionRequest, RegisterRuntimeRequest, ReplayRuntimeRequest,
+    RuntimeLeaseOutcome, RuntimeRegistrationOutcome, SessionLogCommand, SessionLogResponse,
+};
 
 #[path = "../support/session_db_support.rs"]
 mod session_db_support;
+
+#[path = "../support/typed_session.rs"]
+mod typed_session;
 
 #[path = "helpers/coding_agent_mock.rs"]
 mod helpers;
@@ -497,7 +505,7 @@ fn single_done_task_status_with_long_visible_reply_completes_without_backfill_tu
             .detailed_tasks
             .first()
             .map(|task| task.status),
-        Some(runtime::state_machine::session_management::PlanStatus::Done),
+        Some(lifecycle::PlanStatus::Done),
         "done task_status should still update task state; log={:#?}",
         result.session.session_log
     );
@@ -593,6 +601,42 @@ fn single_done_task_status_with_short_visible_reply_is_backfilled() {
 fn coding_agent_provider_retry_exhaustion_preserves_provider_error() {
     let _session_db = session_db_support::SessionDbTestService::start(&ENV_LOCK);
     let workspace = create_rust_workspace();
+    let workspace_text = workspace.to_string_lossy().to_string();
+    let session_id = "e2e-provider-retry-exhausted";
+    let initial_runtime_id = "runtime-provider-retry-initial";
+    let initial_lease_id = "lease-provider-retry-initial";
+    typed_session::create_via_service(typed_session::root_create_request(
+        session_id,
+        &workspace_text,
+        "Provider retry exhaustion",
+        1,
+    ))
+    .expect("retry session should be created before leased execution");
+    assert!(matches!(
+        session_log_contract::client::call_service(&SessionLogCommand::RegisterRuntime(
+            RegisterRuntimeRequest {
+                runtime_id: initial_runtime_id.to_string(),
+                session_id: session_id.to_string(),
+                fallback_from_id: None,
+            }
+        ))
+        .expect("initial runtime registration"),
+        SessionLogResponse::RuntimeRegistered {
+            result: RuntimeRegistrationOutcome::Registered { .. }
+        }
+    ));
+    assert!(matches!(
+        session_log_contract::client::call_service(&SessionLogCommand::ActivateRuntimeLease(
+            ActivateRuntimeLeaseRequest {
+                runtime_id: initial_runtime_id.to_string(),
+                lease_id: initial_lease_id.to_string(),
+            }
+        ))
+        .expect("initial runtime lease activation"),
+        SessionLogResponse::RuntimeLeaseActivated {
+            result: RuntimeLeaseOutcome::Activated
+        }
+    ));
     let provider = MockProvider::start_rate_limit();
     let llm_config = write_llm_config(&workspace, provider.addr);
     let _env = EnvGuard::set(&[
@@ -616,8 +660,10 @@ fn coding_agent_provider_retry_exhaustion_preserves_provider_error() {
         ),
     ]);
 
-    let result = mano::process_from_gateway_session_in_directory(
-        "e2e-provider-retry-exhausted".to_string(),
+    let result = mano::process_from_gateway_session_with_lease_in_directory(
+        session_id.to_string(),
+        initial_runtime_id.to_string(),
+        initial_lease_id.to_string(),
         SessionInput {
             user_input: "Trigger a provider rate limit and report the real error.".to_string(),
             file_input: vec![],
@@ -651,4 +697,50 @@ fn coding_agent_provider_retry_exhaustion_preserves_provider_error() {
         request_count, 4,
         "initial provider call plus three retries should be attempted"
     );
+
+    let lifecycle_projection = match session_log_contract::client::call_service(
+        &SessionLogCommand::GetSession(GetSessionRequest {
+            session_id: result.session.session_id.clone(),
+        }),
+    )
+    .expect("retry session should be queryable")
+    {
+        SessionLogResponse::Session {
+            session: Some(snapshot),
+        } => snapshot.lifecycle_projection,
+        response => panic!("unexpected retry session response: {response:?}"),
+    };
+    assert_eq!(lifecycle_projection.state, SessionState::Failed);
+    assert_eq!(lifecycle_projection.active_runtime_id, None);
+    let runtime_ids = lifecycle_projection.runtime_ids;
+    assert_eq!(runtime_ids.len(), 4, "each provider retry needs a runtime");
+
+    let runtimes = runtime_ids
+        .iter()
+        .map(|runtime_id| {
+            match session_log_contract::client::call_service(&SessionLogCommand::ReplayRuntime(
+                ReplayRuntimeRequest {
+                    runtime_id: runtime_id.clone(),
+                },
+            ))
+            .expect("retry runtime should replay")
+            {
+                SessionLogResponse::RuntimeReplayed {
+                    runtime: Some(replay),
+                } => replay.aggregate,
+                response => panic!("unexpected runtime replay response: {response:?}"),
+            }
+        })
+        .collect::<Vec<_>>();
+    assert!(runtimes
+        .iter()
+        .all(|runtime| runtime.state == RuntimeState::Failed));
+    assert_eq!(runtimes[0].fallback_from_id, None);
+    for (index, runtime) in runtimes.iter().enumerate().skip(1) {
+        assert_eq!(
+            runtime.fallback_from_id.as_ref(),
+            Some(&runtimes[index - 1].runtime_id),
+            "retry runtime must reference the immediately failed invocation"
+        );
+    }
 }

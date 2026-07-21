@@ -2,11 +2,10 @@ use anyhow::{anyhow, Result};
 use std::time::Instant;
 
 use crate::profile_timings;
-use serde_json::Value;
 use session_log_contract::{
-    CommandCheckpoint, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page,
-    SessionLogCommand, SessionLogResponse, SessionRecord, SessionSnapshot, UpsertSessionRequest,
-    WorkspaceSummary,
+    CommandCheckpoint, ContextSlice, GetSessionRequest, ListSessionRecordsRequest,
+    ListSessionsRequest, Page, PersistSessionDeltaRequest, ReadContextSliceRequest,
+    SessionLogCommand, SessionLogResponse, SessionRecord, SessionSnapshot, WorkspaceSummary,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -17,48 +16,62 @@ impl SessionLogClient {
         Ok(Self)
     }
 
-    pub fn upsert_session(
+    pub(crate) fn call_typed(
         &self,
-        session: Value,
-        parent_id: Option<String>,
-        messages: Vec<Value>,
-        todos: Vec<Value>,
-    ) -> Result<()> {
-        let profiling = profile_timings::enabled();
-        let session_bytes = if profiling {
-            profile_timings::json_bytes(&session)
-        } else {
-            0
-        };
-        let messages_bytes = if profiling {
-            profile_timings::json_vec_bytes(&messages)
-        } else {
-            0
-        };
-        let message_count = messages.len();
-        let todos_count = todos.len();
-        let start = Instant::now();
-        let response = self.call(SessionLogCommand::UpsertSession(UpsertSessionRequest {
-            session,
-            parent_id,
-            messages,
-            todos,
-        }));
-        profile_timings::log_elapsed(
-            "session_log_client.upsert_session",
-            start,
-            serde_json::json!({
-                "success": response.is_ok(),
-                "session_bytes": session_bytes,
-                "message_count": message_count,
-                "messages_bytes": messages_bytes,
-                "todos_count": todos_count,
-            }),
-        );
-        match response? {
-            SessionLogResponse::Ok => Ok(()),
-            SessionLogResponse::Error { error } => Err(session_log_error("upsert_session", error)),
-            other => Err(unexpected_session_log_response("upsert_session", other)),
+        command: SessionLogCommand,
+    ) -> Result<SessionLogResponse, String> {
+        self.call(command).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn call_typed_sync(
+        &self,
+        command: SessionLogCommand,
+    ) -> Result<SessionLogResponse, String> {
+        if !session_log_contract::client::service_is_running() {
+            return Err(
+                "session_db service is not running; start the per-home tura_router/tura_session_db owner before accessing session data"
+                    .to_string(),
+            );
+        }
+        session_log_contract::client::call_service(&command).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn persist_session_delta(
+        &self,
+        request: PersistSessionDeltaRequest,
+    ) -> Result<(u64, u64), String> {
+        match self.call_typed_sync(SessionLogCommand::PersistSessionDelta(Box::new(request)))? {
+            SessionLogResponse::SessionDeltaPersisted {
+                next_sequence,
+                next_management_sequence,
+            } => Ok((next_sequence, next_management_sequence)),
+            SessionLogResponse::Error { error } => {
+                Err(format!("session_log persist_session_delta failed: {error}"))
+            }
+            other => Err(format!(
+                "unexpected session_log response for persist_session_delta: {other:?}"
+            )),
+        }
+    }
+
+    pub(crate) fn read_context_slice(
+        &self,
+        session_id: String,
+        max_estimated_tokens: u64,
+    ) -> Result<ContextSlice, String> {
+        match self.call_typed_sync(SessionLogCommand::ReadContextSlice(
+            ReadContextSliceRequest {
+                session_id,
+                max_estimated_tokens,
+            },
+        ))? {
+            SessionLogResponse::ContextSlice { context } => Ok(context),
+            SessionLogResponse::Error { error } => {
+                Err(format!("session_log read_context_slice failed: {error}"))
+            }
+            other => Err(format!(
+                "unexpected session_log response for read_context_slice: {other:?}"
+            )),
         }
     }
 
@@ -138,7 +151,7 @@ impl SessionLogClient {
 
     fn call(&self, command: SessionLogCommand) -> Result<SessionLogResponse> {
         let command_name = session_log_command_name(&command);
-        let async_write = session_log::file_queue::is_async_write(&command);
+        let async_write = session_log_contract::client::is_async_write(&command);
         let command_payload = if async_write || profile_timings::enabled() {
             Some(serde_json::to_vec(&command)?)
         } else {
@@ -151,9 +164,9 @@ impl SessionLogClient {
         if async_write {
             let enqueue_start = Instant::now();
             if let Some(payload) = command_payload.as_deref() {
-                session_log::file_queue::enqueue_serialized_command(payload)?;
+                session_log_contract::client::enqueue_serialized_command(payload)?;
             } else {
-                session_log::file_queue::enqueue_command(&command)?;
+                session_log_contract::client::enqueue_command(&command)?;
             }
             profile_timings::log_elapsed(
                 "session_log_client.enqueue_async_write",
@@ -166,7 +179,7 @@ impl SessionLogClient {
             return Ok(SessionLogResponse::Ok);
         }
         let service_check_start = Instant::now();
-        let service_running = session_log::ipc::service_is_running();
+        let service_running = session_log_contract::client::service_is_running();
         profile_timings::log_elapsed(
             "session_log_client.service_is_running",
             service_check_start,
@@ -179,7 +192,7 @@ impl SessionLogClient {
         );
         if service_running {
             let ipc_start = Instant::now();
-            let ipc_result = session_log::ipc::call_service(&command);
+            let ipc_result = session_log_contract::client::call_service(&command);
             profile_timings::log_elapsed(
                 "session_log_client.call_service",
                 ipc_start,
@@ -206,8 +219,17 @@ fn session_log_command_name(command: &SessionLogCommand) -> &'static str {
         SessionLogCommand::Health => "health",
         SessionLogCommand::CreateSession(_) => "create_session",
         SessionLogCommand::ExecuteSessionCommand(_) => "execute_session_command",
-        SessionLogCommand::PersistSessionPayload(_) => "persist_session_payload",
-        SessionLogCommand::UpsertSession(_) => "upsert_session",
+        SessionLogCommand::UpdateSession(_) => "update_session",
+        SessionLogCommand::UpdateSessionTodos(_) => "update_session_todos",
+        SessionLogCommand::RegisterRuntime(_) => "register_runtime",
+        SessionLogCommand::ActivateRuntimeLease(_) => "activate_runtime_lease",
+        SessionLogCommand::CommitRuntimeEvent(_) => "commit_runtime_event",
+        SessionLogCommand::AppendSessionFeedEvent(_) => "append_session_feed_event",
+        SessionLogCommand::ReadSessionFeed(_) => "read_session_feed",
+        SessionLogCommand::SubscribeSessionFeed => "subscribe_session_feed",
+        SessionLogCommand::ReplayRuntime(_) => "replay_runtime",
+        SessionLogCommand::PersistSessionDelta(_) => "persist_session_delta",
+        SessionLogCommand::ReadContextSlice(_) => "read_context_slice",
         SessionLogCommand::ApplyCommandCheckpoint(_) => "apply_command_checkpoint",
         SessionLogCommand::GetSession(_) => "get_session",
         SessionLogCommand::ListWorkspaces => "list_workspaces",

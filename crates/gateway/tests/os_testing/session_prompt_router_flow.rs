@@ -1,8 +1,8 @@
 #[path = "helpers/session_prompt_router.rs"]
 mod helpers;
 
-#[path = "session_prompt_router/callback_concurrency.rs"]
-mod callback_concurrency;
+#[path = "session_prompt_router/concurrency.rs"]
+mod concurrency;
 #[path = "session_prompt_router/core_session.rs"]
 mod core_session;
 #[path = "session_prompt_router/errors_config.rs"]

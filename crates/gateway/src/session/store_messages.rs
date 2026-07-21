@@ -1,6 +1,56 @@
 use super::*;
 
 impl SessionStore {
+    pub(crate) fn refresh_messages_from_session_db(&self, session_id: &str) -> Result<(), String> {
+        const PAGE_SIZE: u64 = 1_000;
+
+        let client = SessionDbClient::discover().map_err(|error| {
+            format!("failed to discover session_db for message refresh: {error}")
+        })?;
+        let mut page = 0;
+        let mut refreshed = Vec::new();
+        loop {
+            let (page_info, records) = client
+                .list_session_records(session_id.to_string(), page, PAGE_SIZE)
+                .map_err(|error| {
+                    format!("failed to refresh messages for session {session_id}: {error}")
+                })?;
+            for record in records {
+                let message: Message = serde_json::from_value(record.record).map_err(|error| {
+                    format!("invalid message projection for session {session_id}: {error}")
+                })?;
+                let role = match message.role {
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    MessageRole::System => "system",
+                };
+                if record.session_id != session_id
+                    || message.id != record.message_id
+                    || message.session_id != session_id
+                    || role != record.role
+                    || message.created_at != record.created_at
+                    || message.updated_at != record.updated_at
+                {
+                    return Err(format!(
+                        "Session message projection envelope does not match its payload for session {session_id}"
+                    ));
+                }
+                refreshed.push(message);
+            }
+            if (page_info.page + 1).saturating_mul(page_info.page_size) >= page_info.total {
+                break;
+            }
+            page = page.saturating_add(1);
+        }
+        if let Some(info) = self.sessions.write().get_mut(session_id) {
+            info.message_count = refreshed.len();
+        }
+        self.messages
+            .write()
+            .insert(session_id.to_string(), refreshed);
+        Ok(())
+    }
+
     pub fn get_messages(&self, session_id: &str) -> Vec<Message> {
         self.messages
             .read()
@@ -10,84 +60,7 @@ impl SessionStore {
     }
 
     pub fn get_frontend_messages(&self, session_id: &str) -> Vec<Message> {
-        frontend_visible_messages(self.get_session_db_messages(session_id))
-    }
-
-    pub fn get_session_db_messages(&self, session_id: &str) -> Vec<Message> {
-        let should_refresh = {
-            let loaded = self.session_db_loaded.read().contains(session_id);
-            let refresh_needed = self.session_db_refresh_needed.read().contains(session_id);
-            !loaded || refresh_needed
-        };
-        if should_refresh {
-            if let Err(error) = self.refresh_session_db_cache(session_id) {
-                tracing::warn!(
-                    session_id,
-                    error = %error,
-                    "failed to refresh session DB cache for frontend messages"
-                );
-            }
-        }
-
-        let db_messages = self
-            .session_db_messages
-            .read()
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-        let projection_messages = self
-            .messages
-            .read()
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-
-        if db_messages.is_empty() {
-            return projection_messages;
-        }
-        if projection_messages.is_empty() {
-            return db_messages;
-        }
-
-        let mut messages = db_messages;
-        for message in projection_messages {
-            if messages.iter().any(|candidate| candidate.id == message.id) {
-                continue;
-            }
-            messages.push(message);
-        }
-        messages.sort_by_key(|message| message.created_at);
-        messages
-    }
-
-    pub fn apply_runtime_sync_status(
-        &self,
-        session_id: &str,
-        status: &RuntimeProjection,
-        message_id: Option<&str>,
-    ) -> Option<Message> {
-        if status.live_overlay_active() {
-            return None;
-        }
-
-        self.remove_live_messages_for_runtime(session_id, &status.runtime_id);
-        self.session_db_refresh_needed
-            .write()
-            .insert(session_id.to_string());
-        match self.refresh_session_db_cache(session_id) {
-            Ok(messages) => {
-                message_id.and_then(|id| messages.into_iter().find(|message| message.id == id))
-            }
-            Err(error) => {
-                tracing::warn!(
-                    session_id,
-                    runtime_id = %status.runtime_id,
-                    error = %error,
-                    "failed to refresh session DB cache after non-live runtime status"
-                );
-                None
-            }
-        }
+        frontend_visible_messages(self.get_messages(session_id))
     }
 
     pub fn finalize_runtime_live_messages(
@@ -134,9 +107,6 @@ impl SessionStore {
         }
 
         if merged.is_empty() {
-            self.session_db_refresh_needed
-                .write()
-                .insert(session_id.to_string());
             return Vec::new();
         }
 
@@ -153,7 +123,6 @@ impl SessionStore {
                     session_messages.push(message.clone());
                 }
             }
-            session_messages.sort_by_key(|message| message.created_at);
             if let Some(info) = self.sessions.write().get_mut(session_id) {
                 info.message_count = session_messages.len();
                 if let Some(updated_at) = merged.iter().map(|message| message.updated_at).max() {
@@ -162,9 +131,6 @@ impl SessionStore {
             }
         }
 
-        self.session_db_refresh_needed
-            .write()
-            .insert(session_id.to_string());
         for message in &merged {
             self.message_updated_event(message.clone());
         }
@@ -196,6 +162,133 @@ impl SessionStore {
         self.message_updated_event(message)
     }
 
+    pub fn append_feed_text_delta(
+        &self,
+        session_id: &str,
+        message_id: String,
+        part_id: String,
+        delta: String,
+        created_at: i64,
+        updated_at: i64,
+    ) {
+        let parent_id = self.latest_user_parent_id(session_id);
+        let mut messages = self.messages.write();
+        let session_messages = messages.entry(session_id.to_string()).or_default();
+        if let Some(message) = session_messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        {
+            if let Some(part) = message.parts.iter_mut().find(|part| part.id == part_id) {
+                part.content
+                    .get_or_insert_with(String::new)
+                    .push_str(&delta);
+                part.text.get_or_insert_with(String::new).push_str(&delta);
+            } else {
+                message.parts.push(MessagePart {
+                    id: part_id.clone(),
+                    part_type: "text".to_string(),
+                    content: Some(delta.clone()),
+                    text: Some(delta.clone()),
+                    metadata: None,
+                    call_id: None,
+                    tool: None,
+                    state: None,
+                });
+            }
+            message.created_at = message.created_at.min(created_at);
+            message.updated_at = message.updated_at.max(updated_at);
+        } else {
+            session_messages.push(Message {
+                id: message_id.clone(),
+                session_id: session_id.to_string(),
+                role: MessageRole::Assistant,
+                parent_id,
+                parts: vec![MessagePart {
+                    id: part_id.clone(),
+                    part_type: "text".to_string(),
+                    content: Some(delta.clone()),
+                    text: Some(delta.clone()),
+                    metadata: None,
+                    call_id: None,
+                    tool: None,
+                    state: None,
+                }],
+                created_at,
+                updated_at,
+            });
+        }
+        if let Some(info) = self.sessions.write().get_mut(session_id) {
+            info.message_count = session_messages.len();
+            info.updated_at = info.updated_at.max(updated_at);
+        }
+        drop(messages);
+
+        self.push_event(GlobalEvent::MessagePartDelta {
+            properties: crate::contracts::MessagePartDeltaProperties {
+                session_id: session_id.to_string(),
+                message_id,
+                part_id,
+                created_at,
+                updated_at,
+                field: "text".to_string(),
+                delta,
+            },
+        });
+    }
+
+    pub fn upsert_feed_message(&self, session_id: &str, message: Message) -> bool {
+        let mut messages = self.messages.write();
+        let session_messages = messages.entry(session_id.to_string()).or_default();
+        let (projected, inserted, changed) = if let Some(existing) = session_messages
+            .iter_mut()
+            .find(|candidate| candidate.id == message.id)
+        {
+            let merged = merge_message_parts(existing.clone(), message);
+            let changed = *existing != merged;
+            *existing = merged;
+            (existing.clone(), false, changed)
+        } else {
+            session_messages.push(message.clone());
+            (message, true, true)
+        };
+        if let Some(info) = self.sessions.write().get_mut(session_id) {
+            info.message_count = session_messages.len();
+            info.updated_at = info.updated_at.max(projected.updated_at);
+            if projected.role == MessageRole::User {
+                info.last_user_message_at = Some(
+                    info.last_user_message_at
+                        .unwrap_or(projected.updated_at)
+                        .max(projected.updated_at),
+                );
+                if let Some(timestamp) =
+                    chrono::DateTime::<Utc>::from_timestamp_millis(projected.updated_at)
+                {
+                    if timestamp > info.management.session_last_user_message_at {
+                        info.management.record_user_message_at(timestamp);
+                    }
+                }
+                if inserted {
+                    if info.management.input.user_input.trim().is_empty() {
+                        if let Some(text) =
+                            projected.parts.iter().find_map(|part| part.text.clone())
+                        {
+                            info.management.input.user_input = text;
+                        }
+                    }
+                    if let Ok(entry) = serde_json::to_string(&projected) {
+                        info.management.session_log.push(entry);
+                    }
+                }
+            }
+        }
+        drop(messages);
+
+        if changed {
+            self.message_updated_event(projected);
+        }
+        changed
+    }
+
     pub fn remove_live_messages_for_runtime(&self, session_id: &str, runtime_id: &str) {
         let mut live_messages = self.live_messages.write();
         if let Some(overlays) = live_messages.get_mut(session_id) {
@@ -214,99 +307,69 @@ impl SessionStore {
             .unwrap_or_default()
     }
 
-    pub fn set_todos(
+    #[cfg(any(feature = "business-tests", feature = "os-tests"))]
+    pub fn todo_cursor_for_business_test(&self, session_id: &str) -> Option<u64> {
+        self.todo_cursors.read().get(session_id).copied()
+    }
+
+    pub fn persist_todos(
         &self,
         session_id: &str,
         todos: Vec<serde_json::Value>,
-    ) -> Vec<serde_json::Value> {
-        self.todos
-            .write()
-            .insert(session_id.to_string(), todos.clone());
-        self.push_event(GlobalEvent::TodoUpdated {
-            properties: serde_json::json!({
-                "sessionID": session_id,
-                "todos": todos,
-            }),
-        });
-        todos
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let (todos, cursor) = SessionDbClient::discover()
+            .and_then(|client| {
+                client.update_session_todos(session_log_contract::UpdateSessionTodosRequest {
+                    command_id: uuid::Uuid::new_v4().to_string(),
+                    session_id: session_id.to_string(),
+                    todos,
+                    updated_at: Utc::now().timestamp_millis(),
+                })
+            })
+            .map_err(|error| format!("failed to persist session todos: {error}"))?;
+        Ok(self.apply_todos_projection(session_id, cursor, todos))
     }
 
-    pub fn copy_session_context(&self, source_session_id: &str, target_session_id: &str) -> bool {
-        if !self.sessions.read().contains_key(source_session_id)
-            || !self.sessions.read().contains_key(target_session_id)
+    pub(crate) fn apply_todos_projection(
+        &self,
+        session_id: &str,
+        cursor: u64,
+        todos: Vec<serde_json::Value>,
+    ) -> Vec<serde_json::Value> {
+        self.apply_todos_projection_at_cursor(session_id, cursor, todos, true)
+    }
+
+    pub(crate) fn apply_todos_projection_at_cursor(
+        &self,
+        session_id: &str,
+        cursor: u64,
+        todos: Vec<serde_json::Value>,
+        publish: bool,
+    ) -> Vec<serde_json::Value> {
+        let mut cursors = self.todo_cursors.write();
+        if cursors
+            .get(session_id)
+            .is_some_and(|current| *current >= cursor)
         {
-            return false;
+            return self.get_todos(session_id);
         }
-
-        let source_messages = self.get_frontend_messages(source_session_id);
-        let mut id_map = HashMap::new();
-        let now = Utc::now().timestamp_millis();
-        let copied_messages = source_messages
-            .iter()
-            .enumerate()
-            .map(|(index, message)| {
-                let id = new_message_id(now + index as i64);
-                id_map.insert(message.id.clone(), id.clone());
-                Message {
-                    id,
-                    session_id: target_session_id.to_string(),
-                    role: message.role,
-                    parent_id: None,
-                    parts: Vec::new(),
-                    created_at: message.created_at,
-                    updated_at: message.updated_at,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let copied_messages = source_messages
-            .into_iter()
-            .zip(copied_messages)
-            .map(|(source, mut copied)| {
-                copied.parent_id = source
-                    .parent_id
-                    .as_ref()
-                    .and_then(|parent_id| id_map.get(parent_id).cloned());
-                copied.parts = source
-                    .parts
-                    .into_iter()
-                    .map(|part| MessagePart {
-                        id: Uuid::new_v4().to_string(),
-                        part_type: part.part_type,
-                        content: part.content,
-                        text: part.text,
-                        metadata: part.metadata,
-                        call_id: part.call_id,
-                        tool: part.tool,
-                        state: part.state,
-                    })
-                    .collect();
-                copied
-            })
-            .collect::<Vec<_>>();
-
-        let copied_todos = self.get_todos(source_session_id);
-        self.messages
+        let changed = self
+            .todos
             .write()
-            .insert(target_session_id.to_string(), copied_messages.clone());
-        self.todos
-            .write()
-            .insert(target_session_id.to_string(), copied_todos);
-
-        {
-            let mut children = self.children.write();
-            let entry = children.entry(source_session_id.to_string()).or_default();
-            if !entry.iter().any(|id| id == target_session_id) {
-                entry.push(target_session_id.to_string());
-            }
+            .insert(session_id.to_string(), todos.clone())
+            .as_ref()
+            != Some(&todos);
+        cursors.insert(session_id.to_string(), cursor);
+        drop(cursors);
+        if publish && changed {
+            self.push_event(GlobalEvent::TodoUpdated {
+                properties: serde_json::json!({
+                    "sessionID": session_id,
+                    "todos": todos,
+                }),
+            });
         }
-
-        if let Some(info) = self.sessions.write().get_mut(target_session_id) {
-            info.message_count = copied_messages.len();
-            info.updated_at = now;
-            info.last_user_message_at = last_user_message_at_in_messages(&copied_messages);
-        }
-        true
+        todos
     }
 
     pub fn finish_todos(&self, session_id: &str, success: bool) {
@@ -329,7 +392,9 @@ impl SessionStore {
             }
         }
 
-        self.set_todos(session_id, todos);
+        if let Err(error) = self.persist_todos(session_id, todos) {
+            tracing::warn!(session_id, error, "failed to persist terminal todo state");
+        }
     }
 
     fn message_updated_event(&self, message: Message) -> GlobalEvent {
@@ -423,6 +488,30 @@ impl SessionStore {
         metadata: Option<serde_json::Value>,
     ) -> Option<Message> {
         self.add_message_parts_internal(session_id, role, parts, metadata, message_id)
+    }
+
+    pub fn build_message_with_parts(
+        &self,
+        session_id: &str,
+        role: MessageRole,
+        parts: Vec<MessagePart>,
+        message_id: Option<String>,
+        metadata: Option<serde_json::Value>,
+    ) -> Message {
+        let now = Utc::now().timestamp_millis();
+        Message {
+            id: message_id.unwrap_or_else(|| new_message_id(now)),
+            session_id: session_id.to_string(),
+            role,
+            parent_id: if role == MessageRole::Assistant {
+                self.latest_user_parent_id(session_id)
+            } else {
+                None
+            },
+            parts: normalize_message_parts(parts, metadata),
+            created_at: now,
+            updated_at: now,
+        }
     }
 
     #[expect(
@@ -522,25 +611,8 @@ impl SessionStore {
         metadata: Option<serde_json::Value>,
         message_id: Option<String>,
     ) -> Option<Message> {
-        let now = Utc::now().timestamp_millis();
-
-        let parent_id = if role == MessageRole::Assistant {
-            self.latest_user_parent_id(session_id)
-        } else {
-            None
-        };
-
-        let parts = normalize_message_parts(parts, metadata);
-
-        let message = Message {
-            id: message_id.unwrap_or_else(|| new_message_id(now)),
-            session_id: session_id.to_string(),
-            role,
-            parent_id,
-            parts,
-            created_at: now,
-            updated_at: now,
-        };
+        let message = self.build_message_with_parts(session_id, role, parts, message_id, metadata);
+        let now = message.updated_at;
 
         let mut messages = self.messages.write();
         let session_messages = messages.entry(session_id.to_string()).or_default();
@@ -847,11 +919,10 @@ impl SessionStore {
 
     fn latest_user_parent_id(&self, session_id: &str) -> Option<String> {
         let messages = self
-            .session_db_messages
+            .messages
             .read()
             .get(session_id)
             .cloned()
-            .or_else(|| self.messages.read().get(session_id).cloned())
             .unwrap_or_default();
         messages
             .iter()

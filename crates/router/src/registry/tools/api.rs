@@ -1,46 +1,7 @@
-use super::manifest::{ConfigurableEntry, ToolManifest};
-use super::{resolve, state::ToolState};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use super::manifest::ToolManifest;
+use super::resolve;
+use router_contract::{ToolConfigResponse, ToolState, ToolView};
 use std::path::Path;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolView {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub core: bool,
-    pub category: String,
-    pub execution: String,
-    pub enabled: bool,
-    pub aliases: Vec<String>,
-    pub supports_macro_command: bool,
-    pub mutating: bool,
-    pub network: bool,
-    pub configurable: Vec<ConfigurableEntry>,
-    pub state: ToolState,
-    pub binary: Option<String>,
-    pub binary_path: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct ToolPatch {
-    pub enabled: Option<bool>,
-    pub aliases: Option<Vec<String>>,
-    pub core: Option<bool>,
-    pub execution: Option<String>,
-    pub binary: Option<String>,
-    pub mutating: Option<bool>,
-    pub network: Option<bool>,
-    pub policy: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolConfigResponse {
-    pub id: String,
-    pub configurable: Vec<ConfigurableEntry>,
-    pub values: BTreeMap<String, serde_json::Value>,
-}
 
 pub fn view_for_manifest(manifest: &ToolManifest, repo_root: &Path) -> ToolView {
     let binary_path = resolve::resolve_tool_binary(repo_root, &manifest.runtime.binary)
@@ -106,6 +67,7 @@ fn default_aliases(id: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::registry::tools::manifest::{LimitsSection, PathsSection, RuntimeSection};
+    use router_contract::ConfigurableEntry;
 
     #[test]
     fn view_for_core_manifest_is_enabled_without_external_binary() {

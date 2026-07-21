@@ -4,9 +4,9 @@ use crate::app::build_state;
 use crate::daemon::{serve_socket, serve_stdio};
 use crate::runtime_dispatch::dispatch_run_agent;
 use crate::runtime_utils::tokio_runtime;
-use router_contract::RunAgentRequest;
+use router_contract::ExecuteCommandRequest;
+use runtime_contract::RunAgentRequest;
 use tura_router::registry::agent::UpsertAgentRequest;
-use tura_router::registry::command::ExecuteCommandRequest;
 use tura_router::registry::persona::UpsertPersonaRequest;
 use tura_router::registry::Registry;
 
@@ -48,8 +48,7 @@ async fn run_agent_cli() -> anyhow::Result<()> {
     let req: RunAgentRequest = serde_json::from_str(raw.trim())
         .map_err(|error| anyhow::anyhow!("invalid run-agent request json: {error}"))?;
     let state = build_state();
-    let (_status, body) =
-        dispatch_run_agent(&state, req, "router-cli-run-agent".to_string(), None).await;
+    let (_status, body) = dispatch_run_agent(&state, req, "router-cli-run-agent".to_string()).await;
     println!("{}", serde_json::to_string(&body)?);
     Ok(())
 }
@@ -176,12 +175,10 @@ fn registry_command_execute_cli() -> anyhow::Result<()> {
     let payload: RegistryCommandExecutePayload = serde_json::from_str(raw.trim())
         .map_err(|error| anyhow::anyhow!("invalid command execute payload json: {error}"))?;
     let registry = Registry::from_static();
-    let response = registry.commands.execute(
-        payload.directory.as_deref(),
-        ExecuteCommandRequest {
-            command: payload.command,
-            args: payload.args,
-        },
-    );
+    let response = registry.commands.execute(ExecuteCommandRequest {
+        directory: payload.directory,
+        command: payload.command,
+        args: payload.args,
+    });
     print_json(&response)
 }

@@ -1,9 +1,8 @@
 use crate::state_machine::agent_management::{
-    AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ProviderConfig, ToolChoice,
-    ValidatorConfig,
+    AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ValidatorConfig,
 };
-use crate::state_machine::session_management::SessionManagement;
 use chrono::Utc;
+use lifecycle::{ProviderConfig, SessionManagement, ToolChoice};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use tura_agents::coding_agent::{CodingAgent, CodingAgentProviderConfig, CodingAgentToolChoice};
@@ -458,12 +457,10 @@ mod tests {
         provider_config_from_coding_agent, resolve_project_path, AgentRegistryEntry,
     };
     use crate::state_machine::agent_management::{
-        AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ProviderConfig,
-        ToolChoice, ValidatorConfig,
+        AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ValidatorConfig,
     };
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
-    use lifecycle::SessionState;
+    use lifecycle::{ProviderConfig, SessionInput, SessionManagement, SessionState, ToolChoice};
     use std::path::{Path, PathBuf};
     use tura_agents::coding_agent::{CodingAgentProviderConfig, CodingAgentToolChoice};
 

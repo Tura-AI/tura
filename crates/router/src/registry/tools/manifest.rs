@@ -1,3 +1,4 @@
+use router_contract::ConfigurableEntry;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -42,25 +43,4 @@ pub struct PathsSection {
     pub prompt: String,
     pub schema: String,
     pub policy: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConfigurableEntry {
-    pub key: String,
-    #[serde(default)]
-    pub label: String,
-    pub description: String,
-    #[serde(rename = "type")]
-    pub value_type: String,
-    pub default: serde_json::Value,
-    #[serde(default, rename = "enum")]
-    pub enum_values: Vec<String>,
-    #[serde(default)]
-    pub required: bool,
-    #[serde(default = "default_scope")]
-    pub scope: String,
-}
-
-fn default_scope() -> String {
-    "workspace".to_string()
 }

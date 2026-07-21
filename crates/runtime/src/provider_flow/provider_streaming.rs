@@ -7,7 +7,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use tracing::error;
 
-use crate::gateway_events::publish_streamed_agent_text;
+use crate::gateway_events::{frontend_session_id, publish_streamed_agent_text};
+use crate::provider_flow::call::flush_runtime_events;
 use crate::provider_flow::command_run_streaming::{
     apply_cancelled_streamed_command_run_result,
     apply_startup_apply_patch_discarded_streamed_command_run_result,
@@ -22,7 +23,8 @@ use crate::provider_flow::streamed_command_run::{
     command_run_stream_events_from_provider_content, streamed_command_run_call_id,
 };
 use crate::provider_flow::usage::usage_report_from_metrics;
-use crate::state_machine::runtime_management::RuntimeManagement;
+use crate::runtime_event_writer::RuntimeEventWriter;
+use lifecycle::RuntimeAggregate;
 
 pub(crate) struct RuntimeStreamingInput {
     pub(crate) messages: Vec<serde_json::Value>,
@@ -33,32 +35,27 @@ pub(crate) struct RuntimeStreamingInput {
 }
 
 pub(crate) async fn call_runtime_streaming(
-    runtime: &mut RuntimeManagement,
+    runtime: &mut RuntimeAggregate,
     route_config: &tura_llm_rust::RouteConfig,
     tura_config: &Arc<tura_llm_rust::TuraConfig>,
     input: RuntimeStreamingInput,
+    mut runtime_event_writer: Option<&mut RuntimeEventWriter>,
 ) -> Result<(), String> {
     let started_at = Utc::now();
     let timeout_duration = runtime_timeout(runtime);
+    let feed_publisher = runtime_event_writer
+        .as_deref_mut()
+        .map(|writer| {
+            writer.feed_publisher(
+                &runtime.runtime_id,
+                &frontend_session_id(&runtime.session_id),
+            )
+        })
+        .transpose()?;
     let (stream_tx, stream_rx) = mpsc::channel::<tura_llm_rust::ProviderStreamEvent>();
     let final_response_stream_tx = stream_tx.clone();
-    // Forward incremental assistant text tokens to the gateway on a dedicated
-    // thread so the streaming HTTP POSTs never block the provider stream loop.
-    let (text_delta_tx, text_delta_rx) = mpsc::channel::<String>();
-    let text_delta_session_id = runtime.session_id.clone();
     let text_delta_runtime = runtime.clone();
-    let _text_delta_thread = std::thread::spawn(move || {
-        let Ok(async_runtime) = tokio::runtime::Runtime::new() else {
-            return;
-        };
-        while let Ok(delta) = text_delta_rx.recv() {
-            async_runtime.block_on(publish_streamed_agent_text(
-                &text_delta_session_id,
-                &text_delta_runtime,
-                &delta,
-            ));
-        }
-    });
+    let text_feed_publisher = feed_publisher.clone();
 
     let first_stream_output_at: Arc<Mutex<Option<DateTime<Utc>>>> = Arc::new(Mutex::new(None));
     let command_state = StreamedCommandRunState::new();
@@ -83,7 +80,11 @@ pub(crate) async fn call_runtime_streaming(
             command_state_for_sink.mark_seen();
         }
         if let tura_llm_rust::ProviderStreamEvent::TextDelta { text } = &event {
-            let _ = text_delta_tx.send(text.clone());
+            if let Err(error) =
+                publish_streamed_agent_text(&text_delta_runtime, text, text_feed_publisher.as_ref())
+            {
+                tracing::warn!(error = %error, "failed to queue assistant text feed event");
+            }
         }
         let _ = stream_tx.send(event);
     });
@@ -103,6 +104,7 @@ pub(crate) async fn call_runtime_streaming(
         started_at,
         state: command_state.clone(),
         runtime_status: runtime.lifecycle_projection(),
+        feed_publisher,
         require_startup_task_state: input.require_startup_task_state,
     });
 
@@ -132,7 +134,8 @@ pub(crate) async fn call_runtime_streaming(
                 error!(error = %message, "runtime call timed out");
                 runtime.set_output(serde_json::json!({
                     "error": message
-                }));
+                }))?;
+                flush_runtime_events(&mut runtime_event_writer, runtime)?;
                 finish_runtime_failure(
                     runtime,
                     finished_at,
@@ -140,6 +143,7 @@ pub(crate) async fn call_runtime_streaming(
                     message,
                     RuntimeState::TimedOut,
                 )?;
+                flush_runtime_events(&mut runtime_event_writer, runtime)?;
                 provider_task.abort();
                 let _ = (&mut provider_task).await;
                 drop(final_response_stream_tx);
@@ -154,8 +158,10 @@ pub(crate) async fn call_runtime_streaming(
                         error!(error = %e, "runtime call failed");
                         runtime.set_output(serde_json::json!({
                             "error": e.to_string()
-                        }));
+                        }))?;
+                        flush_runtime_events(&mut runtime_event_writer, runtime)?;
                         finish_provider_call_failure(runtime, finished_at, &e, RuntimeState::Failed)?;
+                        flush_runtime_events(&mut runtime_event_writer, runtime)?;
                         drop(final_response_stream_tx);
                         let _ = command_task.join();
                         return Ok(());
@@ -166,7 +172,8 @@ pub(crate) async fn call_runtime_streaming(
                         error!(error = %message, "runtime provider task failed");
                         runtime.set_output(serde_json::json!({
                             "error": message
-                        }));
+                        }))?;
+                        flush_runtime_events(&mut runtime_event_writer, runtime)?;
                         finish_runtime_failure(
                             runtime,
                             finished_at,
@@ -174,6 +181,7 @@ pub(crate) async fn call_runtime_streaming(
                             message,
                             RuntimeState::Failed,
                         )?;
+                        flush_runtime_events(&mut runtime_event_writer, runtime)?;
                         drop(final_response_stream_tx);
                         let _ = command_task.join();
                         return Ok(());
@@ -190,11 +198,12 @@ pub(crate) async fn call_runtime_streaming(
                         &snapshot.events,
                         &snapshot.results,
                         finished_at,
-                    );
+                    )?;
                     let first_token_at = first_stream_output_or(&first_stream_output_at, finished_at);
                     runtime
                         .mark_first_token(first_token_at)
                         .map_err(|e| format!("failed to mark first token: {e}"))?;
+                    flush_runtime_events(&mut runtime_event_writer, runtime)?;
                     finish_runtime_failure(
                         runtime,
                         finished_at,
@@ -203,6 +212,7 @@ pub(crate) async fn call_runtime_streaming(
                             .to_string(),
                         RuntimeState::Cancelled,
                     )?;
+                    flush_runtime_events(&mut runtime_event_writer, runtime)?;
                     provider_task.abort();
                     let _ = (&mut provider_task).await;
                     drop(final_response_stream_tx);
@@ -218,14 +228,16 @@ pub(crate) async fn call_runtime_streaming(
                         &snapshot.events,
                         &snapshot.results,
                         finished_at,
-                    );
+                    )?;
                     let first_token_at = first_stream_output_or(&first_stream_output_at, finished_at);
                     runtime
                         .mark_first_token(first_token_at)
                         .map_err(|e| format!("failed to mark first token: {e}"))?;
+                    flush_runtime_events(&mut runtime_event_writer, runtime)?;
                     runtime
                         .finish_success(finished_at, None)
                         .map_err(|e| format!("failed to finish runtime success: {e}"))?;
+                    flush_runtime_events(&mut runtime_event_writer, runtime)?;
                     provider_task.abort();
                     let _ = (&mut provider_task).await;
                     drop(final_response_stream_tx);
@@ -266,21 +278,21 @@ pub(crate) async fn call_runtime_streaming(
             runtime_output["provider_content"] = tool_dispatch_content.clone();
         }
     }
-    runtime.set_output(runtime_output);
+    runtime.set_output(runtime_output)?;
     apply_provider_response_with_options(
         runtime,
         &tool_dispatch_content,
         finished_at,
         has_streamed_command_run_result,
-    );
+    )?;
     if has_streamed_command_run_result {
-        ensure_streamed_command_run_tool_record(runtime, &snapshot.commands, finished_at);
+        ensure_streamed_command_run_tool_record(runtime, &snapshot.commands, finished_at)?;
     }
 
     if let Some(stream) = response.content.get("stream").and_then(|s| s.as_array()) {
         for chunk in stream {
             if let Some(text) = chunk.get("text").and_then(|t| t.as_str()) {
-                runtime.append_text(text);
+                runtime.append_text(text)?;
             }
         }
     }
@@ -294,9 +306,11 @@ pub(crate) async fn call_runtime_streaming(
     let usage =
         usage_report_from_metrics(response.metrics, started_at, finished_at, first_token_at);
 
+    flush_runtime_events(&mut runtime_event_writer, runtime)?;
     runtime
         .finish_success(finished_at, usage)
         .map_err(|e| format!("failed to finish runtime success: {e}"))?;
+    flush_runtime_events(&mut runtime_event_writer, runtime)?;
 
     Ok(())
 }

@@ -1,13 +1,17 @@
 //! Required session_db process lifecycle E2E tests.
 //!
 //! These are intentionally outside `tests/benchmark`: they prove the mandatory
-//! single-owner, graceful shutdown, bad-input, and idempotent write rules for
+//! single-owner, graceful shutdown, bad-input, and idempotent delta rules for
 //! the session_log crate itself.
 
+#[path = "../support/typed_session.rs"]
+mod typed_session;
+
 use anyhow::{anyhow, bail, Context, Result};
+use lifecycle::{SessionCommand, TaskPlan};
 use session_log_contract::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand,
-    SessionLogResponse, UpsertSessionRequest,
+    SessionLogResponse,
 };
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -23,7 +27,7 @@ const SESSION_DB_BIN: &str = env!("CARGO_BIN_EXE_tura_session_db");
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
-fn session_db_single_owner_bad_input_idempotent_upsert_and_shutdown() -> Result<()> {
+fn session_db_single_owner_bad_input_idempotent_delta_and_shutdown() -> Result<()> {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     let root = temp_root("session-db-lifecycle")?;
     let home = root.join("home");
@@ -35,7 +39,7 @@ fn session_db_single_owner_bad_input_idempotent_upsert_and_shutdown() -> Result<
     let mut service = ServiceGuard::start(&home)?;
     wait_until(
         Duration::from_secs(30),
-        session_log::ipc::service_is_running,
+        session_log_contract::client::service_is_running,
     )?;
     let initial_endpoint = std::fs::read_to_string(service_addr_path(&home))?;
 
@@ -66,7 +70,7 @@ fn session_db_single_owner_bad_input_idempotent_upsert_and_shutdown() -> Result<
     );
     assert!(
         matches!(
-            session_log::ipc::call_service(&SessionLogCommand::ListWorkspaces)?,
+            session_log_contract::client::call_service(&SessionLogCommand::ListWorkspaces)?,
             SessionLogResponse::Workspaces { .. }
         ),
         "service should remain usable after a bad request"
@@ -74,25 +78,41 @@ fn session_db_single_owner_bad_input_idempotent_upsert_and_shutdown() -> Result<
 
     let session_id = format!("lifecycle-{}", unique_nonce()?);
     let workspace = workspace.to_string_lossy().replace('\\', "/");
-    let upsert = SessionLogCommand::UpsertSession(upsert_request(&session_id, &workspace));
-    assert!(matches!(
-        session_log::ipc::call_service(&upsert)?,
-        SessionLogResponse::Ok
-    ));
-    assert!(matches!(
-        session_log::ipc::call_service(&upsert)?,
-        SessionLogResponse::Ok
-    ));
+    typed_session::create_via_service(
+        &session_id,
+        &workspace,
+        "Lifecycle",
+        1,
+        TaskPlan::default(),
+    )?;
+    let entry = typed_session::message_entry(
+        0,
+        &session_id,
+        &format!("m-{session_id}"),
+        "assistant",
+        "idempotent delta",
+        1,
+    );
+    assert_eq!(
+        typed_session::persist_via_service(&session_id, 0, vec![entry.clone()])?,
+        1
+    );
+    assert_eq!(
+        typed_session::persist_via_service(&session_id, 0, vec![entry])?,
+        1
+    );
 
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessions(ListSessionsRequest {
-        workspace,
-        page: 0,
-        page_size: 50,
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessions(
+        ListSessionsRequest {
+            workspace,
+            page: 0,
+            page_size: 50,
+        },
+    ))? {
         SessionLogResponse::Sessions { page, sessions } => {
             assert_eq!(
                 page.total, 1,
-                "idempotent upsert must not duplicate sessions"
+                "idempotent delta replay must not duplicate sessions"
             );
             assert_eq!(sessions.len(), 1);
             assert_eq!(sessions[0].session_id, session_id);
@@ -100,7 +120,7 @@ fn session_db_single_owner_bad_input_idempotent_upsert_and_shutdown() -> Result<
         other => bail!("unexpected list sessions response: {other:?}"),
     }
 
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessionRecords(
         ListSessionRecordsRequest {
             session_id: session_id.clone(),
             page: 0,
@@ -110,7 +130,7 @@ fn session_db_single_owner_bad_input_idempotent_upsert_and_shutdown() -> Result<
         SessionLogResponse::Records { page, records } => {
             assert_eq!(
                 page.total, 1,
-                "idempotent upsert must not duplicate records"
+                "idempotent delta replay must not duplicate records"
             );
             assert_eq!(records.len(), 1);
             assert_eq!(records[0].message_id, format!("m-{session_id}"));
@@ -118,9 +138,11 @@ fn session_db_single_owner_bad_input_idempotent_upsert_and_shutdown() -> Result<
         other => bail!("unexpected list records response: {other:?}"),
     }
 
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id: session_id.clone(),
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.clone(),
+        },
+    ))? {
         SessionLogResponse::Session { session } => {
             let session = session.ok_or_else(|| anyhow!("expected session {session_id}"))?;
             assert_eq!(session.session_id, session_id);
@@ -130,14 +152,14 @@ fn session_db_single_owner_bad_input_idempotent_upsert_and_shutdown() -> Result<
     }
 
     assert!(matches!(
-        session_log::ipc::call_service(&SessionLogCommand::Shutdown)?,
+        session_log_contract::client::call_service(&SessionLogCommand::Shutdown)?,
         SessionLogResponse::Ok
     ));
     service.wait_for_exit(Duration::from_secs(10))?;
     wait_until(Duration::from_secs(10), || {
         !service_addr_path(&home).exists()
     })?;
-    assert!(!session_log::ipc::service_is_running());
+    assert!(!session_log_contract::client::service_is_running());
     assert!(
         !lock_path(&home).exists(),
         "session_db owner lock should be released on graceful exit"
@@ -159,31 +181,32 @@ fn session_db_restart_after_crash_marks_running_sessions_interrupted_and_keeps_h
     let mut first = ServiceGuard::start(&home)?;
     wait_until(
         Duration::from_secs(30),
-        session_log::ipc::service_is_running,
+        session_log_contract::client::service_is_running,
     )?;
     let first_endpoint = std::fs::read_to_string(service_addr_path(&home))?;
 
     let session_id = format!("crash-restart-{}", unique_nonce()?);
     let workspace = workspace.to_string_lossy().replace('\\', "/");
-    assert!(matches!(
-        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(running_upsert_request(
-            &session_id,
-            &workspace,
-            "before crash"
-        )))?,
-        SessionLogResponse::Ok
-    ));
+    typed_session::create_with_message_via_service(
+        &session_id,
+        &workspace,
+        "Running Before Crash",
+        1,
+        "assistant",
+        "before crash",
+    )?;
+    typed_session::execute_via_service(&session_id, SessionCommand::StartUserTurn)?;
 
     first.kill_and_wait(Duration::from_secs(10))?;
     assert!(
-        !session_log::ipc::service_is_running(),
+        !session_log_contract::client::service_is_running(),
         "crashed endpoint should be detected as stale and removed"
     );
 
     let mut second = ServiceGuard::start(&home)?;
     wait_until(
         Duration::from_secs(30),
-        session_log::ipc::service_is_running,
+        session_log_contract::client::service_is_running,
     )?;
     assert_ne!(
         std::fs::read_to_string(service_addr_path(&home))?,
@@ -191,9 +214,11 @@ fn session_db_restart_after_crash_marks_running_sessions_interrupted_and_keeps_h
         "restart should publish a fresh endpoint"
     );
 
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id: session_id.clone(),
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.clone(),
+        },
+    ))? {
         SessionLogResponse::Session { session } => {
             let session = session.ok_or_else(|| anyhow!("expected recovered session"))?;
             assert_eq!(session.session_id, session_id);
@@ -205,7 +230,7 @@ fn session_db_restart_after_crash_marks_running_sessions_interrupted_and_keeps_h
         other => bail!("unexpected get response after restart: {other:?}"),
     }
 
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessionRecords(
         ListSessionRecordsRequest {
             session_id: session_id.clone(),
             page: 0,
@@ -221,7 +246,7 @@ fn session_db_restart_after_crash_marks_running_sessions_interrupted_and_keeps_h
     }
 
     assert!(matches!(
-        session_log::ipc::call_service(&SessionLogCommand::Shutdown)?,
+        session_log_contract::client::call_service(&SessionLogCommand::Shutdown)?,
         SessionLogResponse::Ok
     ));
     second.wait_for_exit(Duration::from_secs(10))?;
@@ -240,7 +265,7 @@ fn session_db_accepts_concurrent_short_lived_clients_without_losing_records() ->
     let mut service = ServiceGuard::start(&home)?;
     wait_until(
         Duration::from_secs(30),
-        session_log::ipc::service_is_running,
+        session_log_contract::client::service_is_running,
     )?;
 
     let workspace = workspace.to_string_lossy().replace('\\', "/");
@@ -252,12 +277,14 @@ fn session_db_accepts_concurrent_short_lived_clients_without_losing_records() ->
         handles.push(std::thread::spawn(move || -> Result<String> {
             let session_id = format!("concurrent-client-{index}-{}", unique_nonce()?);
             barrier.wait();
-            let response = session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-                upsert_request(&session_id, &workspace),
-            ))?;
-            if !matches!(response, SessionLogResponse::Ok) {
-                bail!("unexpected concurrent upsert response: {response:?}");
-            }
+            typed_session::create_with_message_via_service(
+                &session_id,
+                &workspace,
+                "Lifecycle",
+                1,
+                "assistant",
+                "concurrent client",
+            )?;
             Ok(session_id)
         }));
     }
@@ -271,11 +298,13 @@ fn session_db_accepts_concurrent_short_lived_clients_without_losing_records() ->
     }
     session_ids.sort();
 
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessions(ListSessionsRequest {
-        workspace,
-        page: 0,
-        page_size: 50,
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessions(
+        ListSessionsRequest {
+            workspace,
+            page: 0,
+            page_size: 50,
+        },
+    ))? {
         SessionLogResponse::Sessions { page, sessions } => {
             assert_eq!(page.total, 8);
             let mut listed = sessions
@@ -289,7 +318,7 @@ fn session_db_accepts_concurrent_short_lived_clients_without_losing_records() ->
     }
 
     for session_id in session_ids {
-        match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+        match session_log_contract::client::call_service(&SessionLogCommand::ListSessionRecords(
             ListSessionRecordsRequest {
                 session_id: session_id.clone(),
                 page: 0,
@@ -305,7 +334,7 @@ fn session_db_accepts_concurrent_short_lived_clients_without_losing_records() ->
     }
 
     assert!(matches!(
-        session_log::ipc::call_service(&SessionLogCommand::Shutdown)?,
+        session_log_contract::client::call_service(&SessionLogCommand::Shutdown)?,
         SessionLogResponse::Ok
     ));
     service.wait_for_exit(Duration::from_secs(10))?;
@@ -402,7 +431,7 @@ impl ServiceGuard {
 
 impl Drop for ServiceGuard {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(mut child) = self.child.take() {
             let started = Instant::now();
             while started.elapsed() < Duration::from_secs(5) {
@@ -484,63 +513,6 @@ fn write_raw_request(home: &Path, raw: &[u8]) -> Result<String> {
 fn read_endpoint(home: &Path) -> Result<serde_json::Value> {
     let raw = std::fs::read_to_string(service_addr_path(home))?;
     serde_json::from_str(raw.trim()).context("parse service endpoint")
-}
-
-fn upsert_request(session_id: &str, workspace: &str) -> UpsertSessionRequest {
-    UpsertSessionRequest {
-        session: serde_json::json!({
-            "id": session_id,
-            "name": "Lifecycle",
-            "directory": workspace,
-            "created_at": 1,
-            "updated_at": 2,
-            "status": "idle",
-            "management": {
-                "session_id": session_id,
-                "session_name": "Lifecycle",
-                "state": "created"
-            }
-        }),
-        parent_id: None,
-        messages: vec![serde_json::json!({
-            "id": format!("m-{session_id}"),
-            "role": "assistant",
-            "created_at": 1,
-            "updated_at": 1
-        })],
-        todos: vec![],
-    }
-}
-
-fn running_upsert_request(
-    session_id: &str,
-    workspace: &str,
-    content: &str,
-) -> UpsertSessionRequest {
-    UpsertSessionRequest {
-        session: serde_json::json!({
-            "id": session_id,
-            "name": "Running Before Crash",
-            "directory": workspace,
-            "created_at": 1,
-            "updated_at": 2,
-            "status": "idle",
-            "management": {
-                "session_id": session_id,
-                "session_name": "Running Before Crash",
-                "state": "running"
-            }
-        }),
-        parent_id: None,
-        messages: vec![serde_json::json!({
-            "id": format!("m-{session_id}"),
-            "role": "assistant",
-            "created_at": 1,
-            "updated_at": 1,
-            "content": content
-        })],
-        todos: vec![],
-    }
 }
 
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> Result<()> {

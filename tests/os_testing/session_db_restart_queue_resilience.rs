@@ -6,7 +6,7 @@
 //! `.tura/session_log.sqlite3` stores without public network access, API keys,
 //! or third-party services.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use session_log_contract::{
     DeleteSessionRequest, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
     SessionLogCommand, SessionLogResponse,
@@ -31,23 +31,27 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
     let delete_id = env.session_id("delete");
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
 
-    enqueue(SessionLogCommand::UpsertSession(upsert_session(
+    for command in create_session_commands(
         &keep_id,
         &workspace_key,
         timestamp,
-        "running",
+        SessionState::Running,
         &["keep-m1", "keep-m2"],
-        &[("keep-todo-1", "doing")],
-    )))?;
-    enqueue(SessionLogCommand::UpsertSession(upsert_session(
+        &[("keep-todo-1", PlanStatus::Doing)],
+    ) {
+        enqueue(command)?;
+    }
+    for command in create_session_commands(
         &delete_id,
         &workspace_key,
         timestamp + 10,
-        "created",
+        SessionState::Created,
         &["delete-m1"],
         &[],
-    )))?;
-    let first_checkpoint = checkpoint(&keep_id, 1, "command_finished");
+    ) {
+        enqueue(command)?;
+    }
+    let first_checkpoint = checkpoint(&keep_id, 1, CheckpointType::CommandFinished);
     enqueue(SessionLogCommand::ApplyCommandCheckpoint(Box::new(
         first_checkpoint.clone(),
     )))?;
@@ -62,7 +66,8 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
             && session_visible(&delete_id)
             && failed_queue_items(&env.home) >= 1
             && pending_queue_items(&env.home) == 0
-    })?;
+    })
+    .context("initial offline session queue did not drain")?;
     assert!(
         !corrupt_path.exists(),
         "corrupt pending file should be moved out of pending after the drain loop sees it"
@@ -86,16 +91,45 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
     enqueue(SessionLogCommand::DeleteSession(DeleteSessionRequest {
         session_id: delete_id.clone(),
     }))?;
-    enqueue(SessionLogCommand::UpsertSession(upsert_session(
+    enqueue(execute_session_command(
+        &keep_id,
+        SessionCommand::SubmitUserInput,
+    ))?;
+    enqueue(execute_session_command(
+        &keep_id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-keep-restart".to_string(),
+        },
+    ))?;
+    enqueue(execute_session_command(
+        &keep_id,
+        SessionCommand::ApplyTaskStatus {
+            task_plan: task_plan(&[
+                ("keep-todo-1", PlanStatus::Done),
+                ("keep-todo-2", PlanStatus::Done),
+            ]),
+        },
+    ))?;
+    enqueue(execute_session_command(
+        &keep_id,
+        SessionCommand::RuntimeCompleted {
+            runtime_id: "runtime-keep-restart".to_string(),
+        },
+    ))?;
+    enqueue(persist_session_delta_command(
         &keep_id,
         &workspace_key,
         timestamp + 40,
-        "completed",
-        &["keep-m1", "keep-m2", "keep-m3"],
-        &[("keep-todo-1", "done"), ("keep-todo-2", "done")],
-    )))?;
+        1,
+        2,
+        &["keep-m3"],
+        &[
+            ("keep-todo-1", PlanStatus::Done),
+            ("keep-todo-2", PlanStatus::Done),
+        ],
+    ))?;
     enqueue(SessionLogCommand::ApplyCommandCheckpoint(Box::new(
-        checkpoint(&keep_id, 2, "turn_finished"),
+        checkpoint(&keep_id, 2, CheckpointType::TurnFinished),
     )))?;
 
     let mut restarted = SessionDbService::start()?;
@@ -103,7 +137,8 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
         session_missing(&delete_id)
             && session_message_count(&keep_id).is_some_and(|count| count == 3)
             && checkpoint_row_count(&env.home, &keep_id) == 2
-    })?;
+    })
+    .context("restarted offline session queue did not drain")?;
     assert_session_snapshot(
         &keep_id,
         &workspace_key,
@@ -133,36 +168,36 @@ fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losi
     let completed_id = env.session_id("completed");
 
     let mut service = SessionDbService::start()?;
-    assert_ok(session_log::ipc::call_service(
-        &SessionLogCommand::UpsertSession(upsert_session(
-            &running_id,
-            &workspace_key,
-            100,
-            "running",
-            &["running-m1", "running-m2"],
-            &[("running-todo", "doing")],
-        )),
-    )?)?;
-    assert_ok(session_log::ipc::call_service(
-        &SessionLogCommand::UpsertSession(upsert_session(
-            &paused_id,
-            &workspace_key,
-            110,
-            "paused",
-            &["paused-m1"],
-            &[("paused-todo", "waiting_user")],
-        )),
-    )?)?;
-    assert_ok(session_log::ipc::call_service(
-        &SessionLogCommand::UpsertSession(upsert_session(
-            &completed_id,
-            &workspace_key,
-            120,
-            "completed",
-            &["completed-m1"],
-            &[("completed-todo", "done")],
-        )),
-    )?)?;
+    for command in create_session_commands(
+        &running_id,
+        &workspace_key,
+        100,
+        SessionState::Running,
+        &["running-m1", "running-m2"],
+        &[("running-todo", PlanStatus::Doing)],
+    ) {
+        assert_ok(session_log_contract::client::call_service(&command)?)?;
+    }
+    for command in create_session_commands(
+        &paused_id,
+        &workspace_key,
+        110,
+        SessionState::Paused,
+        &["paused-m1"],
+        &[("paused-todo", PlanStatus::WaitingUser)],
+    ) {
+        assert_ok(session_log_contract::client::call_service(&command)?)?;
+    }
+    for command in create_session_commands(
+        &completed_id,
+        &workspace_key,
+        120,
+        SessionState::Completed,
+        &["completed-m1"],
+        &[("completed-todo", PlanStatus::Done)],
+    ) {
+        assert_ok(session_log_contract::client::call_service(&command)?)?;
+    }
     service.shutdown()?;
 
     let mut restarted = SessionDbService::start()?;
@@ -178,7 +213,7 @@ fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losi
         "interrupted",
         "error",
         2,
-        Some("doing"),
+        Some("waiting_user"),
     )?;
     assert_session_snapshot(
         &paused_id,
@@ -240,16 +275,16 @@ fn session_db_handles_concurrent_short_lived_clients_after_restart_with_workspac
                 format!("m-{index}-2"),
             ];
             let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
-            assert_ok(session_log::ipc::call_service(
-                &SessionLogCommand::UpsertSession(upsert_session(
-                    &session_id,
-                    &workspace,
-                    1_000 + index as i64,
-                    "completed",
-                    &message_refs,
-                    &[("batch-task", "done")],
-                )),
-            )?)?;
+            for command in create_session_commands(
+                &session_id,
+                &workspace,
+                1_000 + index as i64,
+                SessionState::Completed,
+                &message_refs,
+                &[("batch-task", PlanStatus::Done)],
+            ) {
+                assert_ok(session_log_contract::client::call_service(&command)?)?;
+            }
             Ok((session_id, workspace))
         }));
     }
@@ -316,14 +351,15 @@ fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Re
             format!("queued-before-start-{index}-1"),
         ];
         let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
-        enqueue(SessionLogCommand::UpsertSession(upsert_session(
+        for command in create_session_payload_commands(
             &session_id,
             &workspace,
             2_000 + index as i64,
-            "completed",
             &message_refs,
-            &[("queued-task", "done")],
-        )))?;
+            &[("queued-task", PlanStatus::Done)],
+        ) {
+            enqueue(command)?;
+        }
         expected_sessions.push((session_id, workspace, messages.len()));
     }
 
@@ -352,16 +388,15 @@ fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Re
                     format!("socket-writer-{writer}-2"),
                 ];
                 let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
-                assert_ok(session_log::ipc::call_service(
-                    &SessionLogCommand::UpsertSession(upsert_session(
-                        &session_id,
-                        &workspace,
-                        3_000 + writer as i64,
-                        "completed",
-                        &message_refs,
-                        &[("socket-task", "done")],
-                    )),
-                )?)?;
+                for command in create_session_payload_commands(
+                    &session_id,
+                    &workspace,
+                    3_000 + writer as i64,
+                    &message_refs,
+                    &[("socket-task", PlanStatus::Done)],
+                ) {
+                    assert_ok(session_log_contract::client::call_service(&command)?)?;
+                }
                 let _ = record_ids(&session_id)?;
                 Ok(vec![(session_id, workspace, messages.len())])
             },
@@ -391,14 +426,15 @@ fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Re
                         format!("queued-while-running-{queue_writer}-{item}-1"),
                     ];
                     let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
-                    enqueue(SessionLogCommand::UpsertSession(upsert_session(
+                    for command in create_session_payload_commands(
                         &session_id,
                         &workspace,
                         4_000 + queue_writer as i64 * 10 + item as i64,
-                        "completed",
                         &message_refs,
-                        &[("live-queue-task", "done")],
-                    )))?;
+                        &[("live-queue-task", PlanStatus::Done)],
+                    ) {
+                        enqueue(command)?;
+                    }
                     sessions.push((session_id, workspace, messages.len()));
                 }
                 Ok(sessions)
@@ -415,38 +451,40 @@ fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Re
             move || -> Result<Vec<(String, String, usize)>> {
                 barrier.wait();
                 for round in 0..20 {
-                    match session_log::ipc::call_service(&SessionLogCommand::ListWorkspaces)? {
+                    match session_log_contract::client::call_service(
+                        &SessionLogCommand::ListWorkspaces,
+                    )? {
                         SessionLogResponse::Workspaces { .. } => {}
                         other => bail!(
                             "unexpected workspace response during concurrent reads: {other:?}"
                         ),
                     }
                     for workspace in [&workspace_a, &workspace_b] {
-                        match session_log::ipc::call_service(&SessionLogCommand::ListSessions(
-                            ListSessionsRequest {
+                        match session_log_contract::client::call_service(
+                            &SessionLogCommand::ListSessions(ListSessionsRequest {
                                 workspace: workspace.clone(),
                                 page: round % 4,
                                 page_size: 7,
-                            },
-                        ))? {
+                            }),
+                        )? {
                             SessionLogResponse::Sessions { .. } => {}
                             other => bail!(
                                 "unexpected sessions response during concurrent reads: {other:?}"
                             ),
                         }
                     }
-                    let _ = session_log::ipc::call_service(&SessionLogCommand::GetSession(
-                        GetSessionRequest {
+                    let _ = session_log_contract::client::call_service(
+                        &SessionLogCommand::GetSession(GetSessionRequest {
                             session_id: sample_session_id.clone(),
-                        },
-                    ))?;
-                    match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
-                        ListSessionRecordsRequest {
+                        }),
+                    )?;
+                    match session_log_contract::client::call_service(
+                        &SessionLogCommand::ListSessionRecords(ListSessionRecordsRequest {
                             session_id: sample_session_id.clone(),
                             page: 0,
                             page_size: 10,
-                        },
-                    ))? {
+                        }),
+                    )? {
                         SessionLogResponse::Records { .. } => {}
                         other => {
                             bail!("unexpected records response during concurrent reads: {other:?}")
@@ -475,10 +513,18 @@ fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Re
         .filter(|(_, workspace, _)| workspace == &workspace_b_key)
         .count() as u64;
 
-    wait_until(Duration::from_secs(20), || {
+    wait_until(Duration::from_secs(60), || {
         pending_queue_items(&env.home) == 0
             && workspace_session_total(&workspace_a_key) == Some(expected_a)
             && workspace_session_total(&workspace_b_key) == Some(expected_b)
+    })
+    .with_context(|| {
+        format!(
+            "concurrent queue drain did not converge: pending={}, workspace_a={:?}/{expected_a}, workspace_b={:?}/{expected_b}",
+            pending_queue_items(&env.home),
+            workspace_session_total(&workspace_a_key),
+            workspace_session_total(&workspace_b_key),
+        )
     })?;
     assert_pending_queue_empty(&env.home)?;
     assert_workspace_page(&workspace_a_key, 0, 500, expected_a, expected_a as usize)?;

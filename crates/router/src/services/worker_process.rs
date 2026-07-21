@@ -13,9 +13,7 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 
-use crate::IpcNotificationSender;
-use router_contract::IpcNotification;
-use runtime_contract::{CallContext, GatewayCallbackFrame, WorkerEnvelope, GATEWAY_CALLBACK_KIND};
+use runtime_contract::{CallContext, WorkerEnvelope};
 
 use super::process_scope::{attach_child_scope, configure_scoped_spawn, WorkerProcessScope};
 
@@ -157,8 +155,6 @@ impl WorkerProcess {
                 &mut reader,
                 Some(WORKER_HEALTH_TIMEOUT),
                 "health check",
-                None,
-                None,
             )
             .await?;
             if line.trim().is_empty() {
@@ -259,19 +255,10 @@ impl WorkerProcess {
         }
     }
 
-    #[allow(dead_code)]
     pub async fn invoke(&self, ctx: CallContext) -> Result<Value> {
-        self.invoke_with_notifications(ctx, None).await
-    }
-
-    pub async fn invoke_with_notifications(
-        &self,
-        ctx: CallContext,
-        notifications: Option<IpcNotificationSender>,
-    ) -> Result<Value> {
         match self.mode {
-            WorkerMode::Persistent => self.invoke_persistent(ctx, notifications).await,
-            WorkerMode::OneShot => self.invoke_one_shot(ctx, notifications).await,
+            WorkerMode::Persistent => self.invoke_persistent(ctx).await,
+            WorkerMode::OneShot => self.invoke_one_shot(ctx).await,
         }
     }
 
@@ -297,11 +284,7 @@ impl WorkerProcess {
         self.stdout.lock().await.take();
     }
 
-    async fn invoke_persistent(
-        &self,
-        ctx: CallContext,
-        notifications: Option<IpcNotificationSender>,
-    ) -> Result<Value> {
+    async fn invoke_persistent(&self, ctx: CallContext) -> Result<Value> {
         let _round_trip = self.round_trip.lock().await;
         let envelope = WorkerEnvelope {
             kind: "call".to_string(),
@@ -348,14 +331,7 @@ impl WorkerProcess {
             let stdout = stdout_guard
                 .as_mut()
                 .ok_or_else(|| anyhow!("persistent worker stdout unavailable"))?;
-            read_worker_json_response_line(
-                stdout,
-                None,
-                "invocation",
-                Some(ctx.request_id.as_str()),
-                notifications.as_ref(),
-            )
-            .await
+            read_worker_json_response_line(stdout, None, "invocation").await
         };
         let response_line = match response_line {
             Ok(line) => line,
@@ -407,11 +383,7 @@ impl WorkerProcess {
         }
     }
 
-    async fn invoke_one_shot(
-        &self,
-        ctx: CallContext,
-        notifications: Option<IpcNotificationSender>,
-    ) -> Result<Value> {
+    async fn invoke_one_shot(&self, ctx: CallContext) -> Result<Value> {
         self.one_shot_cancelled.store(false, Ordering::SeqCst);
         let mut command = Command::new(&self.executable_path);
         command
@@ -454,10 +426,8 @@ impl WorkerProcess {
             .take()
             .ok_or_else(|| anyhow!("one-shot worker stderr missing"))?;
         let request_id = ctx.request_id.clone();
-        let stdout_notifications = notifications.clone();
-        let stdout_task = tokio::spawn(async move {
-            read_one_shot_worker_stdout(stdout, request_id, stdout_notifications).await
-        });
+        let stdout_task =
+            tokio::spawn(async move { read_one_shot_worker_stdout(stdout, request_id).await });
         let stderr_task = tokio::spawn(async move {
             let mut bytes = Vec::new();
             stderr.read_to_end(&mut bytes).await.map(|_| bytes)
@@ -597,18 +567,13 @@ fn parse_one_shot_worker_stdout(stdout: &str) -> Result<Value> {
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .find_map(|line| {
-            let value = serde_json::from_str::<Value>(line).ok()?;
-            (value.get("kind").and_then(Value::as_str) != Some(GATEWAY_CALLBACK_KIND))
-                .then_some(value)
-        })
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
         .ok_or_else(|| anyhow!("one-shot worker returned no json response"))
 }
 
 async fn read_one_shot_worker_stdout(
     stdout: ChildStdout,
     request_id: String,
-    notifications: Option<IpcNotificationSender>,
 ) -> Result<(String, Option<Value>)> {
     let mut reader = BufReader::new(stdout);
     let mut raw = String::new();
@@ -626,13 +591,6 @@ async fn read_one_shot_worker_stdout(
         }
         match serde_json::from_str::<Value>(trimmed) {
             Ok(value) => {
-                if emit_worker_notification(
-                    &value,
-                    Some(request_id.as_str()),
-                    notifications.as_ref(),
-                ) {
-                    continue;
-                }
                 if parsed_response.is_none() {
                     parsed_response = Some(value);
                 } else {
@@ -676,8 +634,6 @@ async fn read_worker_json_response_line<R>(
     reader: &mut R,
     duration: Option<Duration>,
     operation: &str,
-    request_id: Option<&str>,
-    notifications: Option<&IpcNotificationSender>,
 ) -> Result<String>
 where
     R: AsyncBufRead + Unpin,
@@ -718,9 +674,7 @@ where
         }
         let trimmed = line.trim();
         if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-            if emit_worker_notification(&value, request_id, notifications) {
-                continue;
-            }
+            let _ = value;
             return Ok(line);
         }
         if trimmed.starts_with('{') || trimmed.starts_with('[') {
@@ -739,55 +693,6 @@ where
             ));
         }
     }
-}
-
-fn emit_worker_notification(
-    value: &Value,
-    request_id: Option<&str>,
-    notifications: Option<&IpcNotificationSender>,
-) -> bool {
-    let Some(kind) = value.get("kind").and_then(Value::as_str) else {
-        return false;
-    };
-    if kind != GATEWAY_CALLBACK_KIND {
-        return false;
-    }
-    let frame = match serde_json::from_value::<GatewayCallbackFrame>(value.clone()) {
-        Ok(frame) => frame,
-        Err(error) => {
-            warn!(error = %error, "dropping malformed worker gateway callback");
-            return true;
-        }
-    };
-    let Some(request_id) = request_id.filter(|value| !value.trim().is_empty()) else {
-        warn!(
-            method = frame.method,
-            "dropping worker gateway callback without request id"
-        );
-        return true;
-    };
-    let Some(notifications) = notifications else {
-        warn!(
-            request_id,
-            method = frame.method,
-            "dropping worker gateway callback without notification sink"
-        );
-        return true;
-    };
-    if let Err(error) = notifications.send(IpcNotification::new(
-        request_id.to_string(),
-        frame.kind,
-        frame.method.clone(),
-        serde_json::to_value(frame.payload).unwrap_or(Value::Null),
-    )) {
-        warn!(
-            request_id,
-            method = frame.method,
-            error = %error,
-            "failed to forward worker gateway callback"
-        );
-    }
-    true
 }
 
 fn configure_worker_stderr(
@@ -847,7 +752,7 @@ fn worker_stderr_log_path(
         sanitize_log_component(service_name),
         sanitize_log_component(worker_id)
     );
-    Some(session_log::path::default_db_dir().join(name))
+    Some(session_log_contract::client::default_db_dir().join(name))
 }
 
 fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -1053,7 +958,7 @@ mod tests {
             .expect("write mock worker stdout");
         drop(writer);
 
-        let line = super::read_worker_json_response_line(&mut reader, None, "test", None, None)
+        let line = super::read_worker_json_response_line(&mut reader, None, "test")
             .await
             .expect("json line should be found without an invocation deadline");
 
@@ -1074,46 +979,11 @@ mod tests {
             &mut reader,
             Some(std::time::Duration::from_secs(1)),
             "test",
-            None,
-            None,
         )
         .await
         .expect("json line should be found after noise");
 
         assert_eq!(line.trim(), r#"{"ok":true,"result":42}"#);
-    }
-
-    #[tokio::test]
-    async fn worker_json_response_reader_forwards_gateway_callback_before_response() {
-        let (mut writer, reader) = tokio::io::duplex(1024);
-        let mut reader = tokio::io::BufReader::new(reader);
-        writer
-            .write_all(
-                br#"{"kind":"gateway.callback","method":"session.agent_stream","payload":{"session_id":"s1","body":{"delta":"hi"}}}
-{"ok":true,"result":42}
-"#,
-            )
-            .await
-            .expect("write mock worker stdout");
-        drop(writer);
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let line = super::read_worker_json_response_line(
-            &mut reader,
-            Some(std::time::Duration::from_secs(1)),
-            "test",
-            Some("request-1"),
-            Some(&tx),
-        )
-        .await
-        .expect("json line should be found after callback");
-
-        assert_eq!(line.trim(), r#"{"ok":true,"result":42}"#);
-        let notification = rx.try_recv().expect("callback should be forwarded");
-        assert_eq!(notification.request_id, "request-1");
-        assert_eq!(notification.kind, "gateway.callback");
-        assert_eq!(notification.method, "session.agent_stream");
-        assert_eq!(notification.payload["session_id"], "s1");
     }
 
     #[tokio::test]
@@ -1130,8 +1000,6 @@ mod tests {
             &mut reader,
             Some(std::time::Duration::from_secs(1)),
             "test",
-            None,
-            None,
         )
         .await
         .expect("json line should be found after blank lines");
@@ -1149,8 +1017,6 @@ mod tests {
             &mut reader,
             Some(std::time::Duration::from_secs(1)),
             "test",
-            None,
-            None,
         )
         .await
         .expect_err("eof before json should reject the worker protocol");
@@ -1177,8 +1043,6 @@ mod tests {
             &mut reader,
             Some(std::time::Duration::from_secs(1)),
             "test",
-            None,
-            None,
         )
         .await
         .expect_err("excess stdout noise should reject the worker protocol");

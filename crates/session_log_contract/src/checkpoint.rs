@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckpointType {
     TurnStarted,
@@ -23,10 +23,36 @@ pub enum CheckpointType {
     TurnInterrupted,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl CheckpointType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TurnStarted => "turn_started",
+            Self::ProviderCallStarted => "provider_call_started",
+            Self::CommandRunStarted => "command_run_started",
+            Self::CommandReady => "command_ready",
+            Self::CommandStarted => "command_started",
+            Self::CommandFinished => "command_finished",
+            Self::CommandFailed => "command_failed",
+            Self::CommandRunFinished => "command_run_finished",
+            Self::ProviderCallFinished => "provider_call_finished",
+            Self::TurnFinished => "turn_finished",
+            Self::TurnFailed => "turn_failed",
+            Self::TurnInterrupted => "turn_interrupted",
+        }
+    }
+}
+
+impl std::fmt::Display for CheckpointType {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommandCheckpoint {
     pub session_id: String,
-    pub turn_id: String,
+    pub runtime_id: String,
     pub runtime_worker_id: Option<String>,
     pub provider_call_id: Option<String>,
     pub command_run_id: Option<String>,
@@ -35,7 +61,7 @@ pub struct CommandCheckpoint {
     pub event_seq: Option<i64>,
     pub command_type: Option<String>,
     pub command_line: Option<String>,
-    pub status: String,
+    pub checkpoint_type: CheckpointType,
     pub output_summary: Option<String>,
     pub changes: Value,
     pub started_at: Option<String>,
@@ -47,14 +73,14 @@ impl CommandCheckpoint {
         format!(
             "{}:{}:{}:{}:{}:{}:{}",
             self.session_id,
-            self.turn_id,
+            self.runtime_id,
             self.runtime_worker_id.as_deref().unwrap_or("runtime"),
             self.command_run_id.as_deref().unwrap_or("command_run"),
             self.command_id.as_deref().unwrap_or("none"),
             self.event_seq
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "none".to_string()),
-            self.status
+            self.checkpoint_type.as_str()
         )
     }
 }
@@ -67,7 +93,7 @@ mod tests {
     fn checkpoint() -> CommandCheckpoint {
         CommandCheckpoint {
             session_id: "session-1".to_string(),
-            turn_id: "turn-1".to_string(),
+            runtime_id: "runtime-1".to_string(),
             runtime_worker_id: Some("worker-1".to_string()),
             provider_call_id: Some("provider-1".to_string()),
             command_run_id: Some("run-1".to_string()),
@@ -75,7 +101,7 @@ mod tests {
             event_seq: Some(7),
             command_type: Some("shell_command".to_string()),
             command_line: Some("echo ok".to_string()),
-            status: "command_finished".to_string(),
+            checkpoint_type: CheckpointType::CommandFinished,
             output_summary: Some("ok".to_string()),
             changes: json!({ "files": [] }),
             started_at: Some("2026-06-11T00:00:00Z".to_string()),
@@ -123,7 +149,7 @@ mod tests {
 
         assert_eq!(
             checkpoint.idempotency_key(),
-            "session-1:turn-1:worker-1:run-1:cmd-1:7:command_finished"
+            "session-1:runtime-1:worker-1:run-1:cmd-1:7:command_finished"
         );
     }
 
@@ -134,11 +160,11 @@ mod tests {
         checkpoint.command_run_id = None;
         checkpoint.command_id = None;
         checkpoint.event_seq = None;
-        checkpoint.status = "turn_interrupted".to_string();
+        checkpoint.checkpoint_type = CheckpointType::TurnInterrupted;
 
         assert_eq!(
             checkpoint.idempotency_key(),
-            "session-1:turn-1:runtime:command_run:none:none:turn_interrupted"
+            "session-1:runtime-1:runtime:command_run:none:none:turn_interrupted"
         );
     }
 

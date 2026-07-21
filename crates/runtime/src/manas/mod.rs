@@ -13,10 +13,10 @@ pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(()
 
 pub(crate) use constants::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
 pub(crate) use final_response::{user_visible_runtime_output_text, user_visible_runtime_text};
-pub use process::{process_manas_internal, ManasInput, ManasResult};
+pub(crate) use process::{process_manas_internal, ManasInput};
 
 use crate::state_machine::agent_management::AgentManagement;
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 
 pub type AgentLoader = fn(&SessionManagement) -> Result<Vec<AgentManagement>, String>;
 
@@ -59,6 +59,9 @@ pub fn run_session(
             session: &mut session.clone(),
             initial_messages: Vec::new(),
             redis_url: "redis://localhost:6379",
+            initial_runtime_id: None,
+            runtime_event_writer: None,
+            session_delta_writer: None,
         },
         overrides,
     )
@@ -67,7 +70,7 @@ pub fn run_session(
 
 pub mod input {
     use crate::state_machine::agent_management::AgentManagement;
-    use crate::state_machine::session_management::SessionManagement;
+    use lifecycle::SessionManagement;
 
     pub struct ManasOrchestrationInput<'a> {
         pub agents: &'a mut [AgentManagement],

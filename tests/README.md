@@ -276,6 +276,10 @@ router, and session_db IPC stress belongs in `tests/os_testing/` instead so it
 runs serially. The performance runner scans `crates/`, `commands/`, `agents/`,
 and `personas/`; these tests are excluded from default `cargo test`.
 
+Run performance tests only in a controlled, repeatable environment with fixed
+hardware and an explicit baseline. GitHub-hosted runners do not execute these
+tests because shared runner load makes timing results unsuitable as a gate.
+
 ```powershell
 .\xtask\scripts\run-backend-performance-tests.ps1 -List
 .\xtask\scripts\run-backend-performance-tests.ps1 -Crate session_log

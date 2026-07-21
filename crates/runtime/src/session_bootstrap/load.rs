@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::session::activate_session_with_directory;
-use crate::state_machine::session_management::{SessionInput, SessionManagement};
+use lifecycle::{SessionInput, SessionManagement};
 
 pub(crate) fn create_session_with_topic(
     input: SessionInput,

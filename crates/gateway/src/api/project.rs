@@ -157,7 +157,7 @@ fn list_projects_with_default_workspace() -> Vec<Project> {
 
 fn prepare_workspace_directory(directory: &Path) -> Result<(), (StatusCode, String)> {
     fs::create_dir_all(directory).map_err(internal_error)?;
-    runtime::workspace_git::ensure_workspace_git_repo(directory).map_err(|error| {
+    tura_path::workspace_git::ensure_workspace_git_repo(directory).map_err(|error| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to prepare workspace git repository: {error}"),

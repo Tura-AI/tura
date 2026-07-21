@@ -25,10 +25,11 @@ type ProviderSettingsActionsOptions = {
   setState: Setter<AppState>;
   rootClient: Accessor<GatewayClient>;
   directoryClient: Accessor<GatewayClient>;
+  saveRuntimeSettingsLocally?: boolean;
 };
 
 export function useProviderSettingsActions(options: ProviderSettingsActionsOptions) {
-  const { state, setState, rootClient, directoryClient } = options;
+  const { state, setState, rootClient, directoryClient, saveRuntimeSettingsLocally } = options;
 
   async function refreshProviderSurface(providerId?: string) {
     const client = rootClient();
@@ -98,6 +99,25 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
         state().themeMode,
         state().cornerRadius,
       );
+      if (saveRuntimeSettingsLocally) {
+        setState((previous) => {
+          const workspaceConfig = { ...previous.workspaceConfig, ...payload };
+          const config = previous.config
+            ? { ...previous.config, ...configPayload }
+            : previous.config;
+          setLanguage(stringField(workspaceConfig, "language"));
+          return {
+            ...previous,
+            config,
+            configDraft: config ? configToDraft(config) : previous.configDraft,
+            workspaceConfig,
+            workspaceConfigDraft: recordToDraft(workspaceConfig),
+            settingsSaving: false,
+            settingsNotice: t("saved"),
+          };
+        });
+        return;
+      }
       const [workspaceConfig, config] = await Promise.all([
         directoryClient().patchWorkspaceConfig(payload),
         rootClient().patchConfig(configPayload),

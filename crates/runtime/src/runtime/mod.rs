@@ -8,8 +8,8 @@ pub use runtime_receive::runtime_receive;
 
 pub mod types {
     pub use crate::state_machine::agent_management::AgentId;
-    pub use crate::state_machine::runtime_management::{
-        RuntimeError, RuntimeManagement, RuntimeProviderConfig, ToolCallRecord, UsageReport,
+    pub use lifecycle::{
+        RuntimeAggregate, RuntimeError, RuntimeProviderConfig, ToolCallRecord, UsageReport,
     };
 
     use chrono::{DateTime, Utc};

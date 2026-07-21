@@ -38,15 +38,12 @@ tower-http.workspace = true
 
 # Internal
 lifecycle.workspace = true
-runtime = { workspace = true }
 provider = { workspace = true }
 tura_path = { workspace = true }
 agents = { workspace = true }
 personas = { workspace = true }
-router = { workspace = true }
 router_contract.workspace = true
 runtime_contract.workspace = true
-session_log = { workspace = true }
 session_log_contract.workspace = true
 
 [[bin]]
@@ -59,6 +56,7 @@ path = "src/bin/gateway.rs"
 
 
 [dev-dependencies]
+session_log = { workspace = true }
 tempfile.workspace = true
 
 [features]
@@ -95,11 +93,6 @@ required-features = ["os-tests"]
 [[test]]
 name = "session_shell_path_flow"
 path = "tests/business/session_shell_path_flow.rs"
-required-features = ["business-tests"]
-
-[[test]]
-name = "session_messages_flow"
-path = "tests/business/session_messages_flow.rs"
 required-features = ["business-tests"]
 
 [[test]]

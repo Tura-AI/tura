@@ -2,12 +2,14 @@
 //! the next router for the same home must reuse that live owner instead of
 //! spawning or killing a replacement.
 
+#[path = "../support/typed_session.rs"]
+mod typed_session;
+
 use anyhow::{anyhow, bail, Context, Result};
+use lifecycle::TaskPlan;
 use serde_json::{json, Value};
-use session_log::file_queue;
-use session_log_contract::{
-    GetSessionRequest, SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
-};
+use session_log_contract::client::enqueue_command;
+use session_log_contract::{GetSessionRequest, SessionLogCommand, SessionLogResponse};
 use std::{
     ffi::OsString,
     io::{BufRead, BufReader, Write},
@@ -48,7 +50,7 @@ fn router_crash_leaves_session_db_alive_and_next_router_adopts_it() -> Result<()
         wait_for_router_addr(&home, Duration::from_secs(30)).context("first router startup")?;
     wait_until(
         Duration::from_secs(30),
-        session_log::ipc::service_is_running,
+        session_log_contract::client::service_is_running,
     )
     .context("session_db did not start under first router")?;
     let first_service_addr = read_endpoint_addr(&service_addr_path(&home))?;
@@ -64,29 +66,32 @@ fn router_crash_leaves_session_db_alive_and_next_router_adopts_it() -> Result<()
     wait_for_router_unreachable(&first_router_addr, Duration::from_secs(10))
         .context("killed router socket should stop accepting")?;
     assert!(
-        session_log::ipc::service_is_running(),
+        session_log_contract::client::service_is_running(),
         "session_db must remain alive after router crash"
     );
 
     let queued_while_router_dead = "queued-while-router-dead";
-    file_queue::enqueue_command(&SessionLogCommand::UpsertSession(upsert_request(
-        queued_while_router_dead,
-        &workspace_key,
-        10,
-    )))?;
+    enqueue_command(&SessionLogCommand::CreateSession(
+        typed_session::create_request(
+            queued_while_router_dead,
+            &workspace_key,
+            "Router Adoption queued-while-router-dead",
+            10,
+            TaskPlan::default(),
+        ),
+    ))?;
     wait_until(Duration::from_secs(10), || {
         session_visible(queued_while_router_dead).unwrap_or(false)
     })
     .context("live session_db did not drain queued write after router crash")?;
 
     let direct_while_router_dead = "direct-while-router-dead";
-    assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(upsert_request(
-            direct_while_router_dead,
-            &workspace_key,
-            20,
-        )))?,
-        "direct write while router is dead",
+    typed_session::create_via_service(
+        direct_while_router_dead,
+        &workspace_key,
+        "Router Adoption direct-while-router-dead",
+        20,
+        TaskPlan::default(),
     )?;
 
     let mut second_router = RouterGuard::start(&repo, &home, &workspace)?;
@@ -118,7 +123,7 @@ fn router_crash_leaves_session_db_alive_and_next_router_adopts_it() -> Result<()
     assert_eq!(shutdown["payload"]["status"], "shutting_down");
     second_router.wait(Duration::from_secs(10))?;
     wait_until(Duration::from_secs(10), || {
-        !session_log::ipc::service_is_running() && !service_addr_path(&home).exists()
+        !session_log_contract::client::service_is_running() && !service_addr_path(&home).exists()
     })
     .context("adopted session_db did not stop during router shutdown")?;
     wait_for_missing(&router_addr_path(&home), Duration::from_secs(10))?;
@@ -126,49 +131,15 @@ fn router_crash_leaves_session_db_alive_and_next_router_adopts_it() -> Result<()
     Ok(())
 }
 
-fn upsert_request(session_id: &str, workspace: &str, tick: i64) -> UpsertSessionRequest {
-    UpsertSessionRequest {
-        session: json!({
-            "id": session_id,
-            "name": format!("Router Adoption {session_id}"),
-            "directory": workspace,
-            "created_at": tick,
-            "updated_at": tick,
-            "status": "idle",
-            "management": {
-                "session_id": session_id,
-                "session_name": format!("Router Adoption {session_id}"),
-                "state": "created",
-                "current_turn": 0
-            }
-        }),
-        parent_id: None,
-        messages: vec![json!({
-            "id": format!("message-{session_id}"),
-            "role": "assistant",
-            "created_at": tick,
-            "updated_at": tick,
-            "content": format!("content for {session_id}")
-        })],
-        todos: Vec::new(),
-    }
-}
-
 fn session_visible(session_id: &str) -> Result<bool> {
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id: session_id.to_string(),
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))? {
         SessionLogResponse::Session { session } => Ok(session.is_some()),
         SessionLogResponse::Error { error } => bail!("get session returned error: {error}"),
         other => bail!("unexpected get session response: {other:?}"),
-    }
-}
-
-fn assert_ok(response: SessionLogResponse, context: &str) -> Result<()> {
-    match response {
-        SessionLogResponse::Ok => Ok(()),
-        SessionLogResponse::Error { error } => bail!("{context} returned error: {error}"),
-        other => bail!("{context} returned unexpected response: {other:?}"),
     }
 }
 

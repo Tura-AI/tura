@@ -6,18 +6,16 @@ use crate::app::AppState;
 use crate::process_info::current_process_start_time;
 use crate::services;
 use crate::shutdown::mark_router_shutting_down;
-use crate::IpcNotificationSender;
-use router_contract::{IpcRequest, IpcResponse, METHOD_ENQUEUE_TURN, METHOD_HEALTH_CHECK};
+use router_contract::{
+    ExecuteCommandRequest, GetToolConfigResponse, GetToolResponse, IpcRequest, IpcResponse,
+    ListCommandsRequest, ListCommandsResponse, ListToolsResponse, PatchToolConfigRequest,
+    PatchToolRequest, ToolRegistryRequest, ToolRequest, METHOD_ENQUEUE_TURN,
+    METHOD_EXECUTE_COMMAND, METHOD_GET_TOOL, METHOD_GET_TOOL_CONFIG, METHOD_HEALTH_CHECK,
+    METHOD_LIST_COMMANDS, METHOD_LIST_TOOLS, METHOD_PATCH_TOOL, METHOD_PATCH_TOOL_CONFIG,
+};
+use tura_router::registry::ToolRegistry;
 
 pub(crate) async fn handle_ipc_request(state: &AppState, request: IpcRequest) -> IpcResponse {
-    handle_ipc_request_with_notifications(state, request, None).await
-}
-
-pub(crate) async fn handle_ipc_request_with_notifications(
-    state: &AppState,
-    request: IpcRequest,
-    notifications: Option<IpcNotificationSender>,
-) -> IpcResponse {
     let result = match request.method.as_str() {
         "" | METHOD_HEALTH_CHECK
             if request.kind == "health_check" || request.method == METHOD_HEALTH_CHECK =>
@@ -48,12 +46,7 @@ pub(crate) async fn handle_ipc_request_with_notifications(
         METHOD_ENQUEUE_TURN => {
             state
                 .execution
-                .enqueue_turn_with_notifications(
-                    state,
-                    request.payload,
-                    &request.request_id,
-                    notifications,
-                )
+                .enqueue_turn_request(state, request.payload, &request.request_id)
                 .await
         }
         "execution.command_run" => state.command_run.execute(request.payload).await,
@@ -65,12 +58,21 @@ pub(crate) async fn handle_ipc_request_with_notifications(
             .execution
             .kill_session_workers(state, request.payload)
             .await),
+        METHOD_LIST_COMMANDS
+        | METHOD_EXECUTE_COMMAND
+        | METHOD_LIST_TOOLS
+        | METHOD_GET_TOOL
+        | METHOD_PATCH_TOOL
+        | METHOD_GET_TOOL_CONFIG
+        | METHOD_PATCH_TOOL_CONFIG => {
+            handle_registry_request(state, request.method.as_str(), request.payload)
+        }
         "execution.shutdown" => {
             let stopped = state
                 .manager
                 .stop_workers_with_prefix("runtime_worker:")
                 .await;
-            state.session_db.stop();
+            state.session_db.shutdown();
             let background_process_scopes_terminated = mark_router_shutting_down(state);
             Ok(json!({
                 "status": "shutting_down",
@@ -86,16 +88,86 @@ pub(crate) async fn handle_ipc_request_with_notifications(
     }
 }
 
-pub(crate) fn enqueue_turn_session_id(request: &IpcRequest) -> Option<String> {
+fn handle_registry_request(
+    state: &AppState,
+    method: &str,
+    payload: Value,
+) -> anyhow::Result<Value> {
+    match method {
+        METHOD_LIST_COMMANDS => {
+            let request: ListCommandsRequest = decode_payload(payload)?;
+            encode_payload(ListCommandsResponse {
+                commands: state.registry.commands.list(request.directory.as_deref()),
+            })
+        }
+        METHOD_EXECUTE_COMMAND => {
+            let request: ExecuteCommandRequest = decode_payload(payload)?;
+            encode_payload(state.registry.commands.execute(request))
+        }
+        METHOD_LIST_TOOLS => {
+            let request: ToolRegistryRequest = decode_payload(payload)?;
+            encode_payload(ListToolsResponse {
+                tools: ToolRegistry::discover(request.repo_root).list(),
+            })
+        }
+        METHOD_GET_TOOL => {
+            let request: ToolRequest = decode_payload(payload)?;
+            encode_payload(GetToolResponse {
+                tool: ToolRegistry::discover(request.repo_root).get(&request.tool_id),
+            })
+        }
+        METHOD_PATCH_TOOL => {
+            let request: PatchToolRequest = decode_payload(payload)?;
+            let tool = ToolRegistry::discover(request.repo_root)
+                .patch_tool(&request.tool_id, request.patch)
+                .map_err(anyhow::Error::msg)?;
+            encode_payload(GetToolResponse { tool: Some(tool) })
+        }
+        METHOD_GET_TOOL_CONFIG => {
+            let request: ToolRequest = decode_payload(payload)?;
+            encode_payload(GetToolConfigResponse {
+                config: ToolRegistry::discover(request.repo_root).config(&request.tool_id),
+            })
+        }
+        METHOD_PATCH_TOOL_CONFIG => {
+            let request: PatchToolConfigRequest = decode_payload(payload)?;
+            let config = ToolRegistry::discover(request.repo_root)
+                .patch_config(&request.tool_id, request.values)
+                .map_err(anyhow::Error::msg)?;
+            encode_payload(GetToolConfigResponse {
+                config: Some(config),
+            })
+        }
+        _ => unreachable!("registry method was filtered by the IPC dispatcher"),
+    }
+}
+
+fn decode_payload<T: serde::de::DeserializeOwned>(payload: Value) -> anyhow::Result<T> {
+    serde_json::from_value(payload)
+        .map_err(|error| anyhow::anyhow!("invalid router payload: {error}"))
+}
+
+fn encode_payload(payload: impl serde::Serialize) -> anyhow::Result<Value> {
+    serde_json::to_value(payload).map_err(Into::into)
+}
+
+pub(crate) fn enqueue_turn_identity(request: &IpcRequest) -> Option<(String, String)> {
     if request.method != METHOD_ENQUEUE_TURN {
         return None;
     }
-    request
+    let session_id = request
         .payload
         .get("session_id")
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .map(str::to_string)
+        .map(str::to_string)?;
+    let runtime_id = request
+        .payload
+        .get("runtime_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)?;
+    Some((session_id, runtime_id))
 }
 
 #[cfg(test)]
@@ -135,26 +207,29 @@ mod tests {
             method: "execution.enqueue_turn".to_string(),
             payload: json!({
                 "session_id": "session-1",
-                "turn_id": "turn-1",
+                "runtime_id": "runtime-1",
                 "payload": {}
             }),
             deadline_ms: None,
         };
-        assert_eq!(enqueue_turn_session_id(&turn).as_deref(), Some("session-1"));
+        assert_eq!(
+            enqueue_turn_identity(&turn),
+            Some(("session-1".to_string(), "runtime-1".to_string()))
+        );
 
         let command_run = IpcRequest {
             method: "execution.command_run".to_string(),
             payload: json!({ "session_id": "session-1" }),
             ..turn
         };
-        assert_eq!(enqueue_turn_session_id(&command_run), None);
+        assert_eq!(enqueue_turn_identity(&command_run), None);
 
         let blank_session = IpcRequest {
             method: "execution.enqueue_turn".to_string(),
             payload: json!({ "session_id": "   " }),
             ..command_run
         };
-        assert_eq!(enqueue_turn_session_id(&blank_session), None);
+        assert_eq!(enqueue_turn_identity(&blank_session), None);
     }
 
     #[test]
@@ -162,7 +237,7 @@ mod tests {
         let state = build_state();
         state
             .execution
-            .set_session_state_for_test("kill-session", "running");
+            .set_session_lease_for_test("kill-session", true);
 
         let response = tokio_runtime()?.block_on(handle_ipc_request(
             &state,
@@ -192,6 +267,61 @@ mod tests {
         ));
         assert_eq!(probe.payload["sessions"][0]["status"], "inactive");
         assert_eq!(probe.payload["sessions"][0]["active_turn"], false);
+        Ok(())
+    }
+
+    #[test]
+    fn registry_ipc_decodes_typed_requests_and_preserves_behavior() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let commands = temp.path().join(".tura").join("commands");
+        std::fs::create_dir_all(&commands)?;
+        std::fs::write(commands.join("audit.md"), "Audit {{args}}")?;
+        let state = build_state();
+
+        let list = tokio_runtime()?.block_on(handle_ipc_request(
+            &state,
+            IpcRequest::call(
+                "commands-list",
+                METHOD_LIST_COMMANDS,
+                serde_json::to_value(ListCommandsRequest {
+                    directory: Some(temp.path().display().to_string()),
+                })?,
+            ),
+        ));
+        assert!(list.ok, "command list failed: {:?}", list.error);
+        let list: ListCommandsResponse = serde_json::from_value(list.payload)?;
+        assert!(list.commands.iter().any(|command| command.name == "audit"));
+
+        let execute = tokio_runtime()?.block_on(handle_ipc_request(
+            &state,
+            IpcRequest::call(
+                "commands-execute",
+                METHOD_EXECUTE_COMMAND,
+                serde_json::to_value(ExecuteCommandRequest {
+                    directory: Some(temp.path().display().to_string()),
+                    command: "audit".to_string(),
+                    args: Some(vec!["runtime".to_string()]),
+                })?,
+            ),
+        ));
+        assert!(execute.ok, "command execute failed: {:?}", execute.error);
+        let execute: router_contract::ExecuteCommandResponse =
+            serde_json::from_value(execute.payload)?;
+        assert_eq!(execute.output, "Audit runtime");
+
+        let malformed = tokio_runtime()?.block_on(handle_ipc_request(
+            &state,
+            IpcRequest::call(
+                "commands-malformed",
+                METHOD_LIST_COMMANDS,
+                json!({ "directory": null, "legacy": true }),
+            ),
+        ));
+        assert!(!malformed.ok);
+        assert!(malformed
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("unknown field `legacy`")));
         Ok(())
     }
 }

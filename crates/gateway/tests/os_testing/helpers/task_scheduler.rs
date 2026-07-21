@@ -13,9 +13,7 @@ pub(crate) use gateway::{session_store, SessionStore};
 pub(crate) use lifecycle::SessionCommand;
 pub(crate) use serde_json::json;
 pub(crate) use session_log::SessionLogStore;
-pub(crate) use session_log_contract::{
-    SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
-};
+pub(crate) use session_log_contract::{SessionLogCommand, SessionLogResponse};
 pub(crate) use std::path::Path as StdPath;
 pub(crate) use std::sync::Arc;
 pub(crate) use std::time::{Duration, Instant};
@@ -61,10 +59,10 @@ pub(crate) fn execute_scheduler_command(session_id: &str, command: SessionComman
 }
 
 pub(crate) struct SchedulerTestDb {
-    _guard: std::sync::MutexGuard<'static, ()>,
-    _root: tempfile::TempDir,
-    _env: SchedulerEnvGuard,
     _service: SchedulerServiceThread,
+    _env: SchedulerEnvGuard,
+    _root: tempfile::TempDir,
+    _guard: std::sync::MutexGuard<'static, ()>,
 }
 
 impl SchedulerTestDb {
@@ -78,10 +76,10 @@ impl SchedulerTestDb {
         let env = SchedulerEnvGuard::new(&home);
         let service = SchedulerServiceThread::start().expect("start scheduler test DB");
         Self {
-            _guard: guard,
-            _root: root,
-            _env: env,
             _service: service,
+            _env: env,
+            _root: root,
+            _guard: guard,
         }
     }
 }
@@ -267,34 +265,6 @@ pub(crate) fn assert_no_scheduler_side_effects(
     );
 }
 
-pub(crate) fn upsert_runtime_owned_scheduler_snapshot(
-    store: &SessionStore,
-    session_id: &str,
-    workspace: &StdPath,
-) -> anyhow::Result<()> {
-    let mut info = store
-        .get_session_info(session_id)
-        .unwrap_or_else(|| panic!("session {session_id} should exist before runtime DB upsert"));
-    info.directory = Some(workspace.to_string_lossy().to_string());
-    info.message_count = store.get_messages(session_id).len();
-    let response =
-        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
-            session: serde_json::to_value(info)?,
-            parent_id: None,
-            messages: store
-                .get_messages(session_id)
-                .into_iter()
-                .map(serde_json::to_value)
-                .collect::<Result<Vec<_>, _>>()?,
-            todos: store.get_todos(session_id),
-        }))?;
-    match response {
-        SessionLogResponse::Ok => Ok(()),
-        SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
-        other => anyhow::bail!("unexpected session_log upsert response: {other:?}"),
-    }
-}
-
 pub(crate) struct SchedulerEnvGuard {
     previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
 }
@@ -306,6 +276,7 @@ impl SchedulerEnvGuard {
             "SESSION_LOG_DB_ROOT",
             "TURA_DB_ROOT",
             "TURA_SESSION_DB_PROBE_TIMEOUT_MS",
+            "TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS",
         ];
         let previous = keys
             .iter()
@@ -314,7 +285,8 @@ impl SchedulerEnvGuard {
         std::env::set_var("TURA_HOME", home);
         std::env::remove_var("SESSION_LOG_DB_ROOT");
         std::env::remove_var("TURA_DB_ROOT");
-        std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "20");
+        std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "1000");
+        std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", "5000");
         Self { previous }
     }
 }
@@ -340,7 +312,7 @@ impl SchedulerServiceThread {
         let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
         wait_for_scheduler_condition(
             Duration::from_secs(10),
-            session_log::ipc::service_is_running,
+            session_log_contract::client::service_is_running,
         )?;
         Ok(Self {
             handle: Some(handle),
@@ -398,7 +370,7 @@ impl Drop for SchedulerServiceThread {
 fn request_session_db_shutdown_with_timeout(timeout: Duration) -> anyhow::Result<()> {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let result = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         let _ = sender.send(result);
     });
     match receiver.recv_timeout(timeout) {

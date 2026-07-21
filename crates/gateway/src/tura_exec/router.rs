@@ -14,7 +14,7 @@ use super::output::{
     aggregate_runtime_usage, emit_jsonl, turn_completed_event, write_last_message,
     write_turn_log_stderr,
 };
-use super::session::final_text_from_session_db;
+use super::session::{ensure_cli_session, final_text_from_session_db};
 
 const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
 const ROUTER_HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -30,6 +30,7 @@ pub(crate) fn run_via_router(
     prompt: &str,
 ) -> Result<i32, String> {
     let addr = ensure_router_daemon()?;
+    ensure_cli_session(config, session_id)?;
     let stream = TcpStream::connect(&addr)
         .map_err(|err| format!("failed to connect to router daemon at {addr}: {err}"))?;
     stream.set_read_timeout(Some(Duration::from_secs(900))).ok();
@@ -63,7 +64,7 @@ pub(crate) fn run_via_router(
         "request_id": request_id,
         "kind": "call",
         "method": "execution.enqueue_turn",
-        "payload": { "turn_id": format!("turn-{}", uuid::Uuid::new_v4()), "session_id": session_id, "payload": payload },
+        "payload": { "runtime_id": format!("runtime-{}", uuid::Uuid::new_v4()), "session_id": session_id, "payload": payload },
     });
 
     let mut writer = stream
@@ -421,7 +422,7 @@ fn ensure_router_daemon() -> Result<String, String> {
         }
         std::thread::sleep(ROUTER_HEALTH_POLL_INTERVAL);
     }
-    if let Some(error) = session_log::service::unreachable_owner_lock_message() {
+    if let Some(error) = session_log_contract::client::unreachable_owner_lock_message() {
         return Err(format!(
             "router daemon did not become healthy within {} seconds: {error}",
             timeout.as_secs()
@@ -489,7 +490,7 @@ fn router_usage(response: &Value) -> Option<Value> {
     .cloned()
 }
 
-fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
+pub(crate) fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
     const KEYS: &[&str] = &[
         "TURA_SESSION_REASONING_EFFORT",
         "TURA_SESSION_ACCELERATION_ENABLED",
@@ -558,11 +559,11 @@ fn router_stderr_log_path() -> Option<PathBuf> {
         return Some(PathBuf::from(path));
     }
     std::env::var_os("TURA_DEBUG_RUNTIME")?;
-    Some(session_log::path::default_db_dir().join("router-daemon.stderr.log"))
+    Some(session_log_contract::client::default_db_dir().join("router-daemon.stderr.log"))
 }
 
 fn router_addr_path() -> PathBuf {
-    session_log::path::default_db_dir().join("router.addr")
+    session_log_contract::client::default_db_dir().join("router.addr")
 }
 
 /// Read the published router endpoint and confirm it is actually connectable.

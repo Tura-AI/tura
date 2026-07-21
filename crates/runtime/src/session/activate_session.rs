@@ -2,7 +2,7 @@ use chrono::Utc;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::state_machine::session_management::{SessionInput, SessionManagement};
+use lifecycle::{SessionInput, SessionManagement};
 
 const DEFAULT_SESSION_DIRECTORY: &str = "test_session";
 

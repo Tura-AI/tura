@@ -1,3 +1,6 @@
+#[path = "../support/typed_session.rs"]
+mod typed_session;
+
 use anyhow::{anyhow, bail, Context, Result};
 use axum::body;
 use axum::extract::{Path, Query};
@@ -7,9 +10,10 @@ use gateway::api::session_log::{
     session_log_records, session_log_sessions, session_log_workspaces,
 };
 use gateway::contracts::{SessionLogListParams, SessionLogRecordsParams};
+use lifecycle::TaskPlan;
 use serde_json::{json, Value};
 use session_log::SessionLogStore;
-use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
+use session_log_contract::SessionLogCommand;
 use std::path::Path as FsPath;
 use std::time::{Duration, Instant};
 
@@ -29,12 +33,17 @@ async fn gateway_session_log_api_business_flow_lists_workspaces_sessions_and_rec
 
     let session_id = format!("gateway-session-log-api-{}", uuid::Uuid::new_v4());
     let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
-    assert_ok(session_log::ipc::call_service(
-        &SessionLogCommand::UpsertSession(upsert_request(&session_id, &workspace_key, 1)),
-    )?)?;
-    assert_ok(session_log::ipc::call_service(
-        &SessionLogCommand::UpsertSession(upsert_request(&session_id, &workspace_key, 2)),
-    )?)?;
+    typed_session::create_via_service(
+        &session_id,
+        &workspace_key,
+        "Gateway Session Log API",
+        1,
+        TaskPlan::default(),
+    )?;
+    typed_session::persist_messages_via_service(
+        &session_id,
+        vec![message_record(1), message_record(2)],
+    )?;
 
     let (status, workspaces) =
         response_json(session_log_workspaces().await.into_response()).await?;
@@ -120,7 +129,7 @@ async fn gateway_session_log_api_business_flow_lists_workspaces_sessions_and_rec
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }
@@ -198,47 +207,14 @@ async fn response_json(response: Response) -> Result<(StatusCode, Value)> {
     Ok((status, value))
 }
 
-fn upsert_request(session_id: &str, workspace: &str, message_count: usize) -> UpsertSessionRequest {
-    UpsertSessionRequest {
-        session: json!({
-            "id": session_id,
-            "name": "Gateway Session Log API",
-            "directory": workspace,
-            "created_at": 1,
-            "updated_at": 100 + message_count as i64,
-            "status": "idle",
-            "management": {
-                "session_id": session_id,
-                "session_name": "Gateway Session Log API",
-                "state": "created"
-            }
-        }),
-        parent_id: None,
-        messages: (1..=message_count)
-            .map(|index| {
-                json!({
-                    "id": format!("message-{index}"),
-                    "role": if index % 2 == 0 { "assistant" } else { "user" },
-                    "created_at": index as i64,
-                    "updated_at": index as i64,
-                    "content": format!("message body {index}")
-                })
-            })
-            .collect(),
-        todos: vec![json!({
-            "id": "todo-session-log-api",
-            "content": "verify gateway session log api",
-            "status": "done"
-        })],
-    }
-}
-
-fn assert_ok(response: SessionLogResponse) -> Result<()> {
-    match response {
-        SessionLogResponse::Ok => Ok(()),
-        SessionLogResponse::Error { error } => bail!("{error}"),
-        other => bail!("unexpected session_log response: {other:?}"),
-    }
+fn message_record(index: usize) -> Value {
+    json!({
+        "id": format!("message-{index}"),
+        "role": if index % 2 == 0 { "assistant" } else { "user" },
+        "created_at": index as i64,
+        "updated_at": index as i64,
+        "content": format!("message body {index}")
+    })
 }
 
 fn percent_encode_workspace(value: &str) -> String {
@@ -264,7 +240,7 @@ impl ServiceThread {
         let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
         wait_until(
             Duration::from_secs(10),
-            session_log::ipc::service_is_running,
+            session_log_contract::client::service_is_running,
         )?;
         Ok(Self {
             handle: Some(handle),
@@ -274,7 +250,7 @@ impl ServiceThread {
 
 impl Drop for ServiceThread {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

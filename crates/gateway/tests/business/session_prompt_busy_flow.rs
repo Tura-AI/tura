@@ -25,7 +25,12 @@ async fn busy_session_prompt_business_flow_queues_user_command_without_router_di
         .to_string_lossy()
         .to_string();
     let session = create_test_session(directory);
-    execute_test_command(&session.id, SessionCommand::RuntimeStarted);
+    execute_test_command(
+        &session.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-busy-prompt".to_string(),
+        },
+    );
 
     let response = prompt_async(
         Path(session.id.clone()),
@@ -74,7 +79,12 @@ async fn busy_session_prompt_business_flow_queues_multiple_commands_fifo_and_pre
         .to_string_lossy()
         .to_string();
     let session = create_test_session(directory);
-    execute_test_command(&session.id, SessionCommand::RuntimeStarted);
+    execute_test_command(
+        &session.id,
+        SessionCommand::RuntimeStarted {
+            runtime_id: "runtime-busy-prompt-fifo".to_string(),
+        },
+    );
 
     let first = prompt_async(
         Path(session.id.clone()),
@@ -191,6 +201,46 @@ async fn busy_session_prompt_business_flow_runtime_status_requires_canonical_val
             .map(|session| session.status),
         Some(ApiSessionStatus::Busy)
     );
+
+    session_store()
+        .execute_canonical_session_command_with_status_event(
+            &session.id,
+            SessionCommand::RuntimeStarted {
+                runtime_id: "runtime-status-owned".to_string(),
+            },
+        )
+        .expect("runtime should acquire the session");
+    let busy_while_runtime_owned = update_session_status_for_runtime(
+        Path(session.id.clone()),
+        Json(RuntimeSessionStatusRequest {
+            status: "busy".to_string(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(
+        busy_while_runtime_owned.status(),
+        axum::http::StatusCode::CONFLICT,
+        "legacy status updates must not bypass the active runtime identity"
+    );
+    session_store()
+        .execute_canonical_session_command_with_status_event(
+            &session.id,
+            SessionCommand::RuntimeCompleted {
+                runtime_id: "runtime-status-owned".to_string(),
+            },
+        )
+        .expect("runtime should release the session");
+
+    let busy_after_runtime = update_session_status_for_runtime(
+        Path(session.id.clone()),
+        Json(RuntimeSessionStatusRequest {
+            status: "busy".to_string(),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(busy_after_runtime.status(), axum::http::StatusCode::OK);
 
     let running_alias = update_session_status_for_runtime(
         Path(session.id.clone()),
@@ -394,7 +444,7 @@ impl TestSessionDb {
         let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(10) {
-            if session_log::ipc::service_is_running() {
+            if session_log_contract::client::service_is_running() {
                 return Self {
                     _guard: guard,
                     previous_home,
@@ -411,7 +461,7 @@ impl TestSessionDb {
 
 impl Drop for TestSessionDb {
     fn drop(&mut self) {
-        let response = session_log::ipc::call_service(&SessionLogCommand::Shutdown)
+        let response = session_log_contract::client::call_service(&SessionLogCommand::Shutdown)
             .expect("stop busy-flow session DB");
         assert!(matches!(response, SessionLogResponse::Ok));
         if let Some(handle) = self.handle.take() {

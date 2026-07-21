@@ -6,12 +6,14 @@
 //! relying on third-party services.
 
 use anyhow::{anyhow, bail, Context, Result};
+use lifecycle::{SessionCommand, SessionManagement, TaskPlan};
 use serde_json::json;
 use session_log::SessionLogStore;
 use session_log_contract::{
-    CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
-    ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand, SessionLogResponse,
-    UpsertSessionRequest,
+    CommandCheckpoint, CreateSessionRequest, DeleteSessionRequest, DeleteWorkspaceRequest,
+    GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, PersistSessionDeltaRequest,
+    ReadContextSliceRequest, SessionContextRecord, SessionDeltaEntry, SessionLogCommand,
+    SessionLogResponse, SessionRecordProjection,
 };
 use std::{
     path::{Path, PathBuf},
@@ -54,10 +56,12 @@ fn session_db_workspace_flow_handles_concurrent_clients_checkpoint_idempotency_a
         writers.push(thread::spawn(move || -> Result<String> {
             barrier.wait();
             let session_id = format!("flow-session-{index}");
-            let response = session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-                upsert_request(&session_id, &workspace, index),
-            ))?;
-            assert_ok(response, "upsert session")?;
+            create_session_with_messages(
+                &session_id,
+                &workspace,
+                index,
+                &[&format!("message-{session_id}")],
+            )?;
             Ok(session_id)
         }));
     }
@@ -83,15 +87,15 @@ fn session_db_workspace_flow_handles_concurrent_clients_checkpoint_idempotency_a
         .ok_or_else(|| anyhow!("missing checkpoint session"))?;
     let checkpoint = command_checkpoint(&checkpoint_session);
     assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::ApplyCommandCheckpoint(Box::new(
-            checkpoint.clone(),
-        )))?,
+        session_log_contract::client::call_service(&SessionLogCommand::ApplyCommandCheckpoint(
+            Box::new(checkpoint.clone()),
+        ))?,
         "apply checkpoint",
     )?;
     assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::ApplyCommandCheckpoint(Box::new(
-            checkpoint,
-        )))?,
+        session_log_contract::client::call_service(&SessionLogCommand::ApplyCommandCheckpoint(
+            Box::new(checkpoint),
+        ))?,
         "apply duplicate checkpoint",
     )?;
     assert_checkpoint_queue_count(&home, &checkpoint_session, 1)?;
@@ -103,9 +107,11 @@ fn session_db_workspace_flow_handles_concurrent_clients_checkpoint_idempotency_a
         .cloned()
         .ok_or_else(|| anyhow!("missing session to delete"))?;
     assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::DeleteSession(DeleteSessionRequest {
-            session_id: deleted_session.clone(),
-        }))?,
+        session_log_contract::client::call_service(&SessionLogCommand::DeleteSession(
+            DeleteSessionRequest {
+                session_id: deleted_session.clone(),
+            },
+        ))?,
         "delete one session",
     )?;
     assert_session_missing(&deleted_session)?;
@@ -113,7 +119,7 @@ fn session_db_workspace_flow_handles_concurrent_clients_checkpoint_idempotency_a
     assert_workspace_summary(&workspace_b_key, 4)?;
 
     assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::DeleteWorkspace(
+        session_log_contract::client::call_service(&SessionLogCommand::DeleteWorkspace(
             DeleteWorkspaceRequest {
                 workspace: workspace_b_key.clone(),
             },
@@ -124,12 +130,12 @@ fn session_db_workspace_flow_handles_concurrent_clients_checkpoint_idempotency_a
     assert_workspace_summary(&workspace_a_key, 3)?;
 
     assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::Shutdown)?,
+        session_log_contract::client::call_service(&SessionLogCommand::Shutdown)?,
         "shutdown session_db",
     )?;
     service.join(Duration::from_secs(10))?;
     assert!(
-        !session_log::ipc::service_is_running(),
+        !session_log_contract::client::service_is_running(),
         "session_db should not be reachable after graceful shutdown"
     );
     assert!(
@@ -165,27 +171,18 @@ fn session_db_read_path_bounds_pages_and_prunes_stale_workspace_index_rows() -> 
     let workspace_key = normalize_path(&workspace);
     let get_session_id = "read-path-get-session";
     let records_session_id = "read-path-records";
-    assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-            upsert_request_with_messages(
-                get_session_id,
-                &workspace_key,
-                10,
-                &["get-m1", "get-m2", "get-m3"],
-            ),
-        ))?,
-        "upsert get-session target",
+    let shared_last_user_index = 10;
+    create_session_with_messages(
+        get_session_id,
+        &workspace_key,
+        shared_last_user_index,
+        &["get-m1", "get-m2", "get-m3"],
     )?;
-    assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-            upsert_request_with_messages(
-                records_session_id,
-                &workspace_key,
-                20,
-                &["records-m1", "records-m2", "records-m3"],
-            ),
-        ))?,
-        "upsert records target",
+    create_session_with_messages(
+        records_session_id,
+        &workspace_key,
+        shared_last_user_index,
+        &["records-m1", "records-m2", "records-m3"],
     )?;
 
     assert_get_session_snapshot(get_session_id, &workspace_key, 3)?;
@@ -211,7 +208,7 @@ fn session_db_read_path_bounds_pages_and_prunes_stale_workspace_index_rows() -> 
     assert_workspace_absent(&workspace_key)?;
 
     assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::Shutdown)?,
+        session_log_contract::client::call_service(&SessionLogCommand::Shutdown)?,
         "shutdown session_db",
     )?;
     service.join(Duration::from_secs(10))?;
@@ -241,31 +238,28 @@ fn session_db_close_then_reselect_sessions_survives_mixed_reads_and_writes() -> 
         "mixed-session-d",
     ];
     for (index, session_id) in session_ids.iter().enumerate() {
-        assert_ok(
-            session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-                upsert_request_with_messages(
-                    session_id,
-                    &workspace_key,
-                    30 + index,
-                    &[&format!("{session_id}-initial")],
-                ),
-            ))?,
-            "seed mixed session",
+        create_session_with_messages(
+            session_id,
+            &workspace_key,
+            30 + index,
+            &[&format!("{session_id}-initial")],
         )?;
     }
     assert_list_sessions(&workspace_key, 0, 50, 4, 4)?;
 
     let closed_session = session_ids[0];
     assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::DeleteSession(DeleteSessionRequest {
-            session_id: closed_session.to_string(),
-        }))?,
+        session_log_contract::client::call_service(&SessionLogCommand::DeleteSession(
+            DeleteSessionRequest {
+                session_id: closed_session.to_string(),
+            },
+        ))?,
         "close first session",
     )?;
     assert_session_missing(closed_session)?;
 
     let live_sessions = &session_ids[1..];
-    let expected_counts = live_sessions
+    let mut expected_counts = live_sessions
         .iter()
         .map(|session_id| (*session_id, 1_u64))
         .collect::<std::collections::HashMap<_, _>>();
@@ -284,18 +278,16 @@ fn session_db_close_then_reselect_sessions_survives_mixed_reads_and_writes() -> 
         )?;
 
         let message_id = format!("{selected}-followup-{round}");
-        assert_ok(
-            session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
-                upsert_request_with_messages(
-                    selected,
-                    &workspace_key,
-                    50 + round,
-                    &[message_id.as_str()],
-                ),
-            ))?,
-            "append selected session follow-up",
+        persist_session_messages(
+            selected,
+            50 + round,
+            expected_counts[selected],
+            &[message_id.as_str()],
         )?;
 
+        *expected_counts
+            .get_mut(selected)
+            .expect("selected live session count") += 1;
         expected_message_ids.insert(selected, message_id.clone());
         assert_records_include(selected, &message_id)?;
         assert_list_sessions(&workspace_key, 0, 10, 3, 3)?;
@@ -308,65 +300,156 @@ fn session_db_close_then_reselect_sessions_survives_mixed_reads_and_writes() -> 
     }
 
     assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::Shutdown)?,
+        session_log_contract::client::call_service(&SessionLogCommand::Shutdown)?,
         "shutdown session_db",
     )?;
     service.join(Duration::from_secs(10))?;
     Ok(())
 }
 
-fn upsert_request(session_id: &str, workspace: &str, index: usize) -> UpsertSessionRequest {
-    let message_id = format!("message-{session_id}");
-    upsert_request_with_messages(session_id, workspace, index, &[message_id.as_str()])
-}
-
-fn upsert_request_with_messages(
+fn create_session_with_messages(
     session_id: &str,
     workspace: &str,
     index: usize,
     message_ids: &[&str],
-) -> UpsertSessionRequest {
-    UpsertSessionRequest {
-        session: json!({
-            "id": session_id,
-            "name": format!("Flow Session {index}"),
-            "directory": workspace,
-            "created_at": index as i64,
-            "updated_at": 100 + index as i64,
-            "status": "idle",
-            "management": {
+) -> Result<()> {
+    let request = CreateSessionRequest {
+        command_id: format!("create:{session_id}"),
+        session_id: session_id.to_string(),
+        creation_command: SessionCommand::CreateSession {
+            task_plan: TaskPlan::default(),
+        },
+        copy_context: false,
+        workspace: workspace.to_string(),
+        session_directory: workspace.to_string(),
+        name: format!("Flow Session {index}"),
+        created_at: index as i64,
+        model: None,
+        agent: None,
+        session_type: "coding".to_string(),
+        kill_processes_on_start: false,
+        validator_enabled: false,
+        force_planning: false,
+        model_variant: None,
+        model_acceleration_enabled: false,
+        disable_permission_restrictions: false,
+        use_last_tool_call_response: false,
+        auto_session_name: false,
+    };
+    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(request))? {
+        SessionLogResponse::SessionCommandApplied { .. } => {}
+        SessionLogResponse::Error { error } => bail!("create session returned error: {error}"),
+        other => bail!("create session returned unexpected response: {other:?}"),
+    }
+    persist_session_messages(session_id, index, 0, message_ids)
+}
+
+fn persist_session_messages(
+    session_id: &str,
+    index: usize,
+    start_sequence: u64,
+    message_ids: &[&str],
+) -> Result<()> {
+    let mut management = session_management(session_id)?;
+    let previous_management = management.clone();
+    let context = session_context(session_id)?;
+    assert_eq!(context.next_sequence, start_sequence);
+    let updated_at = chrono::DateTime::from_timestamp_millis(100 + index as i64)
+        .unwrap_or_else(chrono::Utc::now);
+    management.session_last_update_at = updated_at;
+    management.session_last_user_message_at = updated_at;
+    management.session_log.clear();
+    management.session_log_retention.omitted_entries = 0;
+    let management_sequence = context.next_management_sequence;
+    let previous_management = (management_sequence > 0).then_some(&previous_management);
+    let entries = message_ids
+        .iter()
+        .enumerate()
+        .map(|(offset, message_id)| {
+            let sequence = start_sequence + offset as u64;
+            let role = if sequence % 2 == 0 {
+                "user"
+            } else {
+                "assistant"
+            };
+            let timestamp = index as i64 * 10 + offset as i64;
+            let record = json!({
+                "id": message_id,
                 "session_id": session_id,
-                "session_name": format!("Flow Session {index}"),
-                "state": "created",
-                "current_turn": index
+                "role": role,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "content": format!("content {index}-{offset}")
+            });
+            SessionDeltaEntry {
+                context: SessionContextRecord {
+                    sequence,
+                    raw_record: json!({ "id": message_id, "role": role }).to_string(),
+                },
+                projection: Some(SessionRecordProjection {
+                    session_id: session_id.to_string(),
+                    message_id: (*message_id).to_string(),
+                    role: role.to_string(),
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    record,
+                }),
             }
+        })
+        .collect();
+    match session_log_contract::client::call_service(&SessionLogCommand::PersistSessionDelta(
+        Box::new(PersistSessionDeltaRequest {
+            session_id: session_id.to_string(),
+            management_sequence,
+            management_delta: SessionManagement::persistence_delta(
+                previous_management,
+                &management,
+            ),
+            retained_from_sequence: 0,
+            entries,
         }),
-        parent_id: None,
-        messages: message_ids
-            .iter()
-            .enumerate()
-            .map(|(offset, message_id)| {
-                json!({
-                    "id": message_id,
-                    "role": if offset % 2 == 0 { "user" } else { "assistant" },
-                    "created_at": index as i64 * 10 + offset as i64,
-                    "updated_at": index as i64 * 10 + offset as i64,
-                    "content": format!("content {index}-{offset}")
-                })
-            })
-            .collect(),
-        todos: vec![json!({
-            "id": format!("todo-{session_id}"),
-            "content": "persist workspace flow",
-            "status": "done"
-        })],
+    ))? {
+        SessionLogResponse::SessionDeltaPersisted { .. } => Ok(()),
+        SessionLogResponse::Error { error } => {
+            bail!("persist session delta returned error: {error}")
+        }
+        other => bail!("persist session delta returned unexpected response: {other:?}"),
+    }
+}
+
+fn session_management(session_id: &str) -> Result<SessionManagement> {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))? {
+        SessionLogResponse::Session {
+            session: Some(session),
+        } => serde_json::from_value(session.management)
+            .with_context(|| format!("invalid management for session {session_id}")),
+        SessionLogResponse::Session { session: None } => bail!("session {session_id} not found"),
+        SessionLogResponse::Error { error } => bail!("get session returned error: {error}"),
+        other => bail!("get session returned unexpected response: {other:?}"),
+    }
+}
+
+fn session_context(session_id: &str) -> Result<session_log_contract::ContextSlice> {
+    match session_log_contract::client::call_service(&SessionLogCommand::ReadContextSlice(
+        ReadContextSliceRequest {
+            session_id: session_id.to_string(),
+            max_estimated_tokens: 1_000_000,
+        },
+    ))? {
+        SessionLogResponse::ContextSlice { context } => Ok(context),
+        SessionLogResponse::Error { error } => bail!("read context returned error: {error}"),
+        other => bail!("read context returned unexpected response: {other:?}"),
     }
 }
 
 fn command_checkpoint(session_id: &str) -> CommandCheckpoint {
     CommandCheckpoint {
         session_id: session_id.to_string(),
-        turn_id: "turn-workspace-flow".to_string(),
+        runtime_id: "runtime-workspace-flow".to_string(),
         runtime_worker_id: Some("worker-workspace-flow".to_string()),
         provider_call_id: Some("provider-workspace-flow".to_string()),
         command_run_id: Some("run-workspace-flow".to_string()),
@@ -374,7 +457,7 @@ fn command_checkpoint(session_id: &str) -> CommandCheckpoint {
         event_seq: Some(7),
         command_type: Some("shell_command".to_string()),
         command_line: Some("Write-Output workspace-flow".to_string()),
-        status: "command_finished".to_string(),
+        checkpoint_type: session_log_contract::CheckpointType::CommandFinished,
         output_summary: Some("workspace-flow".to_string()),
         changes: json!({
             "files": ["workspace-flow.txt"],
@@ -386,7 +469,7 @@ fn command_checkpoint(session_id: &str) -> CommandCheckpoint {
 }
 
 fn assert_workspace_summary(workspace: &str, expected_sessions: u64) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListWorkspaces)? {
+    match session_log_contract::client::call_service(&SessionLogCommand::ListWorkspaces)? {
         SessionLogResponse::Workspaces { workspaces } => {
             let summary = workspaces
                 .iter()
@@ -401,7 +484,7 @@ fn assert_workspace_summary(workspace: &str, expected_sessions: u64) -> Result<(
 }
 
 fn assert_workspace_absent(workspace: &str) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListWorkspaces)? {
+    match session_log_contract::client::call_service(&SessionLogCommand::ListWorkspaces)? {
         SessionLogResponse::Workspaces { workspaces } => {
             assert!(
                 workspaces
@@ -422,11 +505,13 @@ fn assert_list_sessions(
     total: u64,
     expected_len: usize,
 ) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessions(ListSessionsRequest {
-        workspace: workspace.to_string(),
-        page,
-        page_size,
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessions(
+        ListSessionsRequest {
+            workspace: workspace.to_string(),
+            page,
+            page_size,
+        },
+    ))? {
         SessionLogResponse::Sessions { page, sessions } => {
             assert_eq!(page.total, total);
             assert_eq!(sessions.len(), expected_len);
@@ -448,11 +533,13 @@ fn assert_list_sessions_page(
     total: u64,
     expected_session_ids: &[&str],
 ) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessions(ListSessionsRequest {
-        workspace: workspace.to_string(),
-        page,
-        page_size,
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessions(
+        ListSessionsRequest {
+            workspace: workspace.to_string(),
+            page,
+            page_size,
+        },
+    ))? {
         SessionLogResponse::Sessions { page, sessions } => {
             assert_eq!(page.page, expected_page);
             assert_eq!(page.page_size, expected_page_size);
@@ -475,16 +562,17 @@ fn assert_get_session_snapshot(
     workspace: &str,
     expected_messages: u64,
 ) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id: session_id.to_string(),
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))? {
         SessionLogResponse::Session { session } => {
             let snapshot =
                 session.ok_or_else(|| anyhow!("session {session_id} should be present"))?;
             assert_eq!(snapshot.session_id, session_id);
             assert_eq!(snapshot.workspace, workspace);
             assert_eq!(snapshot.message_count, expected_messages);
-            assert_eq!(snapshot.todos.len(), 1);
             Ok(())
         }
         other => bail!("unexpected get session response: {other:?}"),
@@ -499,15 +587,14 @@ fn assert_checkpoint_queue_count(
     let conn = rusqlite::Connection::open(index_db_path(home))
         .with_context(|| format!("open session_db index for {session_id}"))?;
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM session_write_queue
+        "SELECT COUNT(*) FROM command_checkpoints
          WHERE session_id = ?1
-           AND turn_id = 'turn-workspace-flow'
+           AND runtime_id = 'runtime-workspace-flow'
            AND runtime_worker_id = 'worker-workspace-flow'
            AND command_run_id = 'run-workspace-flow'
            AND command_id = 'command-workspace-flow'
            AND event_seq = 7
-           AND event_type = 'command_finished'
-           AND status = 'applied'",
+           AND checkpoint_type = 'command_finished'",
         [session_id],
         |row| row.get(0),
     )?;
@@ -527,7 +614,7 @@ fn assert_records_page(
     total: u64,
     expected_record_ids: &[&str],
 ) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessionRecords(
         ListSessionRecordsRequest {
             session_id: session_id.to_string(),
             page,
@@ -552,7 +639,7 @@ fn assert_records_page(
 }
 
 fn assert_empty_records_page(session_id: &str) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessionRecords(
         ListSessionRecordsRequest {
             session_id: session_id.to_string(),
             page: 0,
@@ -569,7 +656,7 @@ fn assert_empty_records_page(session_id: &str) -> Result<()> {
 }
 
 fn assert_records_include(session_id: &str, expected_record_id: &str) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessionRecords(
         ListSessionRecordsRequest {
             session_id: session_id.to_string(),
             page: 0,
@@ -590,7 +677,7 @@ fn assert_records_include(session_id: &str, expected_record_id: &str) -> Result<
 }
 
 fn assert_original_record_remains(session_id: &str) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessionRecords(
         ListSessionRecordsRequest {
             session_id: session_id.to_string(),
             page: 0,
@@ -603,7 +690,7 @@ fn assert_original_record_remains(session_id: &str) -> Result<()> {
                 records
                     .iter()
                     .any(|record| record.message_id == format!("message-{session_id}")),
-                "original upsert record should remain beside checkpoint records"
+                "original typed delta record should remain beside checkpoint records"
             );
             Ok(())
         }
@@ -612,9 +699,11 @@ fn assert_original_record_remains(session_id: &str) -> Result<()> {
 }
 
 fn assert_session_missing(session_id: &str) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id: session_id.to_string(),
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))? {
         SessionLogResponse::Session { session } => {
             assert!(session.is_none(), "session {session_id} should be deleted");
             Ok(())
@@ -652,7 +741,7 @@ impl ServiceThread {
         let handle = thread::spawn(move || session_log::ipc::serve_blocking(store));
         wait_until(
             Duration::from_secs(10),
-            session_log::ipc::service_is_running,
+            session_log_contract::client::service_is_running,
         )?;
         Ok(Self {
             handle: Some(handle),
@@ -683,7 +772,7 @@ impl ServiceThread {
 
 impl Drop for ServiceThread {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

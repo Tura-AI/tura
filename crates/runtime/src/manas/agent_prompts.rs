@@ -160,10 +160,9 @@ fn has_persona_root(candidate: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::agent_management::{
-        AgentPromptItem, ProviderConfig, ToolChoice, ValidatorConfig,
-    };
+    use crate::state_machine::agent_management::{AgentPromptItem, ValidatorConfig};
     use chrono::Utc;
+    use lifecycle::{ProviderConfig, ToolChoice};
     use std::ffi::OsString;
 
     #[test]
@@ -587,9 +586,9 @@ mod prompt_resource_tests {
     use super::super::constants::COMMAND_RUN_TOOL;
     use super::load_agent_prompt_messages;
     use crate::state_machine::agent_management::{
-        AgentCapabilityItem, AgentManagement, AgentPromptItem, ProviderConfig, ToolChoice,
-        ValidatorConfig,
+        AgentCapabilityItem, AgentManagement, AgentPromptItem, ValidatorConfig,
     };
+    use lifecycle::{ProviderConfig, ToolChoice};
     #[test]
     fn prompt_loading_only_includes_agent_prompt() {
         let now = chrono::Utc::now();

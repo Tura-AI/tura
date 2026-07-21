@@ -63,7 +63,6 @@ crates/runtime/
       retry_policy.rs
       no_tool_policy.rs
       task_progress.rs
-      finalization.rs
 
     checkpoint/
       mod.rs
@@ -100,14 +99,10 @@ crates/runtime/
       activate_session.rs
       create_session.rs
 
-    session_state/
-      mod.rs
-      task_plan.rs
-
     state_machine/
-      session_management.rs
       agent_management.rs
-      runtime_management.rs
+
+    runtime_event_writer.rs
 
     agent_router/
       mod.rs
@@ -204,8 +199,10 @@ Runtime gateway-session persistence goes through `crates/session_log`, not
 workspace-local JSON files. Each session workspace is also initialized as a
 local Git repository when it is prepared, and terminal runtime exits create a
 workspace commit whose message includes the session id and task group.
-`checkpoint/session_snapshot.rs` uses
-`SessionLogClient::upsert_session` to persist runtime session snapshots.
+`checkpoint/session_snapshot.rs` uses `SessionDeltaWriter` and
+`SessionLogClient::persist_session_delta` to append idempotent context records
+and refresh the runtime-owned management projection without replacing session
+history.
 `session_bootstrap/persisted.rs` uses `SessionLogClient::get_session` to resume
 an existing gateway session. Resumed sessions must match the requested workspace
 to avoid cross-workspace reuse of a repeated session id.
@@ -231,7 +228,8 @@ state-machine phases:
 6. Delegate retry/no-tool decisions to `turn_loop/retry_policy.rs` and
    `turn_loop/no_tool_policy.rs`.
 7. Persist session snapshots through `checkpoint/session_snapshot.rs`.
-8. Delegate completion runtime construction to `turn_loop/finalization.rs`.
+8. Return the canonical Session result without constructing a synthetic
+   completion Runtime.
 
 Helper modules own loading, filtering, normalization, checkpoint helpers, and
 final response details. Gateway-visible publishing lives in `gateway_events/`.
@@ -240,11 +238,10 @@ final response details. Gateway-visible publishing lives in `gateway_events/`.
 
 ### Session
 
-The data model is defined in `state_machine/session_management.rs`.
-The lifecycle enum and transition rules are shared from
-`session_log::SessionState` so runtime and the SQLite owner use one
-vocabulary. Task-management JSON projection lives in
-`session_state/task_plan.rs`.
+The data model and transition rules are owned by `lifecycle::SessionAggregate`
+and `lifecycle::SessionManagement` in `crates/lifecycle`. Runtime drives typed
+commands but does not define a second Session state machine. Task-management
+JSON projection lives in `crates/lifecycle/src/session_projection.rs`.
 
 States:
 
@@ -274,7 +271,8 @@ States:
 
 ### Runtime
 
-Owned by `state_machine/runtime_management.rs`.
+Owned by `lifecycle::RuntimeAggregate` in `crates/lifecycle/src/runtime.rs` and
+driven by Runtime provider/tool orchestration.
 
 States:
 
@@ -296,12 +294,11 @@ initialization or test setup paths.
 
 ### Task Management
 
-Session task-management state is stored in
-`state_machine/session_management.rs` as `SessionManagement.task_plan`; its JSON
-projection belongs to `session_state/task_plan.rs`. Runtime task-management
-structs are product state and must not contain benchmark-specific fields or
-evaluator names. Benchmark contracts should live in e2e fixtures and hidden
-evaluators.
+Session task-management state is stored by
+`lifecycle::SessionManagement.task_plan`; its JSON projection belongs to
+`crates/lifecycle/src/session_projection.rs`. Runtime task-management structs
+are product state and must not contain benchmark-specific fields or evaluator
+names. Benchmark contracts should live in e2e fixtures and hidden evaluators.
 
 The model-facing compact state is produced by:
 

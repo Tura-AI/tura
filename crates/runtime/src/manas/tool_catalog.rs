@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::prompt_style::task_status;
 use crate::state_machine::agent_management::AgentManagement;
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 
 use super::constants::{
     COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_TOOL_ENV, DISABLE_PLANNING_TOOL_ENV, PROJECT_ROOT_ENV,
@@ -551,11 +551,9 @@ fn sanitize_provider_schema(mut value: serde_json::Value) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::manas::constants::PLANNING_TOOL;
-    use crate::state_machine::agent_management::{
-        AgentCapabilityItem, ProviderConfig, ToolChoice, ValidatorConfig,
-    };
-    use crate::state_machine::session_management::SessionInput;
+    use crate::state_machine::agent_management::{AgentCapabilityItem, ValidatorConfig};
     use chrono::Utc;
+    use lifecycle::{ProviderConfig, SessionInput, ToolChoice};
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());

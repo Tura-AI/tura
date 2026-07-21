@@ -6,13 +6,16 @@
 //! one session_db owner, concurrent multiplexed clients, no head-of-line
 //! blocking, SQLite workspace-log placement, and version handshake.
 
+#[path = "../support/typed_session.rs"]
+mod typed_session;
+
 use std::path::Path;
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use session_log_contract::{
     DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionsRequest,
-    SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
+    SessionLogCommand, SessionLogResponse,
 };
 
 /// Path to the `tura_session_db` binary built by cargo for this crate.
@@ -55,7 +58,7 @@ struct ServiceGuard {
 
 impl Drop for ServiceGuard {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if !wait_for_child_exit(&mut self.child, Duration::from_secs(10)) {
             let _ = self.child.kill();
             let _ = self.child.wait();
@@ -91,31 +94,12 @@ fn start_service(db_root: &Path) -> ServiceGuard {
     let guard = ServiceGuard { child, _env: env };
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(90) {
-        if session_log::ipc::service_is_running() {
+        if session_log_contract::client::service_is_running() {
             return guard;
         }
         std::thread::sleep(Duration::from_millis(200));
     }
     panic!("session_db service did not become reachable within 90s");
-}
-
-fn upsert(session_id: &str, workspace: &str) -> SessionLogCommand {
-    SessionLogCommand::UpsertSession(UpsertSessionRequest {
-        session: serde_json::json!({
-            "id": session_id,
-            "name": "PM",
-            "directory": workspace,
-            "created_at": 1,
-            "updated_at": 1,
-            "status": "idle",
-            "management": { "session_id": session_id, "session_name": "PM", "state": "created" }
-        }),
-        parent_id: None,
-        messages: vec![serde_json::json!({
-            "id": format!("m-{session_id}"), "role": "assistant", "created_at": 1, "updated_at": 1
-        })],
-        todos: vec![],
-    })
 }
 
 /// T-PM1 / T-PM3: 16 concurrent clients write+read through the single service
@@ -141,15 +125,18 @@ fn concurrent_clients_share_single_owner_over_socket() {
             std::fs::create_dir_all(&workspace).expect("workspace");
             let workspace = workspace.to_string_lossy().replace('\\', "/");
             // Write over the socket.
-            match session_log::ipc::call_service(&upsert(&session_id, &workspace))
-                .expect("upsert call")
-            {
-                SessionLogResponse::Ok => {}
-                other => panic!("unexpected upsert response: {other:?}"),
-            }
+            typed_session::create_with_message_via_service(
+                &session_id,
+                &workspace,
+                "PM",
+                1,
+                "assistant",
+                "process management",
+            )
+            .expect("typed write call");
             // Read it back over the socket; the response must correspond to THIS
             // request (no multiplexing cross-talk).
-            match session_log::ipc::call_service(&SessionLogCommand::GetSession(
+            match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
                 GetSessionRequest {
                     session_id: session_id.clone(),
                 },
@@ -195,13 +182,14 @@ fn version_mismatch_is_refused() {
 
     // Sanity: a matching client succeeds.
     assert!(matches!(
-        session_log::ipc::call_service(&SessionLogCommand::ListWorkspaces).expect("list"),
+        session_log_contract::client::call_service(&SessionLogCommand::ListWorkspaces)
+            .expect("list"),
         SessionLogResponse::Workspaces { .. }
     ));
 
     // Now rewrite the published endpoint with a foreign version and confirm the
     // client refuses (the codex-style handshake). We restore it afterwards.
-    let addr_path = session_log::ipc::service_addr_path();
+    let addr_path = session_log_contract::client::service_addr_path();
     let original = std::fs::read_to_string(&addr_path).expect("read endpoint");
     let endpoint: serde_json::Value = serde_json::from_str(&original).expect("endpoint json");
     let addr = endpoint["addr"].as_str().expect("addr").to_string();
@@ -215,7 +203,7 @@ fn version_mismatch_is_refused() {
     )
     .expect("rewrite endpoint");
 
-    let error = session_log::ipc::call_service(&SessionLogCommand::ListWorkspaces)
+    let error = session_log_contract::client::call_service(&SessionLogCommand::ListWorkspaces)
         .expect_err("a foreign-version service must be refused");
     assert!(
         error.to_string().contains("different build"),
@@ -235,20 +223,27 @@ fn delete_commands_are_served_over_socket() {
     let _service = start_service(temp.path());
 
     let session_id = format!("delete-socket-{}", uuid::Uuid::new_v4());
+    typed_session::create_with_message_via_service(
+        &session_id,
+        &workspace,
+        "PM",
+        1,
+        "assistant",
+        "delete session",
+    )
+    .expect("create session");
     assert!(matches!(
-        session_log::ipc::call_service(&upsert(&session_id, &workspace)).expect("upsert"),
-        SessionLogResponse::Ok
-    ));
-    assert!(matches!(
-        session_log::ipc::call_service(&SessionLogCommand::DeleteSession(DeleteSessionRequest {
-            session_id: session_id.clone()
-        }))
+        session_log_contract::client::call_service(&SessionLogCommand::DeleteSession(
+            DeleteSessionRequest {
+                session_id: session_id.clone()
+            }
+        ))
         .expect("delete session"),
         SessionLogResponse::Ok
     ));
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id,
-    }))
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest { session_id },
+    ))
     .expect("get deleted")
     {
         SessionLogResponse::Session { session } => assert!(session.is_none()),
@@ -256,12 +251,17 @@ fn delete_commands_are_served_over_socket() {
     }
 
     let session_id = format!("delete-workspace-{}", uuid::Uuid::new_v4());
+    typed_session::create_with_message_via_service(
+        &session_id,
+        &workspace,
+        "PM",
+        2,
+        "assistant",
+        "delete workspace",
+    )
+    .expect("create workspace session");
     assert!(matches!(
-        session_log::ipc::call_service(&upsert(&session_id, &workspace)).expect("upsert 2"),
-        SessionLogResponse::Ok
-    ));
-    assert!(matches!(
-        session_log::ipc::call_service(&SessionLogCommand::DeleteWorkspace(
+        session_log_contract::client::call_service(&SessionLogCommand::DeleteWorkspace(
             DeleteWorkspaceRequest {
                 workspace: workspace.clone()
             }
@@ -269,11 +269,13 @@ fn delete_commands_are_served_over_socket() {
         .expect("delete workspace"),
         SessionLogResponse::Ok
     ));
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessions(ListSessionsRequest {
-        workspace,
-        page: 0,
-        page_size: 50,
-    }))
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessions(
+        ListSessionsRequest {
+            workspace,
+            page: 0,
+            page_size: 50,
+        },
+    ))
     .expect("list deleted workspace")
     {
         SessionLogResponse::Sessions { page, sessions } => {

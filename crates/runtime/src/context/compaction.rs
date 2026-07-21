@@ -2,7 +2,7 @@ use chrono::{DateTime, TimeZone, Utc};
 
 use crate::manas::prompt_messages::planning_objective_block;
 use crate::prompt_style::{runtime_prompt_manual, task_status};
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 
 use super::char_budget::{
     compact_context_byte_budget, estimated_tokens_from_bytes, truncate_text_to_char_budget,

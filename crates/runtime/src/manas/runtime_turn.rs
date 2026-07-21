@@ -1,14 +1,16 @@
 use crate::prompt_style::{agent_identity, compact_context, self_reflection, PromptBuilder};
-use crate::runtime::call_runtime::{call_runtime, CallRuntimeInput};
+use crate::provider_flow::call::{call_runtime_with_writer, CallRuntimeInput};
 use crate::runtime::create_runtime::{
-    create_runtime, runtime_provider_config_from_tura, CreateRuntimeInput,
+    create_runtime, generate_runtime_id, runtime_provider_config_from_tura, CreateRuntimeInput,
 };
 use crate::runtime::types::ToolCallData;
+use crate::runtime_event_writer::RuntimeEventWriter;
 use crate::state_machine::agent_management::AgentManagement;
-use crate::state_machine::runtime_management::{RuntimeManagement, UsageReport};
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::RuntimeId;
+use lifecycle::SessionManagement;
 #[cfg(test)]
-use crate::state_machine::session_management::DEFAULT_CONTEXT_TOKEN_LIMIT;
+use lifecycle::DEFAULT_CONTEXT_TOKEN_LIMIT;
+use lifecycle::{RuntimeAggregate, UsageReport};
 
 use super::agent_prompts::{active_persona_display_name, load_agent_system_prompt_messages};
 use super::constants::{COMMAND_RUN_TOOL, PLANNING_TOOL};
@@ -33,7 +35,10 @@ pub(crate) fn execute_turn(
     _is_first_llm_call: bool,
     is_final_turn: bool,
     force_no_tools: bool,
-) -> Result<(RuntimeManagement, Vec<ToolCallData>), String> {
+    runtime_id: Option<RuntimeId>,
+    fallback_from_id: Option<RuntimeId>,
+    mut runtime_event_writer: Option<&mut RuntimeEventWriter>,
+) -> Result<(RuntimeAggregate, Vec<ToolCallData>), String> {
     let agent = agents
         .first()
         .ok_or_else(|| "no agent available".to_string())?;
@@ -133,8 +138,10 @@ pub(crate) fn execute_turn(
         append_self_reflection_tail_prompt(&mut runtime_messages, agent, session);
         session.context_tokens.input = provider_context_input_tokens(session).unwrap_or(0);
         session.context_tokens.limit = compact_limit_tokens;
-        let (runtime, queue_item) = create_runtime(CreateRuntimeInput {
+        let (mut runtime, queue_item) = create_runtime(CreateRuntimeInput {
+            runtime_id: runtime_id.unwrap_or_else(generate_runtime_id),
             session_id: session.session_id.clone(),
+            fallback_from_id,
             agent_id: agent.agent_id.clone(),
             messages: runtime_messages,
             tools,
@@ -144,10 +151,13 @@ pub(crate) fn execute_turn(
             context_tokens: session.context_tokens,
         })
         .await?;
+        if let Some(writer) = runtime_event_writer.as_deref_mut() {
+            writer.flush(&mut runtime)?;
+        }
 
         let config = std::sync::Arc::new(tura_llm_rust::TuraConfig::default());
 
-        let mut runtime = call_runtime(
+        let runtime = call_runtime_with_writer(
             CallRuntimeInput {
                 runtime,
                 messages: queue_item.messages,
@@ -162,10 +172,11 @@ pub(crate) fn execute_turn(
             },
             settings,
             config,
+            runtime_event_writer.as_deref_mut(),
         )
         .await?;
-        sync_context_tokens_from_provider_usage(session, &mut runtime, compact_limit_tokens);
-        Ok::<RuntimeManagement, String>(runtime)
+        sync_context_tokens_from_provider_usage(session, &runtime, compact_limit_tokens);
+        Ok::<RuntimeAggregate, String>(runtime)
     })?;
 
     let tool_calls: Vec<ToolCallData> = runtime
@@ -212,7 +223,7 @@ fn session_user_name() -> String {
 
 fn force_compact_context_limit_tokens(
     settings: &tura_llm_rust::Settings,
-    runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
+    runtime_provider_config: &lifecycle::RuntimeProviderConfig,
 ) -> u64 {
     dynamic_context_limit_tokens(
         settings,
@@ -224,7 +235,7 @@ fn force_compact_context_limit_tokens(
 
 fn compact_prompt_injection_limit_tokens(
     settings: &tura_llm_rust::Settings,
-    runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
+    runtime_provider_config: &lifecycle::RuntimeProviderConfig,
 ) -> u64 {
     dynamic_context_limit_tokens(
         settings,
@@ -236,7 +247,7 @@ fn compact_prompt_injection_limit_tokens(
 
 fn dynamic_context_limit_tokens(
     settings: &tura_llm_rust::Settings,
-    runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
+    runtime_provider_config: &lifecycle::RuntimeProviderConfig,
     model_context_percent: u64,
     cap_tokens: u64,
 ) -> u64 {
@@ -288,7 +299,7 @@ fn catalog_model_context_tokens(
 #[cfg(test)]
 fn model_context_window_tokens(
     settings: &tura_llm_rust::Settings,
-    runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
+    runtime_provider_config: &lifecycle::RuntimeProviderConfig,
 ) -> u64 {
     catalog_model_context_tokens(
         settings,
@@ -317,14 +328,13 @@ fn provider_context_input_tokens(session: &SessionManagement) -> Option<u64> {
 
 fn sync_context_tokens_from_provider_usage(
     session: &mut SessionManagement,
-    runtime: &mut RuntimeManagement,
+    runtime: &RuntimeAggregate,
     active_context_limit_tokens: u64,
 ) {
     if let Some(input_tokens) = runtime_input_tokens(runtime.usage.as_ref()) {
         session.context_tokens.input = input_tokens;
     }
     session.context_tokens.limit = active_context_limit_tokens;
-    runtime.context_tokens = session.context_tokens;
 }
 
 fn runtime_input_tokens(usage: Option<&UsageReport>) -> Option<u64> {
@@ -410,8 +420,8 @@ fn move_command_run_to_end(tools: Vec<serde_json::Value>) -> Vec<serde_json::Val
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::RuntimeProviderConfig;
+    use lifecycle::RuntimeProviderConfig;
+    use lifecycle::{ProviderConfig, ToolChoice};
     use std::collections::HashMap;
     use std::ffi::OsString;
 
@@ -622,7 +632,7 @@ mod tests {
             std::path::PathBuf::from("C:/workspace"),
             false,
             "coding".to_string(),
-            crate::state_machine::session_management::SessionInput {
+            lifecycle::SessionInput {
                 user_input: "continue".to_string(),
                 file_input: vec![],
                 agent: None,
@@ -646,7 +656,7 @@ mod tests {
             std::path::PathBuf::from("C:/workspace"),
             false,
             "coding".to_string(),
-            crate::state_machine::session_management::SessionInput {
+            lifecycle::SessionInput {
                 user_input: "continue".to_string(),
                 file_input: vec![],
                 agent: None,
@@ -670,7 +680,7 @@ mod tests {
             std::path::PathBuf::from("C:/workspace"),
             false,
             "coding".to_string(),
-            crate::state_machine::session_management::SessionInput {
+            lifecycle::SessionInput {
                 user_input: "continue".to_string(),
                 file_input: vec![],
                 agent: None,
@@ -684,36 +694,37 @@ mod tests {
         session.context_tokens.limit = 200_000;
 
         let provider = runtime_provider("codex", "gpt-5.5");
-        let mut runtime = RuntimeManagement::new(
+        let mut runtime = RuntimeAggregate::new(
             "runtime-provider-usage-display".to_string(),
             session.session_id.clone(),
             "agent-test".to_string(),
             provider,
             chrono::Utc::now(),
         );
-        runtime.usage = Some(UsageReport {
-            input_tokens: 1_353_553,
-            output_tokens: 1,
-            total_tokens: 1_353_554,
-            cached_input_tokens: 0,
-            cache_write_tokens: 0,
-            reasoning_tokens: 0,
-            attachment_input_tokens: 0,
-            input_cost: 0.0,
-            output_cost: 0.0,
-            total_cost: 0.0,
-            currency: "USD".to_string(),
-            pricing_source: "provider".to_string(),
-            latency_ms: 2_950,
-            time_to_first_token_ms: 2_950,
-            token_per_second: 0.33,
-        });
+        runtime
+            .update_usage(Some(UsageReport {
+                input_tokens: 1_353_553,
+                output_tokens: 1,
+                total_tokens: 1_353_554,
+                cached_input_tokens: 0,
+                cache_write_tokens: 0,
+                reasoning_tokens: 0,
+                attachment_input_tokens: 0,
+                input_cost: 0.0,
+                output_cost: 0.0,
+                total_cost: 0.0,
+                currency: "USD".to_string(),
+                pricing_source: "provider".to_string(),
+                latency_ms: 2_950,
+                time_to_first_token_ms: 2_950,
+                token_per_second: 0.33,
+            }))
+            .expect("fixture usage should apply");
 
-        sync_context_tokens_from_provider_usage(&mut session, &mut runtime, 200_000);
+        sync_context_tokens_from_provider_usage(&mut session, &runtime, 200_000);
 
         assert_eq!(session.context_tokens.input, 1_353_553);
         assert_eq!(session.context_tokens.limit, 200_000);
-        assert_eq!(runtime.context_tokens, session.context_tokens);
     }
 
     #[test]
@@ -821,7 +832,7 @@ mod tests {
             std::path::PathBuf::from("C:/workspace"),
             false,
             "coding".to_string(),
-            crate::state_machine::session_management::SessionInput {
+            lifecycle::SessionInput {
                 user_input: "work".to_string(),
                 file_input: vec![],
                 agent: None,

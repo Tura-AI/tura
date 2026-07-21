@@ -1,8 +1,12 @@
+#[path = "../support/typed_session.rs"]
+mod typed_session;
+
 use anyhow::{anyhow, Context, Result};
 use gateway::session_db_client::SessionDbClient;
+use lifecycle::TaskPlan;
 use serde_json::json;
 use session_log::SessionLogStore;
-use session_log_contract::{SessionLogCommand, SessionLogResponse, UpsertSessionRequest};
+use session_log_contract::{MarkSessionInterruptedRequest, SessionLogCommand};
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
@@ -22,24 +26,23 @@ fn gateway_session_db_business_flow_reads_written_session_and_records() -> Resul
 
     let client = SessionDbClient::discover()?;
     let session_id = format!("gateway-session-db-business-{}", std::process::id());
-    upsert_session_direct(
-        session_payload(&session_id, &workspace, 1),
-        None,
-        vec![message_payload(&session_id, "m-1", "user", 1)],
-        vec![json!({ "id": "todo-1", "content": "prove local session db flow" })],
+    let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
+    typed_session::create_via_service(
+        &session_id,
+        &workspace_key,
+        "Gateway Session DB Business",
+        1,
+        TaskPlan::default(),
     )?;
-    upsert_session_direct(
-        session_payload(&session_id, &workspace, 2),
-        None,
+    typed_session::persist_messages_via_service(
+        &session_id,
         vec![
             message_payload(&session_id, "m-1", "user", 1),
             message_payload(&session_id, "m-2", "assistant", 2),
         ],
-        vec![json!({ "id": "todo-1", "content": "prove local session db flow", "status": "done" })],
     )?;
 
     let workspaces = client.list_workspaces()?;
-    let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
     assert!(
         workspaces
             .iter()
@@ -59,8 +62,6 @@ fn gateway_session_db_business_flow_reads_written_session_and_records() -> Resul
         .get_session(session_id.clone())?
         .ok_or_else(|| anyhow!("expected persisted session"))?;
     assert_eq!(loaded.session["id"], session_id);
-    assert_eq!(loaded.todos.len(), 1);
-    assert_eq!(loaded.todos[0]["status"], "done");
 
     let (records_page, records) = client.list_session_records(session_id, 0, 50)?;
     assert_eq!(records_page.total, 2);
@@ -81,7 +82,7 @@ fn gateway_session_db_business_flow_reads_written_session_and_records() -> Resul
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     let read_after_shutdown = client
         .list_workspaces()
@@ -108,16 +109,15 @@ fn gateway_session_db_client_rejects_mutating_write_while_service_is_down() -> R
     let client = SessionDbClient::discover()?;
     let session_id = format!("gateway-offline-queue-{}", uuid::Uuid::new_v4());
     let write_error = client
-        .call(SessionLogCommand::UpsertSession(UpsertSessionRequest {
-            session: session_payload(&session_id, &workspace, 1),
-            parent_id: None,
-            messages: vec![message_payload(&session_id, "offline-m-1", "user", 1)],
-            todos: vec![json!({ "id": "offline-todo", "content": "queued while owner is down" })],
-        }))
-        .expect_err("gateway session_db client must reject write commands");
+        .call(SessionLogCommand::MarkSessionInterrupted(
+            MarkSessionInterruptedRequest { session_id },
+        ))
+        .expect_err("gateway session_db client must reject non-owned mutation commands");
     assert!(
-        write_error.to_string().contains("read-only"),
-        "write rejection should explain the read-only gateway client: {write_error:#}"
+        write_error
+            .to_string()
+            .contains("only accepts queries and typed session commands"),
+        "write rejection should explain the typed-only gateway client: {write_error:#}"
     );
 
     let read_error = client
@@ -152,9 +152,16 @@ fn gateway_session_db_business_flow_preserves_mixed_message_shapes() -> Result<(
 
     let client = SessionDbClient::discover()?;
     let session_id = format!("gateway-mixed-shapes-{}", uuid::Uuid::new_v4());
-    upsert_session_direct(
-        session_payload(&session_id, &workspace, 1),
-        None,
+    let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
+    typed_session::create_via_service(
+        &session_id,
+        &workspace_key,
+        "Gateway Mixed Shapes",
+        1,
+        TaskPlan::default(),
+    )?;
+    typed_session::persist_messages_via_service(
+        &session_id,
         vec![
             json!({
                 "id": "runtime-mixed.message",
@@ -196,15 +203,14 @@ fn gateway_session_db_business_flow_preserves_mixed_message_shapes() -> Result<(
                 "usage": {"total_tokens": 9}
             }),
             json!({
-                "id": "legacy-simple-assistant",
+                "id": "diagnostic-simple-assistant",
                 "session_id": session_id,
                 "role": "assistant",
                 "created_at": 13,
                 "updated_at": 13,
-                "content": "legacy dirty shape"
+                "content": "diagnostic simple shape"
             }),
         ],
-        vec![],
     )?;
 
     let (_records_page, records) = client.list_session_records(session_id.clone(), 0, 50)?;
@@ -221,8 +227,8 @@ fn gateway_session_db_business_flow_preserves_mixed_message_shapes() -> Result<(
     assert!(
         records
             .iter()
-            .any(|record| record.message_id == "legacy-simple-assistant"),
-        "dirty legacy shapes should be retained as records for diagnostics"
+            .any(|record| record.message_id == "diagnostic-simple-assistant"),
+        "simple diagnostic shapes should be retained as records"
     );
 
     let loaded = client
@@ -232,7 +238,7 @@ fn gateway_session_db_business_flow_preserves_mixed_message_shapes() -> Result<(
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }
@@ -257,16 +263,23 @@ fn gateway_session_db_client_concurrent_writes_preserve_workspace_listing_and_re
         handles.push(std::thread::spawn(move || -> Result<String> {
             let session_id = format!("gateway-concurrent-{index}-{}", uuid::Uuid::new_v4());
             barrier.wait();
-            upsert_session_direct(
-                session_payload(&session_id, &workspace, index),
-                None,
+            let workspace_key =
+                session_log::path::normalize_workspace(&workspace.to_string_lossy());
+            typed_session::create_via_service(
+                &session_id,
+                &workspace_key,
+                "Gateway Concurrent Session",
+                index,
+                TaskPlan::default(),
+            )?;
+            typed_session::persist_messages_via_service(
+                &session_id,
                 vec![message_payload(
                     &session_id,
                     &format!("concurrent-m-{index}"),
                     "assistant",
                     index,
                 )],
-                vec![json!({ "id": format!("todo-{index}"), "status": "todo" })],
             )?;
             Ok(session_id)
         }));
@@ -306,43 +319,9 @@ fn gateway_session_db_client_concurrent_writes_preserve_workspace_listing_and_re
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
-}
-
-fn upsert_session_direct(
-    session: serde_json::Value,
-    parent_id: Option<String>,
-    messages: Vec<serde_json::Value>,
-    todos: Vec<serde_json::Value>,
-) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
-        session,
-        parent_id,
-        messages,
-        todos,
-    }))? {
-        SessionLogResponse::Ok => Ok(()),
-        SessionLogResponse::Error { error } => Err(anyhow!(error)),
-        other => Err(anyhow!("unexpected session_db response: {other:?}")),
-    }
-}
-
-fn session_payload(session_id: &str, workspace: &Path, sequence: i64) -> serde_json::Value {
-    json!({
-        "id": session_id,
-        "name": "Gateway Session DB Business",
-        "directory": workspace.to_string_lossy(),
-        "created_at": 1,
-        "updated_at": sequence,
-        "status": "idle",
-        "management": {
-            "session_id": session_id,
-            "session_name": "Gateway Session DB Business",
-            "state": "created"
-        }
-    })
 }
 
 fn message_payload(
@@ -372,6 +351,7 @@ impl EnvGuard {
             "SESSION_LOG_DB_ROOT",
             "TURA_DB_ROOT",
             "TURA_SESSION_DB_PROBE_TIMEOUT_MS",
+            "TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS",
         ];
         let previous = keys
             .iter()
@@ -380,7 +360,8 @@ impl EnvGuard {
         std::env::set_var("TURA_HOME", home);
         std::env::remove_var("SESSION_LOG_DB_ROOT");
         std::env::remove_var("TURA_DB_ROOT");
-        std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "20");
+        std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "1000");
+        std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", "5000");
         Self { previous }
     }
 }
@@ -417,7 +398,7 @@ impl ServiceThread {
                 };
                 return Err(anyhow!(detail));
             }
-            if session_log::ipc::service_is_running() {
+            if session_log_contract::client::service_is_running() {
                 return Ok(Self {
                     handle: Some(handle),
                 });
@@ -432,7 +413,7 @@ impl ServiceThread {
 
 impl Drop for ServiceThread {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

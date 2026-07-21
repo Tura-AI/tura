@@ -1,8 +1,8 @@
 use chrono::Utc;
+use lifecycle::{ProviderConfig, ToolChoice};
+use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
 use lifecycle::{RuntimeCallResultStatus, RuntimeState};
 use runtime::runtime::call_runtime::{call_runtime, CallRuntimeInput};
-use runtime::state_machine::agent_management::{ProviderConfig, ToolChoice};
-use runtime::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
@@ -409,7 +409,7 @@ async fn mock_command_run_router_response(raw: &str) -> Value {
     })
 }
 
-fn runtime_with_timeout(runtime_id: &str, timeout_ms: u64) -> RuntimeManagement {
+fn runtime_with_timeout(runtime_id: &str, timeout_ms: u64) -> RuntimeAggregate {
     runtime_for_provider(
         runtime_id,
         timeout_ms,
@@ -427,8 +427,8 @@ fn runtime_for_provider(
     route: &str,
     provider_url_name: &str,
     model: &str,
-) -> RuntimeManagement {
-    RuntimeManagement::new(
+) -> RuntimeAggregate {
+    RuntimeAggregate::new(
         runtime_id.to_string(),
         "session-timeout-business".to_string(),
         "agent-timeout-business".to_string(),

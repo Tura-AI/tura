@@ -2,14 +2,14 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use session_log_contract::CommandCheckpoint;
+use session_log_contract::{CheckpointType, CommandCheckpoint};
 
 use super::client::CheckpointClient;
 
 #[derive(Debug, Clone)]
 pub struct StreamedCommandCheckpoint<'a> {
     pub session_id: &'a str,
-    pub turn_id: &'a str,
+    pub runtime_id: &'a str,
     pub runtime_worker_id: &'a str,
     pub command_run_id: &'a str,
     pub index: usize,
@@ -20,23 +20,23 @@ pub struct StreamedCommandCheckpoint<'a> {
 #[derive(Debug, Clone)]
 pub(super) struct RuntimeCheckpoint<'a> {
     pub session_id: &'a str,
-    pub turn_id: &'a str,
+    pub runtime_id: &'a str,
     pub runtime_worker_id: &'a str,
     pub provider_call_id: Option<&'a str>,
     pub command_run_id: Option<&'a str>,
     pub command_id: Option<&'a str>,
     pub event_seq: Option<i64>,
-    pub event_type: &'a str,
+    pub checkpoint_type: CheckpointType,
     pub payload: Value,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
 }
 
 pub(super) fn checkpoint_runtime_event(input: RuntimeCheckpoint<'_>) -> Result<(), String> {
-    let operation = input.event_type;
+    let operation = input.checkpoint_type.as_str();
     let checkpoint = CommandCheckpoint {
         session_id: input.session_id.to_string(),
-        turn_id: input.turn_id.to_string(),
+        runtime_id: input.runtime_id.to_string(),
         runtime_worker_id: Some(input.runtime_worker_id.to_string()),
         provider_call_id: input.provider_call_id.map(str::to_string),
         command_run_id: input.command_run_id.map(str::to_string),
@@ -44,7 +44,7 @@ pub(super) fn checkpoint_runtime_event(input: RuntimeCheckpoint<'_>) -> Result<(
         event_seq: input.event_seq,
         command_type: None,
         command_line: None,
-        status: input.event_type.to_string(),
+        checkpoint_type: input.checkpoint_type,
         output_summary: None,
         changes: input.payload,
         started_at: input.started_at.map(|value| value.to_rfc3339()),
@@ -61,13 +61,13 @@ pub fn checkpoint_command_run_started(
 ) -> Result<(), String> {
     checkpoint_runtime_event(RuntimeCheckpoint {
         session_id,
-        turn_id: runtime_id,
+        runtime_id,
         runtime_worker_id: runtime_id,
         provider_call_id: Some(runtime_id),
         command_run_id: Some(command_run_id),
         command_id: None,
         event_seq: Some(10),
-        event_type: "command_run_started",
+        checkpoint_type: CheckpointType::CommandRunStarted,
         payload: serde_json::json!({ "event_type": "command_run_started" }),
         started_at: Some(started_at),
         finished_at: None,
@@ -85,13 +85,13 @@ pub fn checkpoint_command_ready(
 ) -> Result<(), String> {
     checkpoint_runtime_event(RuntimeCheckpoint {
         session_id,
-        turn_id: runtime_id,
+        runtime_id,
         runtime_worker_id: runtime_id,
         provider_call_id: Some(runtime_id),
         command_run_id: Some(command_run_id),
         command_id: Some(command_id),
         event_seq: Some(20 + command_index as i64),
-        event_type: "command_ready",
+        checkpoint_type: CheckpointType::CommandReady,
         payload: serde_json::json!({
             "event_type": "command_ready",
             "command": command,
@@ -112,13 +112,13 @@ pub fn checkpoint_command_started(
 ) -> Result<(), String> {
     checkpoint_runtime_event(RuntimeCheckpoint {
         session_id,
-        turn_id: runtime_id,
+        runtime_id,
         runtime_worker_id: runtime_id,
         provider_call_id: Some(runtime_id),
         command_run_id: Some(command_run_id),
         command_id: Some(command_id),
         event_seq: Some(30 + command_index as i64),
-        event_type: "command_started",
+        checkpoint_type: CheckpointType::CommandStarted,
         payload: serde_json::json!({
             "event_type": "command_started",
             "command": command,
@@ -139,13 +139,13 @@ pub fn checkpoint_command_run_finished(
 ) -> Result<(), String> {
     checkpoint_runtime_event(RuntimeCheckpoint {
         session_id,
-        turn_id: runtime_id,
+        runtime_id,
         runtime_worker_id: runtime_id,
         provider_call_id: Some(runtime_id),
         command_run_id: Some(command_run_id),
         command_id: None,
         event_seq: Some(90),
-        event_type: "command_run_finished",
+        checkpoint_type: CheckpointType::CommandRunFinished,
         payload: serde_json::json!({
             "event_type": "command_run_finished",
             "status": status,
@@ -194,14 +194,15 @@ pub fn checkpoint_streamed_command_finished(
         .or_else(|| result.get("output"))
         .and_then(Value::as_str)
         .map(|text| text.chars().take(4000).collect::<String>());
-    let status = if success {
-        "command_finished"
+    let checkpoint_type = if success {
+        CheckpointType::CommandFinished
     } else {
-        "command_failed"
+        CheckpointType::CommandFailed
     };
+    let operation = checkpoint_type.as_str();
     let checkpoint = CommandCheckpoint {
         session_id: input.session_id.to_string(),
-        turn_id: input.turn_id.to_string(),
+        runtime_id: input.runtime_id.to_string(),
         runtime_worker_id: Some(input.runtime_worker_id.to_string()),
         provider_call_id: None,
         command_run_id: Some(input.command_run_id.to_string()),
@@ -209,7 +210,7 @@ pub fn checkpoint_streamed_command_finished(
         event_seq: Some(input.index as i64),
         command_type,
         command_line,
-        status: status.to_string(),
+        checkpoint_type,
         output_summary,
         changes: result
             .get("changes")
@@ -219,7 +220,7 @@ pub fn checkpoint_streamed_command_finished(
         started_at: None,
         finished_at: Some(input.finished_at.to_rfc3339()),
     };
-    write_checkpoint(status, checkpoint)
+    write_checkpoint(operation, checkpoint)
 }
 
 fn write_checkpoint(operation: &str, checkpoint: CommandCheckpoint) -> Result<(), String> {

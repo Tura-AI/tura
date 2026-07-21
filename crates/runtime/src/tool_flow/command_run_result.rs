@@ -2,9 +2,9 @@
 
 use chrono::Utc;
 
-use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::SessionManagement;
 use crate::tool_callback_sanitizer::sanitize_tool_callback_result;
+use lifecycle::RuntimeAggregate;
+use lifecycle::SessionManagement;
 use lifecycle::{PlanStatus, StartCondition};
 
 pub(crate) fn apply_task_attribution_to_streamed_result(
@@ -54,7 +54,7 @@ fn current_task_attribution(session: &SessionManagement) -> Option<serde_json::V
 
 pub(crate) fn record_streamed_command_events(
     session: &mut SessionManagement,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     streamed_result: &serde_json::Value,
 ) {
     let Some(events) = streamed_result
@@ -100,12 +100,10 @@ pub(crate) fn record_streamed_command_events(
 #[cfg(test)]
 mod tests {
     use super::{apply_task_attribution_to_streamed_result, record_streamed_command_events};
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
-    use crate::state_machine::session_management::{
-        PlanStatus, SessionInput, SessionManagement, TaskStep,
-    };
     use chrono::Utc;
+    use lifecycle::{PlanStatus, SessionInput, SessionManagement, TaskStep};
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -174,7 +172,7 @@ mod tests {
             }]
         });
         let now = Utc::now();
-        let runtime = RuntimeManagement::new(
+        let runtime = RuntimeAggregate::new(
             "runtime-streamed".to_string(),
             session.session_id.clone(),
             session.session_id.clone(),
@@ -228,7 +226,7 @@ mod tests {
     #[test]
     fn streamed_command_events_wrap_scalar_values_without_panicking() {
         let mut session = session();
-        let runtime = RuntimeManagement::new(
+        let runtime = RuntimeAggregate::new(
             "runtime-streamed".to_string(),
             session.session_id.clone(),
             session.session_id.clone(),

@@ -7,11 +7,8 @@
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex as ParkingMutex;
-use router_contract::{
-    IpcNotification, IpcRequest, IpcResponse, RouterEndpoint, METHOD_HEALTH_CHECK,
-};
-use runtime_contract::GATEWAY_CALLBACK_KIND;
-use serde_json::{json, Value};
+use router_contract::{IpcRequest, IpcResponse, RouterEndpoint, METHOD_HEALTH_CHECK};
+use serde_json::json;
 use std::{
     io::{BufRead, BufReader, Write},
     net::{SocketAddr, TcpStream},
@@ -125,7 +122,7 @@ impl RouterProcess {
             let killed_spawned_child = self.kill_managed_router_child();
             remove_router_endpoint_files();
             *self.addr.lock() = None;
-            if let Some(error) = session_log::service::unreachable_owner_lock_message() {
+            if let Some(error) = session_log_contract::client::unreachable_owner_lock_message() {
                 *self.last_error.lock() = Some(error.clone());
                 return Err(anyhow!("failed to start router daemon: {error}"));
             }
@@ -143,9 +140,10 @@ impl RouterProcess {
             }
         }
 
-        let error = session_log::service::unreachable_owner_lock_message().unwrap_or_else(|| {
-            "router daemon did not become healthy within 20 seconds".to_string()
-        });
+        let error =
+            session_log_contract::client::unreachable_owner_lock_message().unwrap_or_else(|| {
+                "router daemon did not become healthy within 20 seconds".to_string()
+            });
         *self.last_error.lock() = Some(error.clone());
         Err(anyhow!("failed to start router daemon: {error}"))
     }
@@ -522,77 +520,10 @@ fn call_router_addr(
         if line.trim().is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(line.trim())
-            .context("failed to decode router daemon response frame")?;
-        if value.get("kind").and_then(Value::as_str) == Some(GATEWAY_CALLBACK_KIND) {
-            let notification: IpcNotification = serde_json::from_value(value)
-                .context("failed to decode router callback notification")?;
-            handle_router_notification(&notification);
-            continue;
-        }
         let response: IpcResponse =
-            serde_json::from_value(value).context("failed to decode router daemon response")?;
+            serde_json::from_str(line.trim()).context("failed to decode router daemon response")?;
         return serde_json::to_value(response).map_err(Into::into);
     }
-}
-
-fn handle_router_notification(notification: &IpcNotification) {
-    if let Err(error) = apply_gateway_callback_notification(notification) {
-        tracing::warn!(error = %error, ?notification, "failed to apply router gateway callback");
-    }
-}
-
-fn apply_gateway_callback_notification(notification: &IpcNotification) -> Result<()> {
-    let method = notification.method.as_str();
-    let payload = &notification.payload;
-    let session_id = payload
-        .get("session_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("gateway callback notification missing session_id"))?
-        .to_string();
-    let body = payload.get("body").cloned().unwrap_or(Value::Null);
-    match method {
-        "session.agent_message" => {
-            let request: crate::api::session::SendAgentMessageRequest =
-                serde_json::from_value(body)
-                    .context("failed to decode session.agent_message callback body")?;
-            let response = crate::api::session::send_agent_message_payload(session_id, request);
-            if !response.ok {
-                return Err(anyhow!(
-                    "{}",
-                    response
-                        .error
-                        .unwrap_or_else(|| "session.agent_message callback failed".to_string())
-                ));
-            }
-        }
-        "session.agent_stream" => {
-            let request: crate::api::session::StreamAgentTextRequest = serde_json::from_value(body)
-                .context("failed to decode session.agent_stream callback body")?;
-            let response = crate::api::session::stream_agent_message_payload(session_id, request);
-            if response
-                .get("ok")
-                .and_then(Value::as_bool)
-                .is_some_and(|ok| !ok)
-            {
-                return Err(anyhow!("session.agent_stream callback failed: {response}"));
-            }
-        }
-        "session.todos" => {
-            let todos = serde_json::from_value::<Vec<Value>>(body)
-                .context("failed to decode session.todos callback body")?;
-            crate::session::session_store().set_todos(&session_id, todos);
-        }
-        other => {
-            tracing::warn!(
-                method = other,
-                "dropping unknown gateway callback notification"
-            );
-        }
-    }
-    Ok(())
 }
 
 fn read_timeout_for(method: &str) -> Duration {
@@ -617,7 +548,7 @@ fn router_execution_timeout() -> Duration {
 }
 
 fn router_addr_path() -> PathBuf {
-    session_log::path::default_db_dir().join("router.addr")
+    session_log_contract::client::default_db_dir().join("router.addr")
 }
 
 fn remove_router_endpoint_files() {

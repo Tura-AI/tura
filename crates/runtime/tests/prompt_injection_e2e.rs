@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use lifecycle::SessionInput;
 use runtime::agent_router::activate_agents_by_session_type;
 use runtime::manas::load_agent_system_prompt_messages;
 use runtime::session::activate_session_with_directory;
-use runtime::state_machine::session_management::SessionInput;
 
 #[test]
 fn coding_agents_inject_agent_prompt_without_persona_binding() {

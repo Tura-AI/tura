@@ -7,12 +7,17 @@
 //! or third-party services.
 
 pub(crate) use anyhow::{anyhow, bail, Context, Result};
+pub(crate) use lifecycle::{
+    PlanStatus, SessionCommand, SessionInput, SessionManagement, SessionState, TaskPlan, TaskStep,
+};
 pub(crate) use rusqlite::Connection;
 pub(crate) use serde_json::json;
-pub(crate) use session_log::file_queue;
+pub(crate) use session_log_contract::client::enqueue_command;
 pub(crate) use session_log_contract::{
-    CommandCheckpoint, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
-    SessionLogCommand, SessionLogResponse, UpsertSessionRequest,
+    CheckpointType, CommandCheckpoint, CreateSessionRequest, ExecuteSessionCommandRequest,
+    GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, PersistSessionDeltaRequest,
+    SessionContextRecord, SessionDeltaEntry, SessionLogCommand, SessionLogResponse,
+    SessionRecordProjection,
 };
 pub(crate) use std::{
     path::{Path, PathBuf},
@@ -24,76 +29,248 @@ pub(crate) use std::{
 pub(crate) static SERIAL: Mutex<()> = Mutex::new(());
 
 pub(crate) fn enqueue(command: SessionLogCommand) -> Result<()> {
-    file_queue::enqueue_command(&command)?;
+    enqueue_command(&command)?;
     Ok(())
 }
 
-pub(crate) fn upsert_session(
-    session_id: &str,
-    workspace: &str,
-    updated_at: i64,
-    state: &str,
-    messages: &[&str],
-    todos: &[(&str, &str)],
-) -> UpsertSessionRequest {
-    UpsertSessionRequest {
-        session: json!({
-            "id": session_id,
-            "name": format!("Session {session_id}"),
-            "directory": workspace,
-            "created_at": updated_at - 1,
-            "updated_at": updated_at,
-            "management": {
-                "session_id": session_id,
-                "session_name": format!("Session {session_id}"),
-                "session_directory": workspace,
-                "session_created_at": "2026-06-12T00:00:00.000Z",
-                "session_last_update_at": "2026-06-12T00:00:01.000Z",
-                "state": state,
-                "task_plan": {
-                    "plan_summary": format!("plan for {session_id}"),
-                    "detailed_tasks": todos.iter().map(|(id, status)| {
-                        json!({
-                            "id": id,
-                            "step": format!("task {id}"),
-                            "status": status,
-                            "deliverables": []
-                        })
-                    }).collect::<Vec<_>>()
-                }
-            }
-        }),
-        parent_id: None,
-        messages: messages
+pub(crate) fn task_plan(tasks: &[(&str, PlanStatus)]) -> TaskPlan {
+    TaskPlan {
+        plan_summary: "restart recovery plan".to_string(),
+        detailed_tasks: tasks
             .iter()
             .enumerate()
-            .map(|(index, message_id)| {
-                json!({
-                    "id": message_id,
-                    "role": if index == 0 { "user" } else { "assistant" },
-                    "created_at": updated_at + index as i64,
-                    "updated_at": updated_at + index as i64,
-                    "content": format!("content for {message_id}")
-                })
-            })
-            .collect(),
-        todos: todos
-            .iter()
-            .map(|(id, status)| {
-                json!({
-                    "id": id,
-                    "content": format!("todo {id}"),
-                    "status": status
-                })
+            .map(|(index, (task_id, status))| TaskStep {
+                task_id: (*task_id).to_string(),
+                step: index as u64 + 1,
+                task_summary: format!("task {task_id}"),
+                step_task: format!("task {task_id}"),
+                status: *status,
+                ..TaskStep::default()
             })
             .collect(),
     }
 }
 
-pub(crate) fn checkpoint(session_id: &str, seq: i64, status: &str) -> CommandCheckpoint {
+pub(crate) fn create_session_command(
+    session_id: &str,
+    workspace: &str,
+    created_at: i64,
+    tasks: &[(&str, PlanStatus)],
+) -> SessionLogCommand {
+    SessionLogCommand::CreateSession(CreateSessionRequest {
+        command_id: format!("create:{session_id}"),
+        session_id: session_id.to_string(),
+        creation_command: SessionCommand::CreateSession {
+            task_plan: task_plan(tasks),
+        },
+        copy_context: false,
+        workspace: workspace.to_string(),
+        session_directory: workspace.to_string(),
+        name: format!("Session {session_id}"),
+        created_at,
+        model: None,
+        agent: None,
+        session_type: "coding".to_string(),
+        kill_processes_on_start: false,
+        validator_enabled: false,
+        force_planning: false,
+        model_variant: None,
+        model_acceleration_enabled: false,
+        disable_permission_restrictions: false,
+        use_last_tool_call_response: false,
+        auto_session_name: false,
+    })
+}
+
+pub(crate) fn execute_session_command(
+    session_id: &str,
+    session_command: SessionCommand,
+) -> SessionLogCommand {
+    SessionLogCommand::ExecuteSessionCommand(ExecuteSessionCommandRequest {
+        command_id: uuid::Uuid::new_v4().to_string(),
+        session_id: session_id.to_string(),
+        session_command,
+        message_projection: None,
+    })
+}
+
+pub(crate) fn persist_session_delta_command(
+    session_id: &str,
+    workspace: &str,
+    updated_at: i64,
+    management_sequence: u64,
+    start_sequence: u64,
+    messages: &[&str],
+    tasks: &[(&str, PlanStatus)],
+) -> SessionLogCommand {
+    let now = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(updated_at)
+        .unwrap_or_else(chrono::Utc::now);
+    let mut management = SessionManagement::new(
+        session_id.to_string(),
+        format!("Session {session_id}"),
+        PathBuf::from(workspace),
+        false,
+        Vec::<String>::new(),
+        SessionInput {
+            user_input: String::new(),
+            file_input: Vec::new(),
+            agent: None,
+            runtime_context: None,
+            planning_mode_override: None,
+        },
+        String::new(),
+        now,
+    );
+    management.auto_session_name = false;
+    management.task_plan = task_plan(tasks);
+    SessionLogCommand::PersistSessionDelta(Box::new(PersistSessionDeltaRequest {
+        session_id: session_id.to_string(),
+        management_sequence,
+        management_delta: SessionManagement::persistence_delta(None, &management),
+        retained_from_sequence: 0,
+        entries: messages
+            .iter()
+            .enumerate()
+            .map(|(index, message_id)| {
+                let sequence = start_sequence + index as u64;
+                let role = if sequence == 0 { "user" } else { "assistant" };
+                let record = json!({
+                    "id": message_id,
+                    "session_id": session_id,
+                    "role": role,
+                    "created_at": updated_at + index as i64,
+                    "updated_at": updated_at + index as i64,
+                    "parts": [{
+                        "id": format!("{message_id}-part"),
+                        "type": "text",
+                        "content": format!("content for {message_id}"),
+                        "text": format!("content for {message_id}")
+                    }]
+                });
+                SessionDeltaEntry {
+                    context: SessionContextRecord {
+                        sequence,
+                        raw_record: record.to_string(),
+                    },
+                    projection: Some(SessionRecordProjection {
+                        session_id: session_id.to_string(),
+                        message_id: (*message_id).to_string(),
+                        role: role.to_string(),
+                        created_at: updated_at + index as i64,
+                        updated_at: updated_at + index as i64,
+                        record,
+                    }),
+                }
+            })
+            .collect(),
+    }))
+}
+
+pub(crate) fn create_session_commands(
+    session_id: &str,
+    workspace: &str,
+    created_at: i64,
+    state: SessionState,
+    messages: &[&str],
+    tasks: &[(&str, PlanStatus)],
+) -> Vec<SessionLogCommand> {
+    let mut commands = vec![create_session_command(
+        session_id, workspace, created_at, tasks,
+    )];
+    match state {
+        SessionState::Created => {}
+        SessionState::Running => commands.push(execute_session_command(
+            session_id,
+            SessionCommand::RuntimeStarted {
+                runtime_id: format!("runtime-{session_id}"),
+            },
+        )),
+        SessionState::Paused => {
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeStarted {
+                    runtime_id: format!("runtime-{session_id}"),
+                },
+            ));
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::ApplyRuntimeState {
+                    state: SessionState::Paused,
+                },
+            ));
+        }
+        SessionState::Completed => {
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeStarted {
+                    runtime_id: format!("runtime-{session_id}"),
+                },
+            ));
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeCompleted {
+                    runtime_id: format!("runtime-{session_id}"),
+                },
+            ));
+        }
+        SessionState::Failed => {
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeStarted {
+                    runtime_id: format!("runtime-{session_id}"),
+                },
+            ));
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeFailed {
+                    runtime_id: format!("runtime-{session_id}"),
+                },
+            ));
+        }
+        SessionState::Cancelled => commands.push(execute_session_command(
+            session_id,
+            SessionCommand::CancelSession,
+        )),
+        SessionState::Interrupted => {
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::RuntimeStarted {
+                    runtime_id: format!("runtime-{session_id}"),
+                },
+            ));
+            commands.push(execute_session_command(
+                session_id,
+                SessionCommand::InterruptSession,
+            ));
+        }
+    }
+    commands.push(persist_session_delta_command(
+        session_id, workspace, created_at, 0, 0, messages, tasks,
+    ));
+    commands
+}
+
+pub(crate) fn create_session_payload_commands(
+    session_id: &str,
+    workspace: &str,
+    created_at: i64,
+    messages: &[&str],
+    tasks: &[(&str, PlanStatus)],
+) -> [SessionLogCommand; 2] {
+    [
+        create_session_command(session_id, workspace, created_at, tasks),
+        persist_session_delta_command(session_id, workspace, created_at, 0, 0, messages, tasks),
+    ]
+}
+
+pub(crate) fn checkpoint(
+    session_id: &str,
+    seq: i64,
+    checkpoint_type: CheckpointType,
+) -> CommandCheckpoint {
     CommandCheckpoint {
         session_id: session_id.to_string(),
-        turn_id: "turn-restart-queue".to_string(),
+        runtime_id: "runtime-restart-queue".to_string(),
         runtime_worker_id: Some("runtime-worker-restart-queue".to_string()),
         provider_call_id: Some("provider-restart-queue".to_string()),
         command_run_id: Some("command-run-restart-queue".to_string()),
@@ -101,7 +278,7 @@ pub(crate) fn checkpoint(session_id: &str, seq: i64, status: &str) -> CommandChe
         event_seq: Some(seq),
         command_type: Some("shell_command".to_string()),
         command_line: Some(format!("Write-Output restart-queue-{seq}")),
-        status: status.to_string(),
+        checkpoint_type,
         output_summary: Some(format!("restart queue checkpoint {seq}")),
         changes: json!({ "seq": seq, "files": [format!("file-{seq}.txt")] }),
         started_at: Some("2026-06-12T00:00:00Z".to_string()),
@@ -111,7 +288,9 @@ pub(crate) fn checkpoint(session_id: &str, seq: i64, status: &str) -> CommandChe
 
 pub(crate) fn assert_ok(response: SessionLogResponse) -> Result<()> {
     match response {
-        SessionLogResponse::Ok => Ok(()),
+        SessionLogResponse::Ok
+        | SessionLogResponse::SessionCommandApplied { .. }
+        | SessionLogResponse::SessionDeltaPersisted { .. } => Ok(()),
         SessionLogResponse::Error { error } => bail!("session_db returned error: {error}"),
         other => bail!("session_db returned unexpected response: {other:?}"),
     }
@@ -125,9 +304,11 @@ pub(crate) fn assert_session_snapshot(
     message_count: u64,
     expected_task_status: Option<&str>,
 ) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id: session_id.to_string(),
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))? {
         SessionLogResponse::Session { session } => {
             let snapshot = session.ok_or_else(|| anyhow!("session {session_id} missing"))?;
             assert_eq!(snapshot.session_id, session_id);
@@ -157,9 +338,11 @@ pub(crate) fn assert_session_snapshot(
 }
 
 pub(crate) fn assert_session_missing(session_id: &str) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id: session_id.to_string(),
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))? {
         SessionLogResponse::Session { session } => {
             assert!(session.is_none(), "session {session_id} should be missing");
             Ok(())
@@ -174,7 +357,7 @@ pub(crate) fn assert_records(session_id: &str, expected: &[&str]) -> Result<()> 
 }
 
 pub(crate) fn record_ids(session_id: &str) -> Result<Vec<String>> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessionRecords(
         ListSessionRecordsRequest {
             session_id: session_id.to_string(),
             page: 0,
@@ -199,11 +382,13 @@ pub(crate) fn assert_workspace_page(
     total: u64,
     expected_len: usize,
 ) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessions(ListSessionsRequest {
-        workspace: workspace.to_string(),
-        page,
-        page_size,
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessions(
+        ListSessionsRequest {
+            workspace: workspace.to_string(),
+            page,
+            page_size,
+        },
+    ))? {
         SessionLogResponse::Sessions {
             page: actual_page,
             sessions,
@@ -221,18 +406,20 @@ pub(crate) fn assert_workspace_page(
 }
 
 pub(crate) fn workspace_session_total(workspace: &str) -> Option<u64> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListSessions(ListSessionsRequest {
-        workspace: workspace.to_string(),
-        page: 0,
-        page_size: 1,
-    })) {
+    match session_log_contract::client::call_service(&SessionLogCommand::ListSessions(
+        ListSessionsRequest {
+            workspace: workspace.to_string(),
+            page: 0,
+            page_size: 1,
+        },
+    )) {
         Ok(SessionLogResponse::Sessions { page, .. }) => Some(page.total),
         _ => None,
     }
 }
 
 pub(crate) fn assert_workspace_summaries(expected: &[(String, u64)]) -> Result<()> {
-    match session_log::ipc::call_service(&SessionLogCommand::ListWorkspaces)? {
+    match session_log_contract::client::call_service(&SessionLogCommand::ListWorkspaces)? {
         SessionLogResponse::Workspaces { workspaces } => {
             for (workspace, count) in expected {
                 let summary = workspaces
@@ -262,12 +449,11 @@ pub(crate) fn checkpoint_row_count(home: &Path, session_id: &str) -> i64 {
         return 0;
     };
     conn.query_row(
-        "SELECT COUNT(*) FROM session_write_queue
+        "SELECT COUNT(*) FROM command_checkpoints
          WHERE session_id = ?1
-           AND turn_id = 'turn-restart-queue'
+           AND runtime_id = 'runtime-restart-queue'
            AND runtime_worker_id = 'runtime-worker-restart-queue'
-           AND command_run_id = 'command-run-restart-queue'
-           AND status = 'applied'",
+           AND command_run_id = 'command-run-restart-queue'",
         [session_id],
         |row| row.get(0),
     )
@@ -280,17 +466,18 @@ pub(crate) fn assert_index_state_matches_workspace_state(
 ) -> Result<()> {
     let conn = Connection::open(index_db_path(home)).context("open index db")?;
     for session_id in session_ids {
-        let (state, status, management): (String, String, String) = conn.query_row(
-            "SELECT state, status, management_json FROM sessions WHERE session_id = ?1",
+        let state: String = conn.query_row(
+            "SELECT state FROM sessions WHERE session_id = ?1",
             [session_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| row.get(0),
         )?;
         let snapshot = get_session_snapshot(session_id)?
             .ok_or_else(|| anyhow!("snapshot missing for {session_id}"))?;
         assert_eq!(Some(state.as_str()), snapshot.state.as_deref());
-        assert_eq!(Some(status.as_str()), snapshot.status.as_deref());
-        let management: serde_json::Value = serde_json::from_str(&management)?;
-        assert_eq!(management["state"].as_str(), snapshot.state.as_deref());
+        assert_eq!(
+            snapshot.management["state"].as_str(),
+            snapshot.state.as_deref()
+        );
     }
     Ok(())
 }
@@ -298,9 +485,11 @@ pub(crate) fn assert_index_state_matches_workspace_state(
 pub(crate) fn get_session_snapshot(
     session_id: &str,
 ) -> Result<Option<Box<session_log_contract::SessionSnapshot>>> {
-    match session_log::ipc::call_service(&SessionLogCommand::GetSession(GetSessionRequest {
-        session_id: session_id.to_string(),
-    }))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))? {
         SessionLogResponse::Session { session } => Ok(session),
         other => bail!("unexpected get session response: {other:?}"),
     }
@@ -417,22 +606,38 @@ pub(crate) struct SessionDbService {
 
 impl SessionDbService {
     pub(crate) fn start() -> Result<Self> {
-        let handle = thread::spawn(session_log::service::run_socket_service);
-        wait_until(
-            Duration::from_secs(10),
-            session_log::ipc::service_is_running,
-        )
-        .context("session_db service did not become reachable")?;
-        Ok(Self {
-            handle: Some(handle),
-        })
+        let mut service = Self {
+            handle: Some(thread::spawn(session_log::service::run_socket_service)),
+        };
+        let readiness = wait_until(Duration::from_secs(10), || {
+            service
+                .handle
+                .as_ref()
+                .is_some_and(thread::JoinHandle::is_finished)
+                || matches!(
+                    session_log_contract::client::call_service(&SessionLogCommand::Health),
+                    Ok(SessionLogResponse::Ok)
+                )
+        });
+        if service
+            .handle
+            .as_ref()
+            .is_some_and(thread::JoinHandle::is_finished)
+        {
+            service
+                .join(Duration::from_secs(1))
+                .context("session_db service exited before becoming reachable")?;
+            bail!("session_db service exited before becoming reachable");
+        }
+        readiness.context("session_db service did not become reachable")?;
+        Ok(service)
     }
 
     pub(crate) fn shutdown(&mut self) -> Result<()> {
         if self.handle.is_none() {
             return Ok(());
         }
-        assert_ok(session_log::ipc::call_service(
+        assert_ok(session_log_contract::client::call_service(
             &SessionLogCommand::Shutdown,
         )?)?;
         self.join(Duration::from_secs(10))
@@ -466,7 +671,7 @@ impl SessionDbService {
 impl Drop for SessionDbService {
     fn drop(&mut self) {
         if self.handle.is_some() {
-            let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+            let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
             let _ = self.join(Duration::from_secs(5));
         }
     }

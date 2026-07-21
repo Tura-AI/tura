@@ -65,7 +65,31 @@ fn status_field_does_not_accept_start_condition_values() {
         )
         .expect("invalid task management remains non-fatal");
 
-    assert_eq!(updated.task_management, before);
+    let before_start_at = task_start_at_millis(&before);
+    let updated_start_at = task_start_at_millis(&updated.task_management);
+    let mut before_without_start_at = before;
+    let mut updated_without_start_at = updated.task_management;
+    before_without_start_at
+        .as_object_mut()
+        .expect("task management should be an object")
+        .remove("start_at");
+    updated_without_start_at
+        .as_object_mut()
+        .expect("task management should be an object")
+        .remove("start_at");
+
+    assert_eq!(updated_without_start_at, before_without_start_at);
+    assert_eq!(updated_start_at, before_start_at);
+}
+
+fn task_start_at_millis(task_management: &serde_json::Value) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(
+        task_management["start_at"]
+            .as_str()
+            .expect("task start_at should be an RFC3339 string"),
+    )
+    .expect("task start_at should parse")
+    .timestamp_millis()
 }
 
 fn create_canonical_session(

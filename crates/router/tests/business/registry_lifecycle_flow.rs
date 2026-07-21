@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
+use router_contract::{ConfigurableEntry, ExecuteCommandRequest, ToolPatch};
 use serde_json::json;
 use tura_router::registry::agent::UpsertAgentRequest;
-use tura_router::registry::command::ExecuteCommandRequest;
 use tura_router::registry::persona::UpsertPersonaRequest;
-use tura_router::registry::tools::{ToolPatch, ToolRegistry};
+use tura_router::registry::tools::ToolRegistry;
 use tura_router::registry::{AgentRegistry, CommandRegistry, PersonaRegistry, Registry};
 
 static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
@@ -278,37 +278,31 @@ fn router_registry_business_flow_discovers_renders_and_deduplicates_workspace_co
         vec!["lint", "business-tests", "no-third-party"]
     );
 
-    let rendered_deploy = registry.execute(
-        project.path().to_str(),
-        ExecuteCommandRequest {
-            command: "/deploy".to_string(),
-            args: Some(vec!["api".to_string(), "prod".to_string()]),
-        },
-    );
+    let rendered_deploy = registry.execute(ExecuteCommandRequest {
+        directory: project.path().to_str().map(str::to_string),
+        command: "/deploy".to_string(),
+        args: Some(vec!["api".to_string(), "prod".to_string()]),
+    });
     assert_eq!(
         rendered_deploy.output,
         "# Deploy service\nDeploy api into api prod with api prod"
     );
 
-    let rendered_audit = registry.execute(
-        project.path().to_str(),
-        ExecuteCommandRequest {
-            command: "audit".to_string(),
-            args: Some(vec!["router".to_string(), "gateway".to_string()]),
-        },
-    );
+    let rendered_audit = registry.execute(ExecuteCommandRequest {
+        directory: project.path().to_str().map(str::to_string),
+        command: "audit".to_string(),
+        args: Some(vec!["router".to_string(), "gateway".to_string()]),
+    });
     assert_eq!(
         rendered_audit.output,
         "Audit router gateway using router then gateway"
     );
 
-    let missing = registry.execute(
-        project.path().to_str(),
-        ExecuteCommandRequest {
-            command: "/not-configured".to_string(),
-            args: Some(vec!["ignored".to_string()]),
-        },
-    );
+    let missing = registry.execute(ExecuteCommandRequest {
+        directory: project.path().to_str().map(str::to_string),
+        command: "/not-configured".to_string(),
+        args: Some(vec!["ignored".to_string()]),
+    });
     assert!(missing
         .output
         .contains("Command `not-configured` is not configured"));
@@ -481,13 +475,11 @@ fn router_registry_business_flow_bundle_uses_same_public_registries_without_cros
         .map_err(anyhow::Error::msg)?;
     assert_eq!(agent.summary.id, "bundle-agent");
 
-    let command = registry.commands.execute(
-        project.path().to_str(),
-        ExecuteCommandRequest {
-            command: "status".to_string(),
-            args: Some(vec!["router".to_string(), "state".to_string()]),
-        },
-    );
+    let command = registry.commands.execute(ExecuteCommandRequest {
+        directory: project.path().to_str().map(str::to_string),
+        command: "status".to_string(),
+        args: Some(vec!["router".to_string(), "state".to_string()]),
+    });
     assert_eq!(command.output, "# Status\nCheck router state");
 
     let reloaded = Registry::from_static();

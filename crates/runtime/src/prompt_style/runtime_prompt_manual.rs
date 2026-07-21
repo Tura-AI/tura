@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 
 pub const RUNTIME_PROMPT_MANUAL_RECORD_TYPE: &str = "runtime_prompt_manual";
 pub const RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE: &str =
@@ -389,8 +389,8 @@ mod tests {
         capabilities_for_task_type_ids, normalize_task_type_ids, static_manuals,
         RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE, RUNTIME_PROMPT_MANUAL_RECORD_TYPE,
     };
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
+    use lifecycle::{SessionInput, SessionManagement};
 
     #[test]
     fn embedded_debug_manual_contains_recommended_tdd_workflow() {

@@ -172,8 +172,29 @@ jobs:
       - name: Install read_media Python dependencies
         run: sh commands/read_media/install.sh
       - name: Run backend business tests
-        run: sh xtask/scripts/run-backend-business-tests.sh --jobs 4 --timeout-seconds 300
-      - name: Run Phase 0 Runtime Session equivalence gate
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .ci-results
+          sh xtask/scripts/run-backend-business-tests.sh --jobs 4 --timeout-seconds 300 2>&1 |
+            tee .ci-results/backend-business.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            failure_summary="$(sed -n '/^Failed backend business tests:/,$p' .ci-results/backend-business.log)"
+            failure_summary="${failure_summary//'%'/'%25'}"
+            failure_summary="${failure_summary//$'\r'/'%0D'}"
+            failure_summary="${failure_summary//$'\n'/'%0A'}"
+            echo "::error title=Backend business test failure::$failure_summary"
+          fi
+          exit "$status"
+      - name: Upload backend business failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-business-failure-log
+          path: .ci-results/backend-business.log
+          if-no-files-found: error
+      - name: Run Runtime Session equivalence gate
         shell: pwsh
         run: |
           & ./tests/equivalence/runtime_session/run.ps1 -Mode gate -Repo $PWD
@@ -185,8 +206,10 @@ jobs:
           path: |
             tests/equivalence/runtime_session/reference/*.json
             target/runtime-session-equivalence/*.json
+            target/runtime-session-equivalence/*.stderr.log
             tests/equivalence/runtime_session/baseline.json
             tests/equivalence/runtime_session/core-e2e.json
+            tests/equivalence/runtime_session/*-evidence.json
             tests/equivalence/runtime_session/failure-injection.json
           if-no-files-found: warn
 
@@ -233,7 +256,7 @@ jobs:
           if-no-files-found: error
 
   gui-tests:
-    name: GUI Unit
+    name: GUI Check Unit And E2E
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: quality
@@ -246,9 +269,65 @@ jobs:
       - name: Install GUI dependencies
         working-directory: apps/gui
         run: bun install --frozen-lockfile
+      - name: Install TUI dependencies for shared-session E2E
+        run: npm ci --prefix apps/tui
+      - name: Install GUI E2E dependencies
+        run: |
+          python -m pip install --disable-pip-version-check --quiet playwright==1.52.0
+          python -m playwright install --with-deps chromium
+      - name: Run GUI checks
+        id: gui_check
+        working-directory: apps/gui
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          mkdir -p ../../.ci-results
+          bun run check 2>&1 | tee ../../.ci-results/gui-check.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail_output="$(tail -n 80 ../../.ci-results/gui-check.log)"
+            tail_output="${tail_output//'%'/'%25'}"
+            tail_output="${tail_output//$'\r'/'%0D'}"
+            tail_output="${tail_output//$'\n'/'%0A'}"
+            echo "::error title=GUI check failure::$tail_output"
+          fi
+          exit "$status"
+      - name: Upload GUI check failure log
+        if: failure() && steps.gui_check.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-check-failure-log
+          path: .ci-results/gui-check.log
+          if-no-files-found: error
       - name: Run GUI unit tests
         working-directory: apps/gui
         run: bun run test:unit
+      - name: Run GUI E2E tests
+        id: gui_e2e
+        working-directory: apps/gui
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          mkdir -p ../../.ci-results
+          bun run test:e2e 2>&1 | tee ../../.ci-results/gui-e2e.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail_output="$(tail -n 80 ../../.ci-results/gui-e2e.log)"
+            tail_output="${tail_output//'%'/'%25'}"
+            tail_output="${tail_output//$'\r'/'%0D'}"
+            tail_output="${tail_output//$'\n'/'%0A'}"
+            echo "::error title=GUI E2E failure::$tail_output"
+          fi
+          exit "$status"
+      - name: Upload GUI E2E failure log
+        if: failure() && steps.gui_e2e.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-e2e-failure-log
+          path: .ci-results/gui-e2e.log
+          if-no-files-found: error
 
   install-script-tests:
     name: Install Scripts ${{ matrix.label }}

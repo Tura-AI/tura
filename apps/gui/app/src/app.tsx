@@ -572,6 +572,7 @@ export function App() {
     setState,
     rootClient,
     directoryClient,
+    saveRuntimeSettingsLocally: Boolean(e2eFixture && !gatewayUrlExplicit),
   });
 
   async function refreshAgents() {
@@ -720,6 +721,7 @@ export function App() {
     openBlankSession,
     openSession,
     loadFiles,
+    e2eFixture,
   });
 
   async function submitPrompt() {

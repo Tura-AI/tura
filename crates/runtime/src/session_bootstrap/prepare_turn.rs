@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::session_bootstrap::load::create_session_with_topic;
 use crate::session_bootstrap::persisted::load_persisted_gateway_session;
-use crate::state_machine::session_management::{SessionInput, SessionManagement};
+use lifecycle::{SessionInput, SessionManagement};
 
 pub(crate) fn bootstrap_orchestration_session(
     input: SessionInput,

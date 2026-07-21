@@ -199,7 +199,7 @@ def init_index_db(con):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             idempotency_key TEXT NOT NULL UNIQUE,
             session_id TEXT NOT NULL,
-            turn_id TEXT NULL,
+            runtime_id TEXT NULL,
             runtime_worker_id TEXT NULL,
             command_run_id TEXT NULL,
             command_id TEXT NULL,

@@ -4,7 +4,16 @@
 //! must use `SessionDbClient`, never router calls.
 
 use anyhow::{anyhow, Result};
-use router_contract::{EnqueueTurnRequest, ProbeSessionsRequest, METHOD_ENQUEUE_TURN};
+use router_contract::{
+    CancelRuntimeRequest, EnqueueTurnRequest, ExecuteCommandRequest, ExecuteCommandResponse,
+    GetToolConfigResponse, GetToolResponse, ListCommandsRequest, ListCommandsResponse,
+    ListToolsResponse, PatchToolConfigRequest, PatchToolRequest, ProbeSessionsRequest,
+    ToolRegistryRequest, ToolRequest, METHOD_ENQUEUE_TURN, METHOD_EXECUTE_COMMAND, METHOD_GET_TOOL,
+    METHOD_GET_TOOL_CONFIG, METHOD_LIST_COMMANDS, METHOD_LIST_TOOLS, METHOD_PATCH_TOOL,
+    METHOD_PATCH_TOOL_CONFIG,
+};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -27,10 +36,13 @@ impl RouterClient {
             .map_err(|error| anyhow!("router execution enqueue failed: {error}"))
     }
 
-    pub fn cancel_turn(&self, session_id: &str, active_turn_id: Option<&str>) -> Result<Value> {
+    pub fn cancel_runtime(&self, session_id: &str, runtime_id: &str) -> Result<Value> {
         crate::router_process::global_router_process()?.call(
             "execution.cancel_turn",
-            cancel_turn_payload(session_id, active_turn_id),
+            serde_json::to_value(CancelRuntimeRequest {
+                session_id: session_id.to_string(),
+                runtime_id: runtime_id.to_string(),
+            })?,
         )
     }
 
@@ -51,17 +63,58 @@ impl RouterClient {
         )
     }
 
+    pub fn list_commands(&self, request: ListCommandsRequest) -> Result<ListCommandsResponse> {
+        self.call_typed(METHOD_LIST_COMMANDS, request)
+    }
+
+    pub fn execute_command(
+        &self,
+        request: ExecuteCommandRequest,
+    ) -> Result<ExecuteCommandResponse> {
+        self.call_typed(METHOD_EXECUTE_COMMAND, request)
+    }
+
+    pub fn list_tools(&self, request: ToolRegistryRequest) -> Result<ListToolsResponse> {
+        self.call_typed(METHOD_LIST_TOOLS, request)
+    }
+
+    pub fn get_tool(&self, request: ToolRequest) -> Result<GetToolResponse> {
+        self.call_typed(METHOD_GET_TOOL, request)
+    }
+
+    pub fn patch_tool(&self, request: PatchToolRequest) -> Result<GetToolResponse> {
+        self.call_typed(METHOD_PATCH_TOOL, request)
+    }
+
+    pub fn get_tool_config(&self, request: ToolRequest) -> Result<GetToolConfigResponse> {
+        self.call_typed(METHOD_GET_TOOL_CONFIG, request)
+    }
+
+    pub fn patch_tool_config(
+        &self,
+        request: PatchToolConfigRequest,
+    ) -> Result<GetToolConfigResponse> {
+        self.call_typed(METHOD_PATCH_TOOL_CONFIG, request)
+    }
+
     pub fn shutdown(&self) -> Result<Value> {
         crate::router_process::global_router_process()?.shutdown()
+    }
+
+    fn call_typed<Request, Response>(&self, method: &str, request: Request) -> Result<Response>
+    where
+        Request: Serialize,
+        Response: DeserializeOwned,
+    {
+        let payload = serde_json::to_value(request)?;
+        let response = crate::router_process::global_router_process()?.call(method, payload)?;
+        serde_json::from_value(response)
+            .map_err(|error| anyhow!("invalid typed response for router method {method}: {error}"))
     }
 }
 
 fn enqueue_turn_payload(request: EnqueueTurnRequest) -> Result<Value> {
     serde_json::to_value(request).map_err(Into::into)
-}
-
-fn cancel_turn_payload(session_id: &str, active_turn_id: Option<&str>) -> Value {
-    json!({ "session_id": session_id, "active_turn_id": active_turn_id })
 }
 
 fn kill_session_workers_payload(session_id: &str) -> Value {
@@ -70,14 +123,14 @@ fn kill_session_workers_payload(session_id: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{cancel_turn_payload, enqueue_turn_payload, kill_session_workers_payload};
+    use super::{enqueue_turn_payload, kill_session_workers_payload};
     use router_contract::EnqueueTurnRequest;
     use serde_json::json;
 
     #[test]
-    fn enqueue_turn_payload_preserves_turn_session_and_nested_payload() {
+    fn enqueue_turn_payload_preserves_runtime_session_and_nested_payload() {
         let payload = enqueue_turn_payload(EnqueueTurnRequest {
-            turn_id: "turn-1".to_string(),
+            runtime_id: "runtime-1".to_string(),
             session_id: "session-1".to_string(),
             payload: json!({
                 "prompt": "hello",
@@ -86,24 +139,12 @@ mod tests {
         })
         .expect("enqueue request should serialize");
 
-        assert_eq!(payload["turn_id"], "turn-1");
+        assert_eq!(payload["runtime_id"], "runtime-1");
         assert_eq!(payload["session_id"], "session-1");
         assert_eq!(payload["payload"]["prompt"], "hello");
         assert_eq!(
             payload["payload"]["worker_env"]["TURA_REASONING_EFFORT"],
             "low"
-        );
-    }
-
-    #[test]
-    fn cancel_turn_payload_serializes_optional_active_turn_id() {
-        assert_eq!(
-            cancel_turn_payload("session-1", Some("turn-1")),
-            json!({ "session_id": "session-1", "active_turn_id": "turn-1" })
-        );
-        assert_eq!(
-            cancel_turn_payload("session-1", None),
-            json!({ "session_id": "session-1", "active_turn_id": null })
         );
     }
 

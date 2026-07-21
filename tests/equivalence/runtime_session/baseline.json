@@ -25,7 +25,7 @@
     "first_token_p95_ms",
     "tool_start_p95_ms"
   ],
-  "status": "phase0_reference_frozen; numeric_performance_instrumentation_required_before_phase4_cutover",
-  "execution": ".github/workflows/ci.yml Backend Business runs the candidate capture twice, compares it with the committed reference using exact JSON/raw bytes, generates the AST inventory, and uploads phase0-runtime-session-evidence",
+  "status": "phase0_reference_frozen; direct-switch_differences_recorded_separately; numeric_performance_instrumentation_required_before_phase4_cutover",
+  "execution": ".github/workflows/ci.yml Backend Business runs the candidate capture twice, validates frozen reference hashes, permits only the exact paths and values in direct-switch-evidence.json, compares all other behavior with Phase 0, generates the AST inventory, and uploads phase0-runtime-session-evidence",
   "reason": "Current production exposes timing and message byte counters but does not expose allocator, IPC, DB byte or log-rate counters at one stable boundary. Phase 0 records this as an explicit instrumentation gap; Phase 4 cannot pass without numeric reference captures."
 }

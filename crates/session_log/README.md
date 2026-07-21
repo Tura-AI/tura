@@ -14,15 +14,21 @@ when improvised persistence usually introduces itself.
 <workspace>/.tura/session_log.sqlite3
 ```
 
-The index database stores workspace/session lookup rows and the durable write
-queue. The workspace database stores the full session snapshot and replayable
-records. dev and release builds share the same workspace log for a project
-because it lives in the workspace `.tura` directory; each `TURA_HOME` still has
-its own sockets, locks, and index database.
+The index database is deliberately small: it stores session and runtime lookup
+rows plus typed `command_checkpoints`. The workspace database stores ordered
+session/runtime events, management deltas, context facts, and read projections.
+dev and release builds share the same workspace log for a project because it
+lives in the workspace `.tura` directory; each `TURA_HOME` still has its own
+sockets, locks, index database, and file queue.
 
-Pending SQLite write-queue items are replayed on service startup for session
-upserts, command checkpoints, and delete operations. Command checkpoint replay
-is idempotent by the checkpoint idempotency key.
+There is no SQLite write queue. The strict file queue is the only deferred-write
+path. It replays typed commands from `message_queue/pending`, recovers orphaned
+`processing` items, and quarantines malformed or rejected commands in `failed`
+with an error sidecar. Command checkpoint replay is idempotent by the typed
+checkpoint identity; management and context replay use independent sequences.
+The socket and queue paths share one typed command dispatcher and one online
+Session feed hub. Only newly committed durable feed entries are published;
+idempotent command or sequence replay is silent.
 
 Runtime and gateway fronts do not open SQLite directly. They probe
 `service.addr` with a short timeout; an unreachable endpoint file is removed so
@@ -66,19 +72,34 @@ The index `sessions` table stores lookup metadata and the path of the
 workspace database. Reads hydrate the session snapshot from the workspace
 database; the index must not be treated as the authoritative lifecycle source.
 
-The workspace `sessions` table stores the full persisted session snapshot:
-workspace, parent id, timestamps, status, message count,
-`task_management_json`, `management_json`, `session_json`, and `todos_json`.
+The workspace `session_events` table is the lifecycle truth and is replayed to
+derive the current aggregate. `management_deltas` records ordered typed changes
+under an independent management cursor. `session_context_records` preserves
+both each raw context fact and its `projection_json`; replay of an existing
+sequence must match both identities.
 
-The workspace `session_records` table stores ordered message/event records for
-a session. Records are keyed by `session_id + message_id`; upserts update the
-same record idempotently and keep earlier records that are absent from a later
-partial write. Use `get_session` for the full snapshot and todos. Use
+`session_command_receipts` is the typed transport inbox for session creation
+and lifecycle commands. A command id may be replayed only with byte-equivalent
+canonical request JSON; successful result JSON is stored in the same workspace
+transaction as its event and projections. Receipts provide idempotency, not a
+second lifecycle authority.
+After an ordinary command commits, a derived-index sync failure is logged rather
+than returned as a false business failure. Creation still reports that failure;
+replaying its stable receipt repairs the missing index without recreating state.
+
+The workspace `sessions` columns (`state`, status, counts, and JSON snapshots)
+are transactional read projections, not competing sources of lifecycle truth.
+`session_records` is the UI/history projection keyed by
+`session_id + message_id`. Use `get_session` for the current read projection,
+`read_context_slice` for bounded runtime context and both cursors, and
 `list_session_records` for replay/history records.
 
 If a workspace `.tura/session_log.sqlite3` database disappears, the service
 treats that workspace database as authoritative and removes stale index
 snapshots during reads.
+Workspace deletion does the inverse deliberately: it removes workspace database
+files before their index rows, so a failed or interrupted deletion retains the
+paths required for safe replay.
 
 ## Provider Logs
 
@@ -96,5 +117,6 @@ cargo test -p session_log
 .\xtask\scripts\run-backend-performance-tests.ps1 -Crate session_log
 ```
 
-The OS runner covers process/service-owner lifecycle tests; the performance
-runner covers non-process stress tests.
+The OS runner covers process/service-owner lifecycle tests. Run the performance
+runner only in a controlled, repeatable environment with fixed hardware and an
+explicit baseline; GitHub-hosted runners intentionally exclude it.

@@ -6,13 +6,12 @@ pub mod config;
 pub mod discover;
 pub mod manifest;
 pub mod resolve;
-pub mod state;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub use api::{ToolConfigResponse, ToolPatch, ToolView};
 pub use manifest::ToolManifest;
+use router_contract::{ToolConfigResponse, ToolPatch, ToolState, ToolView};
 
 #[derive(Clone, Debug, Default)]
 pub struct ToolRegistry {
@@ -68,9 +67,9 @@ impl ToolRegistry {
         if let Some(enabled) = patch.enabled {
             view.enabled = enabled;
             view.state = if enabled {
-                state::ToolState::Enabled
+                ToolState::Enabled
             } else {
-                state::ToolState::Disabled
+                ToolState::Disabled
             };
         }
         if let Some(aliases) = patch.aliases {
@@ -118,8 +117,9 @@ fn normalize_repo_root(path: PathBuf) -> PathBuf {
 mod tests {
     use super::*;
     use crate::registry::tools::manifest::{
-        ConfigurableEntry, LimitsSection, PathsSection, RuntimeSection, ToolManifest,
+        LimitsSection, PathsSection, RuntimeSection, ToolManifest,
     };
+    use router_contract::ConfigurableEntry;
     use serde_json::json;
 
     #[test]
@@ -150,12 +150,12 @@ mod tests {
 
         assert_eq!(disabled.id, "web_discover");
         assert!(!disabled.enabled);
-        assert_eq!(disabled.state, state::ToolState::Disabled);
+        assert_eq!(disabled.state, ToolState::Disabled);
         assert_eq!(disabled.aliases, vec!["search"]);
 
         let original = registry.get("web_discover").expect("original view");
         assert_ne!(original.aliases, disabled.aliases);
-        assert_eq!(original.state, state::ToolState::Unavailable);
+        assert_eq!(original.state, ToolState::Unavailable);
     }
 
     #[test]

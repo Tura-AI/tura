@@ -5,7 +5,6 @@ use parking_lot::RwLock;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::IpcNotificationSender;
 use runtime_contract::CallContext;
 
 use super::{
@@ -180,21 +179,10 @@ impl ServiceManager {
         false
     }
 
-    #[allow(dead_code)]
     pub async fn call_worker(
         &self,
         worker_id: &str,
         ctx: CallContext,
-    ) -> Result<serde_json::Value> {
-        self.call_worker_with_notifications(worker_id, ctx, None)
-            .await
-    }
-
-    pub async fn call_worker_with_notifications(
-        &self,
-        worker_id: &str,
-        ctx: CallContext,
-        notifications: Option<IpcNotificationSender>,
     ) -> Result<serde_json::Value> {
         let worker = {
             let workers = self.workers.read();
@@ -204,7 +192,7 @@ impl ServiceManager {
                 .ok_or_else(|| anyhow!("worker not found: {worker_id}"))?
         };
 
-        let result = worker.invoke_with_notifications(ctx, notifications).await;
+        let result = worker.invoke(ctx).await;
         if result.is_err() && !worker.is_alive().await {
             self.workers.write().remove(worker_id);
             self.service_to_worker

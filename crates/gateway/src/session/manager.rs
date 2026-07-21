@@ -5,8 +5,9 @@
 
 use chrono::Utc;
 use lifecycle::{SessionId, SessionState};
-use runtime::state_machine::session_management::{SessionInput, SessionManagement, UserGoal};
+use lifecycle::{SessionInput, SessionManagement, UserGoal};
 use std::path::PathBuf;
+use tura_agents::coding_agent::CodingAgent;
 use uuid::Uuid;
 
 use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
@@ -18,7 +19,7 @@ pub const CODING_AGENT_FAST_NAME: &str = "direct";
 pub const CODING_AGENT_FAST_TEXT_ONLY_NAME: &str = "direct-text-only";
 
 pub fn coding_agent_provider() -> String {
-    runtime::agent_router::coding_agent_provider_name()
+    CodingAgent::provider().tura_llm_name
 }
 
 pub struct SessionManager;
@@ -38,7 +39,8 @@ impl SessionManager {
                 .unwrap_or_default()
                 .join(DEFAULT_SESSION_DIRECTORY)
         });
-        if let Err(error) = runtime::workspace_git::ensure_workspace_git_repo(&session_directory) {
+        if let Err(error) = tura_path::workspace_git::ensure_workspace_git_repo(&session_directory)
+        {
             tracing::warn!(
                 directory = %session_directory.display(),
                 error = %error,

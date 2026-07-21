@@ -4,7 +4,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::prompt_style::runtime_prompt_manual;
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 use lifecycle::{PlanStatus, StartCondition, TaskStep};
 
 const COMMAND_RUN_TOOL: &str = "command_run";
@@ -421,10 +421,8 @@ mod tests {
     const COMMAND_RUN_TOOL: &str = "command_run";
     use crate::context::compact_session_context;
     use crate::prompt_style::runtime_prompt_manual::RUNTIME_PROMPT_MANUAL_RECORD_TYPE;
-    use crate::state_machine::session_management::{
-        PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
-    };
     use chrono::Utc;
+    use lifecycle::{PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep};
     use serde_json::json;
     use std::path::PathBuf;
 

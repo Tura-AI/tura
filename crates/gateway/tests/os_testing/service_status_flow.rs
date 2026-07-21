@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
-use std::net::{Shutdown, TcpListener};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use gateway::api::service::get_service_status;
 use gateway::mock::global_store;
+use router_contract::{IpcRequest, IpcResponse};
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -114,59 +115,19 @@ struct FakeRouterEndpoint {
 impl FakeRouterEndpoint {
     fn start(home: &Path) -> Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).context("bind fake router")?;
+        listener
+            .set_nonblocking(true)
+            .context("set fake router nonblocking")?;
         let addr = listener.local_addr()?.to_string();
         let process_start_time =
             wait_for_current_process_start_time(std::process::id(), Duration::from_secs(2))?;
-        let path = home.join("db").join("session_log").join("router.addr");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(
-            &path,
-            serde_json::json!({
-                "addr": addr,
-                "version": tura_path::instance_version(),
-                "pid": std::process::id(),
-                "process_start_time": process_start_time,
-            })
-            .to_string(),
-        )?;
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let handle = thread::spawn(move || -> Result<()> {
-            listener
-                .set_nonblocking(true)
-                .context("set fake router nonblocking")?;
-            let started = Instant::now();
-            while started.elapsed() < Duration::from_secs(10) && !thread_stop.load(Ordering::SeqCst)
-            {
+            while !thread_stop.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        stream
-                            .set_read_timeout(Some(Duration::from_secs(2)))
-                            .context("set fake router read timeout")?;
-                        let mut request_line = String::new();
-                        let _ = BufReader::new(stream.try_clone()?).read_line(&mut request_line);
-                        if request_line.trim().is_empty() {
-                            continue;
-                        }
-                        let request: serde_json::Value = serde_json::from_str(request_line.trim())
-                            .context("decode fake router health request")?;
-                        stream.write_all(
-                            serde_json::json!({
-                                "ok": true,
-                                "request_id": request.get("request_id").cloned().unwrap_or(serde_json::Value::Null),
-                                "payload": {
-                                    "pid": std::process::id(),
-                                    "process_start_time": process_start_time,
-                                }
-                            })
-                            .to_string()
-                            .as_bytes(),
-                        )?;
-                        stream.write_all(b"\n")?;
-                        stream.flush()?;
-                        stream.shutdown(Shutdown::Write)?;
+                        let _ = respond_to_fake_router_probe(&mut stream, process_start_time);
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(20));
@@ -176,11 +137,83 @@ impl FakeRouterEndpoint {
             }
             Ok(())
         });
-        Ok(Self {
+        let server = Self {
             handle: Some(handle),
             stop,
-        })
+        };
+        probe_fake_router(&addr, process_start_time)?;
+        publish_fake_router_endpoint(home, &addr, process_start_time)?;
+        Ok(server)
     }
+}
+
+fn respond_to_fake_router_probe(stream: &mut TcpStream, process_start_time: u64) -> Result<()> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .context("set fake router read timeout")?;
+    let mut request_line = String::new();
+    let bytes_read = BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+    if bytes_read == 0 || request_line.trim().is_empty() {
+        return Ok(());
+    }
+    let request: IpcRequest =
+        serde_json::from_str(request_line.trim()).context("decode fake router health request")?;
+    let response = IpcResponse::ok(
+        request.request_id,
+        serde_json::json!({
+            "pid": std::process::id(),
+            "process_start_time": process_start_time,
+        }),
+    );
+    stream.write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())?;
+    stream.flush()?;
+    let _ = stream.shutdown(Shutdown::Write);
+    Ok(())
+}
+
+fn probe_fake_router(addr: &str, process_start_time: u64) -> Result<()> {
+    let socket: SocketAddr = addr.parse().context("parse fake router address")?;
+    let stream = TcpStream::connect_timeout(&socket, Duration::from_secs(2))
+        .context("connect fake router readiness probe")?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    let mut writer = stream.try_clone()?;
+    let request = IpcRequest::health_check("fake-router-ready", 5_000);
+    writer.write_all(format!("{}\n", serde_json::to_string(&request)?).as_bytes())?;
+    writer.flush()?;
+    let mut response_line = String::new();
+    BufReader::new(stream).read_line(&mut response_line)?;
+    let response: IpcResponse = serde_json::from_str(response_line.trim())
+        .context("decode fake router readiness response")?;
+    if !response.ok
+        || response.payload["pid"].as_u64() != Some(u64::from(std::process::id()))
+        || response.payload["process_start_time"].as_u64() != Some(process_start_time)
+    {
+        return Err(anyhow!(
+            "fake router readiness response had the wrong process identity: {response:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn publish_fake_router_endpoint(home: &Path, addr: &str, process_start_time: u64) -> Result<()> {
+    let path = home.join("db").join("session_log").join("router.addr");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let pending = path.with_extension("addr.tmp");
+    std::fs::write(
+        &pending,
+        serde_json::json!({
+            "addr": addr,
+            "version": tura_path::instance_version(),
+            "pid": std::process::id(),
+            "process_start_time": process_start_time,
+        })
+        .to_string(),
+    )?;
+    std::fs::rename(pending, path)?;
+    Ok(())
 }
 
 fn current_process_start_time(pid: u32) -> Option<u64> {

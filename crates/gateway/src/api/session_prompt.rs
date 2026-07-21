@@ -23,32 +23,41 @@ pub async fn prompt_async_value(
         .as_ref()
         .is_some_and(|session| matches!(session.status, SessionStatus::Busy))
     {
-        append_user_command_for_runtime(&session_id, content)
-            .map_err(|error| (StatusCode::BAD_GATEWAY, error))?;
         let metadata = serde_json::json!({
             "kind": "user_new_command",
         });
-        let parts = prompt_message_parts(&payload);
-        let _ = session_store().add_message_with_parts(
+        let message = session_store().build_message_with_parts(
             &session_id,
             SessionMessageRole::User,
-            parts,
+            prompt_message_parts(&payload),
             prompt_message_id(&payload),
             Some(metadata),
         );
+        let root_session_id = session_store().root_session_id(&session_id);
+        session_store()
+            .execute_canonical_session_command_with_message(
+                &root_session_id,
+                SessionCommand::QueueUserInputWhileBusy { input: content },
+                message,
+            )
+            .map_err(|error| (StatusCode::BAD_GATEWAY, error))?;
         return Ok(());
     }
-    session_store()
-        .execute_canonical_session_command(&session_id, SessionCommand::StartUserTurn)
-        .map_err(|error| (StatusCode::BAD_GATEWAY, error))?;
-    let user_message = session_store().add_message_with_parts(
+    let user_message = session_store().build_message_with_parts(
         &session_id,
         SessionMessageRole::User,
         prompt_message_parts(&payload),
         prompt_message_id(&payload),
         None,
     );
-    session_store().set_todos(
+    let (_, user_message) = session_store()
+        .execute_canonical_session_command_with_message(
+            &session_id,
+            SessionCommand::StartUserTurn,
+            user_message,
+        )
+        .map_err(|error| (StatusCode::BAD_GATEWAY, error))?;
+    if let Err(error) = session_store().persist_todos(
         &session_id,
         vec![serde_json::json!({
             "id": format!("{session_id}:planning"),
@@ -56,16 +65,15 @@ pub async fn prompt_async_value(
             "status": "in_progress",
             "priority": "medium",
         })],
-    );
+    ) {
+        tracing::warn!(session_id, error, "failed to persist planning todo");
+    }
     watch_direct_mano_messages(
         session_id.clone(),
         session_store().get_messages(&session_id).len(),
     );
     let session_id_for_task = session_id;
-    let payload_for_task = user_message
-        .as_ref()
-        .map(|message| prompt_payload_with_frontend_ids(payload.clone(), message))
-        .unwrap_or(payload);
+    let payload_for_task = prompt_payload_with_frontend_ids(payload, &user_message);
     tokio::task::spawn_blocking(move || {
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run_mano_for_prompt(session_id_for_task.clone(), payload_for_task);
@@ -73,16 +81,14 @@ pub async fn prompt_async_value(
         .is_err()
         {
             tracing::error!(session_id = %session_id_for_task, "MANO prompt task panicked");
-            if let Err(error) = session_store().execute_canonical_session_command_with_status_event(
-                &session_id_for_task,
-                SessionCommand::RuntimeFailed,
-            ) {
-                tracing::warn!(session_id = %session_id_for_task, error, "failed to record prompt panic");
-            }
             session_store().finish_todos(&session_id_for_task, false);
-            add_agent_fallback_message(
+            end_active_runtime_with_fallback(
                 &session_id_for_task,
-                "MANO failed while processing this prompt: background task panicked before completion.".to_string(),
+                RuntimeTerminalState::Failed,
+                "MANO failed while processing this prompt: background task panicked before completion."
+                    .to_string(),
+                None,
+                "failed to record prompt panic",
             );
         }
     });
@@ -111,18 +117,13 @@ fn run_due_task_scheduler_tick() {
             .is_err()
             {
                 tracing::error!(session_id = %run.session_id, "scheduled task panicked");
-                if let Err(error) = session_store()
-                    .execute_canonical_session_command_with_status_event(
-                        &run.session_id,
-                        SessionCommand::RuntimeFailed,
-                    )
-                {
-                    tracing::warn!(session_id = %run.session_id, error, "failed to record scheduled task panic");
-                }
                 session_store().finish_todos(&run.session_id, false);
-                add_agent_fallback_message(
+                end_active_runtime_with_fallback(
                     &run.session_id,
+                    RuntimeTerminalState::Failed,
                     "Scheduled task failed before completion.".to_string(),
+                    None,
+                    "failed to record scheduled task panic",
                 );
             }
         });
@@ -143,19 +144,8 @@ fn run_due_task_scheduler_tick_for_store_with_launcher(
     mut launch: impl FnMut(crate::session::store::ScheduledTaskRun, serde_json::Value),
 ) {
     for run in store.claim_due_task_runs(chrono::Utc::now()) {
-        let prompt = scheduler_prompt_payload(&run.task_summary, run.start_condition);
-        let content = prompt_text(&prompt).unwrap_or_else(|| run.task_summary.clone());
         let initial_count = store.get_messages(&run.session_id).len();
-        let _ = store.add_message_with_metadata(
-            &run.session_id,
-            SessionMessageRole::User,
-            content,
-            Some(serde_json::json!({
-                "kind": "task_scheduler",
-                "start_condition": run.start_condition,
-            })),
-        );
-        store.set_todos(
+        if let Err(error) = store.persist_todos(
             &run.session_id,
             vec![serde_json::json!({
                 "id": format!("{}:scheduled-task", run.session_id),
@@ -163,10 +153,17 @@ fn run_due_task_scheduler_tick_for_store_with_launcher(
                 "status": "in_progress",
                 "priority": "medium",
             })],
-        );
+        ) {
+            tracing::warn!(
+                session_id = %run.session_id,
+                error,
+                "failed to persist scheduled task todo"
+            );
+        }
         if watch_messages {
             watch_direct_mano_messages(run.session_id.clone(), initial_count);
         }
+        let prompt = run.prompt.clone();
         launch(run, prompt);
     }
 }
@@ -179,26 +176,6 @@ pub fn run_due_task_scheduler_tick_for_business_test() {
 #[cfg(any(feature = "business-tests", feature = "os-tests"))]
 pub fn run_due_task_scheduler_tick_for_store_business_test(store: &crate::session::SessionStore) {
     run_due_task_scheduler_tick_for_store_with_launcher(store, false, |_, _| {});
-}
-
-fn scheduler_prompt_payload(
-    task_summary: &str,
-    start_condition: StartCondition,
-) -> serde_json::Value {
-    let trigger = match start_condition {
-        StartCondition::SessionIdle => "session became idle",
-        StartCondition::ScheduledTask => "scheduled start time arrived",
-        StartCondition::PollingTask => "polling interval became due",
-        StartCondition::UserAction => "user action",
-    };
-    serde_json::json!({
-        "parts": [{
-            "id": format!("part_scheduler_{}", uuid::Uuid::new_v4()),
-            "type": "text",
-            "text": format!("Continue the pending task because the {trigger}: {task_summary}")
-        }],
-        "source": "task_scheduler"
-    })
 }
 
 fn reset_polling_task_after_run(session_id: &str) {
@@ -549,7 +526,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         "TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS".to_string(),
         command_run_stall_guard.identical_checks.to_string(),
     );
-    let turn_id =
+    let runtime_id =
         first_prompt_part_id(&payload).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let runtime_metadata = agent_runtime_message_metadata(
         model_override.clone(),
@@ -567,7 +544,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         "worker_env": worker_env,
     });
 
-    let result = forward_run_agent_to_router(&turn_id, &session_id, &body);
+    let result = forward_run_agent_to_router(&runtime_id, &session_id, &body);
 
     if session_store()
         .session_lifecycle_projection(&session_id)
@@ -579,12 +556,6 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
 
     match result {
         Ok(ForwardRunAgentResult::Dispatched) => {
-            if let Err(error) = session_store().execute_canonical_session_command_with_status_event(
-                &session_id,
-                SessionCommand::RuntimeCompleted,
-            ) {
-                tracing::warn!(session_id, error, "failed to record completed runtime");
-            }
             session_store().finish_todos(&session_id, true);
             if let Some(message) = final_agent_message(&session_id, before_count) {
                 let message = session_store()
@@ -598,44 +569,25 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                 });
             }
         }
-        Ok(ForwardRunAgentResult::AppendedToActiveRuntime) => {}
+        Ok(ForwardRunAgentResult::AppendedToActiveRuntime { .. }) => {}
         Err(error) if is_runtime_stopped_error(&error) => {
-            if let Err(lifecycle_error) = session_store()
-                .execute_canonical_session_command_with_status_event(
-                    &session_id,
-                    SessionCommand::RuntimeCompleted,
-                )
-            {
-                tracing::warn!(
-                    session_id,
-                    error = lifecycle_error,
-                    "failed to record stopped runtime"
-                );
-            }
             session_store().finish_todos(&session_id, false);
-            add_agent_fallback_message_with_metadata(
+            end_active_runtime_with_fallback(
                 &session_id,
+                RuntimeTerminalState::Completed,
                 "Runtime stopped.".to_string(),
                 runtime_stopped_metadata(),
+                "failed to record stopped runtime",
             );
         }
         Err(error) => {
-            if let Err(lifecycle_error) = session_store()
-                .execute_canonical_session_command_with_status_event(
-                    &session_id,
-                    SessionCommand::RuntimeFailed,
-                )
-            {
-                tracing::warn!(
-                    session_id,
-                    error = lifecycle_error,
-                    "failed to record runtime failure"
-                );
-            }
             session_store().finish_todos(&session_id, false);
-            add_agent_fallback_message(
+            end_active_runtime_with_fallback(
                 &session_id,
+                RuntimeTerminalState::Failed,
                 format!("MANO failed while processing this prompt: {error}"),
+                None,
+                "failed to record router dispatch failure",
             );
         }
     }
@@ -643,34 +595,21 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
 
 /// Submit through the gateway-owned persistent router instead of spawning a
 /// runtime worker directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ForwardRunAgentResult {
     Dispatched,
-    AppendedToActiveRuntime,
+    AppendedToActiveRuntime { runtime_id: String },
 }
 
 fn forward_run_agent_to_router(
-    turn_id: &str,
+    runtime_id: &str,
     session_id: &str,
     body: &serde_json::Value,
 ) -> Result<ForwardRunAgentResult, String> {
-    let value = crate::router_client::RouterClient::global()
-        .enqueue_turn(router_contract::EnqueueTurnRequest {
-            turn_id: turn_id.to_string(),
-            session_id: session_id.to_string(),
-            payload: body.clone(),
-        })
-        .map_err(|error| {
-            format!("failed to enqueue turn {turn_id} for session {session_id}: {error}")
-        })?;
-    if value
-        .get("ok")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true)
-    {
-        Ok(ForwardRunAgentResult::Dispatched)
-    } else {
-        if value.get("code").and_then(serde_json::Value::as_str) == Some("session_active_turn") {
+    match session_store().register_runtime(session_id, runtime_id)? {
+        session_log_contract::RuntimeRegistrationOutcome::Registered { .. }
+        | session_log_contract::RuntimeRegistrationOutcome::AlreadyRegistered { .. } => {}
+        session_log_contract::RuntimeRegistrationOutcome::SessionBusy { active_runtime_id } => {
             let command = body
                 .get("prompt")
                 .and_then(serde_json::Value::as_str)
@@ -679,15 +618,44 @@ fn forward_run_agent_to_router(
                 .unwrap_or("Prompt submitted")
                 .to_string();
             crate::api::session::append_user_command_for_runtime(session_id, command)?;
-            return Ok(ForwardRunAgentResult::AppendedToActiveRuntime);
+            return Ok(ForwardRunAgentResult::AppendedToActiveRuntime {
+                runtime_id: active_runtime_id,
+            });
         }
+        session_log_contract::RuntimeRegistrationOutcome::RuntimeIdConflict => {
+            return Err(format!(
+                "runtime id {runtime_id} is already registered to another session"
+            ));
+        }
+        session_log_contract::RuntimeRegistrationOutcome::SessionNotFound => {
+            return Err(format!(
+                "session {session_id} was not found during runtime registration"
+            ));
+        }
+    }
+    let value = crate::router_client::RouterClient::global()
+        .enqueue_turn(router_contract::EnqueueTurnRequest {
+            runtime_id: runtime_id.to_string(),
+            session_id: session_id.to_string(),
+            payload: body.clone(),
+        })
+        .map_err(|error| {
+            format!("failed to enqueue turn {runtime_id} for session {session_id}: {error}")
+        })?;
+    if value
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true)
+    {
+        Ok(ForwardRunAgentResult::Dispatched)
+    } else {
         let error = value
             .get("error")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("gateway worker returned failure")
             .to_string();
         Err(format!(
-            "router rejected turn {turn_id} for session {session_id}: {error}"
+            "router rejected runtime {runtime_id} for session {session_id}: {error}"
         ))
     }
 }
@@ -697,6 +665,55 @@ fn is_runtime_stopped_error(error: &str) -> bool {
     lower.contains("one-shot worker cancelled")
         || lower.contains("runtime worker cancelled")
         || lower.contains("runtime worker stopped")
+}
+
+enum RuntimeTerminalState {
+    Completed,
+    Failed,
+}
+
+fn end_active_runtime_with_fallback(
+    session_id: &str,
+    terminal_state: RuntimeTerminalState,
+    content: String,
+    metadata: Option<serde_json::Value>,
+    context: &str,
+) {
+    let message = session_store().build_message_with_parts(
+        session_id,
+        SessionMessageRole::Assistant,
+        vec![crate::session::MessagePart {
+            id: uuid::Uuid::new_v4().to_string(),
+            part_type: "text".to_string(),
+            content: Some(content.clone()),
+            text: Some(content),
+            metadata: None,
+            call_id: None,
+            tool: None,
+            state: None,
+        }],
+        None,
+        metadata,
+    );
+    let Some(runtime_id) = session_store()
+        .session_lifecycle_projection(session_id)
+        .and_then(|projection| projection.active_runtime_id)
+    else {
+        session_store().upsert_feed_message(session_id, message);
+        return;
+    };
+    let command = match terminal_state {
+        RuntimeTerminalState::Completed => SessionCommand::RuntimeCompleted { runtime_id },
+        RuntimeTerminalState::Failed => SessionCommand::RuntimeFailed { runtime_id },
+    };
+    if let Err(error) = session_store().execute_canonical_session_command_with_message(
+        session_id,
+        command,
+        message.clone(),
+    ) {
+        tracing::warn!(session_id, error, "{context}");
+        session_store().upsert_feed_message(session_id, message);
+    }
 }
 
 fn runtime_stopped_metadata() -> Option<serde_json::Value> {
@@ -1044,7 +1061,7 @@ fn is_runtime_markup_line(line: &str) -> bool {
         || (lower.starts_with("</tool_call") && lower.ends_with('>'))
 }
 
-pub(super) fn frontend_safe_reply_message(text: &str) -> String {
+pub(crate) fn frontend_safe_reply_message(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -1121,30 +1138,6 @@ fn json_looks_like_tool_payload(value: &serde_json::Value) -> bool {
         }
         serde_json::Value::Array(items) => items.iter().any(json_looks_like_tool_payload),
         _ => false,
-    }
-}
-
-fn add_agent_fallback_message(session_id: &str, content: String) {
-    add_agent_fallback_message_with_metadata(session_id, content, None);
-}
-
-fn add_agent_fallback_message_with_metadata(
-    session_id: &str,
-    content: String,
-    metadata: Option<serde_json::Value>,
-) {
-    if let Some(message) = session_store().add_message_with_metadata(
-        session_id,
-        SessionMessageRole::Assistant,
-        content,
-        metadata,
-    ) {
-        session_store().push_event(GlobalEvent::MessageUpdated {
-            properties: MessageUpdatedProperties {
-                session_id: session_id.to_string(),
-                info: api_message_from_store(message),
-            },
-        });
     }
 }
 

@@ -3,18 +3,23 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+use lifecycle::{SessionCommand, SessionState, TaskPlan};
 use serde_json::{json, Value};
-use session_log_contract::SessionSnapshot;
+use session_log_contract::{
+    CreateSessionRequest, GetSessionRequest, SessionLogCommand, SessionLogResponse, SessionSnapshot,
+};
 
+use super::cli::CliConfig;
 use super::output::emit_jsonl;
 
 /// Ensure the per-home `tura_session_db` owner is reachable, starting it
 /// (detached, so it outlives this one-shot front) when none is running. The CLI
 /// is a client of the single embedded SQLite owner.
 pub(crate) fn ensure_session_db_owner() {
-    if session_log::ipc::service_is_running() {
+    if session_log_contract::client::service_is_running() {
         return;
     }
+
     let Some(bin) = resolve_session_db_binary() else {
         // No service binary available (for example in a minimal dev tree):
         // allow the caller to continue instead of failing the turn before the
@@ -55,9 +60,10 @@ pub(crate) fn ensure_session_db_owner() {
             return;
         }
     }
+
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(60) {
-        if session_log::ipc::service_is_running() {
+        if session_log_contract::client::service_is_running() {
             if debug {
                 eprintln!(
                     "[tura] ensure_session_db_owner: reachable after {:?}",
@@ -73,17 +79,78 @@ pub(crate) fn ensure_session_db_owner() {
     }
 }
 
+pub(crate) fn ensure_cli_session(config: &CliConfig, session_id: &str) -> Result<(), String> {
+    let response = session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))
+    .map_err(|error| format!("failed to query CLI session `{session_id}`: {error}"))?;
+    match response {
+        SessionLogResponse::Session { session: Some(_) } => return Ok(()),
+        SessionLogResponse::Session { session: None } => {}
+        SessionLogResponse::Error { error } => {
+            return Err(format!(
+                "failed to query CLI session `{session_id}`: {error}"
+            ));
+        }
+        other => {
+            return Err(format!(
+                "unexpected session_db response while querying CLI session `{session_id}`: {other:?}"
+            ));
+        }
+    }
+
+    let workspace = config.cwd.to_string_lossy().to_string();
+    let created_at = chrono::Utc::now().timestamp_millis();
+    let response = session_log_contract::client::call_service(&SessionLogCommand::CreateSession(
+        CreateSessionRequest {
+            command_id: format!("create:{session_id}"),
+            session_id: session_id.to_string(),
+            creation_command: SessionCommand::CreateSession {
+                task_plan: TaskPlan::default(),
+            },
+            copy_context: false,
+            workspace: workspace.clone(),
+            session_directory: workspace,
+            name: "CLI session".to_string(),
+            created_at,
+            model: config.model.clone(),
+            agent: config.agent.clone(),
+            session_type: "coding".to_string(),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: config.planning_mode == Some(true),
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: false,
+            use_last_tool_call_response: false,
+            auto_session_name: true,
+        },
+    ))
+    .map_err(|error| format!("failed to create CLI session `{session_id}`: {error}"))?;
+    match response {
+        SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
+        SessionLogResponse::Error { error } => Err(format!(
+            "failed to create CLI session `{session_id}`: {error}"
+        )),
+        other => Err(format!(
+            "unexpected session_db response while creating CLI session `{session_id}`: {other:?}"
+        )),
+    }
+}
+
 /// Extract the latest assistant message text for a session from the single
 /// session_db owner (the worker has already persisted it).
 pub(crate) fn final_text_from_session_db(session_id: &str) -> String {
     use session_log_contract::{ListSessionRecordsRequest, SessionLogCommand, SessionLogResponse};
-    let response = session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
-        ListSessionRecordsRequest {
+    let response = session_log_contract::client::call_service(
+        &SessionLogCommand::ListSessionRecords(ListSessionRecordsRequest {
             session_id: session_id.to_string(),
             page: 0,
             page_size: 500,
-        },
-    ));
+        }),
+    );
     let records = match response {
         Ok(SessionLogResponse::Records { records, .. }) => records,
         _ => return String::new(),
@@ -135,22 +202,35 @@ fn resolve_session_db_binary() -> Option<PathBuf> {
 }
 
 pub(crate) fn reject_busy_session(session_id: &str, json_output: bool) -> Result<(), String> {
-    let Some(session) = runtime::session_log_client::SessionLogClient::discover()
-        .map_err(|err| format!("failed to inspect session state: {err}"))?
-        .get_session(session_id.to_string())
-        .map_err(|err| format!("failed to inspect session state: {err}"))?
-    else {
+    let response = session_log_contract::client::call_service(&SessionLogCommand::GetSession(
+        GetSessionRequest {
+            session_id: session_id.to_string(),
+        },
+    ))
+    .map_err(|error| format!("failed to inspect session state: {error}"))?;
+    let Some(session) = (match response {
+        SessionLogResponse::Session { session } => session.map(|session| *session),
+        SessionLogResponse::Error { error } => {
+            return Err(format!("failed to inspect session state: {error}"));
+        }
+        other => {
+            return Err(format!(
+                "failed to inspect session state: unexpected session service response {other:?}"
+            ));
+        }
+    }) else {
         return Ok(());
     };
-    if !session_is_busy(&session) {
+    let state = session_state(&session);
+    if !state.is_recoverable_running() {
         return Ok(());
     }
     if json_output {
         emit_jsonl(&json!({
             "type": "session.locked",
             "thread_id": session_id,
-            "status": session.status,
-            "state": session.state,
+            "status": state.ui_status(),
+            "state": state,
             "message": "session is already running; append the prompt through the gateway prompt_async endpoint"
         }))?;
         io::stdout()
@@ -160,13 +240,8 @@ pub(crate) fn reject_busy_session(session_id: &str, json_output: bool) -> Result
     Err(busy_session_message(session_id))
 }
 
-fn session_is_busy(session: &SessionSnapshot) -> bool {
-    fn busy_text(value: Option<&String>) -> bool {
-        value
-            .map(|value| value.trim())
-            .is_some_and(|value| matches!(value, "busy" | "running"))
-    }
-    busy_text(session.status.as_ref()) || busy_text(session.state.as_ref())
+fn session_state(session: &SessionSnapshot) -> SessionState {
+    session.lifecycle_projection.state
 }
 
 fn busy_session_message(session_id: &str) -> String {
@@ -202,17 +277,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn busy_session_detection_accepts_gateway_and_runtime_statuses() {
+    fn busy_session_detection_uses_only_canonical_lifecycle_state() {
         let mut session = test_snapshot();
-        session.status = Some("busy".to_string());
-        assert!(session_is_busy(&session));
-
         session.status = Some("idle".to_string());
-        session.state = Some("running".to_string());
-        assert!(session_is_busy(&session));
-
         session.state = Some("completed".to_string());
-        assert!(!session_is_busy(&session));
+        session.lifecycle_projection = test_projection(SessionState::Running);
+        assert_eq!(session_state(&session), SessionState::Running);
+        assert!(session_state(&session).is_recoverable_running());
+
+        session.lifecycle_projection = test_projection(SessionState::Paused);
+        assert!(session_state(&session).is_recoverable_running());
+
+        session.lifecycle_projection = test_projection(SessionState::Completed);
+        assert!(!session_state(&session).is_recoverable_running());
     }
 
     #[test]
@@ -238,10 +315,16 @@ mod tests {
             status: None,
             message_count: 0,
             task_management: serde_json::json!({}),
-            lifecycle_projection: None,
+            lifecycle_projection: test_projection(SessionState::Created),
             management: serde_json::json!({}),
             session: serde_json::json!({}),
             todos: Vec::new(),
         }
+    }
+
+    fn test_projection(state: SessionState) -> lifecycle::SessionProjection {
+        let mut aggregate = lifecycle::SessionAggregate::new("session-123".to_string());
+        aggregate.state = state;
+        aggregate.query(lifecycle::SessionQuery::Lifecycle)
     }
 }

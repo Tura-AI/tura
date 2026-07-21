@@ -1,13 +1,12 @@
 use serde_json::{json, Value};
 
+use crate::app::AppState;
 use crate::process_info::current_process_start_time;
 use crate::services::managed_process::repo_root;
 use crate::services::manager::{ServiceManager, WorkerAlreadyRunning};
 use crate::services::models::WorkerSpec;
 use crate::services::runtime_workers::MAX_ACTIVE_RUNTIME_WORKERS;
-use crate::{app::AppState, IpcNotificationSender};
-use router_contract::RunAgentRequest;
-use runtime_contract::CallContext;
+use runtime_contract::{CallContext, RunAgentRequest};
 use tura_router::registry::{binary_target_diagnostics, resolve_binary_target};
 
 /// Maximum recursion depth for child sub-sessions (fork-bomb guard, T5.4).
@@ -20,25 +19,22 @@ pub(crate) async fn dispatch_run_agent(
     state: &AppState,
     req: RunAgentRequest,
     ipc_request_id: String,
-    notifications: Option<IpcNotificationSender>,
 ) -> (u16, Value) {
-    dispatch_run_agent_inner(state, req, ipc_request_id, notifications, false).await
+    dispatch_run_agent_inner(state, req, ipc_request_id, false).await
 }
 
 pub(crate) async fn dispatch_run_agent_with_runtime_slot(
     state: &AppState,
     req: RunAgentRequest,
     ipc_request_id: String,
-    notifications: Option<IpcNotificationSender>,
 ) -> (u16, Value) {
-    dispatch_run_agent_inner(state, req, ipc_request_id, notifications, true).await
+    dispatch_run_agent_inner(state, req, ipc_request_id, true).await
 }
 
 async fn dispatch_run_agent_inner(
     state: &AppState,
     req: RunAgentRequest,
     ipc_request_id: String,
-    notifications: Option<IpcNotificationSender>,
     runtime_slot_acquired: bool,
 ) -> (u16, Value) {
     let session_id = req
@@ -46,6 +42,7 @@ async fn dispatch_run_agent_inner(
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("router-{}", uuid::Uuid::new_v4()));
+    let runtime_id = req.runtime_id.clone();
     if router_debug_enabled() {
         eprintln!(
             "router debug: dispatch_run_agent start session_id={} agent={:?} model={:?}",
@@ -226,6 +223,7 @@ async fn dispatch_run_agent_inner(
     }
 
     let call_input = json!({
+        "runtime_id": runtime_id,
         "session_id": session_id,
         "directory": req.directory,
         "model": req.model,
@@ -234,6 +232,7 @@ async fn dispatch_run_agent_inner(
         "prompt": prompt,
         "runtime_context": req.runtime_context,
         "planning_mode_override": req.planning_mode_override,
+        "no_op_manual": req.no_op_manual,
         "return_log": req.return_log,
     });
     let ctx = CallContext {
@@ -252,10 +251,7 @@ async fn dispatch_run_agent_inner(
     if router_debug_enabled() {
         eprintln!("router debug: dispatch_run_agent calling worker session_id={session_id} worker_id={worker_id}");
     }
-    let call_result = state
-        .manager
-        .call_worker_with_notifications(&worker_id, ctx, notifications)
-        .await;
+    let call_result = state.manager.call_worker(&worker_id, ctx).await;
     worker_cleanup.stop_now().await;
     if router_debug_enabled() {
         eprintln!(
@@ -396,11 +392,13 @@ mod tests {
             );
 
             let request = serde_json::from_value(json!({
+                "runtime_id": "runtime-over-limit",
+                "lease_id": "lease-over-limit",
                 "session_id": "over-limit-session",
                 "prompt": "this request should be rejected before another runtime worker starts"
             }))?;
             let (status, body) =
-                dispatch_run_agent(&state, request, "test-request".to_string(), None).await;
+                dispatch_run_agent(&state, request, "test-request".to_string()).await;
 
             assert_eq!(status, 429);
             assert_eq!(body["ok"], false);
@@ -451,11 +449,13 @@ mod tests {
             );
 
             let request = serde_json::from_value(json!({
+                "runtime_id": "runtime-duplicate",
+                "lease_id": "lease-duplicate",
                 "session_id": "duplicate-session",
                 "prompt": "a second runtime for this session must be rejected"
             }))?;
             let (status, body) =
-                dispatch_run_agent(&state, request, "duplicate-request".to_string(), None).await;
+                dispatch_run_agent(&state, request, "duplicate-request".to_string()).await;
 
             assert_eq!(status, 409);
             assert_eq!(body["ok"], false);

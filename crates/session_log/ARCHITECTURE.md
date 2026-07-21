@@ -1,8 +1,8 @@
 # session_log Architecture
 
 `crates/session_log` is Tura's durable memory, not the model's improvised one. It
-stores session snapshots, task-management state, todos, parent links, and
-replayable message/event records.
+stores ordered lifecycle/runtime events, management deltas, context facts,
+typed command checkpoints, and transactional read projections.
 
 Gateway and runtime must go through `runtime::session_log_client`,
 `gateway::session_db_client`, or the session-log CLI bridge instead of writing
@@ -22,10 +22,16 @@ crates/session_log/
     ipc.rs
     lib.rs
     path.rs
-    protocol.rs
     service.rs
-    session_state.rs
     store.rs
+    store/
+      connection.rs
+      helpers.rs
+      payload.rs
+      read.rs
+      runtime_events.rs
+      session_commands.rs
+      write.rs
   tests/
     os_testing/
       router_adopts_live_session_db_flow.rs
@@ -46,11 +52,11 @@ There is no listener port or external database process.
 <workspace>/.tura/session_log.sqlite3
 ```
 
-The per-home index database stores workspace/session lookup rows and the
-durable command/write queue. The workspace database stores full session
-snapshots and replay records. dev and release builds use the same workspace
-database for a project because the log follows the workspace, while each
-`TURA_HOME` keeps separate sockets, locks, and index state.
+The per-home index database stores only session/runtime lookup rows and typed
+command checkpoints. The workspace database stores event and delta facts plus
+their transactional read projections. dev and release builds use the same
+workspace database for a project because the log follows the workspace, while
+each `TURA_HOME` keeps separate sockets, locks, index state, and file queue.
 
 `SESSION_LOG_DB_ROOT` and `TURA_DB_ROOT` are still honored for isolated tests
 and local diagnostics. They affect the per-home index only; workspace logs are
@@ -86,15 +92,23 @@ queue also moves orphaned `message_queue/processing/*.json` files back to
 `pending` at the start of each drain, which recovers writes left behind by a
 killed session-db process.
 
-The SQLite `session_write_queue` replays pending write commands on service
-startup. It accepts `upsert_session`, `apply_command_checkpoint`,
-`delete_session`, and `delete_workspace`; checkpoint replay is idempotent by the
-checkpoint idempotency key.
+The strict file queue is the only deferred-write queue. It accepts the typed
+write command set, replays `pending` items, recovers orphaned `processing`
+items, and quarantines malformed or rejected payloads in `failed` with an error
+sidecar. There is no SQLite write queue. Checkpoint replay is idempotent by its
+typed identity; management and context replay use independent sequences.
+
+Socket writes and file-queue writes execute through the same typed command
+dispatcher. A successful transaction returns its committed durable Session feed
+entries to that dispatcher; the socket path and the service-owned queue drain
+publish those entries through the same in-process subscription hub. Receipt or
+sequence replay returns no new committed entries, so recovering a queue file
+after commit cannot notify online subscribers twice.
 
 Mandatory crate tests cover the service owner rule directly:
 `tests/os_testing/process_lifecycle_e2e.rs` starts a real `tura_session_db`, verifies that a
-second owner is rejected, checks bad-input recovery and idempotent upsert, then
-performs graceful shutdown and asserts endpoint/lock cleanup.
+second owner is rejected, checks bad-input recovery and idempotent delta replay,
+then performs graceful shutdown and asserts endpoint/lock cleanup.
 `tests/os_testing/router_adopts_live_session_db_flow.rs` kills a real router while
 leaving session_db alive, verifies queued and direct writes continue, and then
 starts a new router that adopts the existing session_db endpoint. Higher-level
@@ -109,23 +123,23 @@ sessions
   session_id primary key
   workspace
   workspace_db_path
-  name
-  parent_id
-  created_at
   updated_at
+  last_user_message_at
   state
-  status
-  message_count
 
-session_write_queue
-  id primary key
+runtime_locations
+  runtime_id primary key
+  session_id
+  workspace_db_path
+
+command_checkpoints
   idempotency_key
   session_id
-  event_type
-  payload_json
-  status
-  retry_count
-  timestamps and last_error
+  runtime and command identities
+  checkpoint_type
+  command metadata
+  changes_json
+  started_at / finished_at / applied_at
 ```
 
 Workspace database:
@@ -145,6 +159,9 @@ sessions
   management_json
   session_json
   todos_json
+  next_context_sequence
+  retained_from_sequence
+  next_management_sequence
 
 session_records
   id
@@ -154,41 +171,69 @@ session_records
   created_at
   updated_at
   record_json
+
+session_context_records
+  session_id + sequence primary key
+  record_json
+  projection_json
+
+session_events
+  session_id + event_seq primary key
+  event_json
+
+session_command_receipts
+  command_id primary key
+  session_id
+  request_json
+  result_json
+
+management_deltas
+  session_id + sequence primary key
+  delta_json
 ```
 
-`management_json` is the runtime `SessionManagement` payload used for resume.
-After runtime compaction, this payload may contain a retained `session_log` tail
-plus `session_log_retention` metadata instead of the full historical log. That
-keeps resume from reading and parsing compacted-away runtime history. The
-separate `session_records` table remains the UI/message-history record source.
-`session_json` is the gateway `SessionInfo` snapshot used for hydration.
-`todos_json` keeps UI todo projections with the session snapshot.
+`session_events` is the canonical lifecycle history. Reads replay it into a
+`SessionAggregate`; there is no aggregate JSON authority. `management_deltas`
+stores ordered `SessionManagementDelta` values with a cursor independent from
+the context cursor. The `sessions` row is updated in the same transaction and
+is only a read projection: `management_json` supports bounded resume,
+`session_json` hydrates Gateway, and the task/todo/state/status/count columns
+serve queries. The index row only locates the workspace database and provides a
+lightweight listing projection.
 
-The workspace `sessions` row is the authoritative snapshot for reads and
-resume. The index row locates that workspace database and supports listing, but
-`get_session`, `list_sessions`, and `list_session_summaries` hydrate lifecycle
-fields from the workspace row so stale index state cannot resurrect an old FSM
-value.
+`session_command_receipts` is an inbox, not lifecycle state. Create and execute
+requests carry a stable command id. The owner writes the canonical request and
+typed result beside the event and projections in one transaction, returns the
+saved result for an identical replay, and rejects key reuse with different
+content. A replay also repairs the derived index from the current workspace
+projection, covering owner failure after workspace commit and before index sync.
+Because the workspace transaction is authoritative, an ordinary command returns
+its committed result even if the derived index sync fails; the owner logs that
+repairable failure rather than inviting a new logical command id. Creation keeps
+the index error visible because a newly committed session is otherwise not
+addressable, and its stable `create:{session_id}` receipt makes retry safe.
+Workspace deletion removes every indexed workspace database before deleting its
+index rows. If file removal fails or the owner exits mid-command, the remaining
+index rows preserve the paths needed for an idempotent queue replay.
 
 `session_records` is append/update oriented. Records are uniquely identified by
-`session_id + message_id`; an upsert updates an existing record with the same
-message id and inserts new records, but it does not delete the whole session's
-record history before writing. This keeps earlier replay records available if a
-later process crash only flushes a partial turn.
-When `management_json.session_log_retention.omitted_entries` is non-zero, the
-upsert is treated as a compacted runtime snapshot and records not present in the
-retained message tail are preserved.
+`session_id + message_id`; a typed delta updates the projection for an existing
+message id and inserts new records, but it never deletes records omitted from
+that delta. `session_context_records` has stricter identity: replay of a
+`session_id + sequence` must match both `record_json` and `projection_json`.
+`retained_from_sequence` records the compaction boundary while omitted history
+remains available through the UI projection.
 
-`state` is the only authoritative session lifecycle value. It is the canonical
-`session_log::SessionState` enum serialized in snake_case:
-`created`, `running`, `paused`, `completed`, `failed`, `cancelled`, and
-`interrupted`. `status` is only a derived UI projection:
-`idle`, `busy`, or `error`. Store writes must derive `status` from `state`;
-callers must not provide a second lifecycle vocabulary.
+The derived `state` column serializes `lifecycle::SessionState` in snake_case:
+`created`, `running`, `paused`, `completed`, `failed`, `cancelled`, or
+`interrupted`. `status` is a further UI projection: `idle`, `busy`, or `error`.
+Store writes derive both by replaying events; callers do not provide a second
+lifecycle vocabulary.
 
-Startup recovery marks `running` and `paused` sessions as `interrupted` through
-the shared state transition rules and updates both `management_json` and
-`session_json`. Invalid internal state strings are rejected instead of being
+Service startup recovery marks active sessions as `interrupted` through the
+shared state transition rules, appends the lifecycle event, and updates the read
+projections in the same transaction. Queries never run recovery or mutate
+lifecycle state. Invalid internal state strings are rejected instead of being
 silently coerced or dropped.
 
 If a workspace database is missing, reads remove stale index snapshots and
@@ -196,7 +241,11 @@ return only sessions that still have an authoritative workspace log.
 
 ## Commands
 
-The protocol is `SessionLogCommand` in `src/protocol.rs`.
+The protocol is `SessionLogCommand` in
+`crates/session_log_contract/src/protocol.rs`. Lifecycle mutations use
+`CreateSession`, `ExecuteSessionCommand`, and `PersistSessionDelta`; the
+diagnostic CLI below intentionally exposes only read and administrative
+operations.
 
 ```powershell
 '{"command":"list_workspaces"}' | target\debug\tura_gateway.exe session-log

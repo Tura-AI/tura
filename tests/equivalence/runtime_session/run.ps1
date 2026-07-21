@@ -10,13 +10,25 @@ $ErrorActionPreference = "Stop"
 $RunnerManifest = Join-Path $Repo "tests\equivalence\runtime_session\runner\Cargo.toml"
 $Reference = Join-Path $Repo "tests\equivalence\runtime_session\reference\runtime-session.json"
 $Inventory = Join-Path $Repo "tests\equivalence\runtime_session\reference\inventory.json"
+$DirectSwitchEvidence = Join-Path $Repo "tests\equivalence\runtime_session\direct-switch-evidence.json"
 
 function Invoke-Capture([string]$Root, [string]$Output) {
   New-Item -ItemType Directory -Force (Split-Path -Parent $Output) | Out-Null
+  $temporaryOutput = "$Output.tmp"
+  $stderrOutput = Join-Path $OutputDirectory "$([System.IO.Path]::GetFileNameWithoutExtension($Output)).stderr.log"
+  Remove-Item -LiteralPath $temporaryOutput, $stderrOutput -Force -ErrorAction SilentlyContinue
   Push-Location $Root
   try {
-    & cargo run --quiet --manifest-path (Join-Path $Root "tests\equivalence\runtime_session\runner\Cargo.toml") --bin runtime-session-equivalence > $Output
-    if ($LASTEXITCODE -ne 0) { throw "equivalence capture failed for $Root" }
+    & cargo run --quiet --manifest-path (Join-Path $Root "tests\equivalence\runtime_session\runner\Cargo.toml") --bin runtime-session-equivalence > $temporaryOutput 2> $stderrOutput
+    if ($LASTEXITCODE -ne 0) {
+      Remove-Item -LiteralPath $temporaryOutput -Force -ErrorAction SilentlyContinue
+      $stderrTail = (Get-Content -LiteralPath $stderrOutput -Tail 80 -ErrorAction SilentlyContinue) -join "`n"
+      throw "equivalence capture failed for $Root; stderr=$stderrOutput`n$stderrTail"
+    }
+    Move-Item -LiteralPath $temporaryOutput -Destination $Output -Force
+    if ((Get-Item -LiteralPath $stderrOutput).Length -eq 0) {
+      Remove-Item -LiteralPath $stderrOutput -Force
+    }
   } finally {
     Pop-Location
   }
@@ -24,10 +36,21 @@ function Invoke-Capture([string]$Root, [string]$Output) {
 
 function Invoke-Inventory([string]$Root, [string]$Output) {
   New-Item -ItemType Directory -Force (Split-Path -Parent $Output) | Out-Null
+  $temporaryOutput = "$Output.tmp"
+  $stderrOutput = Join-Path $OutputDirectory "$([System.IO.Path]::GetFileNameWithoutExtension($Output)).stderr.log"
+  Remove-Item -LiteralPath $temporaryOutput, $stderrOutput -Force -ErrorAction SilentlyContinue
   Push-Location $Root
   try {
-    & cargo run --quiet --manifest-path (Join-Path $Root "tests\equivalence\runtime_session\runner\Cargo.toml") --bin inventory -- $Root > $Output
-    if ($LASTEXITCODE -ne 0) { throw "phase 0 inventory failed for $Root" }
+    & cargo run --quiet --manifest-path (Join-Path $Root "tests\equivalence\runtime_session\runner\Cargo.toml") --bin inventory -- $Root > $temporaryOutput 2> $stderrOutput
+    if ($LASTEXITCODE -ne 0) {
+      Remove-Item -LiteralPath $temporaryOutput -Force -ErrorAction SilentlyContinue
+      $stderrTail = (Get-Content -LiteralPath $stderrOutput -Tail 80 -ErrorAction SilentlyContinue) -join "`n"
+      throw "phase 0 inventory failed for $Root; stderr=$stderrOutput`n$stderrTail"
+    }
+    Move-Item -LiteralPath $temporaryOutput -Destination $Output -Force
+    if ((Get-Item -LiteralPath $stderrOutput).Length -eq 0) {
+      Remove-Item -LiteralPath $stderrOutput -Force
+    }
   } finally {
     Pop-Location
   }
@@ -57,6 +80,95 @@ function Assert-Exact([string]$Expected, [string]$Actual, [string]$Label) {
   Write-Host "$Label exact value/raw-byte match"
 }
 
+function ConvertTo-CanonicalJsonValue([AllowNull()][object]$Value) {
+  if ($null -eq $Value) { return $null }
+  if ($Value -is [System.Management.Automation.PSCustomObject]) {
+    $result = [ordered]@{}
+    foreach ($property in ($Value.PSObject.Properties | Sort-Object Name)) {
+      $result[$property.Name] = ConvertTo-CanonicalJsonValue $property.Value
+    }
+    return [pscustomobject]$result
+  }
+  if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+    $items = [System.Collections.Generic.List[object]]::new()
+    foreach ($item in $Value) {
+      $items.Add((ConvertTo-CanonicalJsonValue $item))
+    }
+    return ,$items.ToArray()
+  }
+  return $Value
+}
+
+function ConvertTo-CompactJson([AllowNull()][object]$Value) {
+  $canonical = ConvertTo-CanonicalJsonValue $Value
+  return ConvertTo-Json -InputObject $canonical -Depth 100 -Compress
+}
+
+function Get-JsonPathValue([object]$Root, [object[]]$Path) {
+  $cursor = $Root
+  foreach ($segment in $Path) {
+    $property = $cursor.PSObject.Properties[[string]$segment]
+    if ($null -eq $property) {
+      throw "JSON path '$($Path -join '.')' is missing segment '$segment'"
+    }
+    $cursor = $property.Value
+  }
+  return [pscustomobject]@{ Value = $cursor }
+}
+
+function Set-JsonPathValue([object]$Root, [object[]]$Path, [AllowNull()][object]$Value) {
+  if ($Path.Count -eq 0) { throw "approved compatibility path must not be empty" }
+  $cursor = $Root
+  for ($index = 0; $index -lt $Path.Count - 1; $index++) {
+    $segment = [string]$Path[$index]
+    $property = $cursor.PSObject.Properties[$segment]
+    if ($null -eq $property) {
+      throw "JSON path '$($Path -join '.')' is missing segment '$segment'"
+    }
+    $cursor = $property.Value
+  }
+  $leaf = [string]$Path[$Path.Count - 1]
+  $leafProperty = $cursor.PSObject.Properties[$leaf]
+  if ($null -eq $leafProperty) {
+    throw "JSON path '$($Path -join '.')' is missing leaf '$leaf'"
+  }
+  $leafProperty.Value = $Value
+}
+
+function Assert-FrozenReference([object]$Evidence) {
+  $captureHash = (Get-FileHash -Algorithm SHA256 $Reference).Hash
+  $inventoryHash = (Get-FileHash -Algorithm SHA256 $Inventory).Hash
+  if ($captureHash -cne $Evidence.frozen_phase0.capture_sha256) {
+    throw "frozen Phase 0 capture hash changed: expected=$($Evidence.frozen_phase0.capture_sha256) actual=$captureHash"
+  }
+  if ($inventoryHash -cne $Evidence.frozen_phase0.inventory_sha256) {
+    throw "frozen Phase 0 inventory hash changed: expected=$($Evidence.frozen_phase0.inventory_sha256) actual=$inventoryHash"
+  }
+  Write-Host "frozen Phase 0 capture and inventory hashes match"
+}
+
+function Assert-ApprovedCompatibility([string]$Expected, [string]$Actual, [object]$Evidence) {
+  $expectedJson = Get-Content -Raw $Expected | ConvertFrom-Json -Depth 100
+  $actualJson = Get-Content -Raw $Actual | ConvertFrom-Json -Depth 100
+  foreach ($difference in $Evidence.approved_differences) {
+    $path = @($difference.path)
+    $actualValue = (Get-JsonPathValue $actualJson $path).Value
+    $actualValueText = ConvertTo-CompactJson $actualValue
+    $approvedValueText = ConvertTo-CompactJson $difference.expected_candidate
+    if ($actualValueText -cne $approvedValueText) {
+      throw "approved direct-switch value mismatch at '$($path -join '.')': expected=$approvedValueText actual=$actualValueText"
+    }
+    $referenceValue = (Get-JsonPathValue $expectedJson $path).Value
+    Set-JsonPathValue $actualJson $path $referenceValue
+  }
+  $expectedText = ConvertTo-CompactJson $expectedJson
+  $actualText = ConvertTo-CompactJson $actualJson
+  if ($expectedText -cne $actualText) {
+    throw "runtime/session capture differs outside the approved direct-switch paths"
+  }
+  Write-Host "Phase 0 behavior matches outside approved direct-switch paths"
+}
+
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
 switch ($Mode) {
   "capture" {
@@ -72,7 +184,9 @@ switch ($Mode) {
   "compare" {
     $candidate = Join-Path $OutputDirectory "candidate.json"
     Invoke-Capture $Repo $candidate
-    Assert-Exact $Reference $candidate "runtime/session capture"
+    $evidence = Get-Content -Raw $DirectSwitchEvidence | ConvertFrom-Json -Depth 100
+    Assert-FrozenReference $evidence
+    Assert-ApprovedCompatibility $Reference $candidate $evidence
     if ($ReferenceRepo) {
       $referenceCandidate = Join-Path $OutputDirectory "reference-repo.json"
       Invoke-Capture $ReferenceRepo $referenceCandidate

@@ -1,8 +1,8 @@
 use crate::manas::COMMAND_RUN_TOOL;
 use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
-use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::tool_router::execute_tool::ToolExecutionResult;
 use chrono::{DateTime, Utc};
+use lifecycle::RuntimeAggregate;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PendingCompactContext {
@@ -13,7 +13,7 @@ pub(crate) struct PendingCompactContext {
 
 pub(crate) fn extract_compact_context_results(
     tool_results: &mut [ToolExecutionResult],
-    runtime: Option<&RuntimeManagement>,
+    runtime: Option<&RuntimeAggregate>,
 ) -> Vec<PendingCompactContext> {
     let mut pending = Vec::new();
     for tool_result in tool_results.iter_mut() {
@@ -93,7 +93,7 @@ fn strip_compact_context_from_command_run(
     }
 }
 
-fn runtime_visible_text(runtime: &RuntimeManagement) -> Option<String> {
+fn runtime_visible_text(runtime: &RuntimeAggregate) -> Option<String> {
     user_visible_runtime_text(&runtime.text)
         .or_else(|| {
             runtime
@@ -232,16 +232,16 @@ mod tests {
         CompactContextAgentMessage,
     };
     use crate::manas::COMMAND_RUN_TOOL;
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use crate::tool_router::execute_tool::ToolExecutionResult;
     use chrono::Utc;
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
+    use lifecycle::{SessionInput, SessionManagement};
     use serde_json::json;
     use std::path::PathBuf;
 
-    fn runtime(session: &SessionManagement) -> RuntimeManagement {
-        RuntimeManagement::new(
+    fn runtime(session: &SessionManagement) -> RuntimeAggregate {
+        RuntimeAggregate::new(
             "runtime-compact-tool-step".to_string(),
             session.session_id.clone(),
             "agent".to_string(),
@@ -311,7 +311,9 @@ mod tests {
         }];
 
         let mut runtime = runtime(&session);
-        runtime.text = "Visible runtime reply before checkpoint".to_string();
+        runtime
+            .append_text("Visible runtime reply before checkpoint")
+            .expect("fixture text should apply");
         let pending = extract_compact_context_results(&mut tool_results, Some(&runtime));
 
         assert_eq!(pending.len(), 1);

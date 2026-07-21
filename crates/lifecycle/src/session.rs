@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::RuntimeId;
+
 pub type SessionId = String;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -202,6 +204,8 @@ pub struct SessionAggregate {
     pub task_plan: TaskPlan,
     pub pending_user_inputs: Vec<String>,
     pub cancelled: bool,
+    pub runtime_ids: Vec<RuntimeId>,
+    pub active_runtime_id: Option<RuntimeId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,9 +220,25 @@ pub enum SessionCommand {
         input: String,
     },
     ConsumeQueuedUserInputs,
-    RuntimeStarted,
-    RuntimeCompleted,
-    RuntimeFailed,
+    RuntimeStarted {
+        runtime_id: RuntimeId,
+    },
+    RuntimeRetried {
+        runtime_id: RuntimeId,
+        fallback_from_id: RuntimeId,
+    },
+    RuntimeCompleted {
+        runtime_id: RuntimeId,
+    },
+    RuntimeFailed {
+        runtime_id: RuntimeId,
+    },
+    RuntimeCancelled {
+        runtime_id: RuntimeId,
+    },
+    RuntimeEnded {
+        runtime_id: RuntimeId,
+    },
     ApplyRuntimeState {
         state: SessionState,
     },
@@ -247,6 +267,9 @@ pub enum SessionCommand {
         patch: SessionTaskPlanPatch,
     },
     StartScheduledTask {
+        task_id: String,
+        task_summary: String,
+        start_condition: StartCondition,
         now: DateTime<Utc>,
     },
     DeleteSession,
@@ -271,12 +294,23 @@ pub enum SessionEvent {
         inputs: Vec<String>,
     },
     RuntimeStarted {
+        runtime_id: RuntimeId,
         state: SessionState,
     },
     RuntimeCompleted {
+        runtime_id: RuntimeId,
         state: SessionState,
     },
     RuntimeFailed {
+        runtime_id: RuntimeId,
+        state: SessionState,
+    },
+    RuntimeCancelled {
+        runtime_id: RuntimeId,
+        state: SessionState,
+    },
+    RuntimeEnded {
+        runtime_id: RuntimeId,
         state: SessionState,
     },
     RuntimeStateApplied {
@@ -309,6 +343,74 @@ pub enum SessionEvent {
     SessionDeleted,
 }
 
+impl SessionEvent {
+    fn as_command(&self, aggregate: &SessionAggregate) -> Result<Option<SessionCommand>, String> {
+        let command = match self {
+            Self::SessionCreated { .. } | Self::SessionForked { .. } => return Ok(None),
+            Self::UserInputAccepted { .. } => SessionCommand::SubmitUserInput,
+            Self::UserTurnStarted { .. } => SessionCommand::StartUserTurn,
+            Self::UserInputQueued { input } => SessionCommand::QueueUserInputWhileBusy {
+                input: input.clone(),
+            },
+            Self::QueuedUserInputsConsumed { .. } => SessionCommand::ConsumeQueuedUserInputs,
+            Self::RuntimeStarted { runtime_id, .. } => {
+                let started = SessionCommand::RuntimeStarted {
+                    runtime_id: runtime_id.clone(),
+                };
+                if aggregate
+                    .decide(started.clone())
+                    .is_ok_and(|expected| expected == *self)
+                {
+                    started
+                } else if let Some(fallback_from_id) = aggregate.runtime_ids.last() {
+                    SessionCommand::RuntimeRetried {
+                        runtime_id: runtime_id.clone(),
+                        fallback_from_id: fallback_from_id.clone(),
+                    }
+                } else {
+                    started
+                }
+            }
+            Self::RuntimeCompleted { runtime_id, .. } => SessionCommand::RuntimeCompleted {
+                runtime_id: runtime_id.clone(),
+            },
+            Self::RuntimeFailed { runtime_id, .. } => SessionCommand::RuntimeFailed {
+                runtime_id: runtime_id.clone(),
+            },
+            Self::RuntimeCancelled { runtime_id, .. } => SessionCommand::RuntimeCancelled {
+                runtime_id: runtime_id.clone(),
+            },
+            Self::RuntimeEnded { runtime_id, .. } => SessionCommand::RuntimeEnded {
+                runtime_id: runtime_id.clone(),
+            },
+            Self::RuntimeStateApplied { state } => {
+                SessionCommand::ApplyRuntimeState { state: *state }
+            }
+            Self::SessionInterrupted { .. } => SessionCommand::InterruptSession,
+            Self::SessionCancelled { .. } => SessionCommand::CancelSession,
+            Self::ChildSessionRegistered { parent_id, .. } => {
+                SessionCommand::RegisterChildSession {
+                    parent_id: parent_id.clone(),
+                }
+            }
+            Self::TaskPlanChanged { task_plan } => SessionCommand::ApplyTaskStatus {
+                task_plan: task_plan.clone(),
+            },
+            Self::ScheduledTaskClaimed { .. } => {
+                return aggregate
+                    .scheduled_replay_command(self)
+                    .map(Some)
+                    .ok_or_else(|| {
+                        "scheduled_task_claimed does not match a canonical scheduler result"
+                            .to_string()
+                    });
+            }
+            Self::SessionDeleted => SessionCommand::DeleteSession,
+        };
+        Ok(Some(command))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "query", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionQuery {
@@ -324,6 +426,8 @@ pub struct SessionProjection {
     pub task_plan: TaskPlan,
     pub pending_user_inputs: Vec<String>,
     pub cancelled: bool,
+    pub runtime_ids: Vec<RuntimeId>,
+    pub active_runtime_id: Option<RuntimeId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -353,6 +457,8 @@ impl SessionAggregate {
             task_plan: TaskPlan::default(),
             pending_user_inputs: Vec::new(),
             cancelled: false,
+            runtime_ids: Vec::new(),
+            active_runtime_id: None,
         }
     }
 
@@ -365,6 +471,61 @@ impl SessionAggregate {
         Ok(event)
     }
 
+    /// Rebuilds canonical session state from its ordered event stream.
+    pub fn replay(
+        session_id: SessionId,
+        events: impl IntoIterator<Item = SessionEvent>,
+    ) -> Result<Self, String> {
+        let mut events = events.into_iter();
+        let first = events
+            .next()
+            .ok_or_else(|| format!("session {session_id} has no creation event"))?;
+        let creation_command = match &first {
+            SessionEvent::SessionCreated { task_plan } => SessionCommand::CreateSession {
+                task_plan: task_plan.clone(),
+            },
+            SessionEvent::ChildSessionRegistered { parent_id, .. } => {
+                SessionCommand::RegisterChildSession {
+                    parent_id: parent_id.clone(),
+                }
+            }
+            SessionEvent::SessionForked { parent_id } => SessionCommand::ForkSession {
+                parent_id: parent_id.clone(),
+            },
+            _ => return Err("first session event is not a creation event".to_string()),
+        };
+        let mut aggregate = Self::new(session_id);
+        let expected = aggregate
+            .decide(creation_command)
+            .map_err(|error| error.to_string())?;
+        if expected != first {
+            return Err(
+                "session creation event does not match the canonical reducer result".into(),
+            );
+        }
+        aggregate.apply(&first);
+        for event in events {
+            aggregate.apply_committed(&event)?;
+        }
+        Ok(aggregate)
+    }
+
+    /// Applies one event received from the canonical ordered stream.
+    pub fn apply_committed(&mut self, event: &SessionEvent) -> Result<(), String> {
+        if matches!(event, SessionEvent::SessionDeleted) {
+            return Err("session_deleted cannot appear in a retained session event stream".into());
+        }
+        let command = event.as_command(self)?.ok_or_else(|| {
+            "session creation events may only be the first session event".to_string()
+        })?;
+        let expected = self.decide(command).map_err(|error| error.to_string())?;
+        if expected != *event {
+            return Err("session event does not match the canonical reducer result".to_string());
+        }
+        self.apply(event);
+        Ok(())
+    }
+
     pub fn decide(&self, command: SessionCommand) -> Result<SessionEvent, SessionTransitionError> {
         let previous = self.state;
         match command {
@@ -372,7 +533,17 @@ impl SessionAggregate {
                 Ok(SessionEvent::SessionCreated { task_plan })
             }
             SessionCommand::ApplyRuntimeState { state: next } => {
-                if !previous.can_transition_to(next) {
+                let active_runtime_state_transition = self.active_runtime_id.is_some()
+                    && matches!(previous, SessionState::Running | SessionState::Paused)
+                    && matches!(next, SessionState::Running | SessionState::Paused);
+                let execution_terminal_transition = self.active_runtime_id.is_some()
+                    && matches!(previous, SessionState::Running | SessionState::Paused)
+                    && next.is_terminal();
+                if (self.active_runtime_id.is_some()
+                    && !active_runtime_state_transition
+                    && !execution_terminal_transition)
+                    || !previous.can_transition_to(next)
+                {
                     return Err(SessionTransitionError { previous, next });
                 }
                 Ok(SessionEvent::RuntimeStateApplied { state: next })
@@ -398,42 +569,107 @@ impl SessionAggregate {
                 })
             }
             SessionCommand::QueueUserInputWhileBusy { input } => {
+                let input = input.trim();
                 if !matches!(previous, SessionState::Running | SessionState::Paused)
-                    || input.trim().is_empty()
+                    || input.is_empty()
                 {
                     return Err(SessionTransitionError {
                         previous,
                         next: previous,
                     });
                 }
-                Ok(SessionEvent::UserInputQueued { input })
+                Ok(SessionEvent::UserInputQueued {
+                    input: input.to_string(),
+                })
             }
             SessionCommand::ConsumeQueuedUserInputs => Ok(SessionEvent::QueuedUserInputsConsumed {
                 inputs: self.pending_user_inputs.clone(),
             }),
-            SessionCommand::RuntimeStarted => {
+            SessionCommand::RuntimeStarted { runtime_id } => {
                 let next = SessionState::Running;
-                if !previous.can_transition_to(next) {
+                if runtime_id.trim().is_empty()
+                    || self
+                        .active_runtime_id
+                        .as_ref()
+                        .is_some_and(|active| active != &runtime_id)
+                    || !previous.can_transition_to(next)
+                {
                     return Err(SessionTransitionError { previous, next });
                 }
-                Ok(SessionEvent::RuntimeStarted { state: next })
+                Ok(SessionEvent::RuntimeStarted {
+                    runtime_id,
+                    state: next,
+                })
             }
-            SessionCommand::RuntimeCompleted => {
-                let next = match previous {
-                    SessionState::Created | SessionState::Completed => previous,
-                    _ => SessionState::Completed,
-                };
-                if !previous.can_transition_to(next) {
+            SessionCommand::RuntimeRetried {
+                runtime_id,
+                fallback_from_id,
+            } => {
+                let next = SessionState::Running;
+                if previous != SessionState::Failed
+                    || runtime_id.trim().is_empty()
+                    || fallback_from_id.trim().is_empty()
+                    || runtime_id == fallback_from_id
+                    || self.active_runtime_id.is_some()
+                    || self.runtime_ids.last() != Some(&fallback_from_id)
+                {
                     return Err(SessionTransitionError { previous, next });
                 }
-                Ok(SessionEvent::RuntimeCompleted { state: next })
+                Ok(SessionEvent::RuntimeStarted {
+                    runtime_id,
+                    state: next,
+                })
             }
-            SessionCommand::RuntimeFailed => {
+            SessionCommand::RuntimeCompleted { runtime_id } => {
+                let next = SessionState::Completed;
+                if !self.runtime_terminal_matches(&runtime_id, next)
+                    || !previous.can_transition_to(next)
+                {
+                    return Err(SessionTransitionError { previous, next });
+                }
+                Ok(SessionEvent::RuntimeCompleted {
+                    runtime_id,
+                    state: next,
+                })
+            }
+            SessionCommand::RuntimeFailed { runtime_id } => {
                 let next = SessionState::Failed;
-                if previous != next && !previous.can_transition_to(next) {
+                if !self.runtime_terminal_matches(&runtime_id, next)
+                    || (previous != next && !previous.can_transition_to(next))
+                {
                     return Err(SessionTransitionError { previous, next });
                 }
-                Ok(SessionEvent::RuntimeFailed { state: next })
+                Ok(SessionEvent::RuntimeFailed {
+                    runtime_id,
+                    state: next,
+                })
+            }
+            SessionCommand::RuntimeCancelled { runtime_id } => {
+                let next = SessionState::Cancelled;
+                if !self.runtime_terminal_matches(&runtime_id, next)
+                    || (previous != next && !previous.can_transition_to(next))
+                {
+                    return Err(SessionTransitionError { previous, next });
+                }
+                Ok(SessionEvent::RuntimeCancelled {
+                    runtime_id,
+                    state: next,
+                })
+            }
+            SessionCommand::RuntimeEnded { runtime_id } => {
+                if runtime_id.trim().is_empty()
+                    || self.active_runtime_id.as_ref() != Some(&runtime_id)
+                    || !matches!(previous, SessionState::Running | SessionState::Paused)
+                {
+                    return Err(SessionTransitionError {
+                        previous,
+                        next: previous,
+                    });
+                }
+                Ok(SessionEvent::RuntimeEnded {
+                    runtime_id,
+                    state: previous,
+                })
             }
             SessionCommand::InterruptSession => {
                 let mut task_plan = self.task_plan.clone();
@@ -507,13 +743,18 @@ impl SessionAggregate {
                 }
                 Ok(SessionEvent::TaskPlanChanged { task_plan })
             }
-            SessionCommand::StartScheduledTask { now } => {
-                let Some(index) = self
-                    .task_plan
-                    .detailed_tasks
-                    .iter()
-                    .position(|task| task.scheduler_eligible(now))
-                else {
+            SessionCommand::StartScheduledTask {
+                task_id,
+                task_summary,
+                start_condition,
+                now,
+            } => {
+                let Some(index) = self.task_plan.detailed_tasks.iter().position(|task| {
+                    task.task_id == task_id
+                        && task.start_condition == start_condition
+                        && task.display_summary(&self.task_plan.plan_summary) == task_summary
+                        && task.scheduler_eligible(now)
+                }) else {
                     return Err(SessionTransitionError {
                         previous,
                         next: previous,
@@ -561,19 +802,54 @@ impl SessionAggregate {
                 self.state = *state;
                 self.cancelled = false;
             }
-            SessionEvent::RuntimeStarted { state }
-            | SessionEvent::RuntimeCompleted { state }
-            | SessionEvent::RuntimeFailed { state }
-            | SessionEvent::RuntimeStateApplied { state } => self.state = *state,
+            SessionEvent::RuntimeStarted { runtime_id, state } => {
+                self.state = *state;
+                if !self.runtime_ids.contains(runtime_id) {
+                    self.runtime_ids.push(runtime_id.clone());
+                }
+                self.active_runtime_id = Some(runtime_id.clone());
+            }
+            SessionEvent::RuntimeCompleted { runtime_id, state }
+            | SessionEvent::RuntimeFailed { runtime_id, state } => {
+                self.state = *state;
+                if !self.runtime_ids.contains(runtime_id) {
+                    self.runtime_ids.push(runtime_id.clone());
+                }
+                self.active_runtime_id = None;
+            }
+            SessionEvent::RuntimeCancelled { runtime_id, state } => {
+                self.state = *state;
+                if !self.runtime_ids.contains(runtime_id) {
+                    self.runtime_ids.push(runtime_id.clone());
+                }
+                self.active_runtime_id = None;
+                self.cancelled = true;
+                self.pending_user_inputs.clear();
+            }
+            SessionEvent::RuntimeEnded { runtime_id, state } => {
+                self.state = *state;
+                if !self.runtime_ids.contains(runtime_id) {
+                    self.runtime_ids.push(runtime_id.clone());
+                }
+                self.active_runtime_id = None;
+            }
+            SessionEvent::RuntimeStateApplied { state } => {
+                self.state = *state;
+                if state.is_terminal() {
+                    self.active_runtime_id = None;
+                }
+            }
             SessionEvent::SessionInterrupted { state, task_plan } => {
                 self.state = *state;
                 self.task_plan.clone_from(task_plan);
                 self.pending_user_inputs.clear();
+                self.active_runtime_id = None;
             }
             SessionEvent::SessionCancelled { state } => {
                 self.state = *state;
                 self.cancelled = true;
                 self.pending_user_inputs.clear();
+                self.active_runtime_id = None;
             }
             SessionEvent::ChildSessionRegistered { parent_id, state } => {
                 self.parent_id = Some(parent_id.clone());
@@ -608,7 +884,69 @@ impl SessionAggregate {
                 task_plan: self.task_plan.clone(),
                 pending_user_inputs: self.pending_user_inputs.clone(),
                 cancelled: self.cancelled,
+                runtime_ids: self.runtime_ids.clone(),
+                active_runtime_id: self.active_runtime_id.clone(),
             },
+        }
+    }
+
+    fn runtime_terminal_matches(&self, runtime_id: &RuntimeId, next: SessionState) -> bool {
+        if runtime_id.trim().is_empty() {
+            return false;
+        }
+        match self.active_runtime_id.as_ref() {
+            Some(active) => active == runtime_id,
+            None if self.runtime_ids.contains(runtime_id) => self.state == next,
+            None => false,
+        }
+    }
+
+    fn scheduled_replay_command(&self, event: &SessionEvent) -> Option<SessionCommand> {
+        let SessionEvent::ScheduledTaskClaimed {
+            task_plan, task_id, ..
+        } = event
+        else {
+            return None;
+        };
+        let task = self
+            .task_plan
+            .detailed_tasks
+            .iter()
+            .find(|task| task.task_id == *task_id)?;
+        let now = match task.start_condition {
+            StartCondition::ScheduledTask => task.start_at,
+            StartCondition::PollingTask => {
+                let result_task = task_plan
+                    .detailed_tasks
+                    .iter()
+                    .find(|task| task.task_id == *task_id)?;
+                let seconds = task
+                    .poll_interval
+                    .s
+                    .saturating_add(task.poll_interval.m.saturating_mul(60))
+                    .saturating_add(task.poll_interval.h.saturating_mul(60 * 60))
+                    .saturating_add(task.poll_interval.d.saturating_mul(24 * 60 * 60))
+                    .max(1);
+                result_task
+                    .start_at
+                    .checked_sub_signed(Duration::seconds(seconds.min(i64::MAX as u64) as i64))?
+            }
+            StartCondition::SessionIdle => DateTime::<Utc>::MIN_UTC,
+            StartCondition::UserAction => return None,
+        };
+        let command = SessionCommand::StartScheduledTask {
+            task_id: task_id.clone(),
+            task_summary: task.display_summary(&self.task_plan.plan_summary),
+            start_condition: task.start_condition,
+            now,
+        };
+        if self
+            .decide(command.clone())
+            .is_ok_and(|expected| expected == *event)
+        {
+            Some(command)
+        } else {
+            None
         }
     }
 }
@@ -846,10 +1184,19 @@ impl SessionState {
     pub fn is_recoverable_running(self) -> bool {
         matches!(self, Self::Running | Self::Paused)
     }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Cancelled | Self::Interrupted
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+
     use super::{
         PlanStatus, PollInterval, SessionAggregate, SessionCommand, SessionEvent,
         SessionProjection, SessionQuery, SessionState, SessionTaskPatch, StartCondition, TaskPlan,
@@ -860,6 +1207,134 @@ mod tests {
         let mut aggregate = SessionAggregate::new("session-fixed".to_string());
         aggregate.state = state;
         aggregate
+    }
+
+    #[test]
+    fn replay_rejects_noncanonical_session_history() {
+        let created = SessionEvent::SessionCreated {
+            task_plan: TaskPlan::default(),
+        };
+        assert!(SessionAggregate::replay("session-fixed".to_string(), []).is_err());
+        assert!(SessionAggregate::replay(
+            "session-fixed".to_string(),
+            [SessionEvent::RuntimeStarted {
+                runtime_id: "runtime-fixed".to_string(),
+                state: SessionState::Running,
+            }],
+        )
+        .is_err());
+        assert!(SessionAggregate::replay(
+            "session-fixed".to_string(),
+            [created.clone(), created.clone()],
+        )
+        .is_err());
+        assert!(SessionAggregate::replay(
+            "session-fixed".to_string(),
+            [
+                created,
+                SessionEvent::RuntimeStarted {
+                    runtime_id: "runtime-fixed".to_string(),
+                    state: SessionState::Paused,
+                },
+            ],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn replay_accepts_creation_variants_retry_and_scheduled_claim() {
+        for first in [
+            SessionEvent::SessionForked {
+                parent_id: "parent-fixed".to_string(),
+            },
+            SessionEvent::ChildSessionRegistered {
+                parent_id: "parent-fixed".to_string(),
+                state: SessionState::Running,
+            },
+        ] {
+            SessionAggregate::replay("session-fixed".to_string(), [first])
+                .expect("canonical creation variant should replay");
+        }
+
+        let child_events = [
+            SessionEvent::SessionCreated {
+                task_plan: TaskPlan::default(),
+            },
+            SessionEvent::ChildSessionRegistered {
+                parent_id: "parent-fixed".to_string(),
+                state: SessionState::Running,
+            },
+        ];
+        let child = SessionAggregate::replay("session-fixed".to_string(), child_events)
+            .expect("existing session may register as a child");
+        assert_eq!(child.parent_id.as_deref(), Some("parent-fixed"));
+
+        let mut retry = SessionAggregate::new("session-fixed".to_string());
+        let mut retry_events = vec![
+            retry
+                .execute(SessionCommand::CreateSession {
+                    task_plan: TaskPlan::default(),
+                })
+                .expect("create session"),
+            retry
+                .execute(SessionCommand::RuntimeStarted {
+                    runtime_id: "runtime-first".to_string(),
+                })
+                .expect("start runtime"),
+            retry
+                .execute(SessionCommand::RuntimeFailed {
+                    runtime_id: "runtime-first".to_string(),
+                })
+                .expect("fail runtime"),
+        ];
+        retry_events.push(
+            retry
+                .execute(SessionCommand::RuntimeRetried {
+                    runtime_id: "runtime-retry".to_string(),
+                    fallback_from_id: "runtime-first".to_string(),
+                })
+                .expect("retry runtime"),
+        );
+        assert_eq!(
+            SessionAggregate::replay("session-fixed".to_string(), retry_events)
+                .expect("retry history should replay"),
+            retry
+        );
+
+        let now = Utc::now();
+        let task_plan = TaskPlan {
+            plan_summary: "Scheduled plan".to_string(),
+            detailed_tasks: vec![TaskStep {
+                task_id: "task-fixed".to_string(),
+                start_at: now,
+                start_condition: StartCondition::PollingTask,
+                poll_interval: PollInterval {
+                    m: 5,
+                    ..PollInterval::default()
+                },
+                task_summary: "Run now".to_string(),
+                ..TaskStep::default()
+            }],
+        };
+        let mut scheduled = SessionAggregate::new("session-fixed".to_string());
+        let scheduled_events = vec![
+            scheduled
+                .execute(SessionCommand::CreateSession { task_plan })
+                .expect("create scheduled session"),
+            scheduled
+                .execute(SessionCommand::StartScheduledTask {
+                    task_id: "task-fixed".to_string(),
+                    task_summary: "Run now".to_string(),
+                    start_condition: StartCondition::PollingTask,
+                    now,
+                })
+                .expect("claim scheduled task"),
+        ];
+        assert_eq!(
+            SessionAggregate::replay("session-fixed".to_string(), scheduled_events)
+                .expect("scheduled history should replay"),
+            scheduled
+        );
     }
 
     #[test]
@@ -951,6 +1426,52 @@ mod tests {
     }
 
     #[test]
+    fn active_runtime_state_application_accepts_live_and_terminal_transitions() {
+        for terminal in [
+            SessionState::Completed,
+            SessionState::Failed,
+            SessionState::Cancelled,
+            SessionState::Interrupted,
+        ] {
+            let mut aggregate = SessionAggregate::new("session-fixed".to_string());
+            aggregate
+                .execute(SessionCommand::RuntimeStarted {
+                    runtime_id: "runtime-fixed".to_string(),
+                })
+                .expect("runtime should start");
+
+            for next in [SessionState::Paused, SessionState::Running] {
+                aggregate
+                    .execute(SessionCommand::ApplyRuntimeState { state: next })
+                    .expect("active runtime may pause or resume");
+                assert_eq!(aggregate.state, next);
+                assert_eq!(
+                    aggregate.active_runtime_id.as_deref(),
+                    Some("runtime-fixed")
+                );
+            }
+
+            aggregate
+                .execute(SessionCommand::ApplyRuntimeState { state: terminal })
+                .expect("active runtime may apply a legal terminal state");
+            assert_eq!(aggregate.state, terminal);
+            assert_eq!(aggregate.active_runtime_id, None);
+        }
+
+        let mut aggregate = SessionAggregate::new("session-fixed".to_string());
+        aggregate
+            .execute(SessionCommand::RuntimeStarted {
+                runtime_id: "runtime-fixed".to_string(),
+            })
+            .expect("runtime should start");
+        assert!(aggregate
+            .decide(SessionCommand::ApplyRuntimeState {
+                state: SessionState::Created,
+            })
+            .is_err());
+    }
+
+    #[test]
     fn session_protocol_is_strict_and_projection_is_derived() {
         let aggregate = SessionAggregate::new("session-fixed".to_string());
         assert_eq!(
@@ -962,8 +1483,33 @@ mod tests {
                 task_plan: TaskPlan::default(),
                 pending_user_inputs: Vec::new(),
                 cancelled: false,
+                runtime_ids: Vec::new(),
+                active_runtime_id: None,
             }
         );
+        let retry = SessionCommand::RuntimeRetried {
+            runtime_id: "runtime-retry".to_string(),
+            fallback_from_id: "runtime-failed".to_string(),
+        };
+        let retry_json = serde_json::to_value(&retry).expect("serialize runtime retry command");
+        assert_eq!(
+            retry_json,
+            serde_json::json!({
+                "command": "runtime_retried",
+                "runtime_id": "runtime-retry",
+                "fallback_from_id": "runtime-failed"
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<SessionCommand>(retry_json)
+                .expect("deserialize runtime retry command"),
+            retry
+        );
+        assert!(serde_json::from_value::<SessionCommand>(serde_json::json!({
+            "command": "runtime_retried",
+            "runtime_id": "runtime-retry"
+        }))
+        .is_err());
         assert!(serde_json::from_str::<SessionCommand>(
             r#"{"command":"apply_runtime_state","state":"running","extra":true}"#
         )
@@ -1087,7 +1633,7 @@ mod tests {
         assert_eq!(aggregate.state, SessionState::Running);
         assert!(!aggregate.cancelled);
 
-        for input in ["first", "second"] {
+        for input in [" first ", "second"] {
             aggregate
                 .execute(SessionCommand::QueueUserInputWhileBusy {
                     input: input.to_string(),
@@ -1126,20 +1672,103 @@ mod tests {
             .is_err());
 
         aggregate
-            .execute(SessionCommand::RuntimeStarted)
+            .execute(SessionCommand::RuntimeStarted {
+                runtime_id: "runtime-fixed".to_string(),
+            })
             .expect("created session may start a runtime");
         assert_eq!(aggregate.state, SessionState::Running);
+        assert_eq!(aggregate.runtime_ids, ["runtime-fixed"]);
+        assert_eq!(
+            aggregate.active_runtime_id.as_deref(),
+            Some("runtime-fixed")
+        );
+        assert!(aggregate
+            .execute(SessionCommand::RuntimeCompleted {
+                runtime_id: "runtime-stale".to_string(),
+            })
+            .is_err());
+        assert_eq!(aggregate.state, SessionState::Running);
+        assert_eq!(
+            aggregate.active_runtime_id.as_deref(),
+            Some("runtime-fixed")
+        );
         aggregate
-            .execute(SessionCommand::RuntimeCompleted)
+            .execute(SessionCommand::RuntimeCompleted {
+                runtime_id: "runtime-fixed".to_string(),
+            })
             .expect("running runtime may complete");
         assert_eq!(aggregate.state, SessionState::Completed);
-        assert!(aggregate.execute(SessionCommand::RuntimeFailed).is_err());
+        assert_eq!(aggregate.active_runtime_id, None);
+        assert!(aggregate
+            .execute(SessionCommand::RuntimeFailed {
+                runtime_id: "runtime-fixed".to_string(),
+            })
+            .is_err());
 
-        let mut failed = aggregate_in_state(SessionState::Failed);
+        let mut failed = aggregate_in_state(SessionState::Running);
         failed
-            .execute(SessionCommand::RuntimeFailed)
-            .expect("duplicate runtime failure notification should be idempotent");
+            .execute(SessionCommand::RuntimeStarted {
+                runtime_id: "runtime-failed".to_string(),
+            })
+            .expect("runtime should start");
+        failed
+            .execute(SessionCommand::RuntimeFailed {
+                runtime_id: "runtime-failed".to_string(),
+            })
+            .expect("active runtime failure should apply");
         assert_eq!(failed.state, SessionState::Failed);
+        assert_eq!(failed.active_runtime_id, None);
+        assert!(failed
+            .decide(SessionCommand::RuntimeStarted {
+                runtime_id: "runtime-unrelated".to_string(),
+            })
+            .is_err());
+        assert!(failed
+            .decide(SessionCommand::RuntimeRetried {
+                runtime_id: "runtime-retry".to_string(),
+                fallback_from_id: "runtime-stale".to_string(),
+            })
+            .is_err());
+        assert!(aggregate
+            .decide(SessionCommand::RuntimeRetried {
+                runtime_id: "runtime-retry".to_string(),
+                fallback_from_id: "runtime-fixed".to_string(),
+            })
+            .is_err());
+        assert!(failed
+            .decide(SessionCommand::RuntimeRetried {
+                runtime_id: "runtime-failed".to_string(),
+                fallback_from_id: "runtime-failed".to_string(),
+            })
+            .is_err());
+        failed
+            .execute(SessionCommand::RuntimeRetried {
+                runtime_id: "runtime-retry".to_string(),
+                fallback_from_id: "runtime-failed".to_string(),
+            })
+            .expect("failed session may start a retry of its latest runtime");
+        assert_eq!(failed.state, SessionState::Running);
+        assert_eq!(
+            failed.runtime_ids,
+            ["runtime-failed".to_string(), "runtime-retry".to_string()]
+        );
+        assert_eq!(failed.active_runtime_id.as_deref(), Some("runtime-retry"));
+
+        let mut cancelled = aggregate_in_state(SessionState::Running);
+        cancelled
+            .execute(SessionCommand::RuntimeStarted {
+                runtime_id: "runtime-cancelled".to_string(),
+            })
+            .expect("runtime should start before its terminal callback");
+        cancelled
+            .execute(SessionCommand::RuntimeCancelled {
+                runtime_id: "runtime-cancelled".to_string(),
+            })
+            .expect("active runtime cancellation should apply");
+        assert_eq!(cancelled.state, SessionState::Cancelled);
+        assert_eq!(cancelled.runtime_ids, ["runtime-cancelled"]);
+        assert_eq!(cancelled.active_runtime_id, None);
+        assert!(cancelled.cancelled);
     }
 
     #[test]
@@ -1159,7 +1788,12 @@ mod tests {
         };
 
         let event = aggregate
-            .execute(SessionCommand::StartScheduledTask { now })
+            .execute(SessionCommand::StartScheduledTask {
+                task_id: "task-fixed".to_string(),
+                task_summary: "Run now".to_string(),
+                start_condition: StartCondition::ScheduledTask,
+                now,
+            })
             .expect("due task should be claimed");
 
         assert!(matches!(event, SessionEvent::ScheduledTaskClaimed { .. }));
@@ -1168,5 +1802,53 @@ mod tests {
             aggregate.task_plan.detailed_tasks[0].status,
             PlanStatus::Doing
         );
+    }
+
+    #[test]
+    fn scheduler_claim_rejects_stale_task_preconditions_without_mutation() {
+        let now = chrono::Utc::now();
+        let mut aggregate = SessionAggregate::new("session-fixed".to_string());
+        aggregate.task_plan = TaskPlan {
+            plan_summary: "Scheduled work".to_string(),
+            detailed_tasks: vec![TaskStep {
+                task_id: "task-due".to_string(),
+                start_at: now,
+                start_condition: StartCondition::ScheduledTask,
+                status: PlanStatus::Todo,
+                task_summary: "Run now".to_string(),
+                ..TaskStep::default()
+            }],
+        };
+        let before = aggregate.clone();
+
+        assert!(aggregate
+            .execute(SessionCommand::StartScheduledTask {
+                task_id: "task-stale".to_string(),
+                task_summary: "Run now".to_string(),
+                start_condition: StartCondition::ScheduledTask,
+                now,
+            })
+            .is_err());
+        assert_eq!(aggregate, before);
+
+        assert!(aggregate
+            .execute(SessionCommand::StartScheduledTask {
+                task_id: "task-due".to_string(),
+                task_summary: "Stale summary".to_string(),
+                start_condition: StartCondition::ScheduledTask,
+                now,
+            })
+            .is_err());
+        assert_eq!(aggregate, before);
+
+        assert!(aggregate
+            .execute(SessionCommand::StartScheduledTask {
+                task_id: "task-due".to_string(),
+                task_summary: "Run now".to_string(),
+                start_condition: StartCondition::PollingTask,
+                now,
+            })
+            .is_err());
+        assert_eq!(aggregate, before);
     }
 }

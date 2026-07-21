@@ -234,12 +234,9 @@ function fixturePersonaMedia(role: string) {
       name: id as string,
       emoji_aliases: aliases as string[],
       source_directory: `personas/src/${role}/media/expressions/${id}`,
-      grid_path: `personas/src/${role}/media/expressions/${id}/grid/sheet.jpg`,
+      grid_path: "/assets/conversation-avatar.png",
       frames: Object.fromEntries(
-        directions.map((direction) => [
-          direction,
-          `personas/src/${role}/media/expressions/${id}/frames/${direction}.jpg`,
-        ]),
+        directions.map((direction) => [direction, "/assets/conversation-avatar.png"]),
       ),
     })),
   };

@@ -1,9 +1,7 @@
 pub(crate) use anyhow::{anyhow, Context, Result};
 pub(crate) use axum::extract::{Json, Path};
 pub(crate) use axum::response::IntoResponse;
-pub(crate) use gateway::api::session::{
-    prompt_async, send_agent_message, SendAgentMessageRequest, SendAgentToolCall,
-};
+pub(crate) use gateway::api::session::prompt_async;
 pub(crate) use gateway::contracts::SessionStatus;
 pub(crate) use gateway::session::config::{save_config, TuraSessionConfig};
 pub(crate) use gateway::session::MessageRole;
@@ -71,6 +69,7 @@ impl EnvGuard {
             "TURA_PROJECT_ROOT",
             "TURA_CWD",
             "TURA_SESSION_DB_PROBE_TIMEOUT_MS",
+            "TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS",
             "TURA_GATEWAY_ALLOW_IN_PROCESS_FAKE_ROUTER",
         ];
         let previous = keys
@@ -82,7 +81,8 @@ impl EnvGuard {
         std::env::remove_var("TURA_DB_ROOT");
         std::env::set_var("TURA_PROJECT_ROOT", workspace);
         std::env::set_var("TURA_CWD", workspace);
-        std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "20");
+        std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "1000");
+        std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", "5000");
         std::env::set_var("TURA_GATEWAY_ALLOW_IN_PROCESS_FAKE_ROUTER", "1");
         Self { previous }
     }
@@ -109,7 +109,7 @@ impl ServiceThread {
         let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
         wait_until(
             Duration::from_secs(10),
-            session_log::ipc::service_is_running,
+            session_log_contract::client::service_is_running,
         )?;
         Ok(Self {
             handle: Some(handle),
@@ -119,7 +119,7 @@ impl ServiceThread {
 
 impl Drop for ServiceThread {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -128,9 +128,10 @@ impl Drop for ServiceThread {
 
 #[derive(Clone)]
 pub(crate) enum RouterReply {
+    Completed,
     Payload(Value),
     DelayedPayload(Value, Duration),
-    CallbackThenPayload(Arc<dyn Fn(Value) + Send + Sync>, Value),
+    GatedPayload(Value, Arc<StdMutex<mpsc::Receiver<()>>>),
     RawLine(String),
 }
 
@@ -237,6 +238,7 @@ pub(crate) fn handle_router_connection(
     received: &mpsc::Sender<Value>,
     replies: &StdMutex<VecDeque<RouterReply>>,
 ) -> Result<()> {
+    stream.set_nonblocking(false)?;
     let mut writer = stream.try_clone()?;
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;
@@ -267,6 +269,33 @@ pub(crate) fn handle_router_connection(
         .pop_front()
         .ok_or_else(|| anyhow!("fake router has no reply for request: {request}"))?;
     let response = match reply {
+        RouterReply::Completed => {
+            let runtime_id = request["payload"]["runtime_id"]
+                .as_str()
+                .ok_or_else(|| anyhow!("completed router request missing runtime_id"))?;
+            let session_id = request["payload"]["session_id"]
+                .as_str()
+                .ok_or_else(|| anyhow!("completed router request missing session_id"))?;
+            session_store()
+                .execute_canonical_session_command(
+                    session_id,
+                    SessionCommand::RuntimeCompleted {
+                        runtime_id: runtime_id.to_string(),
+                    },
+                )
+                .map_err(anyhow::Error::msg)
+                .context("complete fake router runtime")?;
+            json!({
+                "ok": true,
+                "request_id": request.get("request_id").cloned().unwrap_or(Value::Null),
+                "payload": {
+                    "status": "finished",
+                    "runtime_id": runtime_id,
+                    "session_id": session_id,
+                    "result": { "ok": true }
+                }
+            })
+        }
         RouterReply::Payload(payload) => json!({
             "ok": true,
             "request_id": request.get("request_id").cloned().unwrap_or(Value::Null),
@@ -280,8 +309,12 @@ pub(crate) fn handle_router_connection(
                 "payload": payload
             })
         }
-        RouterReply::CallbackThenPayload(callback, payload) => {
-            callback(request.clone());
+        RouterReply::GatedPayload(payload, release) => {
+            release
+                .lock()
+                .expect("fake router reply gate lock")
+                .recv_timeout(Duration::from_secs(10))
+                .context("fake router reply gate was not released")?;
             json!({
                 "ok": true,
                 "request_id": request.get("request_id").cloned().unwrap_or(Value::Null),

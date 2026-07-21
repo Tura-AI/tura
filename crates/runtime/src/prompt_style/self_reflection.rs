@@ -1,4 +1,4 @@
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 
 use super::runtime_prompt_manual::active_manual_display_names;
 
@@ -19,7 +19,7 @@ pub fn self_reflection_tail_prompt(session: &SessionManagement) -> String {
 mod tests {
     use super::self_reflection_tail_prompt;
     use crate::prompt_style::runtime_prompt_manual::normalize_task_type_ids;
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
+    use lifecycle::{SessionInput, SessionManagement};
 
     #[test]
     fn tail_prompt_lists_active_manual_display_names_once() {

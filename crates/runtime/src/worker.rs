@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
 use crate::mano::ManoProcessResult;
-use crate::state_machine::session_management::SessionInput;
+use lifecycle::SessionInput;
 use lifecycle::SessionState;
 
 /// Run the runtime worker loop: blocking read on stdin, write on stdout, until
@@ -150,6 +150,24 @@ fn handle_call(payload: &Value) -> Value {
         .and_then(Value::as_str)
         .map(str::to_string)
         .unwrap_or_else(|| format!("worker-{}", uuid::Uuid::new_v4()));
+    let Some(runtime_id) = call
+        .get("runtime_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    else {
+        return json!({ "ok": false, "session_id": session_id, "error": "missing runtime_id" });
+    };
+    let Some(lease_id) = call
+        .get("lease_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    else {
+        return json!({ "ok": false, "session_id": session_id, "error": "missing lease_id" });
+    };
     let directory = call
         .get("directory")
         .and_then(Value::as_str)
@@ -203,8 +221,10 @@ fn handle_call(payload: &Value) -> Value {
     } else {
         std::env::remove_var("TURA_ROUTER_AGENT_SPEC");
     }
-    match crate::mano::process_from_gateway_session_in_directory(
+    match crate::mano::process_from_gateway_session_with_lease_in_directory(
         session_id.clone(),
+        runtime_id,
+        lease_id,
         input,
         directory,
     ) {
@@ -318,8 +338,8 @@ fn looks_like_tool_payload(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::session_management::SessionManagement;
     use chrono::Utc;
+    use lifecycle::SessionManagement;
     use std::path::PathBuf;
 
     #[test]
@@ -332,7 +352,15 @@ mod tests {
 
     #[test]
     fn empty_prompt_is_rejected_without_running_a_session() {
-        let reply = handle_call(&json!({ "input": { "input": { "session_id": "s1" } } }));
+        let reply = handle_call(&json!({
+            "input": {
+                "input": {
+                    "session_id": "s1",
+                    "runtime_id": "runtime-empty-prompt",
+                    "lease_id": "lease-empty-prompt"
+                }
+            }
+        }));
         assert_eq!(reply["ok"], false);
         assert_eq!(reply["session_id"], "s1");
         assert_eq!(reply["error"], "empty prompt");

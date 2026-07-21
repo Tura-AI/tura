@@ -1,203 +1,241 @@
-//! Whole-session snapshot compatibility checkpoints.
+//! Incremental Session context and projection checkpoints.
 
-use crate::profile_timings;
 use crate::session_log_client::SessionLogClient;
-use crate::state_machine::session_management::SessionManagement;
 use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
 use chrono::{DateTime, Utc};
+use lifecycle::SessionManagement;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::time::Instant;
+use session_log_contract::{
+    PersistSessionDeltaRequest, SessionContextRecord, SessionDeltaEntry, SessionRecordProjection,
+};
 
-pub(crate) fn persist_session_snapshot(session: &SessionManagement) -> Result<(), String> {
-    persist_session_snapshot_for_stage(session, None)
+#[derive(Debug)]
+pub(crate) struct SessionDeltaWriter {
+    client: SessionLogClient,
+    next_sequence: u64,
+    next_management_sequence: u64,
+    retained_from_sequence: u64,
+    local_retained_from_sequence: u64,
+    last_management: Option<SessionManagement>,
 }
 
-fn persist_session_snapshot_for_stage(
-    session: &SessionManagement,
-    stage: Option<&str>,
-) -> Result<(), String> {
-    let total_start = Instant::now();
-    let record_start = Instant::now();
-    let record = persisted_record(session);
-    let record_elapsed = record_start.elapsed();
-    let profiling = profile_timings::enabled();
-    let record_bytes = if profiling {
-        profile_timings::json_bytes(&record)
-    } else {
-        0
-    };
-    profile_timings::log_duration(
-        "persist_session_snapshot.persisted_record",
-        record_elapsed,
-        serde_json::json!({
-            "session_id": session.session_id,
-            "stage": stage,
-            "session_log_entries": session.session_log.len(),
-            "record_bytes": record_bytes,
-        }),
-    );
-    let session_info = record
-        .get("info")
-        .cloned()
-        .ok_or_else(|| "persisted session info missing".to_string())?;
-    let messages_start = Instant::now();
-    let messages = persisted_messages(session);
-    let messages_elapsed = messages_start.elapsed();
-    let messages_bytes = if profiling {
-        profile_timings::json_vec_bytes(&messages)
-    } else {
-        0
-    };
-    profile_timings::log_duration(
-        "persist_session_snapshot.persisted_messages_for_upsert",
-        messages_elapsed,
-        serde_json::json!({
-            "session_id": session.session_id,
-            "stage": stage,
-            "session_log_entries": session.session_log.len(),
-            "message_count": messages.len(),
-            "messages_bytes": messages_bytes,
-        }),
-    );
-    let discover_start = Instant::now();
-    let client = SessionLogClient::discover().map_err(|err| {
-        format!(
-            "failed to discover session_log client for session snapshot {}: {err}",
-            session.session_id
-        )
+impl SessionDeltaWriter {
+    pub(crate) fn new(session: &SessionManagement) -> Result<Self, String> {
+        let client = SessionLogClient::discover()
+            .map_err(|error| format!("failed to discover session service: {error}"))?;
+        let context = client.read_context_slice(
+            session.session_id.clone(),
+            session.context_tokens.limit.max(1),
+        )?;
+        let local_end = session
+            .session_log_retention
+            .omitted_entries
+            .saturating_add(session.session_log.len() as u64);
+        if context.next_sequence < session.session_log_retention.omitted_entries
+            || context.next_sequence > local_end
+        {
+            return Err(format!(
+                "session {} context cursor {} is outside local retained range {}..={}",
+                session.session_id,
+                context.next_sequence,
+                session.session_log_retention.omitted_entries,
+                local_end
+            ));
+        }
+        let last_management = if context.next_management_sequence > 0 {
+            let snapshot = client
+                .get_session(session.session_id.clone())
+                .map_err(|error| {
+                    format!(
+                        "failed to load persisted management for session {}: {error}",
+                        session.session_id
+                    )
+                })?
+                .ok_or_else(|| format!("session {} not found", session.session_id))?;
+            Some(persisted_management_baseline(
+                &session.session_id,
+                snapshot.management,
+                context.retained_from_sequence,
+            )?)
+        } else {
+            None
+        };
+        Ok(Self {
+            client,
+            next_sequence: context.next_sequence,
+            next_management_sequence: context.next_management_sequence,
+            retained_from_sequence: context.retained_from_sequence,
+            local_retained_from_sequence: session.session_log_retention.omitted_entries,
+            last_management,
+        })
+    }
+
+    pub(crate) fn checkpoint(
+        &mut self,
+        session: &SessionManagement,
+        stage: &str,
+    ) -> Result<(), String> {
+        let local_retained_from_sequence = session.session_log_retention.omitted_entries;
+        if local_retained_from_sequence < self.local_retained_from_sequence {
+            return Err(format!(
+                "session {} checkpoint {stage} moved local retention backward from {} to {}",
+                session.session_id, self.local_retained_from_sequence, local_retained_from_sequence
+            ));
+        }
+        let retained_from_sequence =
+            if local_retained_from_sequence > self.local_retained_from_sequence {
+                local_retained_from_sequence
+            } else {
+                self.retained_from_sequence
+            };
+        if self.next_sequence < local_retained_from_sequence {
+            return Err(format!(
+                "session {} checkpoint {stage} dropped unpersisted context before sequence {}",
+                session.session_id, self.next_sequence
+            ));
+        }
+        let local_start = usize::try_from(self.next_sequence - local_retained_from_sequence)
+            .map_err(|_| "session context cursor does not fit memory index".to_string())?;
+        if local_start > session.session_log.len() {
+            return Err(format!(
+                "session {} checkpoint {stage} cursor {} exceeds local context end {}",
+                session.session_id,
+                self.next_sequence,
+                local_retained_from_sequence.saturating_add(session.session_log.len() as u64)
+            ));
+        }
+        let entries = session.session_log[local_start..]
+            .iter()
+            .enumerate()
+            .map(|(offset, raw_record)| {
+                let sequence = self.next_sequence.saturating_add(offset as u64);
+                session_delta_entry(session, sequence, raw_record)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let expected_next = self.next_sequence.saturating_add(entries.len() as u64);
+        let mut management = session.clone();
+        management.session_log.clear();
+        management.session_log_retention.omitted_entries = retained_from_sequence;
+        let management_delta =
+            SessionManagement::persistence_delta(self.last_management.as_ref(), &management);
+        let expected_next_management = self.next_management_sequence.saturating_add(1);
+        let (next_sequence, next_management_sequence) =
+            self.client
+                .persist_session_delta(PersistSessionDeltaRequest {
+                    session_id: session.session_id.clone(),
+                    management_sequence: self.next_management_sequence,
+                    management_delta,
+                    retained_from_sequence,
+                    entries,
+                })?;
+        if next_sequence != expected_next {
+            return Err(format!(
+                "session {} checkpoint {stage} acknowledged context cursor {}, expected {}",
+                session.session_id, next_sequence, expected_next
+            ));
+        }
+        if next_management_sequence != expected_next_management {
+            return Err(format!(
+                "session {} checkpoint {stage} acknowledged management cursor {}, expected {}",
+                session.session_id, next_management_sequence, expected_next_management
+            ));
+        }
+        self.next_sequence = next_sequence;
+        self.next_management_sequence = next_management_sequence;
+        self.retained_from_sequence = retained_from_sequence;
+        self.local_retained_from_sequence = local_retained_from_sequence;
+        self.last_management = Some(management);
+        Ok(())
+    }
+}
+
+fn persisted_management_baseline(
+    session_id: &str,
+    value: Value,
+    retained_from_sequence: u64,
+) -> Result<SessionManagement, String> {
+    let mut management: SessionManagement = serde_json::from_value(value).map_err(|error| {
+        format!("invalid persisted management for session {session_id}: {error}")
     })?;
-    profile_timings::log_elapsed(
-        "persist_session_snapshot.discover_client",
-        discover_start,
-        serde_json::json!({
-            "session_id": session.session_id,
-            "stage": stage,
-        }),
-    );
-    let upsert_start = Instant::now();
-    let upsert_result = client.upsert_session(session_info, None, messages, Vec::new());
-    profile_timings::log_elapsed(
-        "persist_session_snapshot.upsert_session",
-        upsert_start,
-        serde_json::json!({
-            "session_id": session.session_id,
-            "stage": stage,
-            "success": upsert_result.is_ok(),
-        }),
-    );
-    let result = upsert_result.map_err(|err| {
-        format!(
-            "failed to persist session snapshot {}: {err}",
-            session.session_id
-        )
-    });
-    profile_timings::log_elapsed(
-        "persist_session_snapshot.total",
-        total_start,
-        serde_json::json!({
-            "session_id": session.session_id,
-            "stage": stage,
-            "success": result.is_ok(),
-        }),
-    );
-    result
+    if management.session_id != session_id {
+        return Err(format!(
+            "persisted management session id {} does not match {session_id}",
+            management.session_id
+        ));
+    }
+    management.session_log.clear();
+    management.session_log_retention.omitted_entries = retained_from_sequence;
+    Ok(management)
 }
 
-pub(crate) fn persist_session_checkpoint(session: &SessionManagement, stage: &str) {
-    if let Err(err) = persist_session_snapshot_for_stage(session, Some(stage)) {
-        tracing::warn!(
-            session_id = %session.session_id,
-            stage,
-            error = %err,
-            "failed to persist gateway session checkpoint"
-        );
+pub(crate) fn persist_session_checkpoint(
+    writer: &mut Option<SessionDeltaWriter>,
+    session: &SessionManagement,
+    stage: &str,
+) -> Result<(), String> {
+    if let Some(writer) = writer {
+        writer.checkpoint(session, stage)?;
     }
     crate::gateway_events::emit_cli_live_session_checkpoint(session, stage);
+    Ok(())
 }
 
-fn persisted_record(session: &SessionManagement) -> serde_json::Value {
-    let messages_start = Instant::now();
-    let messages = persisted_messages(session);
-    let messages_elapsed = messages_start.elapsed();
-    let messages_bytes = if profile_timings::enabled() {
-        profile_timings::json_vec_bytes(&messages)
-    } else {
-        0
-    };
-    profile_timings::log_duration(
-        "persisted_record.messages",
-        messages_elapsed,
+fn session_delta_entry(
+    session: &SessionManagement,
+    sequence: u64,
+    raw_record: &str,
+) -> Result<SessionDeltaEntry, String> {
+    let index = usize::try_from(sequence)
+        .map_err(|_| format!("session context sequence {sequence} does not fit platform index"))?;
+    let base_time = session.session_created_at.timestamp_millis();
+    let record = if let Some((runtime_id, tool_part, created_at, updated_at)) =
+        runtime_tool_part_from_log_entry(index, raw_record, base_time)
+    {
         serde_json::json!({
+            "id": crate::gateway_events::runtime_message_id(&runtime_id),
             "session_id": session.session_id,
-            "session_log_entries": session.session_log.len(),
-            "message_count": messages.len(),
-            "messages_bytes": messages_bytes,
-        }),
-    );
-    serde_json::json!({
-        "info": {
-            "id": session.session_id,
-            "name": session.session_name,
-            "created_at": session.session_created_at.timestamp_millis(),
-            "updated_at": session.session_last_update_at.timestamp_millis(),
-            "directory": session.session_directory.to_string_lossy(),
-            "model": null,
-            "agent": session.input.agent,
-            "task_type": session.task_type,
-            "kill_processes_on_start": false,
-            "validator_enabled": false,
-            "force_planning": false,
-            "model_variant": null,
-            "model_acceleration_enabled": false,
-            "disable_permission_restrictions": session.disable_permission_restrictions,
-            "use_last_tool_call_response": session.use_last_tool_call_response,
-            "status": session_status(session),
-            "message_count": session.session_current_turn,
-            "management": session,
+            "role": "assistant",
+            "parent_id": null,
+            "parts": [tool_part],
+            "created_at": created_at,
+            "updated_at": updated_at,
+        })
+    } else {
+        persisted_message(session, index, raw_record, base_time)
+    };
+    let projection = session_message_projection(&session.session_id, record);
+    Ok(SessionDeltaEntry {
+        context: SessionContextRecord {
+            sequence,
+            raw_record: raw_record.to_string(),
         },
-        "parent_id": null,
-        "messages": messages,
-        "todos": [],
+        projection,
     })
 }
 
-fn persisted_messages(session: &SessionManagement) -> Vec<Value> {
-    let base_time = session.session_created_at.timestamp_millis();
-    let mut messages = Vec::new();
-    let mut runtime_message_indexes = HashMap::new();
-
-    for (index, entry) in session.session_log.iter().enumerate() {
-        let absolute_index = session.absolute_session_log_index(index) as usize;
-        if let Some((runtime_id, tool_part, created_at, updated_at)) =
-            runtime_tool_part_from_log_entry(absolute_index, entry, base_time)
-        {
-            merge_runtime_tool_part(
-                session,
-                &mut messages,
-                &mut runtime_message_indexes,
-                &runtime_id,
-                tool_part,
-                created_at,
-                updated_at,
-            );
-            continue;
-        }
-
-        let message = persisted_message(session, absolute_index, entry, base_time);
-        if let Some(runtime_id) = assistant_runtime_id(&message) {
-            if let Some(existing_index) = runtime_message_indexes.get(&runtime_id).copied() {
-                merge_runtime_message(&mut messages[existing_index], message);
-            } else {
-                runtime_message_indexes.insert(runtime_id, messages.len());
-                messages.push(message);
-            }
-        } else {
-            messages.push(message);
-        }
+fn session_message_projection(session_id: &str, record: Value) -> Option<SessionRecordProjection> {
+    let role = record.get("role").and_then(Value::as_str)?;
+    if !matches!(role, "user" | "assistant" | "system")
+        || record.get("parts").and_then(Value::as_array).is_none()
+    {
+        return None;
     }
-
-    messages
+    let message_id = record
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let created_at = record.get("created_at").and_then(Value::as_i64)?;
+    let updated_at = record.get("updated_at").and_then(Value::as_i64)?;
+    Some(SessionRecordProjection {
+        session_id: session_id.to_string(),
+        message_id,
+        role: role.to_string(),
+        created_at,
+        updated_at,
+        record,
+    })
 }
 
 fn persisted_message(
@@ -363,124 +401,6 @@ fn runtime_tool_part(
             }
         }
     })
-}
-
-fn merge_runtime_tool_part(
-    session: &SessionManagement,
-    messages: &mut Vec<Value>,
-    runtime_message_indexes: &mut HashMap<String, usize>,
-    runtime_id: &str,
-    tool_part: Value,
-    created_at: i64,
-    updated_at: i64,
-) {
-    let message_index = runtime_message_indexes
-        .get(runtime_id)
-        .copied()
-        .unwrap_or_else(|| {
-            let message = serde_json::json!({
-                "id": crate::gateway_events::runtime_message_id(runtime_id),
-                "session_id": session.session_id,
-                "role": "assistant",
-                "parent_id": null,
-                "parts": [],
-                "created_at": created_at,
-                "updated_at": updated_at,
-            });
-            messages.push(message);
-            let message_index = messages.len() - 1;
-            runtime_message_indexes.insert(runtime_id.to_string(), message_index);
-            message_index
-        });
-    merge_part_into_message(&mut messages[message_index], tool_part);
-    merge_message_times(&mut messages[message_index], created_at, updated_at);
-}
-
-fn merge_runtime_message(existing: &mut Value, incoming: Value) {
-    let incoming_created_at = incoming.get("created_at").and_then(valid_timestamp_millis);
-    let incoming_updated_at = incoming.get("updated_at").and_then(valid_timestamp_millis);
-    if let Some(parts) = incoming.get("parts").and_then(Value::as_array) {
-        for part in parts {
-            merge_part_into_message(existing, part.clone());
-        }
-    }
-    if let Some(created_at) = incoming_created_at {
-        merge_message_created_at(existing, created_at);
-    }
-    if let Some(updated_at) = incoming_updated_at {
-        merge_message_updated_at(existing, updated_at);
-    }
-}
-
-fn merge_part_into_message(message: &mut Value, part: Value) {
-    let Some(parts) = message.get_mut("parts").and_then(Value::as_array_mut) else {
-        return;
-    };
-    let part_id = part
-        .get("id")
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
-    if let Some(part_id) = part_id {
-        if let Some(existing) = parts
-            .iter_mut()
-            .find(|existing| existing.get("id").and_then(Value::as_str) == Some(part_id.as_str()))
-        {
-            *existing = part;
-            return;
-        }
-    }
-    parts.push(part);
-    parts.sort_by_key(runtime_part_order);
-}
-
-fn runtime_part_order(part: &Value) -> u8 {
-    match part.get("type").and_then(Value::as_str) {
-        Some("text") => 0,
-        Some("tool") => 1,
-        _ => 2,
-    }
-}
-
-fn merge_message_times(message: &mut Value, created_at: i64, updated_at: i64) {
-    merge_message_created_at(message, created_at);
-    merge_message_updated_at(message, updated_at);
-}
-
-fn merge_message_created_at(message: &mut Value, created_at: i64) {
-    let existing = message
-        .get("created_at")
-        .and_then(valid_timestamp_millis)
-        .unwrap_or(created_at);
-    if let Some(object) = message.as_object_mut() {
-        object.insert(
-            "created_at".to_string(),
-            Value::Number(existing.min(created_at).into()),
-        );
-    }
-}
-
-fn merge_message_updated_at(message: &mut Value, updated_at: i64) {
-    let existing = message
-        .get("updated_at")
-        .and_then(valid_timestamp_millis)
-        .unwrap_or(updated_at);
-    if let Some(object) = message.as_object_mut() {
-        object.insert(
-            "updated_at".to_string(),
-            Value::Number(existing.max(updated_at).into()),
-        );
-    }
-}
-
-fn assistant_runtime_id(message: &Value) -> Option<String> {
-    if message.get("role").and_then(Value::as_str) != Some("assistant") {
-        return None;
-    }
-    message
-        .get("id")
-        .and_then(Value::as_str)
-        .and_then(|id| id.strip_suffix(".message"))
-        .map(str::to_string)
 }
 
 fn conversation_message_record(
@@ -667,21 +587,11 @@ fn record_role(object: &serde_json::Map<String, Value>) -> String {
     }
 }
 
-fn session_status(session: &SessionManagement) -> &'static str {
-    use lifecycle::SessionState;
-
-    match session.state {
-        SessionState::Created | SessionState::Completed => "idle",
-        SessionState::Running | SessionState::Paused => "busy",
-        SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => "error",
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{persisted_message, persisted_messages};
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
+    use super::{persisted_management_baseline, persisted_message};
     use chrono::Utc;
+    use lifecycle::{SessionInput, SessionManagement};
     use std::path::PathBuf;
 
     fn session() -> SessionManagement {
@@ -702,6 +612,28 @@ mod tests {
             "persist".to_string(),
             now,
         )
+    }
+
+    #[test]
+    fn persisted_management_is_the_delta_baseline_after_in_memory_changes() {
+        let mut persisted = session();
+        persisted.session_log = vec!["persisted context".to_string()];
+        let mut current = persisted.clone();
+        current.planning_enabled = true;
+        current.reflection_enabled = true;
+
+        let baseline = persisted_management_baseline(
+            &persisted.session_id,
+            serde_json::to_value(&persisted).expect("persisted management json"),
+            4,
+        )
+        .expect("persisted management baseline");
+        let delta = SessionManagement::persistence_delta(Some(&baseline), &current);
+
+        assert_eq!(delta.planning_enabled, Some(true));
+        assert_eq!(delta.reflection_enabled, Some(true));
+        assert!(baseline.session_log.is_empty());
+        assert_eq!(baseline.session_log_retention.omitted_entries, 4);
     }
 
     #[test]
@@ -744,108 +676,6 @@ mod tests {
         assert_eq!(value["parts"][0]["type"], "text");
         assert_eq!(value["parts"][0]["text"], "final visible reply");
         assert_eq!(value["parts"][0]["content"], "final visible reply");
-    }
-
-    #[test]
-    fn persisted_messages_merges_runtime_tool_result_into_runtime_assistant_message() {
-        let mut session = session();
-        let large_output = "large streamed output line\n".repeat(1_000);
-        let assistant_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-14T08:09:11Z")
-            .expect("timestamp")
-            .timestamp_millis();
-        let assistant_updated_at = assistant_created_at + 100;
-        let tool_finished_at = "2026-06-14T08:09:14Z";
-        session.push_log(
-            serde_json::json!({
-                "id": "runtime-merge-1.message",
-                "part_id": "runtime-merge-1.message",
-                "role": "assistant",
-                "content": "I checked the workspace.",
-                "created_at": assistant_created_at,
-                "updated_at": assistant_updated_at,
-                "runtime_id": "runtime-merge-1"
-            })
-            .to_string(),
-            Utc::now(),
-        );
-        session.push_log(
-            serde_json::json!({
-                "type": "tool_result",
-                "runtime_id": "runtime-merge-1",
-                "tool_name": "command_run",
-                "input": {
-                    "commands": [{
-                        "step": 1,
-                        "command_type": "shell_command",
-                        "command_line": "Get-ChildItem"
-                    }]
-                },
-                "output": {
-                    "streamed_command_run_result": {
-                        "results": [{
-                            "step": 1,
-                            "command_type": "shell_command",
-                            "command_line": "Get-ChildItem",
-                            "success": true,
-                            "output": large_output
-                        }]
-                    }
-                },
-                "success": true,
-                "error": null,
-                "timestamp": tool_finished_at
-            })
-            .to_string(),
-            Utc::now(),
-        );
-
-        let messages = persisted_messages(&session);
-
-        assert_eq!(messages.len(), 1, "{messages:#?}");
-        let message = &messages[0];
-        assert_eq!(message["id"], "runtime-merge-1.message");
-        assert_eq!(message["role"], "assistant");
-        assert_eq!(message["created_at"], assistant_created_at);
-        assert_eq!(
-            message["updated_at"],
-            chrono::DateTime::parse_from_rfc3339(tool_finished_at)
-                .expect("timestamp")
-                .timestamp_millis()
-        );
-        assert_eq!(message["parts"].as_array().expect("parts").len(), 2);
-        assert_eq!(message["parts"][0]["id"], "runtime-merge-1.message");
-        assert_eq!(message["parts"][0]["text"], "I checked the workspace.");
-        assert_eq!(
-            message["parts"][1]["id"],
-            "runtime-merge-1.tool.command_run"
-        );
-        assert_eq!(message["parts"][1]["tool"], "command_run");
-        assert_eq!(
-            message["parts"][1]["call_id"],
-            "runtime-merge-1.tool.command_run"
-        );
-        assert_eq!(message["parts"][1]["state"]["status"], "completed");
-        assert_eq!(
-            message["parts"][1]["state"]["input"]["commands"][0]["command_line"],
-            "Get-ChildItem"
-        );
-        assert_eq!(
-            message["parts"][1]["state"]["output"]["streamed_command_run_result"]["results"][0]
-                ["success"],
-            true
-        );
-        let output = message["parts"][1]["state"]["output"]["streamed_command_run_result"]
-            ["results"][0]["output"]
-            .as_str()
-            .expect("streamed output should remain a string");
-        assert!(
-            output.contains("characters truncated"),
-            "large streamed output should be truncated before callback snapshot: {output}"
-        );
-        assert!(
-            output.len() < large_output.len(),
-            "snapshot should not keep raw streamed output"
-        );
     }
 
     #[test]

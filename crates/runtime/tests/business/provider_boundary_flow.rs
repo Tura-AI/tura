@@ -1,12 +1,12 @@
 use chrono::{DateTime, Utc};
+use lifecycle::{ProviderConfig, ToolChoice};
+use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
 use lifecycle::{RuntimeCallResultStatus, RuntimeState};
+use lifecycle::{SessionInput, SessionManagement};
 use runtime::context::{
     accumulate_tool_result_with_provider_metadata, build_messages_from_session,
 };
 use runtime::runtime::call_runtime::{call_runtime, CallRuntimeInput};
-use runtime::state_machine::agent_management::{ProviderConfig, ToolChoice};
-use runtime::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
-use runtime::state_machine::session_management::{SessionInput, SessionManagement};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
@@ -24,6 +24,8 @@ use tura_llm_rust::{
 
 #[path = "../support/session_db_support.rs"]
 mod session_db_support;
+#[path = "../support/typed_session.rs"]
+mod typed_session;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 static ASYNC_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -541,22 +543,23 @@ async fn runtime_prompt_cache_key_reuses_root_session_for_forked_sessions() {
     let child_session_id = "cache-child-session";
     let client = runtime::session_log_client::SessionLogClient::discover()
         .expect("session db client should be available");
-    client
-        .upsert_session(
-            session_snapshot_json(root_session_id, &workspace_text),
-            None,
-            Vec::new(),
-            Vec::new(),
-        )
-        .expect("root session should persist");
-    client
-        .upsert_session(
-            session_snapshot_json(child_session_id, &workspace_text),
-            Some(root_session_id.to_string()),
-            Vec::new(),
-            Vec::new(),
-        )
-        .expect("child session should persist");
+    typed_session::create_via_service(typed_session::root_create_request(
+        root_session_id,
+        &workspace_text,
+        root_session_id,
+        1,
+    ))
+    .expect("root session should persist");
+    typed_session::create_via_service(typed_session::create_request(
+        child_session_id,
+        &workspace_text,
+        child_session_id,
+        1,
+        lifecycle::SessionCommand::ForkSession {
+            parent_id: root_session_id.to_string(),
+        },
+    ))
+    .expect("child session should persist");
     wait_for_session_parent(&client, child_session_id, root_session_id);
 
     let provider = LocalProvider::start(vec![ProviderReply::Json {
@@ -813,8 +816,8 @@ fn runtime_for_provider(
     provider_url_name: &str,
     model: &str,
     stream: bool,
-) -> RuntimeManagement {
-    RuntimeManagement::new(
+) -> RuntimeAggregate {
+    RuntimeAggregate::new(
         runtime_id.to_string(),
         session_id.to_string(),
         "agent-runtime-boundary".to_string(),
@@ -862,23 +865,6 @@ fn settings_for_route(
         model_catalog: ModelCatalog::default(),
         provider_enums: ProviderEnumCatalog::default(),
     }
-}
-
-fn session_snapshot_json(session_id: &str, workspace: &str) -> Value {
-    json!({
-        "id": session_id,
-        "directory": workspace,
-        "name": session_id,
-        "created_at": 1,
-        "updated_at": 1,
-        "management": {
-            "session_id": session_id,
-            "session_name": session_id,
-            "session_directory": workspace,
-            "state": "created",
-            "task_plan": {"plan_summary": "", "detailed_tasks": []}
-        }
-    })
 }
 
 fn wait_for_session_parent(

@@ -47,12 +47,25 @@ async fn gateway_prompt_business_flow_records_router_rejection_as_session_error(
     .into_response();
     assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
     let request = router.next_request(Duration::from_secs(10))?;
-    assert_eq!(request["payload"]["turn_id"], "router-reject-turn");
+    assert_eq!(request["payload"]["runtime_id"], "router-reject-turn");
 
     wait_until(Duration::from_secs(10), || {
-        session_store()
+        let status_is_error = session_store()
             .get_session(&session.id)
-            .is_some_and(|session| session.status == SessionStatus::Error)
+            .is_some_and(|session| session.status == SessionStatus::Error);
+        let fallback_is_visible = session_store()
+            .get_messages(&session.id)
+            .iter()
+            .any(|message| {
+                message.role == MessageRole::Assistant
+                    && message.parts.iter().any(|part| {
+                        part.text
+                            .as_deref()
+                            .unwrap_or_default()
+                            .contains("mock router rejected the turn")
+                    })
+            });
+        status_is_error && fallback_is_visible
     })?;
     let messages = session_store().get_messages(&session.id);
     assert!(
@@ -124,7 +137,10 @@ async fn gateway_prompt_business_flow_records_router_transport_error_without_db_
     let request = router.next_request(Duration::from_secs(10))?;
     assert_eq!(request["kind"], "call");
     assert_eq!(request["method"], "execution.enqueue_turn");
-    assert_eq!(request["payload"]["turn_id"], "router-transport-error-turn");
+    assert_eq!(
+        request["payload"]["runtime_id"],
+        "router-transport-error-turn"
+    );
 
     wait_until(Duration::from_secs(10), || {
         session_store()
@@ -210,7 +226,7 @@ async fn gateway_prompt_business_flow_reports_runtime_stop_without_mano_failure(
 
     let request = router.next_request(Duration::from_secs(10))?;
     assert_eq!(request["method"], "execution.enqueue_turn");
-    assert_eq!(request["payload"]["turn_id"], "runtime-stop-turn");
+    assert_eq!(request["payload"]["runtime_id"], "runtime-stop-turn");
 
     wait_until(Duration::from_secs(10), || {
         session_store()
@@ -247,7 +263,7 @@ async fn gateway_prompt_business_flow_reports_runtime_stop_without_mano_failure(
 }
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_appends_prompt_when_router_reports_active_turn() -> Result<()>
+async fn gateway_prompt_business_flow_appends_prompt_when_canonical_session_is_busy() -> Result<()>
 {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
@@ -257,17 +273,6 @@ async fn gateway_prompt_business_flow_appends_prompt_when_router_reports_active_
     std::fs::create_dir_all(&workspace)?;
     let _env = EnvGuard::new(&home, &workspace);
     let service = ServiceThread::start()?;
-    let router = FakeRouter::start(
-        &home,
-        vec![RouterReply::Payload(json!({
-            "ok": false,
-            "code": "session_active_turn",
-            "session_id": "filled below by assertion only",
-            "turn_id": "router-active-turn",
-            "error": "session already has an active turn"
-        }))],
-    )?;
-
     let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
         None,
@@ -280,6 +285,9 @@ async fn gateway_prompt_business_flow_appends_prompt_when_router_reports_active_
         false,
         false,
     );
+    session_store()
+        .register_runtime(&session.id, "canonical-active-runtime")
+        .map_err(anyhow::Error::msg)?;
     let response = prompt_async(
         Path(session.id.clone()),
         Json(json!({
@@ -296,12 +304,6 @@ async fn gateway_prompt_business_flow_appends_prompt_when_router_reports_active_
     .await
     .into_response();
     assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
-
-    let enqueue = router.next_request(Duration::from_secs(10))?;
-    assert_eq!(enqueue["kind"], "call");
-    assert_eq!(enqueue["method"], "execution.enqueue_turn");
-    assert_eq!(enqueue["payload"]["turn_id"], "router-active-turn");
-    assert_eq!(enqueue["payload"]["session_id"], session.id);
 
     wait_until(Duration::from_secs(10), || {
         session_store()
@@ -338,7 +340,6 @@ async fn gateway_prompt_business_flow_appends_prompt_when_router_reports_active_
         vec!["append this to the running runtime".to_string()]
     );
 
-    drop(router);
     drop(service);
     Ok(())
 }
@@ -375,14 +376,7 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
     .map_err(anyhow::Error::msg)?;
 
     let service = ServiceThread::start()?;
-    let router = FakeRouter::start(
-        &home,
-        vec![RouterReply::Payload(json!({
-            "ok": true,
-            "accepted": true,
-            "worker_id": "agent-runtime-worker"
-        }))],
-    )?;
+    let router = FakeRouter::start(&home, vec![RouterReply::Completed])?;
 
     let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
@@ -416,7 +410,7 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
 
     let request = router.next_request(Duration::from_secs(10))?;
     assert_eq!(request["method"], "execution.enqueue_turn");
-    assert_eq!(request["payload"]["turn_id"], "agent-runtime-turn");
+    assert_eq!(request["payload"]["runtime_id"], "agent-runtime-turn");
     assert_eq!(
         request["payload"]["payload"]["agent"],
         "business-runtime-agent"
@@ -478,14 +472,7 @@ async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router
     save_config(&workspace, &config).map_err(anyhow::Error::msg)?;
 
     let service = ServiceThread::start()?;
-    let router = FakeRouter::start(
-        &home,
-        vec![RouterReply::Payload(json!({
-            "ok": true,
-            "accepted": true,
-            "worker_id": "workspace-config-worker"
-        }))],
-    )?;
+    let router = FakeRouter::start(&home, vec![RouterReply::Completed])?;
 
     let session = create_canonical_test_session(
         Some(workspace.to_string_lossy().to_string()),
@@ -517,7 +504,7 @@ async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router
     assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
 
     let request = router.next_request(Duration::from_secs(10))?;
-    assert_eq!(request["payload"]["turn_id"], "workspace-config-turn");
+    assert_eq!(request["payload"]["runtime_id"], "workspace-config-turn");
     assert_eq!(request["payload"]["payload"]["model"], "openai/gpt-5.5");
     assert_eq!(
         request["payload"]["payload"]["agent"],

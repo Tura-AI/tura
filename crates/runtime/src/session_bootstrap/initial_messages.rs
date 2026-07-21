@@ -3,7 +3,7 @@ use crate::context::{
     user_input_content_value, ContextualUserFragment, WorkspaceSnapshot, USER_AGENT_CONTEXT_ROLE,
 };
 use crate::prompt_style::context_blocks;
-use crate::state_machine::session_management::SessionManagement;
+use lifecycle::SessionManagement;
 
 const FRONTEND_MESSAGE_ID_ENV: &str = "TURA_FRONTEND_MESSAGE_ID";
 const FRONTEND_PART_ID_ENV: &str = "TURA_FRONTEND_PART_ID";
@@ -202,7 +202,7 @@ fn session_has_runtime_context_message(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::session_management::SessionInput;
+    use lifecycle::SessionInput;
     use std::path::PathBuf;
     use std::sync::Mutex;
 

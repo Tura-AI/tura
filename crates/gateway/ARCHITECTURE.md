@@ -501,8 +501,10 @@ prompt as a follow-up command and forward it through `session.append_user_comman
 instead of surfacing a MANO failure.
 
 Pending follow-up controls are currently projected from `task_management` and
-`/session/{sessionID}/todo`. The current source of truth is the enriched
-session response plus todo projection.
+`/session/{sessionID}/todo`. Session DB owns the durable todo projection:
+gateway todo updates commit `todos_json` and the ordered `TodosUpdated` feed
+event in one transaction, while gateway caches apply only the newest feed
+cursor so an older session snapshot cannot roll the projection back.
 
 The file-backed scheduler for `scheduled_task`, `polling_task`, and
 `session_idle` belongs in gateway when execution ownership is implemented. It

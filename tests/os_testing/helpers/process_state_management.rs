@@ -5,6 +5,7 @@
 //! correctness coverage instead of optional performance or live scripts.
 
 pub(crate) use anyhow::{anyhow, bail, Context, Result};
+pub(crate) use lifecycle::SessionManagement;
 pub(crate) use serde_json::json;
 pub(crate) use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -21,6 +22,7 @@ pub(crate) use std::{
 
 pub(crate) static SERIAL: Mutex<()> = Mutex::new(());
 pub(crate) const PROCESS_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
+const GATEWAY_STDIN_EOF_EXIT_TIMEOUT: Duration = Duration::from_secs(40);
 
 pub(crate) fn stale_endpoints_are_replaced_gateway_restarts_and_conflicts_fail(
     repo: &Path,
@@ -89,19 +91,79 @@ pub(crate) fn stale_endpoints_are_replaced_gateway_restarts_and_conflicts_fail(
     assert_eq!(shutdown["payload"]["status"], "shutting_down");
     wait_for_missing(&router_addr_path(&home), Duration::from_secs(10))?;
     wait_for_missing(&service_addr_path(&home), Duration::from_secs(10))?;
-    let health_after_shutdown = http_get(first_port, "/global/health", Duration::from_secs(2))
-        .context("stale/restart gateway health after router shutdown failed")?;
+    let health_after_shutdown = match http_get(first_port, "/global/health", Duration::from_secs(2))
+    {
+        Ok(response) => response,
+        Err(error) => bail!(
+            "stale/restart gateway health after router shutdown failed: {error}; {}",
+            gateway.health_context()
+        ),
+    };
     assert!(
         health_after_shutdown.starts_with("HTTP/1.1 200"),
         "gateway should remain alive until its front process is stopped"
     );
+    let recovered_status = wait_for_gateway_router_running(first_port, Duration::from_secs(30))
+        .with_context(|| {
+            format!(
+                "stale/restart gateway did not restart router after explicit shutdown; {}",
+                gateway.health_context()
+            )
+        })?;
+    assert_eq!(
+        recovered_status["router"]["status"], "running",
+        "gateway should restart its router after explicit shutdown: {recovered_status}"
+    );
+    wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
+        .context("stale/restart recovered session_db endpoint did not become reachable")?;
+    let reconnected_session_id = format!("gateway-feed-reconnected-{}", std::process::id());
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
+    let created = session_db_call(
+        &home,
+        &json!({
+            "command": "create_session",
+            "command_id": format!("{reconnected_session_id}:create"),
+            "session_id": reconnected_session_id,
+            "creation_command": {
+                "command": "create_session",
+                "task_plan": {"plan_summary": "", "detailed_tasks": []}
+            },
+            "copy_context": false,
+            "workspace": workspace.to_string_lossy(),
+            "session_directory": workspace.to_string_lossy(),
+            "name": "Gateway Feed Reconnected",
+            "created_at": timestamp,
+            "model": null,
+            "agent": null,
+            "session_type": "coding",
+            "kill_processes_on_start": false,
+            "validator_enabled": false,
+            "force_planning": false,
+            "model_variant": null,
+            "model_acceleration_enabled": false,
+            "disable_permission_restrictions": false,
+            "use_last_tool_call_response": false,
+            "auto_session_name": false
+        }),
+    )?;
+    assert_eq!(
+        created["kind"], "session_command_applied",
+        "typed create after router restart failed: {created}"
+    );
+    wait_for_gateway_session(first_port, &reconnected_session_id, Duration::from_secs(30))
+        .context("Gateway feed tailer did not project a session created after router restart")?;
     gateway.stop()?;
     assert_endpoints_cleaned(&home)?;
 
     let restart_port = free_port()?;
     let mut restarted = GatewayGuard::start(repo, &home, &workspace, restart_port)?;
-    wait_for_http_ok(restart_port, "/global/health", Duration::from_secs(30))
-        .context("stale/restart second gateway did not become healthy")?;
+    let restart_health = wait_for_http_ok(restart_port, "/global/health", Duration::from_secs(30));
+    if let Err(error) = restart_health {
+        bail!(
+            "stale/restart second gateway did not become healthy: {error}; {}",
+            restarted.health_context()
+        );
+    }
     wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
         .context("stale/restart second router endpoint did not become reachable")?;
     wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
@@ -599,6 +661,8 @@ pub(crate) fn gateway_stdin_eof_shuts_down_router_session_db_and_runtime(
     std::fs::create_dir_all(&workspace)?;
 
     let port = free_port()?;
+    let stdout_log = process_log_path(&home, "gateway-stdin-eof.stdout.log");
+    let stderr_log = process_log_path(&home, "gateway-stdin-eof.stderr.log");
     let mut child = Command::new(debug_bin(repo, "tura_gateway"))
         .current_dir(&workspace)
         .envs(gateway_env(repo, &home, &workspace, port))
@@ -606,14 +670,8 @@ pub(crate) fn gateway_stdin_eof_shuts_down_router_session_db_and_runtime(
         .env("TURA_GATEWAY_ROUTER_LEASE_TTL_SECS", "1")
         .env("TURA_ROUTER_IDLE_SHUTDOWN_SECS", "2")
         .stdin(Stdio::piped())
-        .stdout(Stdio::from(process_log_file(
-            &home,
-            "gateway-stdin-eof.stdout.log",
-        )?))
-        .stderr(Stdio::from(process_log_file(
-            &home,
-            "gateway-stdin-eof.stderr.log",
-        )?))
+        .stdout(Stdio::from(process_log_file_at(&stdout_log)?))
+        .stderr(Stdio::from(process_log_file_at(&stderr_log)?))
         .spawn()
         .context("spawn stdin-eof gateway")?;
 
@@ -636,7 +694,18 @@ pub(crate) fn gateway_stdin_eof_shuts_down_router_session_db_and_runtime(
     )?;
 
     drop(child.stdin.take());
-    let status = wait_for_process_exit(&mut child, Duration::from_secs(20), "stdin-eof gateway")?;
+    let status = wait_for_process_exit(
+        &mut child,
+        GATEWAY_STDIN_EOF_EXIT_TIMEOUT,
+        "stdin-eof gateway",
+    )
+    .with_context(|| {
+        format!(
+            "stdin-eof gateway shutdown failed; stdout tail: {}; stderr tail: {}",
+            file_tail(&stdout_log, 4096),
+            file_tail(&stderr_log, 4096)
+        )
+    })?;
     assert!(
         status.success(),
         "stdin-eof gateway should exit cleanly after frontend pipe closes: {status}"
@@ -669,22 +738,107 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
     let mut session_db = SessionDbGuard::start(repo, &home)?;
     wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
         .context("recovery initial session_db endpoint did not become reachable")?;
-    let upsert = session_db_call(
+    let created = session_db_call(
         &home,
         &json!({
-            "command": "upsert_session",
-            "session": running_session_payload(&session_id, &workspace, timestamp),
-            "messages": [
-                message_payload(&session_id, message_id, "user", timestamp, "resume this work")
-            ],
-            "todos": [
-                {"id": "todo-recovery", "content": "keep history across restart", "status": "doing"}
-            ]
+            "command": "create_session",
+            "command_id": format!("{session_id}:create"),
+            "session_id": session_id,
+            "creation_command": {
+                "command": "create_session",
+                "task_plan": {"plan_summary": "", "detailed_tasks": []}
+            },
+            "copy_context": false,
+            "workspace": workspace.to_string_lossy(),
+            "session_directory": workspace.to_string_lossy(),
+            "name": "Process Recovery",
+            "created_at": timestamp,
+            "model": null,
+            "agent": null,
+            "session_type": "coding",
+            "kill_processes_on_start": false,
+            "validator_enabled": false,
+            "force_planning": false,
+            "model_variant": null,
+            "model_acceleration_enabled": false,
+            "disable_permission_restrictions": false,
+            "use_last_tool_call_response": false,
+            "auto_session_name": false
         }),
     )?;
     assert_eq!(
-        upsert["kind"], "ok",
-        "upsert through session_db failed: {upsert}"
+        created["kind"], "session_command_applied",
+        "typed create through session_db failed: {created}"
+    );
+    let started = session_db_call(
+        &home,
+        &json!({
+            "command": "execute_session_command",
+            "command_id": format!("{session_id}:start-user-turn"),
+            "session_id": session_id,
+            "session_command": {"command": "start_user_turn"},
+            "message_projection": null
+        }),
+    )?;
+    assert_eq!(
+        started["kind"], "session_command_applied",
+        "typed start through session_db failed: {started}"
+    );
+    let loaded = session_db_call(
+        &home,
+        &json!({
+            "command": "get_session",
+            "session_id": session_id,
+        }),
+    )?;
+    assert_eq!(
+        loaded["kind"], "session",
+        "typed get through session_db failed: {loaded}"
+    );
+    assert!(
+        loaded["session"]["management"].is_object(),
+        "typed get omitted canonical management: {loaded}"
+    );
+    let mut management: SessionManagement =
+        serde_json::from_value(loaded["session"]["management"].clone())
+            .context("decode canonical session management")?;
+    management.session_log.clear();
+    management.session_log_retention.omitted_entries = 0;
+    let management_delta = SessionManagement::persistence_delta(None, &management);
+    let message = message_payload(
+        &session_id,
+        message_id,
+        "user",
+        timestamp,
+        "resume this work",
+    );
+    let persisted = session_db_call(
+        &home,
+        &json!({
+            "command": "persist_session_delta",
+            "session_id": session_id,
+            "management_sequence": 0,
+            "management_delta": management_delta,
+            "retained_from_sequence": 0,
+            "entries": [{
+                "context": {
+                    "sequence": 0,
+                    "raw_record": json!({"id": message_id, "role": "user"}).to_string()
+                },
+                "projection": {
+                    "session_id": session_id,
+                    "message_id": message_id,
+                    "role": "user",
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                    "record": message
+                }
+            }]
+        }),
+    )?;
+    assert_eq!(
+        persisted["kind"], "session_delta_persisted",
+        "typed delta through session_db failed: {persisted}"
     );
 
     let before = session_db_call(
@@ -1182,6 +1336,32 @@ pub(crate) fn wait_for_gateway_router_running_with_http_timeout(
         std::thread::sleep(Duration::from_millis(150));
     }
     Err(last_error.unwrap_or_else(|| anyhow!("gateway router status did not become running")))
+}
+
+fn wait_for_gateway_session(port: u16, session_id: &str, timeout: Duration) -> Result<()> {
+    let started = Instant::now();
+    let mut last_error = None;
+    while started.elapsed() < timeout {
+        match http_json_with_timeout(port, "/session", Duration::from_secs(2)) {
+            Ok(sessions)
+                if sessions.as_array().is_some_and(|sessions| {
+                    sessions
+                        .iter()
+                        .any(|session| session["id"].as_str() == Some(session_id))
+                }) =>
+            {
+                return Ok(())
+            }
+            Ok(sessions) => {
+                last_error = Some(anyhow!(
+                    "Gateway session list did not contain {session_id}: {sessions}"
+                ));
+            }
+            Err(error) => last_error = Some(error),
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("Gateway session did not become visible")))
 }
 
 pub(crate) fn wait_for_router_session_db_running(
@@ -1876,28 +2056,6 @@ impl Drop for UnresponsiveEndpoint {
             let _ = handle.join();
         }
     }
-}
-
-pub(crate) fn running_session_payload(
-    session_id: &str,
-    workspace: &Path,
-    timestamp: i64,
-) -> serde_json::Value {
-    json!({
-        "id": session_id,
-        "name": "Process Recovery",
-        "directory": workspace.to_string_lossy(),
-        "created_at": timestamp,
-        "updated_at": timestamp,
-        "management": {
-            "session_id": session_id,
-            "session_name": "Process Recovery",
-            "session_directory": workspace.to_string_lossy(),
-            "session_created_at": "2026-06-12T00:00:00.000Z",
-            "session_last_update_at": "2026-06-12T00:00:00.000Z",
-            "state": "running"
-        }
-    })
 }
 
 pub(crate) fn message_payload(

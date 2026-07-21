@@ -123,6 +123,8 @@ incremental = false
 
 [dev-dependencies]
 anyhow.workspace = true
+chrono.workspace = true
+lifecycle.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
 session_log.workspace = true
@@ -135,6 +137,7 @@ router_contract.workspace = true
 runtime.workspace = true
 runtime_contract.workspace = true
 tools.workspace = true
+uuid.workspace = true
 
 [features]
 os-tests = []
@@ -171,9 +174,4 @@ required-features = ["os-tests"]
 [[test]]
 name = "command_run_router_ownership_e2e"
 path = "tests/os_testing/command_run_router_ownership_e2e.rs"
-required-features = ["os-tests"]
-
-[[test]]
-name = "tauri_gui_lifecycle_policy"
-path = "tests/os_testing/tauri_gui_lifecycle_policy.rs"
 required-features = ["os-tests"]

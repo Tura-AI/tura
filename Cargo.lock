@@ -1668,9 +1668,7 @@ dependencies = [
  "personas",
  "provider",
  "reqwest 0.12.28",
- "router",
  "router_contract",
- "runtime",
  "runtime_contract",
  "semver",
  "serde",
@@ -4236,7 +4234,6 @@ dependencies = [
  "provider",
  "redis",
  "reqwest 0.12.28",
- "router",
  "router_contract",
  "runtime_contract",
  "rusqlite",
@@ -4258,6 +4255,7 @@ dependencies = [
 name = "runtime_contract"
 version = "0.1.0"
 dependencies = [
+ "lifecycle",
  "serde",
  "serde_json",
  "uuid",
@@ -4700,9 +4698,13 @@ dependencies = [
 name = "session_log_contract"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
+ "fs2",
  "lifecycle",
  "serde",
  "serde_json",
+ "tura_path",
 ]
 
 [[package]]
@@ -5863,6 +5865,8 @@ name = "tura_workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "lifecycle",
  "router",
  "router_contract",
  "runtime",

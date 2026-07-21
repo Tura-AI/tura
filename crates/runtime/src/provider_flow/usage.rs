@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::state_machine::runtime_management::UsageReport;
+use lifecycle::UsageReport;
 
 pub(crate) fn usage_report_from_metrics(
     metrics: Option<tura_llm_rust::CallMetrics>,
@@ -22,7 +22,7 @@ pub(crate) fn usage_report_from_metrics(
         let input_tokens = m.usage.input_tokens?;
         let output_tokens = m.usage.output_tokens?;
         let total_tokens = m.usage.total_tokens?;
-        Some(crate::state_machine::runtime_management::UsageReport {
+        Some(lifecycle::UsageReport {
             input_tokens,
             output_tokens,
             total_tokens,
@@ -50,7 +50,7 @@ fn tokens_per_second(output_tokens: u64, latency_ms: u64) -> f64 {
 }
 
 pub(crate) fn runtime_cache_diagnostics(
-    runtime: &crate::state_machine::runtime_management::RuntimeManagement,
+    runtime: &lifecycle::RuntimeAggregate,
 ) -> serde_json::Value {
     let input = runtime.input.as_ref();
     let messages = input

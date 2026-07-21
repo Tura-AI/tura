@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::state_machine::session_management::{SessionInput, SessionManagement};
+use lifecycle::{SessionInput, SessionManagement};
 
 pub fn create_session(
     session_directory: PathBuf,

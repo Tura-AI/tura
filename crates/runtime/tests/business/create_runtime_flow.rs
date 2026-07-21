@@ -1,9 +1,9 @@
+use lifecycle::ContextTokenStats;
+use lifecycle::RuntimeAggregate;
+use lifecycle::{ProviderConfig, ToolChoice};
 use lifecycle::{RuntimeCallResultStatus, RuntimeState};
 use runtime::runtime::create_runtime::{create_runtime, runtime_provider_config_from_tura};
 use runtime::runtime::types::RuntimeQueueItem;
-use runtime::state_machine::agent_management::{ProviderConfig, ToolChoice};
-use runtime::state_machine::runtime_management::RuntimeManagement;
-use runtime::state_machine::session_management::ContextTokenStats;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -79,6 +79,7 @@ async fn create_runtime_business_flow_builds_runtime_queue_and_provider_config_f
     );
     assert!(runtime.runtime_id.starts_with("runtime-"));
     assert_eq!(runtime.session_id, "session-create-runtime-business");
+    assert_eq!(runtime.fallback_from_id, None);
     assert_eq!(runtime.agent_id, "agent-create-runtime-business");
     assert_eq!(runtime.provider.provider_name, "business_runtime");
     assert_eq!(runtime.provider.llm_provider_name, "localbeta");
@@ -95,6 +96,55 @@ async fn create_runtime_business_flow_builds_runtime_queue_and_provider_config_f
     assert_eq!(runtime.provider.base.tool_choice, ToolChoice::Auto);
     assert_eq!(runtime.provider.base.time_out_ms, 12_345);
     assert_eq!(queue_item.provider_name, "business_runtime");
+}
+
+#[tokio::test]
+async fn create_runtime_business_flow_records_retry_predecessor_in_creation_event() {
+    let _guard = ENV_LOCK.lock().await;
+    let _env = EnvGuard::clear(&[
+        "TURA_SESSION_MODEL_OVERRIDE",
+        "TURA_PROVIDER_TOTAL_TIMEOUT_MS",
+    ]);
+    let settings = Arc::new(settings_with_routes(
+        vec![(
+            "retry_runtime",
+            RouteConfig {
+                default_temperature: 0.0,
+                providers: vec![LlmProviderConfig {
+                    provider: "localretry".to_string(),
+                    base_url: "http://127.0.0.1:4444/v1".to_string(),
+                    model: "retry-model".to_string(),
+                    temperature: 0.0,
+                }],
+            },
+        )],
+        HashMap::new(),
+    ));
+    let mut input = runtime_input(
+        "session-create-runtime-retry",
+        "agent-create-runtime-retry",
+        "retry_runtime",
+        vec![json!({"role": "user", "content": "retry"})],
+        Vec::new(),
+        settings,
+        false,
+    );
+    input.fallback_from_id = Some("runtime-failed-predecessor".to_string());
+
+    let (mut runtime, _) = create_runtime(input)
+        .await
+        .unwrap_or_else(|error| panic!("retry runtime should be created: {error}"));
+
+    assert_eq!(
+        runtime.fallback_from_id.as_deref(),
+        Some("runtime-failed-predecessor")
+    );
+    let replayed = RuntimeAggregate::replay(
+        runtime.runtime_id.clone(),
+        runtime.take_uncommitted_events(),
+    )
+    .unwrap_or_else(|error| panic!("retry runtime events should replay: {error}"));
+    assert_eq!(replayed, runtime);
 }
 
 #[tokio::test]
@@ -285,7 +335,9 @@ fn runtime_input(
     thinking: bool,
 ) -> runtime::runtime::create_runtime::CreateRuntimeInput {
     runtime::runtime::create_runtime::CreateRuntimeInput {
+        runtime_id: format!("runtime-{session_id}"),
         session_id: session_id.to_string(),
+        fallback_from_id: None,
         agent_id: agent_id.to_string(),
         messages,
         tools,
@@ -358,7 +410,7 @@ fn settings_with_routes_and_catalog(
 }
 
 fn assert_runtime_and_queue_are_consistent(
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     queue_item: &RuntimeQueueItem,
     messages: &[Value],
     tools: &[Value],
@@ -372,7 +424,7 @@ fn assert_runtime_and_queue_are_consistent(
 }
 
 fn assert_error_contains(
-    result: Result<(RuntimeManagement, RuntimeQueueItem), String>,
+    result: Result<(RuntimeAggregate, RuntimeQueueItem), String>,
     needle: &str,
 ) {
     match result {

@@ -70,7 +70,10 @@ subprocesses from continuing after their caller is gone.
 
 When a compatible `service.addr` already points to a live `tura_session_db`
 (for example after a router crash where the DB owner survived), router
-adopts that service instead of spawning a second owner. `execution.shutdown`
+adopts that service instead of spawning a second owner. Session DB start,
+restart, and stop operations are serialized; `execution.shutdown` marks the
+service lifecycle terminal before waiting for any in-flight start, so a late
+health probe cannot recreate the owner after router shutdown. `execution.shutdown`
 always sends the session_db shutdown command, including for an adopted service,
 then removes the router endpoint as the socket daemon exits.
 

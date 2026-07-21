@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
 
-use crate::state_machine::session_management::SessionManagement;
 use crate::turn_loop::retry_policy::env_flag;
+use lifecycle::SessionManagement;
 
 pub(crate) fn emit_cli_live_session_checkpoint(session: &SessionManagement, stage: &str) {
     if matches!(stage, "completed") {

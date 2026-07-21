@@ -33,28 +33,26 @@ runs for at least Anthropic/Claude, Google/Gemini, one OpenAI-compatible third
 party, and one local endpoint. Record exact provider/model versions, settings,
 dates, raw artifacts, failure taxonomy, and cost.
 
-## Runtime/session parsing is not end-to-end single-source
+## Runtime/session context projection cost is not fully measured
 
-**Status:** Partially converged
+**Status:** Lifecycle ownership converged; performance evidence incomplete
 
-`SessionState` is canonically defined in
-`crates/session_log/src/session_state.rs` and re-exported by
-`crates/runtime/src/state_machine/session_management.rs`. This removes one class
-of enum drift. The wider session contract still crosses runtime snapshots,
-context rebuilding, JSON payloads, queue records, IPC, and SQLite helpers. Those
-boundaries can repeatedly deserialize, normalize, clone, and serialize session
-data during a turn.
+`SessionState`, `SessionAggregate`, and `SessionManagement` are canonically
+defined in `crates/lifecycle`. Runtime, Gateway, Router, and Session DB consume
+typed lifecycle contracts directly; noncanonical DB schemas and queued payloads
+are rejected instead of entering compatibility parsers. Context rebuilding,
+record projections, IPC, and SQLite still cross JSON boundaries that can repeat
+deserialization, cloning, and serialization during a turn.
 
 **Risk:** Duplicate work increases latency and allocation pressure, while
 separate parser/normalization paths can drift on old records, recovery, terminal
 states, or compaction.
 
-**Required evidence:** First measure parse count, bytes, wall time, allocations,
-queue latency, and snapshot size. Then establish one versioned session/state
-contract or generated compatibility layer. Preserve fixtures for legacy/current
-records and test transition parity, checkpoint/recovery, compaction, malformed
-records, and mixed-version replay. Do not remove a parser merely because two
-functions have similar names.
+**Required evidence:** Measure parse count, bytes, wall time, allocations, queue
+latency, and retained context size at the typed create/command/delta boundaries.
+Preserve transition, checkpoint/recovery, compaction, malformed-record, and
+noncanonical-schema rejection fixtures. Do not add compatibility parsers or
+remove a current parser merely because two functions have similar names.
 
 ## Cross-crate communication contracts are bundled with implementations
 

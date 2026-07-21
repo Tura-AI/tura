@@ -22,9 +22,11 @@ dev and release builds therefore share a workspace's session log while keeping
 their per-home sockets, locks, and indexes isolated.
 
 Gateway and runtime must not write session state directly to
-`.tura/sessions/*.json`. Gateway persists `SessionInfo`, messages, todos, and
-parent links through `SessionLogClient::upsert_session`. Runtime resumes
-gateway sessions through `SessionLogClient::get_session`, scoped by workspace.
+`.tura/sessions/*.json`. Gateway creates sessions and applies typed
+`SessionCommand`s through `SessionDbClient`; creation commands own parent links
+and task state. Runtime persists bounded context and record projections through
+`SessionLogClient::persist_session_delta` and resumes sessions through
+`SessionLogClient::get_session`, scoped by workspace.
 
 Developer query commands:
 
@@ -64,10 +66,14 @@ inside session-log records except as normalized runtime/session events.
 
   crates/
     gateway/
+    lifecycle/
     provider/
     router/
+    router_contract/
     runtime/
+    runtime_contract/
     session_log/
+    session_log_contract/
     tools/
 
   db/
@@ -99,17 +105,32 @@ owning directory names.
 
 ```text
 crates/gateway     -> package gateway (binaries: tura_gateway, tura_exec)
+crates/lifecycle   -> package lifecycle, library lifecycle
 crates/runtime     -> package runtime (binary: tura_runtime), library runtime
+crates/runtime_contract -> package runtime_contract, library runtime_contract
 crates/session_log -> package session_log (binary: tura_session_db), library session_log
+crates/session_log_contract -> package session_log_contract, library session_log_contract
 crates/path        -> package tura_path, library tura_path
 agents      -> package agents, library tura_agents
 crates/provider    -> package provider, library tura_llm_rust
 crates/tools       -> package tools, library code_tools
 crates/router      -> package router, default binary tura_router
+crates/router_contract -> package router_contract, library router_contract
 ```
 
 Use the directory-matching package names in build, check, install, and start
 commands.
+
+`crates/lifecycle` owns the canonical Session and Runtime aggregates, states,
+commands, events, queries, projections, and transition rules. Gateway, router,
+runtime, and session-log services consume those types through the lifecycle and
+contract crates; they do not define a second lifecycle state machine. The
+`router_contract`, `runtime_contract`, and `session_log_contract` crates own
+strict wire DTOs and clients only, and do not depend back on service
+implementations. The resolved dependency and state-ownership constraints are
+enforced by `crates/lifecycle/tests/service_dependency_architecture.rs` and the
+Runtime / Session equivalence gate documented in
+`tests/equivalence/runtime_session/README.md`.
 
 ### Binary topology (single backend pipeline, many thin fronts)
 

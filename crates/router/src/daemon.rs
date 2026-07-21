@@ -2,15 +2,13 @@ use serde_json::json;
 use std::sync::{atomic::Ordering, Arc};
 
 use crate::app::build_state;
-use crate::ipc_handlers::{
-    enqueue_turn_session_id, handle_ipc_request, handle_ipc_request_with_notifications,
-};
+use crate::ipc_handlers::{enqueue_turn_identity, handle_ipc_request};
 use crate::process_info::current_process_start_time;
 use crate::services::{
     recovery::recover_after_start, runtime_orphans::cleanup_orphan_runtime_workers,
 };
 use crate::shutdown::start_idle_shutdown_monitor;
-use router_contract::{IpcNotification, IpcRequest, IpcResponse, RouterEndpoint};
+use router_contract::{IpcRequest, IpcResponse, RouterEndpoint};
 
 pub(crate) async fn serve_stdio() -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -52,7 +50,7 @@ pub(crate) async fn serve_stdio() -> anyhow::Result<()> {
 /// File (under the instance's db dir) recording the running router daemon's
 /// socket endpoint, so any front can probe-and-connect rather than spawn its own.
 pub(crate) fn router_addr_path() -> std::path::PathBuf {
-    session_log::path::default_db_dir().join("router.addr")
+    session_log_contract::client::default_db_dir().join("router.addr")
 }
 
 fn publish_router_addr(addr: &std::net::SocketAddr) -> anyhow::Result<()> {
@@ -121,14 +119,14 @@ async fn handle_socket_connection(
     state: crate::app::AppState,
     stream: tokio::net::TcpStream,
 ) -> anyhow::Result<()> {
-    use std::collections::HashSet;
+    use std::collections::HashMap;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::sync::Mutex as AsyncMutex;
 
     let connection_guard = ConnectionLifecycleGuard::new(state.lifecycle.clone());
     let (read, write) = stream.into_split();
     let write = Arc::new(AsyncMutex::new(write));
-    let active_sessions = Arc::new(AsyncMutex::new(HashSet::<String>::new()));
+    let active_sessions = Arc::new(AsyncMutex::new(HashMap::<String, String>::new()));
     let pending_tasks = Arc::new(AsyncMutex::new(Vec::<tokio::task::JoinHandle<()>>::new()));
     let mut lines = BufReader::new(read).lines();
     while let Some(line) = lines.next_line().await? {
@@ -150,38 +148,24 @@ async fn handle_socket_connection(
             }
         };
         state.lifecycle.mark_activity();
-        let active_session_id = enqueue_turn_session_id(&parsed);
-        if let Some(session_id) = active_session_id.as_ref() {
-            active_sessions.lock().await.insert(session_id.clone());
+        let active_runtime = enqueue_turn_identity(&parsed);
+        if let Some((session_id, runtime_id)) = active_runtime.as_ref() {
+            active_sessions
+                .lock()
+                .await
+                .insert(session_id.clone(), runtime_id.clone());
         }
         let abort_on_disconnect = should_abort_request_on_connection_close(&parsed);
         let state_for_task = state.clone();
         let write_for_task = Arc::clone(&write);
         let active_sessions_for_task = Arc::clone(&active_sessions);
         let handle = tokio::spawn(async move {
-            let (notification_tx, mut notification_rx) =
-                tokio::sync::mpsc::unbounded_channel::<IpcNotification>();
-            let notification_writer = {
-                let write = Arc::clone(&write_for_task);
-                tokio::spawn(async move {
-                    while let Some(notification) = notification_rx.recv().await {
-                        if let Ok(encoded) = serde_json::to_string(&notification) {
-                            let mut writer = write.lock().await;
-                            let _ = writer.write_all(format!("{encoded}\n").as_bytes()).await;
-                            let _ = writer.flush().await;
-                        }
-                    }
-                })
-            };
-            let response = handle_ipc_request_with_notifications(
-                &state_for_task,
-                parsed,
-                Some(notification_tx),
-            )
-            .await;
-            let _ = notification_writer.await;
-            if let Some(session_id) = active_session_id.as_ref() {
-                active_sessions_for_task.lock().await.remove(session_id);
+            let response = handle_ipc_request(&state_for_task, parsed).await;
+            if let Some((session_id, runtime_id)) = active_runtime.as_ref() {
+                let mut active = active_sessions_for_task.lock().await;
+                if active.get(session_id) == Some(runtime_id) {
+                    active.remove(session_id);
+                }
             }
             if let Ok(encoded) = serde_json::to_string(&response) {
                 let mut writer = write_for_task.lock().await;
@@ -197,12 +181,18 @@ async fn handle_socket_connection(
         .lock()
         .await
         .iter()
-        .cloned()
+        .map(|(session_id, runtime_id)| (session_id.clone(), runtime_id.clone()))
         .collect::<Vec<_>>();
-    for session_id in sessions {
+    for (session_id, runtime_id) in sessions {
         let _ = state
             .execution
-            .cancel_turn(&state, json!({ "session_id": session_id }))
+            .cancel_turn(
+                &state,
+                json!({
+                    "session_id": session_id,
+                    "runtime_id": runtime_id,
+                }),
+            )
             .await;
     }
     let tasks = pending_tasks.lock().await.drain(..).collect::<Vec<_>>();

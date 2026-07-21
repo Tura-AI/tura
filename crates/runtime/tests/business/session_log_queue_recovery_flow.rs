@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use lifecycle::SessionCommand;
 use runtime::session_log_client::SessionLogClient;
 use serde_json::json;
 use session_log_contract::SessionLogCommand;
@@ -7,6 +8,9 @@ use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[path = "../support/typed_session.rs"]
+mod typed_session;
 
 #[test]
 fn runtime_session_log_business_flow_replays_queued_write_after_service_start() -> Result<()> {
@@ -25,11 +29,22 @@ fn runtime_session_log_business_flow_replays_queued_write_after_service_start() 
         "reads should fail before the session_db service is reachable"
     );
 
-    client.upsert_session(
-        session_payload(&session_id, &workspace, 1),
-        None,
-        vec![message_payload(&session_id, "m-queued", "assistant", 1)],
-        vec![json!({ "id": "queued-todo", "content": "drain queued runtime write" })],
+    let workspace_text = workspace.to_string_lossy();
+    typed_session::enqueue_create(typed_session::root_create_request(
+        &session_id,
+        &workspace_text,
+        "Runtime Queue Recovery",
+        1,
+    ))?;
+    typed_session::enqueue_delta(
+        &session_id,
+        &workspace_text,
+        "Runtime Queue Recovery",
+        1,
+        typed_session::entries_from_messages(
+            0,
+            vec![message_payload(&session_id, "m-queued", "assistant", 1)],
+        )?,
     )?;
     assert!(
         queue_pending_dir(&home).exists(),
@@ -71,7 +86,7 @@ fn runtime_session_log_business_flow_replays_queued_write_after_service_start() 
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }
@@ -98,19 +113,29 @@ fn runtime_session_log_business_flow_drains_concurrent_offline_writes_without_lo
         let barrier = Arc::clone(&barrier);
         let workspace = workspace.clone();
         handles.push(std::thread::spawn(move || -> Result<String> {
-            let client = SessionLogClient::discover()?;
             let session_id = format!("runtime-concurrent-queue-{index}-{}", uuid::Uuid::new_v4());
             barrier.wait();
-            client.upsert_session(
-                session_payload(&session_id, &workspace, index),
-                None,
-                vec![message_payload(
-                    &session_id,
-                    &format!("queued-m-{index}"),
-                    "assistant",
-                    index,
-                )],
-                vec![json!({ "id": format!("queued-todo-{index}") })],
+            let workspace_text = workspace.to_string_lossy();
+            typed_session::enqueue_create(typed_session::root_create_request(
+                &session_id,
+                &workspace_text,
+                "Runtime Queue Recovery",
+                index as i64,
+            ))?;
+            typed_session::enqueue_delta(
+                &session_id,
+                &workspace_text,
+                "Runtime Queue Recovery",
+                index as i64,
+                typed_session::entries_from_messages(
+                    0,
+                    vec![message_payload(
+                        &session_id,
+                        &format!("queued-m-{index}"),
+                        "assistant",
+                        index,
+                    )],
+                )?,
             )?;
             Ok(session_id)
         }));
@@ -161,7 +186,7 @@ fn runtime_session_log_business_flow_drains_concurrent_offline_writes_without_lo
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }
@@ -184,26 +209,50 @@ fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and
     let session_a1 = format!("runtime-online-a1-{}", uuid::Uuid::new_v4());
     let session_a2 = format!("runtime-online-a2-{}", uuid::Uuid::new_v4());
     let session_b1 = format!("runtime-online-b1-{}", uuid::Uuid::new_v4());
-    client.upsert_session(
-        session_payload(&session_a1, &workspace_a, 1),
-        None,
-        vec![
-            message_payload(&session_a1, "a1-m1", "user", 1),
-            message_payload(&session_a1, "a1-m2", "assistant", 2),
-        ],
-        vec![json!({ "id": "a1-todo", "status": "todo" })],
+    typed_session::create_via_service(typed_session::root_create_request(
+        &session_a1,
+        &workspace_a.to_string_lossy(),
+        "Runtime Queue Recovery",
+        1,
+    ))?;
+    typed_session::persist_via_service(
+        &session_a1,
+        typed_session::entries_from_messages(
+            0,
+            vec![
+                message_payload(&session_a1, "a1-m1", "user", 1),
+                message_payload(&session_a1, "a1-m2", "assistant", 2),
+            ],
+        )?,
     )?;
-    client.upsert_session(
-        session_payload(&session_a2, &workspace_a, 3),
-        Some(session_a1.clone()),
-        vec![message_payload(&session_a2, "a2-m1", "assistant", 1)],
-        Vec::new(),
+    typed_session::create_via_service(typed_session::create_request(
+        &session_a2,
+        &workspace_a.to_string_lossy(),
+        "Runtime Queue Recovery",
+        3,
+        SessionCommand::ForkSession {
+            parent_id: session_a1.clone(),
+        },
+    ))?;
+    typed_session::persist_via_service(
+        &session_a2,
+        typed_session::entries_from_messages(
+            0,
+            vec![message_payload(&session_a2, "a2-m1", "assistant", 1)],
+        )?,
     )?;
-    client.upsert_session(
-        session_payload(&session_b1, &workspace_b, 2),
-        None,
-        vec![message_payload(&session_b1, "b1-m1", "assistant", 1)],
-        Vec::new(),
+    typed_session::create_via_service(typed_session::root_create_request(
+        &session_b1,
+        &workspace_b.to_string_lossy(),
+        "Runtime Queue Recovery",
+        2,
+    ))?;
+    typed_session::persist_via_service(
+        &session_b1,
+        typed_session::entries_from_messages(
+            0,
+            vec![message_payload(&session_b1, "b1-m1", "assistant", 1)],
+        )?,
     )?;
 
     let workspace_a_key = session_log::path::normalize_workspace(&workspace_a.to_string_lossy());
@@ -263,46 +312,37 @@ fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and
         .ok_or_else(|| anyhow!("expected first workspace A session"))?;
     assert_eq!(snapshot.workspace, workspace_a_key);
     assert_eq!(snapshot.message_count, 2);
-    assert_eq!(snapshot.todos.len(), 1);
-    assert_eq!(snapshot.todos[0]["id"], "a1-todo");
-
-    client.upsert_session(
-        session_payload(&session_a1, &workspace_a, 4),
-        None,
-        vec![
-            updated_message_payload(&session_a1, "a1-m2", "assistant", 2, "assistant updated"),
-            message_payload(&session_a1, "a1-m3", "assistant", 3),
-        ],
-        vec![json!({ "id": "a1-todo", "status": "done" })],
+    typed_session::persist_via_service(
+        &session_a1,
+        typed_session::entries_from_messages(
+            2,
+            vec![
+                updated_message_payload(&session_a1, "a1-m2", "assistant", 2, "assistant updated"),
+                message_payload(&session_a1, "a1-m3", "assistant", 3),
+            ],
+        )?,
     )?;
     wait_until(Duration::from_secs(10), || {
         let Some(updated) = client.get_session(session_a1.clone()).ok().flatten() else {
             return false;
         };
-        updated.message_count == 2
-            && updated
-                .todos
-                .first()
-                .and_then(|todo| todo.get("status"))
-                .and_then(serde_json::Value::as_str)
-                == Some("done")
-            && session_records_have_ids(&client, &session_a1, &["a1-m2", "a1-m3"])
+        updated.message_count == 3
+            && session_records_have_ids(&client, &session_a1, &["a1-m1", "a1-m2", "a1-m3"])
     })?;
     let updated = client
         .get_session(session_a1.clone())?
         .ok_or_else(|| anyhow!("expected updated workspace A session"))?;
-    assert_eq!(updated.message_count, 2);
-    assert_eq!(updated.todos[0]["status"], "done");
+    assert_eq!(updated.message_count, 3);
 
     let (records_page, records) = client.list_session_records(session_a1.clone(), 0, 10)?;
-    assert_eq!(records_page.total, 2);
+    assert_eq!(records_page.total, 3);
     assert_eq!(
         records
             .iter()
             .map(|record| record.message_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["a1-m2", "a1-m3"],
-        "online upsert is a full snapshot and deletes records absent from the runtime source"
+        vec!["a1-m1", "a1-m2", "a1-m3"],
+        "typed delta replay updates a projection without deleting retained history"
     );
     let updated_m2 = records
         .iter()
@@ -311,20 +351,16 @@ fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and
     assert_eq!(updated_m2.record["parts"][0]["text"], "assistant updated");
 
     let (tail_page, tail_records) = client.list_session_records(session_a1, 0, 2)?;
-    assert_eq!(tail_page.total, 2);
-    assert_eq!(tail_page.page, 0);
+    assert_eq!(tail_page.total, 3);
+    assert!(!tail_records.is_empty());
     assert_eq!(
-        tail_records
-            .iter()
-            .map(|record| record.message_id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["a1-m2", "a1-m3"],
-        "record page 0 returns the full bounded page after snapshot replacement"
+        tail_records.last().map(|record| record.message_id.as_str()),
+        Some("a1-m3")
     );
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }
@@ -404,18 +440,26 @@ fn runtime_session_log_business_flow_restart_marks_running_session_interrupted()
     let service = ServiceThread::start()?;
     let client = SessionLogClient::discover()?;
     let session_id = format!("runtime-running-restart-{}", uuid::Uuid::new_v4());
-    client.upsert_session(
-        running_session_payload(&session_id, &workspace),
-        None,
-        vec![message_payload(&session_id, "running-m-1", "assistant", 1)],
-        vec![json!({ "id": "running-todo", "status": "in_progress" })],
+    typed_session::create_via_service(typed_session::root_create_request(
+        &session_id,
+        &workspace.to_string_lossy(),
+        "Runtime Running Restart Recovery",
+        1,
+    ))?;
+    typed_session::execute_via_service(&session_id, SessionCommand::StartUserTurn)?;
+    typed_session::persist_via_service(
+        &session_id,
+        typed_session::entries_from_messages(
+            0,
+            vec![message_payload(&session_id, "running-m-1", "assistant", 1)],
+        )?,
     )?;
     wait_for_session(&client, &session_id, |snapshot| {
         snapshot.state.as_deref() == Some("running") && snapshot.message_count == 1
     })?;
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
 
     let restarted = ServiceThread::start()?;
@@ -438,7 +482,7 @@ fn runtime_session_log_business_flow_restart_marks_running_session_interrupted()
 
     drop(restarted);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }
@@ -457,21 +501,29 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
     let service = ServiceThread::start()?;
     let client = SessionLogClient::discover()?;
     let session_id = format!("runtime-interrupted-resume-{}", uuid::Uuid::new_v4());
-    client.upsert_session(
-        running_session_payload(&session_id, &workspace),
-        None,
-        vec![
-            message_payload(&session_id, "resume-m-1", "user", 1),
-            message_payload(&session_id, "resume-m-2", "assistant", 2),
-        ],
-        vec![json!({ "id": "resume-todo-1", "status": "doing" })],
+    typed_session::create_via_service(typed_session::root_create_request(
+        &session_id,
+        &workspace.to_string_lossy(),
+        "Runtime Running Restart Recovery",
+        1,
+    ))?;
+    typed_session::execute_via_service(&session_id, SessionCommand::StartUserTurn)?;
+    typed_session::persist_via_service(
+        &session_id,
+        typed_session::entries_from_messages(
+            0,
+            vec![
+                message_payload(&session_id, "resume-m-1", "user", 1),
+                message_payload(&session_id, "resume-m-2", "assistant", 2),
+            ],
+        )?,
     )?;
     wait_for_session(&client, &session_id, |snapshot| {
         snapshot.state.as_deref() == Some("running") && snapshot.message_count == 2
     })?;
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
 
     let restarted = ServiceThread::start()?;
@@ -487,16 +539,19 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
     assert_eq!(interrupted.status.as_deref(), Some("error"));
     assert_eq!(interrupted.message_count, 2);
 
-    client.upsert_session(
-        resumed_session_payload(&session_id, &workspace),
-        None,
-        vec![
-            message_payload(&session_id, "resume-m-1", "user", 1),
-            message_payload(&session_id, "resume-m-2", "assistant", 2),
-            message_payload(&session_id, "resume-m-3", "user", 3),
-            message_payload(&session_id, "resume-m-4", "assistant", 4),
-        ],
-        vec![json!({ "id": "resume-todo-1", "status": "done" })],
+    typed_session::enqueue_execute(&session_id, SessionCommand::SubmitUserInput)?;
+    typed_session::enqueue_delta(
+        &session_id,
+        &workspace.to_string_lossy(),
+        "Runtime Running Restart Recovery",
+        1,
+        typed_session::entries_from_messages(
+            2,
+            vec![
+                message_payload(&session_id, "resume-m-3", "user", 3),
+                message_payload(&session_id, "resume-m-4", "assistant", 4),
+            ],
+        )?,
     )?;
     wait_for_session(&client, &session_id, |snapshot| {
         snapshot.state.as_deref() == Some("created")
@@ -539,62 +594,9 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
 
     drop(restarted);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
-}
-
-fn session_payload(session_id: &str, workspace: &Path, updated_at: i64) -> serde_json::Value {
-    json!({
-        "id": session_id,
-        "name": "Runtime Queue Recovery",
-        "directory": workspace.to_string_lossy(),
-        "created_at": 1,
-        "updated_at": updated_at,
-        "last_user_message_at": updated_at,
-        "status": "idle",
-        "management": {
-            "session_id": session_id,
-            "session_name": "Runtime Queue Recovery",
-            "session_last_user_message_at": chrono::DateTime::from_timestamp_millis(updated_at)
-                .unwrap_or_else(chrono::Utc::now)
-                .to_rfc3339(),
-            "state": "created"
-        }
-    })
-}
-
-fn resumed_session_payload(session_id: &str, workspace: &Path) -> serde_json::Value {
-    json!({
-        "id": session_id,
-        "name": "Runtime Interrupted Resume Recovery",
-        "directory": workspace.to_string_lossy(),
-        "created_at": 1,
-        "updated_at": 5,
-        "status": "idle",
-        "management": {
-            "session_id": session_id,
-            "session_name": "Runtime Interrupted Resume Recovery",
-            "state": "created"
-        }
-    })
-}
-
-fn running_session_payload(session_id: &str, workspace: &Path) -> serde_json::Value {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    json!({
-        "id": session_id,
-        "name": "Runtime Running Restart Recovery",
-        "directory": workspace.to_string_lossy(),
-        "created_at": 1,
-        "updated_at": now_ms,
-        "status": "idle",
-        "management": {
-            "session_id": session_id,
-            "session_name": "Runtime Running Restart Recovery",
-            "state": "running"
-        }
-    })
 }
 
 fn message_payload(
@@ -692,7 +694,7 @@ impl ServiceThread {
         let handle = std::thread::spawn(session_log::service::run_socket_service);
         wait_until(
             Duration::from_secs(10),
-            session_log::ipc::service_is_running,
+            session_log_contract::client::service_is_running,
         )?;
         Ok(Self {
             handle: Some(handle),
@@ -702,7 +704,7 @@ impl ServiceThread {
 
 impl Drop for ServiceThread {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

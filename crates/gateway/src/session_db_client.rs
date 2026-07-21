@@ -1,16 +1,15 @@
 //! Direct client for the session DB service data path.
 //!
 //! Gateway/session reads and typed lifecycle commands use this client directly.
-//! Runtime owns whole-session checkpoints; Gateway has one narrow projection
-//! payload path for forked conversation records and todos.
 
 use anyhow::{anyhow, Result};
 use lifecycle::SessionCommand;
 use session_log_contract::{
-    CreateSessionRequest, ExecuteSessionCommandRequest, GetSessionRequest,
-    ListSessionRecordsRequest, ListSessionsRequest, Page, PersistSessionPayloadRequest,
-    SessionCommandResult, SessionLogCommand, SessionLogResponse, SessionRecord, SessionSnapshot,
-    SessionSummary, WorkspaceSummary,
+    CreateSessionRequest, DeleteSessionRequest, ExecuteSessionCommandRequest, GetSessionRequest,
+    ListSessionRecordsRequest, ListSessionsRequest, Page, ReadSessionFeedRequest,
+    RegisterRuntimeRequest, RuntimeRegistrationOutcome, SessionCommandResult, SessionFeedEntry,
+    SessionLogCommand, SessionLogResponse, SessionRecord, SessionRecordProjection, SessionSnapshot,
+    SessionSummary, UpdateSessionRequest, UpdateSessionTodosRequest, WorkspaceSummary,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -37,24 +36,72 @@ impl SessionDbClient {
         session_id: String,
         command: SessionCommand,
     ) -> Result<SessionCommandResult> {
+        self.execute_session_command_with_message(session_id, command, None)
+    }
+
+    pub fn execute_session_command_with_message(
+        &self,
+        session_id: String,
+        command: SessionCommand,
+        message_projection: Option<SessionRecordProjection>,
+    ) -> Result<SessionCommandResult> {
         session_command_response(
             "execute_session_command",
             self.call(SessionLogCommand::ExecuteSessionCommand(
                 ExecuteSessionCommandRequest {
+                    command_id: uuid::Uuid::new_v4().to_string(),
                     session_id,
                     session_command: command,
+                    message_projection,
                 },
             ))?,
         )
     }
 
-    pub fn persist_session_payload(&self, request: PersistSessionPayloadRequest) -> Result<()> {
-        match self.call(SessionLogCommand::PersistSessionPayload(request))? {
-            SessionLogResponse::Ok => Ok(()),
+    pub fn update_session(&self, request: UpdateSessionRequest) -> Result<SessionSnapshot> {
+        match self.call(SessionLogCommand::UpdateSession(request))? {
+            SessionLogResponse::SessionUpdated { session } => Ok(*session),
+            SessionLogResponse::Error { error } => Err(service_error("update_session", error)),
+            other => Err(unexpected_response("update_session", other)),
+        }
+    }
+
+    pub fn update_session_todos(
+        &self,
+        request: UpdateSessionTodosRequest,
+    ) -> Result<(Vec<serde_json::Value>, u64)> {
+        match self.call(SessionLogCommand::UpdateSessionTodos(request))? {
+            SessionLogResponse::SessionTodosUpdated { todos, cursor } => Ok((todos, cursor)),
             SessionLogResponse::Error { error } => {
-                Err(service_error("persist_session_payload", error))
+                Err(service_error("update_session_todos", error))
             }
-            other => Err(unexpected_response("persist_session_payload", other)),
+            other => Err(unexpected_response("update_session_todos", other)),
+        }
+    }
+
+    pub fn delete_session(&self, session_id: String) -> Result<()> {
+        match self.call(SessionLogCommand::DeleteSession(DeleteSessionRequest {
+            session_id,
+        }))? {
+            SessionLogResponse::Ok => Ok(()),
+            SessionLogResponse::Error { error } => Err(service_error("delete_session", error)),
+            other => Err(unexpected_response("delete_session", other)),
+        }
+    }
+
+    pub fn register_runtime(
+        &self,
+        runtime_id: String,
+        session_id: String,
+    ) -> Result<RuntimeRegistrationOutcome> {
+        match self.call(SessionLogCommand::RegisterRuntime(RegisterRuntimeRequest {
+            runtime_id,
+            session_id,
+            fallback_from_id: None,
+        }))? {
+            SessionLogResponse::RuntimeRegistered { result } => Ok(result),
+            SessionLogResponse::Error { error } => Err(service_error("register_runtime", error)),
+            other => Err(unexpected_response("register_runtime", other)),
         }
     }
 
@@ -94,6 +141,21 @@ impl SessionDbClient {
         }))?)
     }
 
+    pub fn read_session_feed(
+        &self,
+        session_id: String,
+        after_cursor: u64,
+        limit: u64,
+    ) -> Result<(Vec<SessionFeedEntry>, u64)> {
+        session_feed_response(self.call(SessionLogCommand::ReadSessionFeed(
+            ReadSessionFeedRequest {
+                session_id,
+                after_cursor,
+                limit,
+            },
+        ))?)
+    }
+
     pub fn list_session_records(
         &self,
         session_id: String,
@@ -128,8 +190,8 @@ impl SessionDbClient {
     }
 
     fn call_blocking(command: SessionLogCommand) -> Result<SessionLogResponse> {
-        if session_log::ipc::service_is_running() {
-            return session_log::ipc::call_service(&command);
+        if session_log_contract::client::service_is_running() {
+            return session_log_contract::client::call_service(&command);
         }
         Err(anyhow!(
             "session_db service is not running; start the per-home tura_router/tura_session_db owner before reading session data"
@@ -143,7 +205,11 @@ fn is_gateway_command(command: &SessionLogCommand) -> bool {
         SessionLogCommand::Health
             | SessionLogCommand::CreateSession(_)
             | SessionLogCommand::ExecuteSessionCommand(_)
-            | SessionLogCommand::PersistSessionPayload(_)
+            | SessionLogCommand::UpdateSession(_)
+            | SessionLogCommand::UpdateSessionTodos(_)
+            | SessionLogCommand::DeleteSession(_)
+            | SessionLogCommand::RegisterRuntime(_)
+            | SessionLogCommand::ReadSessionFeed(_)
             | SessionLogCommand::GetSession(_)
             | SessionLogCommand::ListWorkspaces
             | SessionLogCommand::ListSessions(_)
@@ -196,6 +262,17 @@ fn session_response(response: SessionLogResponse) -> Result<Option<SessionSnapsh
     }
 }
 
+fn session_feed_response(response: SessionLogResponse) -> Result<(Vec<SessionFeedEntry>, u64)> {
+    match response {
+        SessionLogResponse::SessionFeed {
+            entries,
+            next_cursor,
+        } => Ok((entries, next_cursor)),
+        SessionLogResponse::Error { error } => Err(service_error("read_session_feed", error)),
+        other => Err(unexpected_response("read_session_feed", other)),
+    }
+}
+
 fn records_response(response: SessionLogResponse) -> Result<(Page, Vec<SessionRecord>)> {
     match response {
         SessionLogResponse::Records { page, records } => Ok((page, records)),
@@ -218,12 +295,12 @@ mod tests {
         is_gateway_command, records_response, session_response, sessions_response,
         workspaces_response,
     };
-    use lifecycle::SessionCommand;
+    use lifecycle::{SessionAggregate, SessionCommand, SessionQuery, SessionState};
     use serde_json::json;
     use session_log_contract::{
         CommandCheckpoint, DeleteSessionRequest, MarkSessionInterruptedRequest, Page,
-        PersistSessionPayloadRequest, SessionLogCommand, SessionLogResponse, SessionSnapshot,
-        UpsertSessionRequest, WorkspaceSummary,
+        SessionLogCommand, SessionLogResponse, SessionSnapshot, UpdateSessionTodosRequest,
+        WorkspaceSummary,
     };
 
     fn snapshot(session_id: &str) -> SessionSnapshot {
@@ -239,7 +316,11 @@ mod tests {
             status: Some("running".to_string()),
             message_count: 3,
             task_management: json!({}),
-            lifecycle_projection: None,
+            lifecycle_projection: {
+                let mut aggregate = SessionAggregate::new(session_id.to_string());
+                aggregate.state = SessionState::Running;
+                aggregate.query(SessionQuery::Lifecycle)
+            },
             management: json!({}),
             session: json!({ "session_id": session_id }),
             todos: Vec::new(),
@@ -318,27 +399,22 @@ mod tests {
         assert!(is_gateway_command(
             &SessionLogCommand::ExecuteSessionCommand(
                 session_log_contract::ExecuteSessionCommandRequest {
+                    command_id: "command-1".to_string(),
                     session_id: "session-1".to_string(),
                     session_command: SessionCommand::SubmitUserInput,
+                    message_projection: None,
                 }
             )
         ));
-        assert!(is_gateway_command(
-            &SessionLogCommand::PersistSessionPayload(PersistSessionPayloadRequest {
+        assert!(is_gateway_command(&SessionLogCommand::UpdateSessionTodos(
+            UpdateSessionTodosRequest {
+                command_id: "todos-1".to_string(),
                 session_id: "session-1".to_string(),
-                records: Vec::new(),
-                todos: Vec::new(),
-            })
-        ));
-        assert!(!is_gateway_command(&SessionLogCommand::UpsertSession(
-            UpsertSessionRequest {
-                session: json!({}),
-                parent_id: None,
-                messages: Vec::new(),
-                todos: Vec::new(),
+                todos: vec![json!({"id": "todo-1"})],
+                updated_at: 1,
             }
         )));
-        assert!(!is_gateway_command(&SessionLogCommand::DeleteSession(
+        assert!(is_gateway_command(&SessionLogCommand::DeleteSession(
             DeleteSessionRequest {
                 session_id: "session-1".to_string()
             }
@@ -351,7 +427,7 @@ mod tests {
         assert!(!is_gateway_command(
             &SessionLogCommand::ApplyCommandCheckpoint(Box::new(CommandCheckpoint {
                 session_id: "session-1".to_string(),
-                turn_id: "turn-1".to_string(),
+                runtime_id: "runtime-1".to_string(),
                 runtime_worker_id: None,
                 provider_call_id: None,
                 command_run_id: None,
@@ -359,7 +435,7 @@ mod tests {
                 event_seq: None,
                 command_type: None,
                 command_line: None,
-                status: "turn_started".to_string(),
+                checkpoint_type: session_log_contract::CheckpointType::TurnStarted,
                 output_summary: None,
                 changes: json!({}),
                 started_at: None,

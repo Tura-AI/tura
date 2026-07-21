@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
+use router_contract::ToolPatch;
 use serde_json::json;
-use tura_router::registry::tools::{ToolPatch, ToolRegistry};
+use tura_router::registry::tools::ToolRegistry;
 
 fn registry() -> ToolRegistry {
     let current = std::env::current_dir().expect("current dir");

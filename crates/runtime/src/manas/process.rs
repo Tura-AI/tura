@@ -1,5 +1,5 @@
 use crate::gateway_events::{
-    publish_gateway_agent_message_from_runtime, publish_runtime_failure_message,
+    frontend_session_id, publish_agent_message_from_runtime, publish_runtime_failure_message,
     publish_runtime_usage_record,
 };
 use crate::manas::constants::PLANNING_TOOL;
@@ -20,7 +20,7 @@ use tura_llm_rust::{
     provider_media_fallback, replace_unsupported_content_type_in_messages, ProviderMediaFallback,
 };
 
-use crate::checkpoint::session_snapshot::persist_session_checkpoint;
+use crate::checkpoint::session_snapshot::{persist_session_checkpoint, SessionDeltaWriter};
 use crate::context::{
     accumulate_tool_result_with_provider_metadata, build_context,
     compact_session_context_automatically_with_capabilities,
@@ -31,10 +31,8 @@ use crate::manas::ManasOverrides;
 use crate::provider_flow::errors::{
     provider_timeout_retry_wait, runtime_failure_allows_retry, runtime_failure_text,
 };
+use crate::runtime_event_writer::{RuntimeEventWriter, RuntimeFeedPublisher};
 use crate::state_machine::agent_management::{AgentManagement, AgentState};
-use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::SessionManagement;
-use crate::turn_loop::finalization::create_dummy_runtime;
 use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
 use crate::turn_loop::provider_step::accumulate_session_from_runtime;
 use crate::turn_loop::retry_policy::env_flag;
@@ -44,26 +42,30 @@ use crate::turn_loop::task_progress::{
     record_task_focus_message, record_task_focus_message_for_terminal_done,
 };
 use crate::turn_loop::tool_step::{command_run_results_empty, extract_compact_context_results};
+use lifecycle::RuntimeAggregate;
+use lifecycle::SessionManagement;
 use lifecycle::{PlanStatus, RuntimeId, RuntimeState, SessionState};
 
-const DEFAULT_MANAS_MAX_TURNS: u64 = 256;
+const DEFAULT_MANAS_MAX_TURNS: u64 = 2_560;
 const DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF: usize = 1_000;
 
-pub struct ManasInput<'a> {
-    pub agents: &'a mut [AgentManagement],
-    pub session: &'a mut SessionManagement,
-    pub initial_messages: Vec<serde_json::Value>,
-    pub redis_url: &'a str,
+pub(crate) struct ManasInput<'a> {
+    pub(crate) agents: &'a mut [AgentManagement],
+    pub(crate) session: &'a mut SessionManagement,
+    pub(crate) initial_messages: Vec<serde_json::Value>,
+    pub(crate) redis_url: &'a str,
+    pub(crate) initial_runtime_id: Option<RuntimeId>,
+    pub(crate) runtime_event_writer: Option<RuntimeEventWriter>,
+    pub(crate) session_delta_writer: Option<SessionDeltaWriter>,
 }
 
-pub struct ManasResult {
-    pub agents: Vec<AgentManagement>,
-    pub session: SessionManagement,
-    pub final_runtime: RuntimeManagement,
-    pub final_error: Option<String>,
+pub(crate) struct ManasResult {
+    pub(crate) agents: Vec<AgentManagement>,
+    pub(crate) session: SessionManagement,
+    pub(crate) final_error: Option<String>,
 }
 
-pub fn process_manas_internal(
+pub(crate) fn process_manas_internal(
     input: ManasInput,
     overrides: ManasOverrides,
 ) -> Result<ManasResult, String> {
@@ -72,6 +74,9 @@ pub fn process_manas_internal(
         session,
         initial_messages,
         redis_url,
+        mut initial_runtime_id,
+        mut runtime_event_writer,
+        mut session_delta_writer,
     } = input;
     let mut loaded_agents;
     let agents = if agents.is_empty() {
@@ -90,7 +95,7 @@ pub fn process_manas_internal(
         session.record_session_capabilities(commands.iter().map(String::as_str));
     }
     session.transition(SessionState::Running, Utc::now())?;
-    persist_session_checkpoint(session, "running");
+    persist_session_checkpoint(&mut session_delta_writer, session, "running")?;
 
     let active_agent_capabilities = agent_commands
         .as_ref()
@@ -98,6 +103,7 @@ pub fn process_manas_internal(
         .unwrap_or_default();
     let mut current_messages = initial_messages.clone();
     let mut last_runtime_id: Option<RuntimeId> = None;
+    let mut fallback_from_id: Option<RuntimeId> = None;
     let original_user_task = session.input.user_input.clone();
     let mut turn = 0_u64;
     let mut provider_timeout_retries = 0_u8;
@@ -127,6 +133,7 @@ pub fn process_manas_internal(
                 session,
                 last_runtime_id.as_deref().unwrap_or_default(),
                 &error,
+                None,
             );
             final_error = Some(error);
             final_session_state = SessionState::Failed;
@@ -149,6 +156,9 @@ pub fn process_manas_internal(
             turn == 1,
             false,
             false,
+            initial_runtime_id.take(),
+            fallback_from_id.take(),
+            runtime_event_writer.as_mut(),
         ) {
             Ok(result) => result,
             Err(error) => {
@@ -159,9 +169,8 @@ pub fn process_manas_internal(
                     "runtime failed during turn; publishing visible fallback"
                 );
                 let runtime_id = last_runtime_id
-                    .clone()
                     .unwrap_or_else(|| format!("runtime-error-{}", session.session_id));
-                publish_runtime_failure_message(session, &runtime_id, &error);
+                publish_runtime_failure_message(session, &runtime_id, &error, None);
                 if env_flag("TURA_RUNTIME_ERRORS_FATAL") {
                     return Err(error);
                 }
@@ -176,10 +185,20 @@ pub fn process_manas_internal(
 
         last_runtime_id = Some(runtime.runtime_id.clone());
 
-        accumulate_session_from_runtime(session, &runtime, true)?;
+        let feed_publisher = runtime_feed_publisher(&mut runtime_event_writer, &runtime)?;
+
+        if let Err(error) = accumulate_session_from_runtime(session, &runtime, true) {
+            seal_runtime_feed(&mut runtime_event_writer, &runtime.runtime_id)?;
+            return Err(error);
+        }
         increment_turn_with_fresh_timestamp(session);
-        persist_session_checkpoint(session, "runtime");
-        publish_runtime_usage_record(session, &runtime);
+        if let Err(error) =
+            persist_session_checkpoint(&mut session_delta_writer, session, "runtime")
+        {
+            seal_runtime_feed(&mut runtime_event_writer, &runtime.runtime_id)?;
+            return Err(error);
+        }
+        publish_runtime_usage_record(session, &runtime, feed_publisher.as_ref());
 
         if runtime.state == RuntimeState::TimedOut || runtime_failure_allows_retry(&runtime) {
             let error_text = runtime_failure_text(&runtime)
@@ -199,7 +218,13 @@ pub fn process_manas_internal(
                     let error = format!(
                         "Provider/model does not support `{content_type}` media input for this request. Use an image-capable model or a route whose model metadata includes that input modality. Original provider error: {error_text}"
                     );
-                    publish_runtime_failure_message(session, &runtime.runtime_id, &error);
+                    publish_runtime_failure_message(
+                        session,
+                        &runtime.runtime_id,
+                        &error,
+                        feed_publisher.as_ref(),
+                    );
+                    seal_runtime_feed(&mut runtime_event_writer, &runtime.runtime_id)?;
                     final_error = Some(error);
                     final_session_state = SessionState::Failed;
                     break;
@@ -243,6 +268,8 @@ pub fn process_manas_internal(
                         3,
                     )),
                 );
+                fallback_from_id = Some(runtime.runtime_id.clone());
+                seal_runtime_feed(&mut runtime_event_writer, &runtime.runtime_id)?;
                 continue;
             }
 
@@ -258,7 +285,13 @@ pub fn process_manas_internal(
             let error = format!(
                 "Provider runtime failed after 3 retries before completing the task: {error_text}"
             );
-            publish_runtime_failure_message(session, &runtime.runtime_id, &error);
+            publish_runtime_failure_message(
+                session,
+                &runtime.runtime_id,
+                &error,
+                feed_publisher.as_ref(),
+            );
+            seal_runtime_feed(&mut runtime_event_writer, &runtime.runtime_id)?;
             final_error = Some(error);
             final_session_state = SessionState::Failed;
             break;
@@ -273,7 +306,13 @@ pub fn process_manas_internal(
                 error = %error_text,
                 "provider runtime failed"
             );
-            publish_runtime_failure_message(session, &runtime.runtime_id, &error_text);
+            publish_runtime_failure_message(
+                session,
+                &runtime.runtime_id,
+                &error_text,
+                feed_publisher.as_ref(),
+            );
+            seal_runtime_feed(&mut runtime_event_writer, &runtime.runtime_id)?;
             if env_flag("TURA_RUNTIME_ERRORS_FATAL") {
                 return Err(error_text);
             }
@@ -287,11 +326,12 @@ pub fn process_manas_internal(
             let visible_reply_published_before_terminal_status =
                 visible_reply_before_tool.is_some();
             if let Some(content) = visible_reply_before_tool.as_deref() {
-                if let Err(error) = publish_gateway_agent_message_from_runtime(
+                if let Err(error) = publish_agent_message_from_runtime(
                     &session.session_id,
                     &runtime,
                     content.to_string(),
                     String::new(),
+                    feed_publisher.as_ref(),
                 ) {
                     warn!(
                         session_id = %session.session_id,
@@ -303,8 +343,16 @@ pub fn process_manas_internal(
             }
             provider_timeout_retries = 0;
             no_tool_retries = 0;
-            let mut tool_results =
-                execute_tool_calls(&tool_calls, agents.first(), session, &runtime, redis_url)?;
+            let tool_results = execute_tool_calls(
+                &tool_calls,
+                agents.first(),
+                session,
+                &runtime,
+                redis_url,
+                feed_publisher.as_ref(),
+            );
+            seal_runtime_feed(&mut runtime_event_writer, &runtime.runtime_id)?;
+            let mut tool_results = tool_results?;
             let pending_compact_contexts =
                 extract_compact_context_results(&mut tool_results, Some(&runtime));
             let terminal_task_status = tool_results
@@ -331,7 +379,7 @@ pub fn process_manas_internal(
                         .and_then(|tool_call| tool_call.provider_metadata.clone()),
                 )?;
             }
-            persist_session_checkpoint(session, "tool_results");
+            persist_session_checkpoint(&mut session_delta_writer, session, "tool_results")?;
 
             if pending_compact_contexts.is_empty()
                 && should_end_turn_without_task_status_backfill(
@@ -363,7 +411,7 @@ pub fn process_manas_internal(
                         &active_agent_capabilities,
                     )?;
                 }
-                persist_session_checkpoint(session, "compact_context");
+                persist_session_checkpoint(&mut session_delta_writer, session, "compact_context")?;
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
@@ -393,7 +441,11 @@ pub fn process_manas_internal(
                     &summary,
                     &active_agent_capabilities,
                 )?;
-                persist_session_checkpoint(session, "auto_compact_context");
+                persist_session_checkpoint(
+                    &mut session_delta_writer,
+                    session,
+                    "auto_compact_context",
+                )?;
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
@@ -434,7 +486,11 @@ pub fn process_manas_internal(
                 terminal_status_followed_command,
             ) {
                 if complete_active_doing_task_after_non_planning_reply(session, true) {
-                    persist_session_checkpoint(session, "task_auto_completed");
+                    persist_session_checkpoint(
+                        &mut session_delta_writer,
+                        session,
+                        "task_auto_completed",
+                    )?;
                 }
                 info!(
                     session_id = %session.session_id,
@@ -457,6 +513,8 @@ pub fn process_manas_internal(
                         &current_messages,
                         redis_url,
                         &original_user_task,
+                        runtime_event_writer.as_mut(),
+                        &mut session_delta_writer,
                     )?
                 } else {
                     true
@@ -479,20 +537,41 @@ pub fn process_manas_internal(
             } else if terminal_task_status.as_deref() == Some("doing") {
                 if let Some(next_task) = active_doing_task_user_message(session) {
                     record_task_focus_message_for_terminal_done(session, &next_task, false);
-                    persist_session_checkpoint(session, "task_focus");
+                    persist_session_checkpoint(&mut session_delta_writer, session, "task_focus")?;
                 }
             } else if let Some(next_task) = active_task_user_message(session) {
                 record_task_focus_message_for_terminal_done(session, &next_task, false);
-                persist_session_checkpoint(session, "task_focus");
+                persist_session_checkpoint(&mut session_delta_writer, session, "task_focus")?;
             }
         } else {
+            if let Some(content) = visible_runtime_reply(&runtime) {
+                if let Err(error) = publish_agent_message_from_runtime(
+                    &session.session_id,
+                    &runtime,
+                    content,
+                    String::new(),
+                    feed_publisher.as_ref(),
+                ) {
+                    warn!(
+                        session_id = %session.session_id,
+                        runtime_id = %runtime.runtime_id,
+                        error = %error,
+                        "failed to publish final assistant message"
+                    );
+                }
+            }
+            seal_runtime_feed(&mut runtime_event_writer, &runtime.runtime_id)?;
             if let Some(summary) = auto_compact_summary_after_new_context(session, &runtime, &[]) {
                 compact_session_context_automatically_with_capabilities(
                     session,
                     &summary,
                     &active_agent_capabilities,
                 )?;
-                persist_session_checkpoint(session, "auto_compact_context");
+                persist_session_checkpoint(
+                    &mut session_delta_writer,
+                    session,
+                    "auto_compact_context",
+                )?;
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
@@ -542,7 +621,11 @@ pub fn process_manas_internal(
                     session,
                     !session.goal_mode && !supports_planning,
                 ) {
-                    persist_session_checkpoint(session, "task_auto_completed");
+                    persist_session_checkpoint(
+                        &mut session_delta_writer,
+                        session,
+                        "task_auto_completed",
+                    )?;
                 }
                 info!(
                     session_id = %session.session_id,
@@ -583,7 +666,11 @@ pub fn process_manas_internal(
 
             if !session.goal_mode && !supports_planning {
                 if complete_active_doing_task_after_non_planning_reply(session, false) {
-                    persist_session_checkpoint(session, "task_auto_completed");
+                    persist_session_checkpoint(
+                        &mut session_delta_writer,
+                        session,
+                        "task_auto_completed",
+                    )?;
                 }
                 info!(
                     session_id = %session.session_id,
@@ -617,7 +704,7 @@ pub fn process_manas_internal(
                 push_no_tool_task_status_retry_message(&mut current_messages, session);
                 if let Some(next_task) = active_doing_task_user_message(session) {
                     record_task_focus_message(session, &next_task);
-                    persist_session_checkpoint(session, "task_focus");
+                    persist_session_checkpoint(&mut session_delta_writer, session, "task_focus")?;
                 }
                 warn!(
                     session_id = %session.session_id,
@@ -640,13 +727,14 @@ pub fn process_manas_internal(
 
     session.transition(final_session_state, Utc::now())?;
     persist_session_checkpoint(
+        &mut session_delta_writer,
         session,
         if final_session_state == SessionState::Failed {
             "failed"
         } else {
             "completed"
         },
-    );
+    )?;
     let git_event = if final_session_state == SessionState::Failed {
         "failed"
     } else {
@@ -663,12 +751,9 @@ pub fn process_manas_internal(
         agent.updated_at = Utc::now();
     }
 
-    let final_runtime = create_dummy_runtime(last_runtime_id.unwrap_or_default(), session)?;
-
     Ok(ManasResult {
         agents: agents.to_vec(),
         session: session.clone(),
-        final_runtime,
         final_error,
     })
 }
@@ -829,6 +914,8 @@ fn run_terminal_final_response_turn(
     current_messages: &[serde_json::Value],
     redis_url: &str,
     original_user_task: &str,
+    mut runtime_event_writer: Option<&mut RuntimeEventWriter>,
+    session_delta_writer: &mut Option<SessionDeltaWriter>,
 ) -> Result<bool, String> {
     let (runtime, _tool_calls) = execute_turn(
         agents,
@@ -840,7 +927,19 @@ fn run_terminal_final_response_turn(
         false,
         true,
         true,
+        None,
+        None,
+        runtime_event_writer.as_deref_mut(),
     )?;
+    let feed_publisher = runtime_event_writer
+        .as_deref_mut()
+        .map(|writer| {
+            writer.feed_publisher(
+                &runtime.runtime_id,
+                &frontend_session_id(&runtime.session_id),
+            )
+        })
+        .transpose()?;
     let visible_text = visible_runtime_reply(&runtime);
     let has_visible_text = visible_text
         .as_ref()
@@ -849,13 +948,14 @@ fn run_terminal_final_response_turn(
     let visible_text = visible_text.filter(|text| !text.trim().is_empty());
     accumulate_session_from_runtime(session, &runtime, true)?;
     session.increment_turn(Utc::now());
-    persist_session_checkpoint(session, "terminal_final_response");
+    persist_session_checkpoint(session_delta_writer, session, "terminal_final_response")?;
     if let Some(content) = visible_text {
-        if let Err(error) = publish_gateway_agent_message_from_runtime(
+        if let Err(error) = publish_agent_message_from_runtime(
             &session.session_id,
             &runtime,
             content,
             String::new(),
+            feed_publisher.as_ref(),
         ) {
             warn!(
                 session_id = %session.session_id,
@@ -865,11 +965,38 @@ fn run_terminal_final_response_turn(
             );
         }
     }
-    publish_runtime_usage_record(session, &runtime);
+    publish_runtime_usage_record(session, &runtime, feed_publisher.as_ref());
+    if let Some(writer) = runtime_event_writer {
+        writer.seal_runtime(&runtime.runtime_id)?;
+    }
     Ok(has_visible_text)
 }
 
-fn visible_runtime_reply(runtime: &RuntimeManagement) -> Option<String> {
+fn runtime_feed_publisher(
+    runtime_event_writer: &mut Option<RuntimeEventWriter>,
+    runtime: &RuntimeAggregate,
+) -> Result<Option<RuntimeFeedPublisher>, String> {
+    runtime_event_writer
+        .as_mut()
+        .map(|writer| {
+            writer.feed_publisher(
+                &runtime.runtime_id,
+                &frontend_session_id(&runtime.session_id),
+            )
+        })
+        .transpose()
+}
+
+fn seal_runtime_feed(
+    runtime_event_writer: &mut Option<RuntimeEventWriter>,
+    runtime_id: &str,
+) -> Result<(), String> {
+    runtime_event_writer
+        .as_mut()
+        .map_or(Ok(()), |writer| writer.seal_runtime(runtime_id))
+}
+
+fn visible_runtime_reply(runtime: &RuntimeAggregate) -> Option<String> {
     user_visible_runtime_text(&runtime.text)
         .or_else(|| {
             runtime
@@ -883,7 +1010,7 @@ fn visible_runtime_reply(runtime: &RuntimeManagement) -> Option<String> {
 
 fn auto_compact_summary_after_new_context(
     session: &SessionManagement,
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
 ) -> Option<String> {
     let limit = session.context_tokens.limit;
@@ -905,7 +1032,7 @@ fn auto_compact_summary_after_new_context(
 }
 
 fn estimated_new_context_tokens(
-    runtime: &RuntimeManagement,
+    runtime: &RuntimeAggregate,
     tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
 ) -> u64 {
     let visible_bytes = visible_runtime_reply(runtime)
@@ -947,16 +1074,12 @@ mod tests {
         should_retry_no_tool_task_status, terminal_status_needs_final_response_turn,
         DEFAULT_MANAS_MAX_TURNS,
     };
-    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{
-        RuntimeManagement, RuntimeProviderConfig, UsageReport,
-    };
-    use crate::state_machine::session_management::{
-        PlanStatus, SessionInput, SessionManagement, TaskStep,
-    };
     use crate::tool_router::execute_tool::ToolExecutionResult;
     use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
     use chrono::{Duration, Utc};
+    use lifecycle::{PlanStatus, SessionInput, SessionManagement, TaskStep};
+    use lifecycle::{ProviderConfig, ToolChoice};
+    use lifecycle::{RuntimeAggregate, RuntimeProviderConfig, UsageReport};
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -1349,11 +1472,8 @@ mod tests {
         )
     }
 
-    fn test_runtime_with_usage(
-        session: &SessionManagement,
-        input_tokens: u64,
-    ) -> RuntimeManagement {
-        let mut runtime = RuntimeManagement::new(
+    fn test_runtime_with_usage(session: &SessionManagement, input_tokens: u64) -> RuntimeAggregate {
+        let mut runtime = RuntimeAggregate::new(
             format!("runtime-{}", session.session_id),
             session.session_id.clone(),
             "agent-test".to_string(),
@@ -1376,23 +1496,25 @@ mod tests {
             },
             Utc::now(),
         );
-        runtime.usage = Some(UsageReport {
-            input_tokens,
-            output_tokens: 0,
-            total_tokens: input_tokens,
-            cached_input_tokens: 0,
-            cache_write_tokens: 0,
-            reasoning_tokens: 0,
-            attachment_input_tokens: 0,
-            input_cost: 0.0,
-            output_cost: 0.0,
-            total_cost: 0.0,
-            currency: "USD".to_string(),
-            pricing_source: "test".to_string(),
-            latency_ms: 0,
-            time_to_first_token_ms: 0,
-            token_per_second: 0.0,
-        });
+        runtime
+            .update_usage(Some(UsageReport {
+                input_tokens,
+                output_tokens: 0,
+                total_tokens: input_tokens,
+                cached_input_tokens: 0,
+                cache_write_tokens: 0,
+                reasoning_tokens: 0,
+                attachment_input_tokens: 0,
+                input_cost: 0.0,
+                output_cost: 0.0,
+                total_cost: 0.0,
+                currency: "USD".to_string(),
+                pricing_source: "test".to_string(),
+                latency_ms: 0,
+                time_to_first_token_ms: 0,
+                token_per_second: 0.0,
+            }))
+            .expect("fixture usage should apply");
         runtime
     }
 

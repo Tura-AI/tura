@@ -70,7 +70,7 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
     });
     let input = StreamedCommandCheckpoint {
         session_id: &session_id,
-        turn_id: runtime_id,
+        runtime_id,
         runtime_worker_id: runtime_id,
         command_run_id,
         index: 0,
@@ -110,7 +110,6 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
             "command_started",
         ]
     );
-    assert!(rows.iter().all(|row| row.status == "applied"));
     let finished = rows
         .iter()
         .find(|row| row.event_type == "command_finished")
@@ -131,39 +130,43 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
         .iter()
         .find(|row| row.event_type == "command_run_finished")
         .ok_or_else(|| anyhow!("missing command_run_finished row"))?;
+    let run_started_at_text = run_started_at.to_rfc3339();
+    let ready_at_text = ready_at.to_rfc3339();
+    let command_started_at_text = command_started_at.to_rfc3339();
+    let command_finished_at_text = command_finished_at.to_rfc3339();
+    let run_finished_at_text = run_finished_at.to_rfc3339();
     assert_eq!(
-        run_started.payload["started_at"],
-        run_started_at.to_rfc3339()
+        run_started.started_at.as_deref(),
+        Some(run_started_at_text.as_str())
     );
-    assert_eq!(ready.payload["started_at"], ready_at.to_rfc3339());
+    assert_eq!(ready.started_at.as_deref(), Some(ready_at_text.as_str()));
     assert_eq!(
-        started.payload["started_at"],
-        command_started_at.to_rfc3339()
-    );
-    assert_eq!(
-        finished.payload["finished_at"],
-        command_finished_at.to_rfc3339()
-    );
-    assert_eq!(
-        run_finished.payload["started_at"],
-        run_started_at.to_rfc3339()
+        started.started_at.as_deref(),
+        Some(command_started_at_text.as_str())
     );
     assert_eq!(
-        run_finished.payload["finished_at"],
-        run_finished_at.to_rfc3339()
+        finished.finished_at.as_deref(),
+        Some(command_finished_at_text.as_str())
     );
-    assert_eq!(run_finished.payload["status"], "command_run_finished");
-    assert_eq!(run_finished.payload["changes"]["status"], "success");
+    assert_eq!(
+        run_finished.started_at.as_deref(),
+        Some(run_started_at_text.as_str())
+    );
+    assert_eq!(
+        run_finished.finished_at.as_deref(),
+        Some(run_finished_at_text.as_str())
+    );
+    assert_eq!(run_finished.changes["status"], "success");
     assert_eq!(finished.command_type.as_deref(), Some("shell_command"));
     assert_eq!(
-        finished.payload["output_summary"],
-        json!("checkpoint-online\n")
+        finished.output_summary.as_deref(),
+        Some("checkpoint-online\n")
     );
-    assert_eq!(finished.payload["changes"][0]["path"], "checkpoint.txt");
+    assert_eq!(finished.changes[0]["path"], "checkpoint.txt");
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }
@@ -176,7 +179,7 @@ fn runtime_checkpoint_business_flow_queues_offline_ack_and_drains_on_service_sta
     std::fs::create_dir_all(&home)?;
     let _env = EnvGuard::new(&home);
     assert!(
-        !session_log::ipc::service_is_running(),
+        !session_log_contract::client::service_is_running(),
         "checkpoint offline test starts without a session_db service"
     );
 
@@ -197,11 +200,10 @@ fn runtime_checkpoint_business_flow_queues_offline_ack_and_drains_on_service_sta
     let rows = wait_for_checkpoint_rows(&home, &session_id, 1, Duration::from_secs(10))?;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].event_type, "command_run_started");
-    assert_eq!(rows[0].status, "applied");
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }
@@ -214,7 +216,7 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
     std::fs::create_dir_all(&home)?;
     let _env = EnvGuard::new(&home);
     assert!(
-        !session_log::ipc::service_is_running(),
+        !session_log_contract::client::service_is_running(),
         "checkpoint batch test starts without a session_db service"
     );
 
@@ -271,7 +273,7 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
     ))?;
     let finished = StreamedCommandCheckpoint {
         session_id: &session_id,
-        turn_id: runtime_id,
+        runtime_id,
         runtime_worker_id: runtime_id,
         command_run_id,
         index: 0,
@@ -306,7 +308,6 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
         "duplicate offline command_finished ACK should update one durable checkpoint row; rows={row_event_types:?}; failed_queue={:?}",
         failed_queue_errors(&home)?
     );
-    assert!(rows.iter().all(|row| row.status == "applied"));
     let mut event_types = rows
         .iter()
         .map(|row| row.event_type.as_str())
@@ -337,26 +338,31 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
         finished_row.command_line.as_deref(),
         Some("printf checkpoint-batch")
     );
-    assert_eq!(finished_row.payload["output_summary"], "checkpoint-batch");
-    assert_eq!(finished_row.payload["changes"][0]["path"], "batch.txt");
-    assert_eq!(finished_row.payload["changes"][1]["path"], "trace.log");
+    assert_eq!(
+        finished_row.output_summary.as_deref(),
+        Some("checkpoint-batch")
+    );
+    assert_eq!(finished_row.changes[0]["path"], "batch.txt");
+    assert_eq!(finished_row.changes[1]["path"], "trace.log");
     let run_finished = rows
         .iter()
         .find(|row| row.event_type == "command_run_finished")
         .ok_or_else(|| anyhow!("missing command_run_finished row after offline drain"))?;
+    let run_started_at_text = run_started_at.to_rfc3339();
+    let run_finished_at_text = run_finished_at.to_rfc3339();
     assert_eq!(
-        run_finished.payload["started_at"],
-        run_started_at.to_rfc3339()
+        run_finished.started_at.as_deref(),
+        Some(run_started_at_text.as_str())
     );
     assert_eq!(
-        run_finished.payload["finished_at"],
-        run_finished_at.to_rfc3339()
+        run_finished.finished_at.as_deref(),
+        Some(run_finished_at_text.as_str())
     );
-    assert_eq!(run_finished.payload["changes"]["status"], "success");
+    assert_eq!(run_finished.changes["status"], "success");
 
     drop(service);
     wait_until(Duration::from_secs(5), || {
-        !session_log::ipc::service_is_running()
+        !session_log_contract::client::service_is_running()
     })?;
     Ok(())
 }
@@ -364,45 +370,41 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
 #[derive(Debug)]
 struct CheckpointRow {
     event_type: String,
-    status: String,
     event_seq: Option<i64>,
     command_type: Option<String>,
     command_line: Option<String>,
-    payload: serde_json::Value,
+    output_summary: Option<String>,
+    changes: serde_json::Value,
+    started_at: Option<String>,
+    finished_at: Option<String>,
 }
 
 fn checkpoint_rows(home: &Path, session_id: &str) -> Result<Vec<CheckpointRow>> {
     let db = home.join("db").join("session_log").join("index.sqlite3");
     let conn = Connection::open(&db).with_context(|| format!("open {}", db.display()))?;
     let mut stmt = conn.prepare(
-        "SELECT event_type, status, event_seq, payload_json
-         FROM session_write_queue
+        "SELECT checkpoint_type, event_seq, command_type, command_line,
+                output_summary, changes_json, started_at, finished_at
+         FROM command_checkpoints
          WHERE session_id = ?1
-         ORDER BY COALESCE(event_seq, 0), id",
+         ORDER BY COALESCE(event_seq, 0), idempotency_key",
     )?;
     let rows = stmt
         .query_map([session_id], |row| {
             let event_type: String = row.get(0)?;
-            let status: String = row.get(1)?;
-            let event_seq: Option<i64> = row.get(2)?;
-            let payload_json: String = row.get(3)?;
-            let payload: serde_json::Value = serde_json::from_str(&payload_json)
+            let event_seq: Option<i64> = row.get(1)?;
+            let changes_json: String = row.get(5)?;
+            let changes: serde_json::Value = serde_json::from_str(&changes_json)
                 .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-            let command_type = payload
-                .get("command_type")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string);
-            let command_line = payload
-                .get("command_line")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string);
             Ok(CheckpointRow {
                 event_type,
-                status,
                 event_seq,
-                command_type,
-                command_line,
-                payload,
+                command_type: row.get(2)?,
+                command_line: row.get(3)?,
+                output_summary: row.get(4)?,
+                changes,
+                started_at: row.get(6)?,
+                finished_at: row.get(7)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -553,7 +555,7 @@ impl ServiceThread {
         let handle = std::thread::spawn(session_log::service::run_socket_service);
         wait_until(
             Duration::from_secs(10),
-            session_log::ipc::service_is_running,
+            session_log_contract::client::service_is_running,
         )?;
         Ok(Self {
             handle: Some(handle),
@@ -563,7 +565,7 @@ impl ServiceThread {
 
 impl Drop for ServiceThread {
     fn drop(&mut self) {
-        let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

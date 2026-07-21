@@ -1,70 +1,31 @@
 //! File-backed handoff queue for session DB writes.
 //!
-//! Runtime processes must not block on session-log storage. They enqueue JSON
-//! commands here and let the session DB owner drain them.
+//! Runtime processes and explicit offline handoffs enqueue JSON commands here
+//! and let the session DB owner drain them.
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::{path::default_db_dir, SessionLogStore};
-use session_log_contract::SessionLogCommand;
-
-const QUEUE_DIR: &str = "message_queue";
-const PENDING_DIR: &str = "pending";
-const PROCESSING_DIR: &str = "processing";
-const FAILED_DIR: &str = "failed";
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-
-pub fn is_async_write(command: &SessionLogCommand) -> bool {
-    matches!(
-        command,
-        SessionLogCommand::UpsertSession(_)
-            | SessionLogCommand::ApplyCommandCheckpoint(_)
-            | SessionLogCommand::MarkSessionInterrupted(_)
-            | SessionLogCommand::DeleteSession(_)
-            | SessionLogCommand::DeleteWorkspace(_)
-    )
-}
-
-pub fn enqueue_command(command: &SessionLogCommand) -> Result<PathBuf> {
-    let payload = serde_json::to_vec(command)?;
-    enqueue_serialized_command(&payload)
-}
-
-pub fn enqueue_serialized_command(payload: &[u8]) -> Result<PathBuf> {
-    let pending = queue_root().join(PENDING_DIR);
-    fs::create_dir_all(&pending)
-        .with_context(|| format!("failed to create session queue {}", pending.display()))?;
-
-    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let now = chrono::Utc::now()
-        .timestamp_nanos_opt()
-        .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() * 1000);
-    let name = queue_item_name(now, std::process::id(), id);
-    let tmp_path = pending.join(format!("{name}.tmp"));
-    let final_path = pending.join(name);
-    fs::write(&tmp_path, payload)
-        .with_context(|| format!("failed to write session queue item {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, &final_path).with_context(|| {
-        format!(
-            "failed to publish session queue item {}",
-            final_path.display()
-        )
-    })?;
-    Ok(final_path)
-}
+use crate::{ipc, SessionLogStore};
+use session_log_contract::client::{failed_queue_dir, pending_queue_dir, processing_queue_dir};
+use session_log_contract::{SessionFeedEntry, SessionLogCommand};
 
 pub fn drain_queue(store: &SessionLogStore, limit: usize) -> Result<u64> {
-    let root = queue_root();
-    let pending = root.join(PENDING_DIR);
+    drain_queue_with_feed(store, limit, |_| {})
+}
+
+pub(crate) fn drain_queue_with_feed(
+    store: &SessionLogStore,
+    limit: usize,
+    mut publish: impl FnMut(SessionFeedEntry),
+) -> Result<u64> {
+    let pending = pending_queue_dir();
     fs::create_dir_all(&pending)?;
-    fs::create_dir_all(root.join(PROCESSING_DIR))?;
-    fs::create_dir_all(root.join(FAILED_DIR))?;
-    recover_orphaned_processing(&root)?;
+    fs::create_dir_all(processing_queue_dir())?;
+    fs::create_dir_all(failed_queue_dir())?;
+    recover_orphaned_processing()?;
 
     let mut paths = fs::read_dir(&pending)?
         .flatten()
@@ -78,17 +39,20 @@ pub fn drain_queue(store: &SessionLogStore, limit: usize) -> Result<u64> {
         let Some(file_name) = path.file_name().map(|name| name.to_owned()) else {
             continue;
         };
-        let processing = root.join(PROCESSING_DIR).join(&file_name);
+        let processing = processing_queue_dir().join(&file_name);
         if fs::rename(&path, &processing).is_err() {
             continue;
         }
         match apply_file(store, &processing) {
-            Ok(()) => {
+            Ok(feed_entries) => {
+                for entry in feed_entries {
+                    publish(entry);
+                }
                 let _ = fs::remove_file(&processing);
                 applied += 1;
             }
             Err(error) => {
-                let failed = root.join(FAILED_DIR).join(&file_name);
+                let failed = failed_queue_dir().join(&file_name);
                 let error_path = failed.with_extension("error.txt");
                 let move_result = fs::rename(&processing, &failed);
                 if move_result.is_ok() {
@@ -121,13 +85,12 @@ pub fn drain_queue(store: &SessionLogStore, limit: usize) -> Result<u64> {
     Ok(applied)
 }
 
-fn recover_orphaned_processing(root: &Path) -> Result<()> {
-    let processing = root.join(PROCESSING_DIR);
-    let pending = root.join(PENDING_DIR);
+fn recover_orphaned_processing() -> Result<()> {
+    let processing = processing_queue_dir();
+    let pending = pending_queue_dir();
     if !processing.exists() {
         return Ok(());
     }
-
     for entry in fs::read_dir(&processing)?.flatten() {
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
@@ -152,11 +115,7 @@ fn recover_orphaned_processing(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn queue_item_name(now: i64, pid: u32, id: u64) -> String {
-    format!("{now:020}-{pid}-{id:020}.json")
-}
-
-fn apply_file(store: &SessionLogStore, path: &Path) -> Result<()> {
+fn apply_file(store: &SessionLogStore, path: &Path) -> Result<Vec<SessionFeedEntry>> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read session queue item {}", path.display()))?;
     let command: SessionLogCommand = serde_json::from_str(&raw)
@@ -164,19 +123,25 @@ fn apply_file(store: &SessionLogStore, path: &Path) -> Result<()> {
     apply_command(store, command)
 }
 
-fn apply_command(store: &SessionLogStore, command: SessionLogCommand) -> Result<()> {
-    match command {
-        SessionLogCommand::UpsertSession(payload) => store.upsert_session(payload),
-        SessionLogCommand::ApplyCommandCheckpoint(payload) => {
-            store.apply_command_checkpoint(*payload)
-        }
-        SessionLogCommand::MarkSessionInterrupted(payload) => {
-            store.mark_session_interrupted(payload).map(|_| ())
-        }
-        SessionLogCommand::DeleteSession(payload) => store.delete_session(payload),
-        SessionLogCommand::DeleteWorkspace(payload) => store.delete_workspace(payload),
-        other => anyhow::bail!("session queue only accepts write commands: {other:?}"),
+fn apply_command(
+    store: &SessionLogStore,
+    command: SessionLogCommand,
+) -> Result<Vec<SessionFeedEntry>> {
+    if !matches!(
+        &command,
+        SessionLogCommand::CreateSession(_)
+            | SessionLogCommand::ExecuteSessionCommand(_)
+            | SessionLogCommand::UpdateSession(_)
+            | SessionLogCommand::UpdateSessionTodos(_)
+            | SessionLogCommand::PersistSessionDelta(_)
+            | SessionLogCommand::ApplyCommandCheckpoint(_)
+            | SessionLogCommand::MarkSessionInterrupted(_)
+            | SessionLogCommand::DeleteSession(_)
+            | SessionLogCommand::DeleteWorkspace(_)
+    ) {
+        anyhow::bail!("session queue only accepts write commands: {command:?}");
     }
+    Ok(ipc::execute_command_with_feed(store, command)?.committed_feed_entries)
 }
 
 fn is_discardable_queue_error(error: &anyhow::Error) -> bool {
@@ -189,116 +154,4 @@ fn is_discardable_queue_error(error: &anyhow::Error) -> bool {
             || text.contains("invalid canonical session state")
             || text.contains("session queue only accepts write commands")
     })
-}
-
-fn queue_root() -> PathBuf {
-    default_db_dir().join(QUEUE_DIR)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{is_async_write, queue_item_name};
-    use serde_json::json;
-    use session_log_contract::{
-        CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
-        ListSessionRecordsRequest, ListSessionsRequest, MarkSessionInterruptedRequest,
-        SessionLogCommand, UpsertSessionRequest,
-    };
-
-    fn upsert() -> UpsertSessionRequest {
-        UpsertSessionRequest {
-            session: json!({ "id": "session", "management": { "session_id": "session", "state": "created" } }),
-            parent_id: None,
-            messages: Vec::new(),
-            todos: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn queue_item_names_keep_same_tick_ids_in_numeric_order() {
-        let now = 42;
-        let pid = 7;
-        let mut names = vec![
-            queue_item_name(now, pid, 10),
-            queue_item_name(now, pid, 2),
-            queue_item_name(now, pid, 1),
-        ];
-        names.sort();
-
-        assert_eq!(
-            names,
-            vec![
-                queue_item_name(now, pid, 1),
-                queue_item_name(now, pid, 2),
-                queue_item_name(now, pid, 10),
-            ]
-        );
-        assert!(names[0].ends_with("-00000000000000000001.json"));
-    }
-
-    fn checkpoint() -> CommandCheckpoint {
-        CommandCheckpoint {
-            session_id: "session".to_string(),
-            turn_id: "turn".to_string(),
-            runtime_worker_id: None,
-            provider_call_id: None,
-            command_run_id: None,
-            command_id: None,
-            event_seq: None,
-            command_type: None,
-            command_line: None,
-            status: "turn_started".to_string(),
-            output_summary: None,
-            changes: json!({}),
-            started_at: None,
-            finished_at: None,
-        }
-    }
-
-    #[test]
-    fn async_write_classifier_accepts_only_mutating_commands() {
-        let write_commands = [
-            SessionLogCommand::UpsertSession(upsert()),
-            SessionLogCommand::ApplyCommandCheckpoint(Box::new(checkpoint())),
-            SessionLogCommand::MarkSessionInterrupted(MarkSessionInterruptedRequest {
-                session_id: "session".to_string(),
-            }),
-            SessionLogCommand::DeleteSession(DeleteSessionRequest {
-                session_id: "session".to_string(),
-            }),
-            SessionLogCommand::DeleteWorkspace(DeleteWorkspaceRequest {
-                workspace: "workspace".to_string(),
-            }),
-        ];
-        for command in &write_commands {
-            assert!(is_async_write(command), "{command:?} should be queued");
-        }
-
-        let read_commands = [
-            SessionLogCommand::Health,
-            SessionLogCommand::GetSession(GetSessionRequest {
-                session_id: "session".to_string(),
-            }),
-            SessionLogCommand::ListWorkspaces,
-            SessionLogCommand::ListSessions(ListSessionsRequest {
-                workspace: "workspace".to_string(),
-                page: 0,
-                page_size: 10,
-            }),
-            SessionLogCommand::ListSessionSummaries(ListSessionsRequest {
-                workspace: "workspace".to_string(),
-                page: 0,
-                page_size: 10,
-            }),
-            SessionLogCommand::ListSessionRecords(ListSessionRecordsRequest {
-                session_id: "session".to_string(),
-                page: 0,
-                page_size: 10,
-            }),
-            SessionLogCommand::Shutdown,
-        ];
-        for command in &read_commands {
-            assert!(!is_async_write(command), "{command:?} should not be queued");
-        }
-    }
 }
