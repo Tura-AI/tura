@@ -5,11 +5,21 @@ use chrono::{DateTime, Utc};
 use crate::state_machine::runtime_management::UsageReport;
 
 pub(crate) fn usage_report_from_metrics(
+    runtime: &crate::state_machine::runtime_management::RuntimeManagement,
     metrics: Option<tura_llm_rust::CallMetrics>,
     started_at: DateTime<Utc>,
     finished_at: DateTime<Utc>,
     first_token_at: DateTime<Utc>,
 ) -> Option<UsageReport> {
+    let called_at = runtime.called_at.unwrap_or(runtime.created_at);
+    let routing_ms = called_at
+        .signed_duration_since(runtime.created_at)
+        .num_milliseconds()
+        .max(0) as u64;
+    let provider_queue_ms = started_at
+        .signed_duration_since(called_at)
+        .num_milliseconds()
+        .max(0) as u64;
     let latency_ms = finished_at
         .signed_duration_since(started_at)
         .num_milliseconds()
@@ -35,6 +45,8 @@ pub(crate) fn usage_report_from_metrics(
             total_cost: m.cost.total_cost.unwrap_or(0.0),
             currency: m.cost.currency.unwrap_or_else(|| "USD".to_string()),
             pricing_source: "provider".to_string(),
+            routing_ms,
+            provider_queue_ms,
             latency_ms,
             time_to_first_token_ms,
             token_per_second: tokens_per_second(output_tokens, latency_ms),

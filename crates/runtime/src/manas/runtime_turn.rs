@@ -704,6 +704,8 @@ mod tests {
             total_cost: 0.0,
             currency: "USD".to_string(),
             pricing_source: "provider".to_string(),
+            routing_ms: 0,
+            provider_queue_ms: 0,
             latency_ms: 2_950,
             time_to_first_token_ms: 2_950,
             token_per_second: 0.33,

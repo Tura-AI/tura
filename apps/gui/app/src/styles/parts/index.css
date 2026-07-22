@@ -5,6 +5,7 @@
 @import "./base/loading.css";
 @import "./base/page-shell.css";
 @import "./layout/composer-controls.css";
+@import "./conversation/latency-diagnostics.css";
 @import "./layout/start-modal.css";
 @import "./layout/messages-rich.css";
 @import "./layout/rich-content.css";

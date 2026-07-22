@@ -187,6 +187,8 @@ mod tests {
                     total_cost: 0.03,
                     currency: "USD".to_string(),
                     pricing_source: "test".to_string(),
+                    routing_ms: 10,
+                    provider_queue_ms: 5,
                     latency_ms: 100,
                     time_to_first_token_ms: 25,
                     token_per_second: 50.0,

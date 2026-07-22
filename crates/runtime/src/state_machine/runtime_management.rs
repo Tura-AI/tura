@@ -95,6 +95,10 @@ pub struct UsageReport {
     pub total_cost: f64,
     pub currency: String,
     pub pricing_source: String,
+    #[serde(default)]
+    pub routing_ms: u64,
+    #[serde(default)]
+    pub provider_queue_ms: u64,
     pub latency_ms: u64,
     pub time_to_first_token_ms: u64,
     pub token_per_second: f64,
@@ -589,6 +593,8 @@ mod tests {
             total_cost: 0.0,
             currency: "USD".to_string(),
             pricing_source: "test".to_string(),
+            routing_ms: 10,
+            provider_queue_ms: 0,
             latency_ms: 20,
             time_to_first_token_ms: 5,
             token_per_second: 250.0,
@@ -626,6 +632,8 @@ mod tests {
             total_cost: 0.0,
             currency: "USD".to_string(),
             pricing_source: "provider".to_string(),
+            routing_ms: 0,
+            provider_queue_ms: 0,
             latency_ms: 1000,
             time_to_first_token_ms: 0,
             token_per_second: 1.0,

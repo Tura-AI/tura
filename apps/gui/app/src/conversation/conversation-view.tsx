@@ -60,6 +60,7 @@ import {
 } from "./message-tools";
 import { assistantFooterMetaText } from "./assistant-footer-meta";
 import { transcriptNearBottom } from "./transcript-scroll";
+import { LatencyDiagnosticsPanel } from "./latency-diagnostics-panel";
 
 const INSPECTOR_MIN_WIDTH = 320;
 const INSPECTOR_MAX_WIDTH = 680;
@@ -413,6 +414,7 @@ export function ConversationView(props: {
           <span>{t("conversation")}</span>
           <h1>{props.session ? sessionTitle(props.session) : t("newSession")}</h1>
         </div>
+        <LatencyDiagnosticsPanel messages={props.messages} session={props.session} />
       </header>
       <div class="conversation-grid page-layer-middle">
         <div
