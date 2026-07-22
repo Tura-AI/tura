@@ -683,7 +683,7 @@ test("render shows agent persona summary and persona panel", () => {
   const top = render(state, richCapabilities());
   assert.doesNotMatch(top, /Agent:.*fast/);
   assert.doesNotMatch(top, /persona:.*tura/);
-  assert.match(top, /Tab: sessions/);
+  assert.match(top, /Tab: complete\/sessions/);
   assert.match(top, /\/stop: cancel/);
   assert.doesNotMatch(top, /↑\/↓ view sessions/);
   assert.doesNotMatch(top, /[┌┐└┘]/u);

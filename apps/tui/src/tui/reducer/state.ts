@@ -51,6 +51,9 @@ export interface AppState {
   modelConfig?: TuraConfigResponse;
   status: "idle" | "busy" | "error";
   composer: string;
+  composerCursor: number;
+  selectedCompletionIndex: number;
+  completionDismissed: boolean;
   notice?: string;
   noticeTransient?: boolean;
   help: boolean;
@@ -115,7 +118,9 @@ export type AppAction =
     }
   | { type: "event"; event: GatewayEventEnvelope }
   | { type: "messages-incremental"; sessionID: string; messages: Message[]; session?: Session }
-  | { type: "composer"; value: string }
+  | { type: "composer"; value: string; cursor?: number }
+  | { type: "select-completion"; delta: number; count: number }
+  | { type: "dismiss-completion" }
   | { type: "notice"; value?: string; transient?: boolean }
   | { type: "status"; value: AppState["status"] }
   | { type: "permissions"; value: PermissionRequest[] }
@@ -173,6 +178,9 @@ export function initialState(cwd: string): AppState {
     authStatuses: {},
     status: "idle",
     composer: "",
+    composerCursor: 0,
+    selectedCompletionIndex: 0,
+    completionDismissed: false,
     help: false,
     sessionsOpen: false,
     modelsOpen: false,

@@ -1,5 +1,6 @@
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
 import { borderColor, reset, textSecondary } from "./styles/colors.js";
+import { graphemes } from "./text-graphemes.js";
 export {
   bold,
   borderColor,
@@ -29,11 +30,6 @@ export const clear = "\x1bc\x1b[3J\x1b[2J\x1b[H\x1b[3J";
 const ansiControlPattern = /^(?:\x1b\[[0-9;]*[Km]|\x1b\]8;;[^\x1b]*\x1b\\)/;
 const ansiControlGlobalPattern = /(?:\x1b\[[0-9;]*[Km]|\x1b\]8;;[^\x1b]*\x1b\\)/g;
 const sgrControlPattern = /^\x1b\[([0-9;]*)m/;
-const segmenter =
-  typeof Intl !== "undefined" && "Segmenter" in Intl
-    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
-    : undefined;
-
 export let activeCapabilities: TerminalCapabilities = detectTerminalCapabilities();
 
 export function setActiveCapabilities(capabilities: TerminalCapabilities) {
@@ -163,11 +159,6 @@ export function visibleTextWidth(text: string): number {
 
 export function stripAnsi(text: string): string {
   return text.replace(ansiControlGlobalPattern, "");
-}
-
-function graphemes(text: string): string[] {
-  if (!text) return [];
-  return segmenter ? [...segmenter.segment(text)].map((item) => item.segment) : Array.from(text);
 }
 
 function* ansiTokens(text: string): Generator<{ value: string; control: boolean }> {

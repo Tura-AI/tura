@@ -49,6 +49,22 @@ import {
 } from "./session-actions.js";
 import { createResizeDrawGate, createTerminalResizeHandler } from "./resize.js";
 import { mediaTokenForInputPath, saveClipboardImageInput } from "./clipboard-image.js";
+import {
+  backspaceAtCursor,
+  deleteAtCursor,
+  insertAtCursor,
+  moveCursorByCharacter,
+  moveCursorByWord,
+  moveCursorToLineBoundary,
+  type ComposerEdit,
+} from "./composer-editor.js";
+import {
+  completedSlashCommand,
+  slashCommandQuery,
+  slashCommandSuggestions,
+  type SlashCommandDefinition,
+} from "./slash-commands.js";
+import { modelCount } from "./reducer/navigation.js";
 
 const GATEWAY_SHUTDOWN_POLL_MS = 1_000;
 const GATEWAY_SHUTDOWN_PROBE_TIMEOUT_MS = 1_500;
@@ -424,10 +440,19 @@ export async function handleTuiKeypress(
     }
     if (state.sessionLoading) return;
     if (key?.name === "tab" || sequence === "\t") {
+      const suggestions = activeSlashCommandSuggestions(state);
+      if (suggestions.length) {
+        applySlashCommandCompletion(state, dispatch, suggestions);
+        return;
+      }
       await openSessionPicker(client, getState, dispatch);
       return;
     }
     if (key?.name === "escape") {
+      if (activeSlashCommandSuggestions(state).length) {
+        dispatch({ type: "dismiss-completion" });
+        return;
+      }
       if (state.help) dispatch({ type: "toggle-help" });
       if (state.sessionsOpen) {
         clearTerminalForSurfaceTransition();
@@ -457,8 +482,13 @@ export async function handleTuiKeypress(
       sequence === "\x1b[A" ||
       sequence === "\x1b[B"
     ) {
-      if (state.settingInput) return;
       const delta = key?.name === "up" || sequence === "\x1b[A" ? -1 : 1;
+      const suggestions = activeSlashCommandSuggestions(state);
+      if (suggestions.length) {
+        dispatch({ type: "select-completion", delta, count: suggestions.length });
+        return;
+      }
+      if (state.settingInput) return;
       if (state.sessionsOpen) dispatch({ type: "select-session", delta });
       else if (state.modelsOpen) dispatch({ type: "select-model", delta });
       else if (state.personasOpen) dispatch({ type: "select-persona", delta });
@@ -474,45 +504,51 @@ export async function handleTuiKeypress(
       sequence === "\x1b[D" ||
       sequence === "\x1b[C"
     ) {
-      if (state.settingInput) return;
       const direction = key?.name === "left" || sequence === "\x1b[D" ? -1 : 1;
-      if (state.sessionsOpen) {
-        dispatch({
-          type: "select-session",
-          delta: pageSelectionDelta(
-            state.selectedSessionIndex,
-            sessionPanelPageSize(),
-            state.sessions.length + 1,
-            direction,
-          ),
-        });
+      if (state.settingInput) {
+        const cursor =
+          key?.meta || key?.ctrl
+            ? moveCursorByWord(state.composer, state.composerCursor, direction)
+            : moveCursorByCharacter(state.composer, state.composerCursor, direction);
+        dispatch({ type: "composer", value: state.composer, cursor });
+      } else if (state.sessionsOpen) {
+        dispatchPanelPageSelection(state, dispatch, direction);
+      } else if (state.modelsOpen || state.personasOpen) {
+        dispatchPanelPageSelection(state, dispatch, direction);
       } else if (state.settingsOpen && state.settingDetail) {
-        dispatch({
-          type: "select-setting-option",
-          delta: pageSelectionDelta(
-            state.selectedSettingOptionIndex,
-            settingsPanelPageSize(state),
-            settingOptions(state).length,
-            direction,
-          ),
-        });
+        dispatchPanelPageSelection(state, dispatch, direction);
       } else if (state.settingsOpen) {
-        dispatch({
-          type: "select-settings",
-          delta: pageSelectionDelta(
-            state.selectedSettingsIndex,
-            settingsPanelPageSize(state),
-            settingsEntries(state).length,
-            direction,
-          ),
-        });
-      } else return;
+        dispatchPanelPageSelection(state, dispatch, direction);
+      } else {
+        const cursor =
+          key?.meta || key?.ctrl
+            ? moveCursorByWord(state.composer, state.composerCursor, direction)
+            : moveCursorByCharacter(state.composer, state.composerCursor, direction);
+        dispatch({ type: "composer", value: state.composer, cursor });
+      }
       return;
     }
     if (key?.name === "pageup" || sequence === "\x1b[5~") {
+      dispatchPanelPageSelection(state, dispatch, -1);
       return;
     }
     if (key?.name === "pagedown" || sequence === "\x1b[6~") {
+      dispatchPanelPageSelection(state, dispatch, 1);
+      return;
+    }
+    if (key?.name === "home" || key?.name === "end") {
+      if (dispatchPanelBoundarySelection(state, dispatch, key.name === "home" ? "start" : "end"))
+        return;
+      const cursor = key.ctrl
+        ? key.name === "home"
+          ? 0
+          : state.composer.length
+        : moveCursorToLineBoundary(
+            state.composer,
+            state.composerCursor,
+            key.name === "home" ? "start" : "end",
+          );
+      dispatch({ type: "composer", value: state.composer, cursor });
       return;
     }
     if (state.sessionsOpen && (key?.name === "delete" || sequence === "\x1b[3~")) {
@@ -573,6 +609,13 @@ export async function handleTuiKeypress(
         }
         return;
       }
+      const suggestions = activeSlashCommandSuggestions(state);
+      const query = slashCommandQuery(state.composer);
+      const selectedSuggestion = selectedSlashCommand(state, suggestions);
+      if (selectedSuggestion && query !== selectedSuggestion.name) {
+        applySlashCommandCompletion(state, dispatch, suggestions);
+        return;
+      }
       const value = state.composer.trim();
       dispatch({ type: "composer", value: "" });
       if (!value) return;
@@ -583,14 +626,34 @@ export async function handleTuiKeypress(
       return;
     }
     if (state.settingsOpen && !state.settingInput) return;
+    if (key?.ctrl && key.name === "a") {
+      dispatch({ type: "composer", value: state.composer, cursor: 0 });
+      return;
+    }
+    if (key?.ctrl && key.name === "e") {
+      dispatch({ type: "composer", value: state.composer, cursor: state.composer.length });
+      return;
+    }
+    if (key?.meta && (key.name === "b" || key.name === "f")) {
+      const cursor = moveCursorByWord(
+        state.composer,
+        state.composerCursor,
+        key.name === "b" ? -1 : 1,
+      );
+      dispatch({ type: "composer", value: state.composer, cursor });
+      return;
+    }
     if (key?.ctrl && key.name === "j") {
-      dispatch({ type: "composer", value: `${state.composer}\n` });
+      dispatchComposerEdit(dispatch, insertAtCursor(state.composer, state.composerCursor, "\n"));
       return;
     }
     if (key?.ctrl && key.name === "v") {
       const path = await saveClipboardImageInput(state.cwd);
       if (path)
-        dispatch({ type: "composer", value: state.composer + mediaTokenForInputPath(path) });
+        dispatchComposerEdit(
+          dispatch,
+          insertAtCursor(state.composer, state.composerCursor, mediaTokenForInputPath(path)),
+        );
       return;
     }
     if (key?.ctrl && key.name === "l") {
@@ -598,16 +661,150 @@ export async function handleTuiKeypress(
       return;
     }
     if (key?.name === "backspace") {
-      dispatch({ type: "composer", value: state.composer.slice(0, -1) });
+      dispatchComposerEdit(dispatch, backspaceAtCursor(state.composer, state.composerCursor));
+      return;
+    }
+    if (key?.name === "delete" || sequence === "\x1b[3~") {
+      dispatchComposerEdit(dispatch, deleteAtCursor(state.composer, state.composerCursor));
       return;
     }
     const printable = text ?? printableSequence(keySequence(key));
     if (printable && !key?.ctrl && !key?.meta) {
-      dispatch({ type: "composer", value: state.composer + printable });
+      dispatchComposerEdit(
+        dispatch,
+        insertAtCursor(state.composer, state.composerCursor, printable),
+      );
     }
   } catch (error) {
     dispatch({ type: "notice", value: userFacingError(error), transient: true });
   }
+}
+
+function activeSlashCommandSuggestions(state: AppState): SlashCommandDefinition[] {
+  if (
+    state.settingInput ||
+    state.completionDismissed ||
+    state.help ||
+    state.sessionsOpen ||
+    state.modelsOpen ||
+    state.authOpen ||
+    state.settingsOpen ||
+    state.personasOpen
+  )
+    return [];
+  return slashCommandSuggestions(state.composer);
+}
+
+function selectedSlashCommand(
+  state: AppState,
+  suggestions: SlashCommandDefinition[],
+): SlashCommandDefinition | undefined {
+  if (!suggestions.length) return undefined;
+  return suggestions[state.selectedCompletionIndex % suggestions.length];
+}
+
+function applySlashCommandCompletion(
+  state: AppState,
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  suggestions: SlashCommandDefinition[],
+): void {
+  const selected = selectedSlashCommand(state, suggestions);
+  if (!selected) return;
+  const value = completedSlashCommand(selected);
+  dispatch({ type: "composer", value, cursor: value.length });
+}
+
+function dispatchComposerEdit(
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  edit: ComposerEdit,
+): void {
+  dispatch({ type: "composer", value: edit.value, cursor: edit.cursor });
+}
+
+type PanelSelection = {
+  kind: "session" | "model" | "persona" | "settings" | "setting-option";
+  current: number;
+  total: number;
+  pageSize: number;
+};
+
+function activePanelSelection(state: AppState): PanelSelection | undefined {
+  if (state.settingInput) return undefined;
+  if (state.sessionsOpen)
+    return {
+      kind: "session",
+      current: state.selectedSessionIndex,
+      total: state.sessions.length + 1,
+      pageSize: sessionPanelPageSize(),
+    };
+  if (state.modelsOpen)
+    return {
+      kind: "model",
+      current: state.selectedModelIndex,
+      total: modelCount(state.providers),
+      pageSize: menuPanelPageSize(),
+    };
+  if (state.personasOpen)
+    return {
+      kind: "persona",
+      current: state.selectedPersonaIndex,
+      total: state.personas.length,
+      pageSize: menuPanelPageSize(),
+    };
+  if (state.settingsOpen && state.settingDetail)
+    return {
+      kind: "setting-option",
+      current: state.selectedSettingOptionIndex,
+      total: settingOptions(state).length,
+      pageSize: settingsPanelPageSize(state),
+    };
+  if (state.settingsOpen)
+    return {
+      kind: "settings",
+      current: state.selectedSettingsIndex,
+      total: settingsEntries(state).length,
+      pageSize: settingsPanelPageSize(state),
+    };
+  return undefined;
+}
+
+function dispatchPanelPageSelection(
+  state: AppState,
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  direction: -1 | 1,
+): boolean {
+  const selection = activePanelSelection(state);
+  if (!selection) return false;
+  dispatchPanelSelectionDelta(
+    dispatch,
+    selection.kind,
+    pageSelectionDelta(selection.current, selection.pageSize, selection.total, direction),
+  );
+  return true;
+}
+
+function dispatchPanelBoundarySelection(
+  state: AppState,
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  boundary: "start" | "end",
+): boolean {
+  const selection = activePanelSelection(state);
+  if (!selection) return false;
+  const target = boundary === "start" ? 0 : Math.max(0, selection.total - 1);
+  dispatchPanelSelectionDelta(dispatch, selection.kind, target - selection.current);
+  return true;
+}
+
+function dispatchPanelSelectionDelta(
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  kind: PanelSelection["kind"],
+  delta: number,
+): void {
+  if (kind === "session") dispatch({ type: "select-session", delta });
+  else if (kind === "model") dispatch({ type: "select-model", delta });
+  else if (kind === "persona") dispatch({ type: "select-persona", delta });
+  else if (kind === "settings") dispatch({ type: "select-settings", delta });
+  else dispatch({ type: "select-setting-option", delta });
 }
 
 function panelMaxLines(): number {
@@ -615,6 +812,10 @@ function panelMaxLines(): number {
 }
 
 function sessionPanelPageSize(): number {
+  return Math.max(1, panelMaxLines() - 4);
+}
+
+function menuPanelPageSize(): number {
   return Math.max(1, panelMaxLines() - 4);
 }
 

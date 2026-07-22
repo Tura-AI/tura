@@ -20,6 +20,7 @@ import {
   wrap,
 } from "./render-terminal.js";
 import { composerLines } from "./render/composer.js";
+import { completionMenuLines } from "./render/completions.js";
 import {
   busyAnimationFrame,
   questionAnimationFrame,
@@ -152,6 +153,7 @@ export function renderFrame(
   if (chatSurface) lines.push(...bottomTitleLines(state, renderCols));
   lines.push(bottomMetaLine(state, renderCols));
   if (shouldShowComposer(state)) {
+    lines.push(...completionMenuLines(state, renderCols));
     lines.push(...composerSeparator(renderCols));
     lines.push(
       ...composerLines(
@@ -159,6 +161,7 @@ export function renderFrame(
         renderCols,
         state.thinkingFrame,
         state.settingInput ? t("settingInputComposerHint") : undefined,
+        state.composerCursor,
       ),
     );
   }
@@ -203,12 +206,14 @@ export function renderChatFrameParts(
     ...transcriptThinkingLines(state, renderCols),
     ...bottomTitleLines(state, renderCols),
     bottomMetaLine(state, renderCols),
+    ...completionMenuLines(state, renderCols),
     ...composerSeparator(renderCols),
     ...composerLines(
       state.composer,
       renderCols,
       state.thinkingFrame,
       state.settingInput ? t("settingInputComposerHint") : undefined,
+      state.composerCursor,
     ),
   ];
   const live = finalizeFrame(liveLines, 0, renderCols);
@@ -350,6 +355,7 @@ function renderPlainFrame(state: AppState): RenderedFrame {
   if (chatSurface) lines.push(...bottomTitleLines(state, renderCols).map(stripAnsi));
   lines.push(stripAnsi(bottomMetaLine(state, renderCols)));
   if (shouldShowComposer(state)) {
+    lines.push(...completionMenuLines(state, renderCols));
     lines.push("");
     lines.push(
       ...composerLines(
@@ -357,6 +363,7 @@ function renderPlainFrame(state: AppState): RenderedFrame {
         renderCols,
         state.thinkingFrame,
         state.settingInput ? t("settingInputComposerHint") : undefined,
+        state.composerCursor,
       ),
     );
   }
@@ -441,6 +448,20 @@ function panelPageInfo(state: AppState): PanelPageInfo | undefined {
   const maxLines = Math.max(1, (process.stdout.rows || 40) - 4);
   if (state.settingsOpen) return settingsPageInfo(state, maxLines);
   if (state.sessionsOpen) return sessionPageInfo(state, maxLines);
+  if (state.modelsOpen)
+    return selectionPageInfo(
+      state.selectedModelIndex,
+      modelPanelPageSize(maxLines),
+      modelEntries(state).length,
+      t("modelSelectPage"),
+    );
+  if (state.personasOpen)
+    return selectionPageInfo(
+      state.selectedPersonaIndex,
+      menuPanelPageSize(maxLines),
+      state.personas.length,
+      t("personaSelectPage"),
+    );
   return undefined;
 }
 
@@ -743,7 +764,12 @@ function personaLines(state: AppState, cols: number, maxLines: number): string[]
     entries.map(([label]) => label),
     cols,
   );
-  for (const [index, [label, description]] of entries.entries()) {
+  const visibleEntries = menuPanelPageSize(maxLines);
+  const start = pageStartForIndex(state.selectedPersonaIndex, visibleEntries, entries.length);
+  for (const [offset, [label, description]] of entries
+    .slice(start, start + visibleEntries)
+    .entries()) {
+    const index = start + offset;
     const rendered = menuEntryLines(
       label,
       description,
@@ -751,7 +777,6 @@ function personaLines(state: AppState, cols: number, maxLines: number): string[]
       cols,
       index === state.selectedPersonaIndex,
     );
-    if (lines.length + rendered.length >= maxLines - 2) break;
     lines.push(...rendered);
   }
   lines.push(sectionBlankLine(cols));
@@ -761,23 +786,7 @@ function personaLines(state: AppState, cols: number, maxLines: number): string[]
 function modelLines(state: AppState, cols: number, maxLines: number): string[] {
   const lines = sectionLines(t("models"), cols);
   lines.push(sectionBodyLine(secondaryText(t("selectModels")), cols));
-  const providers = state.providers?.all ?? [];
-  let row = 0;
-  const entries: Array<[string, string, boolean]> = [];
-  for (const provider of providers) {
-    const defaults = state.providers?.default[provider.id];
-    const connected = state.providers?.connected.includes(provider.id) ? t("connected") : "";
-    for (const model of Object.keys(provider.models ?? {}).slice(0, 12)) {
-      entries.push([
-        `${provider.id}/${model}`,
-        [provider.name, connected, model === defaults ? `(${t("defaultModel")})` : undefined]
-          .filter(Boolean)
-          .join("  "),
-        row === state.selectedModelIndex,
-      ]);
-      row += 1;
-    }
-  }
+  const entries = modelEntries(state);
   if (!entries.length) {
     lines.push(sectionBodyLine(t("noProviders"), cols), sectionBlankLine(cols));
     return lines.slice(0, maxLines);
@@ -786,13 +795,56 @@ function modelLines(state: AppState, cols: number, maxLines: number): string[] {
     entries.map(([label]) => label),
     cols,
   );
-  for (const [label, description, selected] of entries) {
-    const rendered = menuEntryLines(label, description, width, cols, selected);
-    if (lines.length + rendered.length >= maxLines - 2) break;
+  const visibleEntries = modelPanelPageSize(maxLines);
+  const start = pageStartForIndex(state.selectedModelIndex, visibleEntries, entries.length);
+  for (const [offset, [label, description]] of entries
+    .slice(start, start + visibleEntries)
+    .entries()) {
+    const rendered = menuEntryLines(
+      label,
+      description,
+      width,
+      cols,
+      start + offset === state.selectedModelIndex,
+    );
     lines.push(...rendered);
   }
   lines.push(sectionBlankLine(cols));
   return lines.slice(0, maxLines);
+}
+
+function modelEntries(state: AppState): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  for (const provider of state.providers?.all ?? []) {
+    const defaults = state.providers?.default[provider.id];
+    const connected = state.providers?.connected.includes(provider.id) ? t("connected") : "";
+    for (const model of Object.keys(provider.models ?? {})) {
+      entries.push([
+        `${provider.id}/${model}`,
+        [provider.name, connected, model === defaults ? `(${t("defaultModel")})` : undefined]
+          .filter(Boolean)
+          .join("  "),
+      ]);
+    }
+  }
+  return entries;
+}
+
+function menuPanelPageSize(maxLines: number): number {
+  return Math.max(1, maxLines - 4);
+}
+
+function modelPanelPageSize(maxLines: number): number {
+  return menuPanelPageSize(maxLines);
+}
+
+function selectionPageInfo(
+  index: number,
+  pageSize: number,
+  total: number,
+  label: string,
+): PanelPageInfo {
+  return { label, ...pageInfoForIndex(index, pageSize, total) };
 }
 
 function helpLines(cols: number, maxLines: number): string[] {

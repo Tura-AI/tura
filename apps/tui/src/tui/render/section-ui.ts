@@ -1,4 +1,3 @@
-import { t } from "../../i18n.js";
 import {
   activeCapabilities,
   pad,
@@ -12,6 +11,7 @@ import {
 } from "../render-terminal.js";
 import { panelBlankLine, panelLine } from "../styles/panel.js";
 import { secondaryText } from "../styles/text.js";
+import { slashCommandHelpEntries } from "../slash-commands.js";
 
 export function sectionLines(title: string, cols: number): string[] {
   const titleLine = sectionTitleLine(title, cols);
@@ -184,24 +184,5 @@ function richHelpEntryLines(
 }
 
 export function commandHelpEntries(): Array<[string, string]> {
-  return [
-    ["/chat", t("helpChat")],
-    ["/new", t("helpNew")],
-    ["/resume <id>", t("helpResume")],
-    ["/auth", t("providerLogin")],
-    [t("loginProvider"), t("helpLogin")],
-    [t("logoutProvider"), t("helpLogout")],
-    ["/settings", t("helpSettings")],
-    ["/model <provider/model>", t("helpModel")],
-    ["/agent <name>", t("agent")],
-    ["/personas", t("personas")],
-    ["/persona <name>", t("applyPersona")],
-    ["/sessions", t("helpSessions")],
-    ["/models", t("helpModels")],
-    ["/abort", t("helpAbort")],
-    ["/stop", t("helpStop")],
-    [t("configGet"), t("helpConfigGet")],
-    [t("configSet"), t("helpConfigSet")],
-    ["/quit", t("helpQuit")],
-  ];
+  return slashCommandHelpEntries();
 }

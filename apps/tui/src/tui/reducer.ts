@@ -36,6 +36,7 @@ import {
   upsertMessageIgnoringLive,
   upsertPartIgnoringLive,
 } from "./reducer/messages.js";
+import { clampCursor } from "./composer-editor.js";
 
 export { displayMessages } from "./reducer/messages.js";
 export { initialState } from "./reducer/state.js";
@@ -429,7 +430,26 @@ export function reducer(state: AppState, action: AppAction): AppState {
     };
     return nextState;
   }
-  if (action.type === "composer") return { ...state, composer: action.value };
+  if (action.type === "composer") {
+    const valueChanged = action.value !== state.composer;
+    return {
+      ...state,
+      composer: action.value,
+      composerCursor: clampCursor(action.value, action.cursor ?? action.value.length),
+      selectedCompletionIndex: valueChanged ? 0 : state.selectedCompletionIndex,
+      completionDismissed: valueChanged ? false : state.completionDismissed,
+    };
+  }
+  if (action.type === "select-completion") {
+    return {
+      ...state,
+      selectedCompletionIndex: wrapIndex(
+        state.selectedCompletionIndex + action.delta,
+        action.count,
+      ),
+    };
+  }
+  if (action.type === "dismiss-completion") return { ...state, completionDismissed: true };
   if (action.type === "notice") {
     return {
       ...state,
@@ -589,7 +609,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
     };
   }
   if (action.type === "setting-input") {
-    return { ...state, settingInput: action.value, composer: action.value ? "" : state.composer };
+    return {
+      ...state,
+      settingInput: action.value,
+      composer: action.value ? "" : state.composer,
+      composerCursor: action.value ? 0 : state.composerCursor,
+      selectedCompletionIndex: 0,
+      completionDismissed: false,
+    };
   }
   if (action.type === "about-info") return { ...state, aboutInfo: action.value };
   if (action.type === "about-update") {
