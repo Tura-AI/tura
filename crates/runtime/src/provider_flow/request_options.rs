@@ -375,16 +375,18 @@ fn provider_base_url(settings: &tura_llm_rust::Settings, provider: &str) -> Opti
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_provider_messages, prompt_cache_key, session_reasoning_effort,
-        session_service_tier, stream_options,
+        normalize_provider_messages, prompt_cache_key, session_model_override_route,
+        session_reasoning_effort, session_service_tier, stream_options,
     };
+    use std::collections::HashMap;
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
-    use tura_llm_rust::strip_thought_blocks;
+    use tura_llm_rust::{strip_thought_blocks, ModelCatalog, ProviderEnumCatalog, Settings};
 
     const REASONING_ENV: &str = "TURA_SESSION_REASONING_EFFORT";
     const ACCEL_ENV: &str = "TURA_SESSION_ACCELERATION_ENABLED";
     const DISABLE_CACHE_ENV: &str = "TURA_DISABLE_PROMPT_CACHE";
+    const MODEL_OVERRIDE_ENV: &str = "TURA_SESSION_MODEL_OVERRIDE";
 
     fn with_env<T>(name: &str, value: Option<&str>, run: impl FnOnce() -> T) -> T {
         static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -438,6 +440,50 @@ mod tests {
         with_env(ACCEL_ENV, Some("true"), || {
             assert_eq!(session_service_tier().as_deref(), Some("priority"));
         });
+    }
+
+    #[test]
+    fn model_override_resolves_configured_provider_and_runtime_alias_base_urls() {
+        let settings = Settings {
+            provider_base_url: HashMap::from([
+                (
+                    "google".to_string(),
+                    "https://google.test/v1beta".to_string(),
+                ),
+                (
+                    "mistral".to_string(),
+                    "https://api.mistral.ai/v1".to_string(),
+                ),
+            ]),
+            routes: HashMap::new(),
+            model_catalog: ModelCatalog::default(),
+            provider_enums: ProviderEnumCatalog::default(),
+        };
+        let fallback = openai_route();
+
+        with_env(
+            MODEL_OVERRIDE_ENV,
+            Some("mistral/mistral-medium-3.5"),
+            || {
+                let route = session_model_override_route(&settings, &fallback)
+                    .expect("configured Mistral provider should resolve");
+                let provider = &route.providers[0];
+                assert_eq!(provider.provider, "mistral");
+                assert_eq!(provider.base_url, "https://api.mistral.ai/v1");
+            },
+        );
+
+        with_env(
+            MODEL_OVERRIDE_ENV,
+            Some("gemini-api/gemini-3.5-flash"),
+            || {
+                let route = session_model_override_route(&settings, &fallback)
+                    .expect("Gemini alias should resolve through Google runtime config");
+                let provider = &route.providers[0];
+                assert_eq!(provider.provider, "gemini-api");
+                assert_eq!(provider.base_url, "https://google.test/v1beta");
+            },
+        );
     }
 
     #[test]
