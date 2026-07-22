@@ -3,7 +3,6 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import time
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
@@ -266,6 +265,7 @@ async def goto_app(page, tab: str, selector: str, extra: dict | None = None) -> 
             try:
                 body = await page.locator("body").inner_text(timeout=2_000)
             except Exception:
+                # Preserve the original navigation error when diagnostics cannot be read.
                 pass
             if "Failed to fetch dynamically imported module" in body and attempt < 2:
                 await page.wait_for_timeout(1_000)
@@ -281,6 +281,7 @@ async def goto_app(page, tab: str, selector: str, extra: dict | None = None) -> 
             encoding="utf-8",
         )
     except Exception:
+        # Failure artifacts are best-effort and must not hide the original navigation error.
         pass
     if last_error is not None:
         raise last_error

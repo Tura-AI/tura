@@ -1,10 +1,7 @@
-import type { Session } from "../types/session.js";
-import { isDraftSession } from "../types/session.js";
 import { parseLanguage, setLanguage, t } from "../i18n.js";
 import { settingOptions } from "./render.js";
 import { settingPatch } from "./logic/selection.js";
 import type { AboutOpenTarget, AboutUiAction } from "../types/about.js";
-import type { AppState } from "./reducer.js";
 import {
   fetchAuthSurface,
   type TuiDispatch,
@@ -110,47 +107,6 @@ function aboutOpenTarget(action: AboutUiAction): AboutOpenTarget | undefined {
   if (action === "contribute") return "contribute";
   if (action === "contact") return "contact";
   return undefined;
-}
-
-export async function updateActiveSession(
-  client: TuiGatewayClient,
-  getState: TuiGetState,
-  dispatch: TuiDispatch,
-  patch: Partial<Session>,
-): Promise<Session | undefined> {
-  const state = getState();
-  const active = state.session;
-  if (!active) return undefined;
-  const session = isDraftSession(active)
-    ? { ...active, ...patch, updated_at: Date.now() }
-    : await client.updateSession(active.id, patch);
-  dispatchHydrateFromState(
-    dispatch,
-    state,
-    session,
-    await client.getSessionConfig().catch(() => state.sessionConfig),
-  );
-  return session;
-}
-
-function dispatchHydrateFromState(
-  dispatch: TuiDispatch,
-  state: AppState,
-  session: Session,
-  sessionConfig: AppState["sessionConfig"],
-): void {
-  dispatch({
-    type: "hydrate",
-    session,
-    messages: state.messages,
-    permissions: state.permissions,
-    providers: state.providers,
-    agents: state.agents,
-    personas: state.personas,
-    sessions: state.sessions,
-    sessionConfig,
-    modelConfig: state.modelConfig,
-  });
 }
 
 async function applyProviderAuthAction(

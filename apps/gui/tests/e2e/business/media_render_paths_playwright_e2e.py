@@ -4,7 +4,6 @@ import mimetypes
 import os
 import socket
 import subprocess
-import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -192,7 +191,7 @@ def prepare_media() -> tuple[Path, list[str]]:
 
 async def main() -> None:
     workspace, paths = prepare_media()
-    media_server = start_media_fixture_server()
+    start_media_fixture_server()
     gui = start_gui()
     try:
         await wait_for(lambda: ready(GUI_URL), gui, "GUI dev server")

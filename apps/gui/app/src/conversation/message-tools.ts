@@ -28,12 +28,6 @@ export function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
-export function toolTitle(part: MessagePart): string {
-  const state = asRecord(part.state);
-  const title = stringField(state, "title") || stringField(state, "step_summary");
-  return title || part.tool || part.type || "tool";
-}
-
 export function toolCommand(part: MessagePart): string {
   const state = asRecord(part.state);
   const input = asRecord(state.input);

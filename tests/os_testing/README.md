@@ -35,6 +35,12 @@ entrypoints explicit. The runner-label wrappers are `run-ubuntu-latest.sh`,
 `run-macos-latest.sh`, `run-windows-2022.ps1`, and `run-windows-2025.ps1`, with
 matching `run-install-release-*` wrappers.
 
+On Windows, each backend OS target has a bounded timeout. Assertion failures
+retain their nonzero exit code and diagnostics, while timeout and failure paths
+terminate the Cargo process tree and any repo-owned backend child processes
+started by the runner. Run `scripts/tests/scripts/test-backend-os-runner.ps1`
+to verify both assertion and timeout cleanup without running the real suite.
+
 The required source installer contract is additionally covered by
 `.github/workflows/source-install.yml`: the default installer must complete
 environment setup, release build, PATH registration, and `tura --help` discovery

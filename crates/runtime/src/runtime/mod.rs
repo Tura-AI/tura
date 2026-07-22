@@ -7,9 +7,8 @@ pub use create_runtime::create_runtime;
 pub use runtime_receive::runtime_receive;
 
 pub mod types {
-    pub use crate::state_machine::agent_management::AgentId;
     pub use lifecycle::{
-        RuntimeAggregate, RuntimeError, RuntimeProviderConfig, ToolCallRecord, UsageReport,
+        AgentId, RuntimeAggregate, RuntimeError, RuntimeProviderConfig, ToolCallRecord, UsageReport,
     };
 
     use chrono::{DateTime, Utc};

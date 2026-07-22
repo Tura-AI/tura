@@ -130,11 +130,6 @@ function usageFromEvents(events) {
   return usage
 }
 
-function toolCount(text, pattern) {
-  const matches = text.match(new RegExp(pattern, "gi"))
-  return matches ? matches.length : 0
-}
-
 function latestProviderLogs(sinceMs) {
   const logDir = path.join(repoRoot, "log", "provider")
   if (!fs.existsSync(logDir)) return []

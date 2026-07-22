@@ -242,18 +242,6 @@ function pushUnique(candidates, value) {
   }
 }
 
-function windowsPathCommand(name, { env = process.env, pathExists = existsSync } = {}) {
-  for (const entry of pathEntries(env)) {
-    for (const executable of windowsExecutableNames(name, env)) {
-      const candidate = path.win32.join(entry, executable);
-      if (pathExists(candidate)) {
-        return candidate;
-      }
-    }
-  }
-  return null;
-}
-
 function whereWindowsCommand(name, { env = process.env, spawnSyncFn = spawnSync } = {}) {
   const commandName = path.win32.extname(name) ? name : `${name}.exe`;
   const result = spawnSyncFn("where.exe", [commandName], {

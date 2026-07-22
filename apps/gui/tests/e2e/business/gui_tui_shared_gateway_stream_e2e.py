@@ -4,7 +4,6 @@ import os
 import queue
 import socket
 import subprocess
-import sys
 import threading
 import time
 from collections import Counter

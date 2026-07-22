@@ -18,9 +18,7 @@ export const thinkingWaveMid = "\x1b[38;2;75;174;172m";
 export const thinkingWaveLow = "\x1b[38;2;81;149;154m";
 export const thinkingWaveBaseBlend = "\x1b[38;2;86;124;136m";
 export const surfaceBackground = "\x1b[48;2;20;23;24m";
-export const elementBackground = "\x1b[48;2;24;27;28m";
 export const richInlineBg = "\x1b[48;5;236m";
 export const richBlockBg = "\x1b[48;5;234m";
 
-export const lineColor = "\x1b[38;2;61;70;68m";
 export const borderColor = "\x1b[38;2;61;70;68m";

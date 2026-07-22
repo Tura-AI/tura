@@ -27,7 +27,6 @@ fn hardcoded_session(_input: SessionInput) -> Result<SessionManagement, String> 
 }
 
 fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>, String> {
-    let now = Utc::now();
     let provider = ProviderConfig {
         tura_llm_name: coding_agent_provider_name(),
         default_model_tier: None,
@@ -55,7 +54,6 @@ fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>
             false,
             provider.clone(),
             validator.clone(),
-            now,
         ),
         AgentManagement::new(
             "agent-2".to_string(),
@@ -68,7 +66,6 @@ fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>
             false,
             provider,
             validator,
-            now,
         ),
     ])
 }

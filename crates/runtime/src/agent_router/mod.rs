@@ -1,5 +1,5 @@
 use crate::state_machine::agent_management::{
-    AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ValidatorConfig,
+    AgentCapabilityItem, AgentManagement, AgentPromptItem, ValidatorConfig,
 };
 use chrono::Utc;
 use lifecycle::{ProviderConfig, SessionManagement, ToolChoice};
@@ -95,13 +95,10 @@ fn create_agent_by_name(
                     canonical_name != "direct" && canonical_name != "direct-text-only";
                 agent.self_reflection = canonical_name == "thoughtful";
                 agent.agent_prompt.clear();
-                agent.add_prompt(
-                    AgentPromptItem {
-                        agent_prompt: canonical_name.to_string(),
-                        prompt_directory: prompts_directory.to_path_buf(),
-                    },
-                    Utc::now(),
-                );
+                agent.add_prompt(AgentPromptItem {
+                    agent_prompt: canonical_name.to_string(),
+                    prompt_directory: prompts_directory.to_path_buf(),
+                });
                 if canonical_name == "balanced" || canonical_name == "thoughtful" {
                     agent
                         .agent_capabilities
@@ -135,7 +132,6 @@ fn create_coding_agent(
         return Ok(agent);
     }
 
-    let now = Utc::now();
     let provider = provider_config_from_coding_agent(CodingAgent::provider());
 
     let validator = ValidatorConfig {
@@ -157,26 +153,19 @@ fn create_coding_agent(
         false,
         provider,
         validator,
-        now,
     );
     for capability_name in CodingAgent::capabilities() {
-        agent.add_capability(
-            AgentCapabilityItem {
-                capability_name,
-                capability_directory: capabilities_directory.to_path_buf(),
-            },
-            now,
-        );
+        agent.add_capability(AgentCapabilityItem {
+            capability_name,
+            capability_directory: capabilities_directory.to_path_buf(),
+        });
     }
 
     for prompt_name in CodingAgent::prompts() {
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: prompt_name,
-                prompt_directory: prompts_directory.to_path_buf(),
-            },
-            now,
-        );
+        agent.add_prompt(AgentPromptItem {
+            agent_prompt: prompt_name,
+            prompt_directory: prompts_directory.to_path_buf(),
+        });
     }
     Ok(agent)
 }
@@ -190,7 +179,6 @@ fn create_general_agent(
         return Ok(agent);
     }
 
-    let now = Utc::now();
     let provider = ProviderConfig {
         tura_llm_name: "fast".to_string(),
         default_model_tier: Some("fast".to_string()),
@@ -217,15 +205,11 @@ fn create_general_agent(
         false,
         provider,
         validator,
-        now,
     );
-    agent.add_prompt(
-        AgentPromptItem {
-            agent_prompt: "general".to_string(),
-            prompt_directory: prompts_directory.to_path_buf(),
-        },
-        now,
-    );
+    agent.add_prompt(AgentPromptItem {
+        agent_prompt: "general".to_string(),
+        prompt_directory: prompts_directory.to_path_buf(),
+    });
     Ok(agent)
 }
 
@@ -329,7 +313,6 @@ fn build_agent_from_registry_entry(
     project_directory: &Path,
     entry: AgentRegistryEntry,
 ) -> Result<AgentManagement, String> {
-    let now = Utc::now();
     let mut agent = AgentManagement::new(
         generate_agent_id(&entry.agent_name),
         entry.agent_name,
@@ -341,31 +324,24 @@ fn build_agent_from_registry_entry(
         entry.self_reflection,
         entry.provider,
         entry.validator,
-        now,
     );
     agent.op_manual = entry.op_manual;
 
     for prompt in entry.agent_prompt {
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: prompt.agent_prompt,
-                prompt_directory: resolve_project_path(project_directory, prompt.prompt_directory),
-            },
-            now,
-        );
+        agent.add_prompt(AgentPromptItem {
+            agent_prompt: prompt.agent_prompt,
+            prompt_directory: resolve_project_path(project_directory, prompt.prompt_directory),
+        });
     }
 
     for capability in entry.agent_capabilities {
-        agent.add_capability(
-            AgentCapabilityItem {
-                capability_name: capability.capability_name,
-                capability_directory: resolve_project_path(
-                    project_directory,
-                    capability.capability_directory,
-                ),
-            },
-            now,
-        );
+        agent.add_capability(AgentCapabilityItem {
+            capability_name: capability.capability_name,
+            capability_directory: resolve_project_path(
+                project_directory,
+                capability.capability_directory,
+            ),
+        });
     }
 
     Ok(agent)
@@ -414,53 +390,16 @@ fn generate_agent_id(agent_name: &str) -> String {
     )
 }
 
-pub fn initialize_agent_state_machine(
-    agents: &mut [AgentManagement],
-    session: &SessionManagement,
-) -> Result<(), String> {
-    let now = chrono::Utc::now();
-
-    for agent in agents.iter_mut() {
-        match session.state {
-            lifecycle::SessionState::Created => {
-                agent.state = AgentState::Idle;
-            }
-            lifecycle::SessionState::Running => {
-                agent.state = AgentState::Idle;
-            }
-            lifecycle::SessionState::Paused => {
-                agent.state = AgentState::Waiting;
-            }
-            lifecycle::SessionState::Completed => {
-                agent.state = AgentState::Completed;
-            }
-            lifecycle::SessionState::Failed => {
-                agent.state = AgentState::Failed;
-            }
-            lifecycle::SessionState::Cancelled => {
-                agent.state = AgentState::Failed;
-            }
-            lifecycle::SessionState::Interrupted => {
-                agent.state = AgentState::Failed;
-            }
-        }
-        agent.updated_at = now;
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        build_agent_from_registry_entry, initialize_agent_state_machine,
-        provider_config_from_coding_agent, resolve_project_path, AgentRegistryEntry,
+        build_agent_from_registry_entry, provider_config_from_coding_agent, resolve_project_path,
+        AgentRegistryEntry,
     };
     use crate::state_machine::agent_management::{
-        AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ValidatorConfig,
+        AgentCapabilityItem, AgentPromptItem, ValidatorConfig,
     };
-    use chrono::Utc;
-    use lifecycle::{ProviderConfig, SessionInput, SessionManagement, SessionState, ToolChoice};
+    use lifecycle::{ProviderConfig, ToolChoice};
     use std::path::{Path, PathBuf};
     use tura_agents::coding_agent::{CodingAgentProviderConfig, CodingAgentToolChoice};
 
@@ -482,45 +421,6 @@ mod tests {
             need_validator: false,
             validator_name: None,
         }
-    }
-
-    fn agent(name: &str) -> AgentManagement {
-        let now = Utc::now();
-        AgentManagement::new(
-            format!("{name}-id"),
-            name.to_string(),
-            PathBuf::from("agents").join(name),
-            None,
-            true,
-            false,
-            false,
-            false,
-            provider_config(),
-            validator_config(),
-            now,
-        )
-    }
-
-    fn session_in_state(state: SessionState) -> SessionManagement {
-        let now = Utc::now();
-        let mut session = SessionManagement::new(
-            "session-agent-router".to_string(),
-            "Agent Router".to_string(),
-            PathBuf::from("workspace"),
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "hello".to_string(),
-                file_input: Vec::new(),
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "goal".to_string(),
-            now,
-        );
-        session.restore_state(state);
-        session
     }
 
     #[test]
@@ -636,31 +536,5 @@ mod tests {
             project.join("agents/custom")
         );
         assert_eq!(resolve_project_path(project, absolute.clone()), absolute);
-    }
-
-    #[test]
-    fn initialize_agent_state_machine_maps_session_states_to_agent_states() {
-        for (session_state, expected_agent_state) in [
-            (SessionState::Created, AgentState::Idle),
-            (SessionState::Running, AgentState::Idle),
-            (SessionState::Paused, AgentState::Waiting),
-            (SessionState::Completed, AgentState::Completed),
-            (SessionState::Failed, AgentState::Failed),
-            (SessionState::Cancelled, AgentState::Failed),
-            (SessionState::Interrupted, AgentState::Failed),
-        ] {
-            let mut agents = vec![agent("agent-a"), agent("agent-b")];
-            let session = session_in_state(session_state);
-
-            initialize_agent_state_machine(&mut agents, &session)
-                .expect("agent state initialization should succeed");
-
-            assert!(
-                agents
-                    .iter()
-                    .all(|agent| agent.state == expected_agent_state),
-                "session state {session_state:?} should map all agents to {expected_agent_state:?}"
-            );
-        }
     }
 }

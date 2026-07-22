@@ -130,7 +130,6 @@ impl Drop for ServiceThread {
 pub(crate) enum RouterReply {
     Completed,
     Payload(Value),
-    DelayedPayload(Value, Duration),
     GatedPayload(Value, Arc<StdMutex<mpsc::Receiver<()>>>),
     RawLine(String),
 }
@@ -301,14 +300,6 @@ pub(crate) fn handle_router_connection(
             "request_id": request.get("request_id").cloned().unwrap_or(Value::Null),
             "payload": payload
         }),
-        RouterReply::DelayedPayload(payload, delay) => {
-            std::thread::sleep(delay);
-            json!({
-                "ok": true,
-                "request_id": request.get("request_id").cloned().unwrap_or(Value::Null),
-                "payload": payload
-            })
-        }
         RouterReply::GatedPayload(payload, release) => {
             release
                 .lock()

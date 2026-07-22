@@ -207,6 +207,10 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             wget
+      - name: Verify backend OS runner cleanup (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/tests/scripts/test-backend-os-runner.ps1
       - name: Run backend OS tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

@@ -7,7 +7,6 @@ use runtime::manas::{self, ManasOverrides};
 use runtime::state_machine::agent_management::{AgentManagement, ValidatorConfig};
 
 fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>, String> {
-    let now = Utc::now();
     let provider = ProviderConfig {
         tura_llm_name: coding_agent_provider_name(),
         default_model_tier: None,
@@ -35,7 +34,6 @@ fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>
             false,
             provider.clone(),
             validator.clone(),
-            now,
         ),
         AgentManagement::new(
             "test-agent-2".to_string(),
@@ -48,7 +46,6 @@ fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>
             false,
             provider,
             validator,
-            now,
         ),
     ])
 }

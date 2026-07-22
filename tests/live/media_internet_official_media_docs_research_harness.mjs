@@ -434,10 +434,6 @@ function memberFromPath(file) {
   return null
 }
 
-function verdictSeen(text) {
-  return /\bSAME_STYLE\b/i.test(text)
-}
-
 function memberCoverage(text, files = []) {
   const lower = String(text || "").toLowerCase()
   const members = ["minji", "hanni", "danielle", "haerin", "hyein"]

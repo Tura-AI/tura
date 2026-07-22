@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 pub mod aliases;
 pub mod api;
 pub mod config;
@@ -96,11 +94,6 @@ impl ToolRegistry {
 
     pub fn resolve_alias(&self, value: &str) -> String {
         aliases::resolve_alias(value, self.tools.values())
-    }
-
-    #[allow(dead_code)]
-    pub fn repo_root(&self) -> &Path {
-        &self.repo_root
     }
 }
 

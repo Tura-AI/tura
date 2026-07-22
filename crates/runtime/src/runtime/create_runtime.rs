@@ -1,6 +1,5 @@
-use crate::state_machine::agent_management::AgentId;
 use chrono::Utc;
-use lifecycle::{ContextTokenStats, ProviderConfig};
+use lifecycle::{AgentId, ContextTokenStats, ProviderConfig};
 use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
 use lifecycle::{RuntimeId, SessionId};
 

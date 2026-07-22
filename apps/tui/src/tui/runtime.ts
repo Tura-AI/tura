@@ -1,6 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { GatewayClient } from "../gateway/client.js";
-import { sameDirectory } from "../gateway/directory.js";
 import { userFacingError } from "../gateway/errors.js";
 import type { MockGatewayClient } from "../gateway/mock-client.js";
 import type { ProviderAuthStatus } from "../types/provider.js";
@@ -141,10 +140,6 @@ export async function fetchAuthSurface(
     ),
   ]);
   return { methods, statuses };
-}
-
-export function eventMatchesWorkspace(directory: string, cwd: string): boolean {
-  return directory === "global" || sameDirectory(directory, cwd);
 }
 
 function shouldOpenProviderSettingsOnStartup(state: AppState): boolean {

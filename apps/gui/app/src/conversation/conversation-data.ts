@@ -5,11 +5,7 @@ import {
   normalizeAvatarSettings,
 } from "../components/avatar/agent-avatar-canvas";
 import { type AppState } from "../state/global-store";
-export {
-  messagesWithSessionThinking,
-  sessionIsWorking,
-  sessionShowsBusyAnimation,
-} from "./session-animation";
+export { messagesWithSessionThinking, sessionShowsBusyAnimation } from "./session-animation";
 export {
   conversationReactionItems,
   latestSticker,

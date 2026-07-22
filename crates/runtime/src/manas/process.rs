@@ -32,7 +32,7 @@ use crate::provider_flow::errors::{
     provider_timeout_retry_wait, runtime_failure_allows_retry, runtime_failure_text,
 };
 use crate::runtime_event_writer::{RuntimeEventWriter, RuntimeFeedPublisher};
-use crate::state_machine::agent_management::{AgentManagement, AgentState};
+use crate::state_machine::agent_management::AgentManagement;
 use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
 use crate::turn_loop::provider_step::accumulate_session_from_runtime;
 use crate::turn_loop::retry_policy::env_flag;
@@ -741,15 +741,6 @@ pub(crate) fn process_manas_internal(
         "completed"
     };
     commit_terminal_session_checkpoint(session, git_event);
-
-    for agent in agents.iter_mut() {
-        agent.state = if final_session_state == SessionState::Failed {
-            AgentState::Failed
-        } else {
-            AgentState::Completed
-        };
-        agent.updated_at = Utc::now();
-    }
 
     Ok(ManasResult {
         agents: agents.to_vec(),

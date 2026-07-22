@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from urllib.parse import urlencode
 
-from playwright.async_api import async_playwright, expect
+from playwright.async_api import async_playwright
 
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -57,6 +57,7 @@ async def goto_app(page, params: dict, selector: str):
             try:
                 body = await page.locator("body").inner_text(timeout=2_000)
             except Exception:
+                # Preserve the original navigation error when diagnostics cannot be read.
                 pass
             if "Failed to fetch dynamically imported module" in body and attempt < 2:
                 await page.wait_for_timeout(1_000)

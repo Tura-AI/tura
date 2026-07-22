@@ -320,7 +320,9 @@ export function PlanView(props: {
         panelOpen() && "plan-split-workbench",
         planPanelFullscreen() && "plan-panel-fullscreen",
       )}
-      ref={workbenchEl}
+      ref={(element) => {
+        workbenchEl = element;
+      }}
       style={{
         "--plan-panel-width": `${panelWidth()}px`,
         "--plan-main-min-width": `${PLAN_MAIN_MIN_WIDTH}px`,

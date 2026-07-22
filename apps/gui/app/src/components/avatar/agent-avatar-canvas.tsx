@@ -435,7 +435,9 @@ export function AgentAvatarCanvas(props: {
       data-avatar-expression={expression()}
     >
       <canvas
-        ref={canvas}
+        ref={(element) => {
+          canvas = element;
+        }}
         class="agent-avatar-canvas"
         width={CANVAS_SIZE}
         height={CANVAS_SIZE}

@@ -17,6 +17,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
   onMount,
   untrack,
@@ -243,13 +244,17 @@ export function ConversationView(props: {
     setInspectorParts([]);
   });
 
-  createEffect(() => {
-    props.closeInspectorSignal;
-    setInspectorOpen(false);
-    setInspectorOverlay(false);
-    setSelectedToolId(undefined);
-    setInspectorParts([]);
-  });
+  createEffect(
+    on(
+      () => props.closeInspectorSignal,
+      () => {
+        setInspectorOpen(false);
+        setInspectorOverlay(false);
+        setSelectedToolId(undefined);
+        setInspectorParts([]);
+      },
+    ),
+  );
 
   createEffect(() => {
     if (!inspectorOpen() || inspectorOverlay() || canFitInspector(inspectorWidth())) {
@@ -416,7 +421,9 @@ export function ConversationView(props: {
       </header>
       <div class="conversation-grid page-layer-middle">
         <div
-          ref={conversationMainEl}
+          ref={(element) => {
+            conversationMainEl = element;
+          }}
           class="conversation-main"
           style={{
             "--scroll-follow-bottom": `${scrollFollowBottom()}px`,
@@ -937,33 +944,44 @@ function Transcript(props: {
     });
   });
 
-  createEffect(() => {
-    displayMessages().length;
-    virtualLayout().totalHeight;
-    scheduleScrollRestore();
-    if (displayMessages().length === 0) {
-      setTranscriptRenderReady(true);
-    }
-  });
-
-  createEffect(() => {
-    messageLayoutSignature();
-    props.session?.status;
-    props.loading;
-    props.avatarSettings.display_mode;
-    if (props.loading) {
-      setTranscriptRenderReady(false);
-    } else if (displayMessages().length === 0) {
-      setTranscriptRenderReady(true);
-    } else if (!transcriptRenderReady()) {
-      requestAnimationFrame(() => {
-        if (pendingMeasuredHeights.size === 0 && virtualItems().length === 0) {
-          queueTranscriptReveal();
+  createEffect(
+    on(
+      () => [displayMessages().length, virtualLayout().totalHeight] as const,
+      ([messageCount]) => {
+        scheduleScrollRestore();
+        if (messageCount === 0) {
+          setTranscriptRenderReady(true);
         }
-      });
-    }
-    queueFloatingAvatarUpdate();
-  });
+      },
+    ),
+  );
+
+  createEffect(
+    on(
+      () =>
+        [
+          messageLayoutSignature(),
+          props.session?.status,
+          props.loading,
+          props.avatarSettings.display_mode,
+          displayMessages().length,
+        ] as const,
+      ([, , loading, , messageCount]) => {
+        if (loading) {
+          setTranscriptRenderReady(false);
+        } else if (messageCount === 0) {
+          setTranscriptRenderReady(true);
+        } else if (!transcriptRenderReady()) {
+          requestAnimationFrame(() => {
+            if (pendingMeasuredHeights.size === 0 && virtualItems().length === 0) {
+              queueTranscriptReveal();
+            }
+          });
+        }
+        queueFloatingAvatarUpdate();
+      },
+    ),
+  );
 
   createEffect(() => {
     virtualItems().length;
@@ -1275,7 +1293,9 @@ function VirtualMessageCell(props: {
 
   return (
     <div
-      ref={rowEl}
+      ref={(element) => {
+        rowEl = element;
+      }}
       class="transcript-virtual-row"
       data-message-id={props.entry.item().message.id}
       data-virtual-index={props.entry.index()}

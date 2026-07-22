@@ -7,12 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use sysinfo::{Pid, System};
 use tokio::sync::Barrier;
-use tura_router::manager::ServiceManager;
+use tura_router::manager::{ServiceManager, WorkerAlreadyRunning};
 use tura_router::models::WorkerSpec;
 use tura_router::runtime_orphans::cleanup_orphan_runtime_workers;
 
 #[tokio::test]
-async fn router_worker_business_flow_reuses_replaces_and_cleans_up_processes() -> Result<()> {
+async fn router_worker_business_flow_replaces_dead_workers_and_cleans_up_processes() -> Result<()> {
     let temp = tempfile::tempdir().context("temp worker dir")?;
     let script = write_worker_script(temp.path())?;
     let python = python_executable()?;
@@ -26,12 +26,7 @@ async fn router_worker_business_flow_reuses_replaces_and_cleans_up_processes() -
         env: vec![("TURA_TEST_WORKER_KIND".to_string(), "business".to_string())],
     };
 
-    let first = manager.ensure_worker(spec.clone()).await?;
-    let reused = manager.ensure_worker(spec.clone()).await?;
-    assert_eq!(
-        first.worker_id, reused.worker_id,
-        "healthy workers must be reused by key"
-    );
+    let first = manager.ensure_exclusive_worker(spec.clone()).await?;
     assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 1);
 
     let first_response = manager
@@ -115,7 +110,7 @@ async fn router_worker_business_flow_reuses_replaces_and_cleans_up_processes() -
     );
     tokio::time::sleep(Duration::from_millis(250)).await;
 
-    let replacement = manager.ensure_worker(spec.clone()).await?;
+    let replacement = manager.ensure_exclusive_worker(spec.clone()).await?;
     assert_ne!(
         replacement.worker_id, first.worker_id,
         "dead worker must be replaced for the same key"
@@ -123,7 +118,7 @@ async fn router_worker_business_flow_reuses_replaces_and_cleans_up_processes() -
     assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 1);
 
     let other = manager
-        .ensure_worker(WorkerSpec {
+        .ensure_exclusive_worker(WorkerSpec {
             key: "runtime_worker:other-session".to_string(),
             service_name: "runtime".to_string(),
             executable: python,
@@ -141,7 +136,7 @@ async fn router_worker_business_flow_reuses_replaces_and_cleans_up_processes() -
 }
 
 #[tokio::test]
-async fn router_worker_business_flow_concurrent_ensure_keeps_single_owner_per_key() -> Result<()> {
+async fn router_worker_business_flow_concurrent_ensure_rejects_duplicate_owners() -> Result<()> {
     let temp = tempfile::tempdir().context("temp concurrent worker dir")?;
     let script = write_worker_script(temp.path())?;
     let python = python_executable()?;
@@ -167,22 +162,37 @@ async fn router_worker_business_flow_concurrent_ensure_keeps_single_owner_per_ke
         tasks.push(tokio::spawn(async move {
             barrier.wait().await;
             manager
-                .ensure_worker(spec)
+                .ensure_exclusive_worker(spec)
                 .await
                 .map(|handle| handle.worker_id)
         }));
     }
 
     let mut worker_ids = Vec::new();
+    let mut duplicate_worker_ids = Vec::new();
     for task in tasks {
-        worker_ids.push(task.await??);
+        match task.await? {
+            Ok(worker_id) => worker_ids.push(worker_id),
+            Err(error) => {
+                let duplicate = error
+                    .downcast_ref::<WorkerAlreadyRunning>()
+                    .context("concurrent duplicate should use WorkerAlreadyRunning")?;
+                assert_eq!(duplicate.key, "runtime_worker:concurrent-ensure");
+                duplicate_worker_ids.push(duplicate.worker_id.clone());
+            }
+        }
     }
-    worker_ids.sort();
-    worker_ids.dedup();
     assert_eq!(
         worker_ids.len(),
         1,
-        "concurrent ensure_worker calls for one key must converge on one worker"
+        "exactly one concurrent exclusive start should succeed"
+    );
+    assert_eq!(duplicate_worker_ids.len(), callers - 1);
+    assert!(
+        duplicate_worker_ids
+            .iter()
+            .all(|worker_id| worker_id == &worker_ids[0]),
+        "all duplicate starts should identify the single owner"
     );
     assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 1);
 
@@ -220,7 +230,7 @@ async fn router_worker_business_flow_skips_non_protocol_stdout_noise_before_resp
         env: vec![("TURA_TEST_WORKER_KIND".to_string(), "noisy".to_string())],
     };
 
-    let worker = manager.ensure_worker(spec).await?;
+    let worker = manager.ensure_exclusive_worker(spec).await?;
     let response = manager
         .call_worker(
             &worker.worker_id,
@@ -262,8 +272,10 @@ async fn router_worker_business_flow_stop_by_key_only_cleans_target_session_and_
         env: vec![("TURA_TEST_WORKER_KIND".to_string(), "survivor".to_string())],
     };
 
-    let target = manager.ensure_worker(target_spec.clone()).await?;
-    let survivor = manager.ensure_worker(survivor_spec.clone()).await?;
+    let target = manager.ensure_exclusive_worker(target_spec.clone()).await?;
+    let survivor = manager
+        .ensure_exclusive_worker(survivor_spec.clone())
+        .await?;
     assert_ne!(target.worker_id, survivor.worker_id);
     assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 2);
 
@@ -298,7 +310,7 @@ async fn router_worker_business_flow_stop_by_key_only_cleans_target_session_and_
     );
     assert_eq!(survivor_response["input"]["seq"], 42);
 
-    let recreated = manager.ensure_worker(target_spec).await?;
+    let recreated = manager.ensure_exclusive_worker(target_spec).await?;
     assert_ne!(
         recreated.worker_id, target.worker_id,
         "ensuring the stopped key should create a fresh target worker"
@@ -341,7 +353,7 @@ async fn router_worker_business_flow_stale_worker_id_fails_cleanly_after_key_sto
         env: vec![("TURA_TEST_WORKER_KIND".to_string(), "stale-id".to_string())],
     };
 
-    let first = manager.ensure_worker(spec.clone()).await?;
+    let first = manager.ensure_exclusive_worker(spec.clone()).await?;
     let first_response = manager
         .call_worker(
             &first.worker_id,
@@ -380,7 +392,7 @@ async fn router_worker_business_flow_stale_worker_id_fails_cleanly_after_key_sto
         "stale worker id error should name the missing worker: {stale_error:#}"
     );
 
-    let recreated = manager.ensure_worker(spec).await?;
+    let recreated = manager.ensure_exclusive_worker(spec).await?;
     assert_ne!(
         recreated.worker_id, first.worker_id,
         "recreated key should get a fresh worker id after stale id cleanup"
@@ -421,7 +433,7 @@ async fn router_worker_business_flow_stop_by_key_interrupts_slow_worker_without_
         env: vec![("TURA_TEST_WORKER_KIND".to_string(), "slow-stop".to_string())],
     };
 
-    let handle = manager.ensure_worker(spec.clone()).await?;
+    let handle = manager.ensure_exclusive_worker(spec.clone()).await?;
     let slow_call_manager = Arc::clone(&manager);
     let slow_worker_id = handle.worker_id.clone();
     let slow_call = tokio::spawn(async move {
@@ -457,7 +469,7 @@ async fn router_worker_business_flow_stop_by_key_interrupts_slow_worker_without_
         .expect_err("interrupted slow worker call should fail");
     assert_worker_interruption_error(&slow_error);
 
-    let recreated = manager.ensure_worker(spec).await?;
+    let recreated = manager.ensure_exclusive_worker(spec).await?;
     assert_ne!(
         recreated.worker_id, handle.worker_id,
         "slow worker key should recreate with a fresh worker id after cleanup"
@@ -515,9 +527,11 @@ async fn router_worker_business_flow_prefix_stop_interrupts_many_in_flight_worke
 
     let mut prefix_handles = Vec::new();
     for spec in &prefix_specs {
-        prefix_handles.push(manager.ensure_worker(spec.clone()).await?);
+        prefix_handles.push(manager.ensure_exclusive_worker(spec.clone()).await?);
     }
-    let survivor = manager.ensure_worker(survivor_spec.clone()).await?;
+    let survivor = manager
+        .ensure_exclusive_worker(survivor_spec.clone())
+        .await?;
     assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 4);
     assert_eq!(manager.count_workers_with_prefix("other_worker:"), 1);
 
@@ -604,7 +618,9 @@ async fn router_worker_business_flow_prefix_stop_interrupts_many_in_flight_worke
     assert_eq!(survivor_response["worker_kind"], "prefix-stop-survivor");
     assert_eq!(survivor_response["input"]["seq"], 101);
 
-    let recreated = manager.ensure_worker(prefix_specs[0].clone()).await?;
+    let recreated = manager
+        .ensure_exclusive_worker(prefix_specs[0].clone())
+        .await?;
     assert!(
         prefix_handles
             .iter()

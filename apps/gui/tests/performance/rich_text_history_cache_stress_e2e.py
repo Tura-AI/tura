@@ -307,7 +307,7 @@ class RichHistoryGatewayHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             self.wfile.flush()
             self.close_connection = True
-            return
+            return None
         if path == "/__records":
             return self.send_json({"requests": self.server.requests, "sessions": self.server.sessions})
         if path == "/global/health":

@@ -371,7 +371,7 @@ mod tests {
             for index in 0..MAX_ACTIVE_RUNTIME_WORKERS {
                 state
                     .manager
-                    .ensure_worker(WorkerSpec {
+                    .ensure_exclusive_worker(WorkerSpec {
                         key: format!("runtime_worker:limit-fill-{index}"),
                         service_name: "runtime".to_string(),
                         executable: std::path::PathBuf::from(
@@ -433,7 +433,7 @@ mod tests {
         runtime.block_on(async {
             let handle = state
                 .manager
-                .ensure_worker(WorkerSpec {
+                .ensure_exclusive_worker(WorkerSpec {
                     key: "runtime_worker:duplicate-session".to_string(),
                     service_name: "runtime_worker".to_string(),
                     executable: std::path::PathBuf::from(
@@ -484,7 +484,7 @@ mod tests {
         runtime.block_on(async {
             let handle = state
                 .manager
-                .ensure_worker(WorkerSpec {
+                .ensure_exclusive_worker(WorkerSpec {
                     key: "runtime_worker:drop-cleanup".to_string(),
                     service_name: "runtime_worker".to_string(),
                     executable: std::path::PathBuf::from(

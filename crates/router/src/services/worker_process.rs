@@ -340,7 +340,7 @@ impl WorkerProcess {
                     worker_id = self.worker_id,
                     service_name = self.service_name,
                     error = %error,
-                    "persistent worker invocation failed; stopping worker before reuse"
+                    "persistent worker invocation failed; stopping worker before another start"
                 );
                 self.stop().await;
                 return Err(anyhow!(

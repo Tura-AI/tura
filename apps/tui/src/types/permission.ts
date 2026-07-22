@@ -5,10 +5,6 @@ export interface PermissionRequest {
   args?: Record<string, unknown>;
 }
 
-export interface PermissionReplyResponse {
-  success: boolean;
-}
-
 export interface QuestionRequest {
   id: string;
   sessionID?: string;

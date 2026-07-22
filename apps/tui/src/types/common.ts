@@ -29,10 +29,6 @@ export class GatewayUnavailableError extends Error {
   exitCode = 5;
 }
 
-export class PermissionDeniedError extends Error {
-  exitCode = 3;
-}
-
 export class TimeoutError extends Error {
   exitCode = 4;
 }

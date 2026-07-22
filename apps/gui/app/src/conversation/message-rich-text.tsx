@@ -274,7 +274,14 @@ function RichTableView(props: {
 
   return (
     <figure class="rich-table-frame">
-      <div ref={tableScroll} class="rich-table-scroll" tabindex="0" onScroll={updateScrollMetrics}>
+      <div
+        ref={(element) => {
+          tableScroll = element;
+        }}
+        class="rich-table-scroll"
+        tabindex="0"
+        onScroll={updateScrollMetrics}
+      >
         <table>
           <Show when={caption()}>
             <caption>{caption()}</caption>
@@ -328,7 +335,9 @@ function RichTableView(props: {
       </div>
       <Show when={hasXOverflow()}>
         <div
-          ref={xTrack}
+          ref={(element) => {
+            xTrack = element;
+          }}
           class="rich-table-overflow-bar rich-table-overflow-x"
           aria-hidden="true"
           onPointerDown={(event) => dragScroll(event, setHorizontalScroll)}

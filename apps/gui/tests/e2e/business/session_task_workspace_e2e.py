@@ -3,7 +3,6 @@ import base64
 import json
 import mimetypes
 import os
-import shutil
 import socket
 import subprocess
 import threading
@@ -209,7 +208,7 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             self.close_connection = True
             time.sleep(0.2)
-            return
+            return None
         if path == "/__records":
             return self.send_json(
                 {
@@ -285,7 +284,7 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             self.wfile.flush()
             self.close_connection = True
-            return
+            return None
         if path == "/session":
             directory = self.server.directory_from(self, query)
             sessions = [item for item in self.server.sessions if item.get("directory") == directory]
@@ -412,7 +411,7 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
                     item["taskManagement"] = management
                 self.server.records.append({"type": "session.prompt_async", "session_id": session_id, "payload": payload})
             self.empty()
-            return
+            return None
         if path == "/command":
             return self.send_json({"output": ""})
         return self.send_json({})
@@ -682,6 +681,7 @@ async def drag_first_card_to_column(page, card_text: str, column_text: str):
         )
         return
     except Exception:
+        # Browser state is optional here; the gateway record check below is authoritative.
         pass
     with urlopen(GATEWAY_URL + "/__records", timeout=5) as response:
         records = json.loads(response.read().decode("utf-8"))

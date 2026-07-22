@@ -2,7 +2,7 @@ import { sessionConfigPatchFromAssignments } from "../../commands/config-values.
 import { isDraftSession } from "../../types/session.js";
 import { runtimeModelFromConfig } from "../model-config.js";
 import type { AppState, SettingDetail } from "../reducer.js";
-import { settingOptions, settingsEntries } from "../render.js";
+import { settingsEntries } from "../render.js";
 
 export interface PromptRuntimeSelection {
   model?: string;
@@ -69,10 +69,6 @@ export function settingPatch(
     return { command_run_stall_guard_profile: value };
   }
   return undefined;
-}
-
-export function selectedSettingOption(state: AppState): [string, string, unknown] | undefined {
-  return settingOptions(state)[state.selectedSettingOptionIndex];
 }
 
 export function promptRuntimeSelection(state: AppState): PromptRuntimeSelection {

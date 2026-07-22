@@ -135,7 +135,6 @@ tokio.workspace = true
 router.workspace = true
 router_contract.workspace = true
 runtime.workspace = true
-runtime_contract.workspace = true
 tools.workspace = true
 uuid.workspace = true
 

@@ -57,7 +57,7 @@ import {
 } from "./render/section-ui.js";
 import { settingsLines, settingsPageInfo } from "./render/settings.js";
 
-export { settingOptions, settingsCommandEntries, settingsEntries } from "./render/settings.js";
+export { settingOptions, settingsEntries } from "./render/settings.js";
 
 export type RenderedChatFrame = RenderedFrame & {
   renderCols: number;

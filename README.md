@@ -298,7 +298,6 @@ full navigation page is [docs/start/navigation.md](docs/start/navigation.md).
 ### Architecture
 
 - [System architecture](ARCHITECTURE.md)
-- [Runtime / Session refactor plan and acceptance contract](docs/plan/architect.md)
 - [Runtime / Session equivalence gate](tests/equivalence/runtime_session/README.md)
 - [Session DB](crates/session_log/ARCHITECTURE.md)
 - [Gateway](crates/gateway/ARCHITECTURE.md)

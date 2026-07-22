@@ -1,7 +1,7 @@
 use chrono::Utc;
 use tracing::{error, info};
 
-use crate::agent_router::{activate_agents_by_session_type, initialize_agent_state_machine};
+use crate::agent_router::activate_agents_by_session_type;
 use crate::checkpoint::session_snapshot::{persist_session_checkpoint, SessionDeltaWriter};
 use crate::manas::{process_manas_internal, ManasInput};
 use crate::mano::{ManoOverrides, ManoProcessResult};
@@ -125,11 +125,6 @@ fn orchestrate_with_config_and_session(
     session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
     session.reflection_enabled = agents.first().is_some_and(|agent| agent.reflection);
     session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agents);
-
-    if let Err(e) = initialize_agent_state_machine(&mut agents, &session) {
-        error!(error = %e, "failed to initialize agent state machine");
-        return Err(format!("failed to initialize agent state machine: {e}"));
-    }
 
     info!(
         session_id = %session.session_id,
@@ -302,7 +297,6 @@ pub fn process_from_user_internal(
             session.planning_enabled = agts.first().is_some_and(agent_has_planning_capability);
             session.reflection_enabled = agts.first().is_some_and(|agent| agent.reflection);
             session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agts);
-            initialize_agent_state_machine(&mut agts, &session)?;
             agts
         }
     };

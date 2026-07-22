@@ -8,6 +8,7 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { performance } from "node:perf_hooks";
+import { pipeline } from "node:stream";
 
 export const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 
@@ -358,24 +359,17 @@ export class BackendStressHarness {
     });
     const stdoutStream = child.stdout && options.stdout ? fs.createWriteStream(options.stdout) : undefined;
     const stderrStream = child.stderr && options.stderr ? fs.createWriteStream(options.stderr) : undefined;
-    if (stdoutStream) {
-      stdoutStream.on("error", (error) => {
+    const pipeLog = (source, destination, label) => {
+      if (!source || !destination) return;
+      pipeline(source, destination, (error) => {
+        if (!error) return;
         this.recordCleanup({
           action: "log-stream-error",
-          label: `${options.label}:stdout`,
+          label: `${options.label}:${label}`,
           error: String(error?.message || error),
         });
       });
-    }
-    if (stderrStream) {
-      stderrStream.on("error", (error) => {
-        this.recordCleanup({
-          action: "log-stream-error",
-          label: `${options.label}:stderr`,
-          error: String(error?.message || error),
-        });
-      });
-    }
+    };
     const entry = {
       child,
       label: options.label || path.basename(command),
@@ -386,8 +380,8 @@ export class BackendStressHarness {
       stderrStream,
     };
     this.processes.push(entry);
-    if (child.stdout && stdoutStream) child.stdout.pipe(stdoutStream);
-    if (child.stderr && stderrStream) child.stderr.pipe(stderrStream);
+    pipeLog(child.stdout, stdoutStream, "stdout");
+    pipeLog(child.stderr, stderrStream, "stderr");
     return child;
   }
 

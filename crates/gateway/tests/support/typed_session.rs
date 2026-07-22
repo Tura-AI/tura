@@ -52,27 +52,6 @@ pub fn create_via_service(
     }
 }
 
-pub fn create_if_missing_via_service(
-    session_id: &str,
-    workspace: &str,
-    name: &str,
-    created_at: i64,
-    task_plan: TaskPlan,
-) -> Result<()> {
-    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
-        GetSessionRequest {
-            session_id: session_id.to_string(),
-        },
-    ))? {
-        SessionLogResponse::Session { session: Some(_) } => Ok(()),
-        SessionLogResponse::Session { session: None } => {
-            create_via_service(session_id, workspace, name, created_at, task_plan)
-        }
-        SessionLogResponse::Error { error } => bail!("get session failed: {error}"),
-        other => bail!("unexpected get session response: {other:?}"),
-    }
-}
-
 pub fn persist_messages_via_service(
     session_id: &str,
     messages: Vec<serde_json::Value>,

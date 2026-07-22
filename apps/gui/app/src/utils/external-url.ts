@@ -1,9 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
-export function isWebUrl(value: string | null | undefined): value is string {
-  return typeof value === "string" && /^https?:\/\//iu.test(value.trim());
-}
-
 export function isSystemOpenUrl(value: string | null | undefined): value is string {
   return typeof value === "string" && /^(?:https?|file):\/\//iu.test(value.trim());
 }

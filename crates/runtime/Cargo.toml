@@ -119,13 +119,11 @@ router_contract.workspace = true
 runtime_contract.workspace = true
 tura_path = { workspace = true }
 tools = { workspace = true }
-reqwest.workspace = true
 session_log_contract.workspace = true
 uuid.workspace = true
 sysinfo.workspace = true
 
 [dev-dependencies]
-tokio-test.workspace = true
 tempfile.workspace = true
 rusqlite.workspace = true
 session_log = { workspace = true }

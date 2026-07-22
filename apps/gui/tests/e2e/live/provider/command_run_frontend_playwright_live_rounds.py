@@ -205,6 +205,7 @@ async def goto(page, tab: str, extra: dict | None = None):
             try:
                 body = await page.locator("body").inner_text(timeout=2_000)
             except Exception:
+                # Preserve the original navigation error when diagnostics cannot be read.
                 pass
             if "Failed to fetch dynamically imported module" in body and attempt < 2:
                 await page.wait_for_timeout(1_000)
@@ -264,6 +265,7 @@ def approve_pending_permissions() -> None:
                 timeout=10,
             )
         except Exception:
+            # Permission replies are best-effort; a later poll observes any unresolved item.
             pass
 
 

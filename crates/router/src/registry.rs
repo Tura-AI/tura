@@ -11,8 +11,6 @@ pub mod tools;
 use std::path::{Path, PathBuf};
 
 pub use agent::AgentRegistry;
-#[allow(unused_imports)]
-pub use agent::AgentSpec;
 pub use command::CommandRegistry;
 pub use persona::PersonaRegistry;
 pub use tools::ToolRegistry;
@@ -23,8 +21,6 @@ pub struct Registry {
     pub agents: AgentRegistry,
     pub commands: CommandRegistry,
     pub personas: PersonaRegistry,
-    #[allow(dead_code)]
-    pub tools: ToolRegistry,
 }
 
 impl Registry {
@@ -33,13 +29,8 @@ impl Registry {
             agents: AgentRegistry::from_static(),
             commands: CommandRegistry,
             personas: PersonaRegistry::from_static(),
-            tools: ToolRegistry::discover(default_repo_root()),
         }
     }
-}
-
-fn default_repo_root() -> PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// Resolve a sibling service binary for the current router profile first.

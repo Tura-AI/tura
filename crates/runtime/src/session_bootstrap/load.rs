@@ -12,6 +12,5 @@ pub(crate) fn create_session_with_topic(
 
     let session_directory =
         session_directory_override.unwrap_or_else(|| project_directory.join("sessions"));
-    crate::workspace_git::ensure_workspace_git_repo(&session_directory)?;
     activate_session_with_directory(session_directory, input)
 }

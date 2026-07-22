@@ -33,7 +33,7 @@ export function topmostSessionId(
     return undefined;
   }
   const visited = new Set<string>();
-  while (current) {
+  for (;;) {
     if (visited.has(current.id)) {
       return current.id;
     }
@@ -48,7 +48,6 @@ export function topmostSessionId(
     }
     current = parent;
   }
-  return undefined;
 }
 
 export function visibleSessionTreeRows(

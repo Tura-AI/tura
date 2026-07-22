@@ -768,7 +768,7 @@ function timeoutSignal(
         ? window
         : undefined;
   if (!scheduler?.setTimeout || !scheduler.clearTimeout) {
-    return { signal: existing ?? undefined, dispose: () => undefined };
+    return { signal: undefined, dispose: () => undefined };
   }
   const timer = scheduler.setTimeout(
     () => controller.abort(new DOMException("Gateway request timed out.", "TimeoutError")),
