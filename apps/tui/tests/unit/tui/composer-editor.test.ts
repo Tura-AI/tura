@@ -11,9 +11,9 @@ import {
 } from "../../../src/tui/composer-editor.js";
 
 test("composer edits insert and delete at the active cursor", () => {
-  assert.deepEqual(insertAtCursor("helo", 3, "l"), { value: "hello", cursor: 4 });
-  assert.deepEqual(backspaceAtCursor("hello", 3), { value: "helo", cursor: 2 });
-  assert.deepEqual(deleteAtCursor("hello", 2), { value: "helo", cursor: 2 });
+  assert.deepEqual(insertAtCursor("at", 0, "c"), { value: "cat", cursor: 1 });
+  assert.deepEqual(backspaceAtCursor("plane", 2), { value: "pane", cursor: 1 });
+  assert.deepEqual(deleteAtCursor("plane", 1), { value: "pane", cursor: 1 });
 });
 
 test("composer character navigation keeps grapheme clusters intact", () => {
