@@ -1,0 +1,16 @@
+{
+  "name": "mcp",
+  "description": "List or call tools on a configured stdio MCP server.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["action", "server"],
+    "properties": {
+      "action": { "type": "string", "enum": ["list_tools", "call_tool"] },
+      "server": { "type": "string" },
+      "tool": { "type": "string", "x-tura-optional": true },
+      "arguments": { "type": "object", "x-tura-optional": true }
+    }
+  }
+}
+

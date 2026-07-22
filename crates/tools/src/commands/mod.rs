@@ -34,6 +34,7 @@ pub fn execute(
         "generate_media" => {
             execute_external("generate_media", command_line, session_dir, timeout_secs)
         }
+        "mcp" => execute_external("mcp", command_line, session_dir, timeout_secs),
         "planning" if planning_command_enabled() => planning::execute(command_line, session_dir),
         "read_media" => execute_external("read_media", command_line, session_dir, timeout_secs),
         "shell_command" => shell_command::execute(command_line, session_dir, timeout_secs),
@@ -54,6 +55,7 @@ pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
     match canonical_command(command).as_str() {
         "apply_patch" => apply_patch::access(command_line, session_dir),
         "generate_media" => access_external("generate_media", command_line, session_dir),
+        "mcp" => access_external("mcp", command_line, session_dir),
         "planning" if planning_command_enabled() => Access::default(),
         "read_media" => access_external("read_media", command_line, session_dir),
         "web_discover" => access_external("web_discover", command_line, session_dir),
@@ -89,6 +91,9 @@ pub fn display_command(
     if canonical_command(command) == "web_discover" {
         return "web_discover".to_string();
     }
+    if canonical_command(command) == "mcp" {
+        return "mcp".to_string();
+    }
     shell_executor::display_command(command_line, session_dir, timeout_secs)
 }
 
@@ -112,6 +117,7 @@ pub fn canonical_command(name: &str) -> String {
             "generate_media".to_string()
         }
         "task_status" => "task_status".to_string(),
+        "mcp" | "model_context_protocol" => "mcp".to_string(),
         other => other.to_string(),
     }
 }

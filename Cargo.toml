@@ -11,6 +11,7 @@ resolver = "2"
 default-members = [
   ".",
   "commands/generate_media",
+  "commands/mcp",
   "agents",
   "commands/read_media",
   "commands/web_discover",
@@ -28,6 +29,7 @@ members = [
   "agents",
   "apps/tauri/src-tauri",
   "commands/generate_media",
+  "commands/mcp",
   "commands/read_media",
   "commands/web_discover",
   "crates/gateway",

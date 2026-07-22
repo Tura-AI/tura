@@ -105,6 +105,7 @@ copy_release_runtime_files() {
   copy_runtime_path crates/tools/src/commands crates/tools/src/commands
   copy_runtime_path crates/tools/src/command_run/schema.json crates/tools/src/command_run/schema.json
   copy_runtime_path commands/generate_media commands/generate_media
+  copy_runtime_path commands/mcp commands/mcp
   copy_runtime_path commands/read_media commands/read_media
   copy_runtime_path commands/web_discover commands/web_discover
   copy_runtime_path README.md README.md
@@ -215,7 +216,7 @@ fi
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p router --bin tura_router)
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p session_log --bin tura_session_db)
 (cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p runtime --bin tura_runtime)
-(cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p generate_media -p read_media -p web_discover)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p generate_media -p mcp -p read_media -p web_discover)
 
 copy_release_config
 if [ "$BINARY" -eq 0 ]; then
