@@ -467,7 +467,19 @@ mod tests {
             .set_write_timeout(Some(Duration::from_secs(10)))
             .expect("set client write timeout");
 
-        let (server_stream, _) = listener.accept().expect("accept queued client");
+        let accept_started = Instant::now();
+        let server_stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error)
+                    if error.kind() == ErrorKind::WouldBlock
+                        && accept_started.elapsed() < Duration::from_secs(5) =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept queued client: {error}"),
+            }
+        };
         let server = std::thread::spawn(move || handle_connection(store, server_stream));
 
         let oversized_variant = "x".repeat(1_000_000);

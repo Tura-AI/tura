@@ -1,8 +1,7 @@
 use super::{
     apply_codex_auth_env, load_codex_auth_tokens, normalize_response_content,
     openai_login_is_oauth, provider_latency_timeouts, refresh_openai_access_token_if_needed,
-    ProviderConfig, ProviderLatencyConfig, ProviderLatencyTimeouts,
-    set_provider_latency_timeouts,
+    set_provider_latency_timeouts, ProviderConfig, ProviderLatencyConfig, ProviderLatencyTimeouts,
 };
 use serde_json::json;
 use std::path::PathBuf;
