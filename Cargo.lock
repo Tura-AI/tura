@@ -5879,6 +5879,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tools",
+ "uuid",
 ]
 
 [[package]]

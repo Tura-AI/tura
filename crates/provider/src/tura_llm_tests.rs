@@ -1,7 +1,7 @@
 use super::{
     apply_codex_auth_env, load_codex_auth_tokens, normalize_response_content,
-    openai_login_is_oauth, provider_latency_timeouts, set_provider_latency_timeouts,
-    ProviderLatencyConfig, ProviderLatencyTimeouts,
+    openai_login_is_oauth, provider_latency_timeouts, refresh_openai_access_token_if_needed,
+    set_provider_latency_timeouts, ProviderConfig, ProviderLatencyConfig, ProviderLatencyTimeouts,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -38,6 +38,26 @@ fn unique_temp_dir(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("tura-provider-{name}-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&path).expect("temp dir");
     path
+}
+
+#[test]
+fn provider_alias_preserves_auth_identity_and_resolves_runtime_protocol() {
+    let gemini = ProviderConfig {
+        provider: "gemini-api".to_string(),
+        base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
+        model: "gemini-3.5-flash".to_string(),
+        temperature: 0.2,
+    };
+    let mistral = ProviderConfig {
+        provider: "mistral".to_string(),
+        base_url: "https://api.mistral.ai/v1".to_string(),
+        model: "mistral-medium-3.5".to_string(),
+        temperature: 0.2,
+    };
+
+    assert_eq!(gemini.provider, "gemini-api");
+    assert_eq!(gemini.runtime_provider(), "google");
+    assert_eq!(mistral.runtime_provider(), "mistral");
 }
 
 #[test]
@@ -231,6 +251,77 @@ fn loads_codex_oauth_tokens_from_codex_home() {
     assert_eq!(
         std::env::var("OPENAI_ACCOUNT_ID").as_deref(),
         Ok("acct-local")
+    );
+}
+
+#[tokio::test]
+async fn prefers_codex_auth_when_env_token_is_still_marked_valid() {
+    let _lock = crate::test_support::env_lock_async().await;
+    let _restore = EnvRestore::capture(&[
+        "CODEX_HOME",
+        "TURA_ENV_PATH",
+        "OPENAI_LOGIN",
+        "OPENAI_API_KEY",
+        "OPENAI_REFRESH_TOKEN",
+        "OPENAI_TOKEN_EXPIRES",
+        "OPENAI_ACCOUNT_ID",
+    ]);
+    let root = unique_temp_dir("rotated-codex-auth");
+    let codex_home = root.join("codex-home");
+    std::fs::create_dir_all(&codex_home).expect("create codex home");
+    std::fs::write(
+        codex_home.join("auth.json"),
+        r#"{
+            "tokens": {
+                "access_token": "fresh-codex-access",
+                "refresh_token": "fresh-codex-refresh",
+                "account_id": "fresh-account"
+            }
+        }"#,
+    )
+    .expect("write codex auth");
+    let env_path = root.join("tura.env");
+    std::fs::write(
+        &env_path,
+        concat!(
+            "OPENAI_LOGIN=oauth\n",
+            "OPENAI_API_KEY=stale-env-access\n",
+            "OPENAI_REFRESH_TOKEN=stale-env-refresh\n",
+            "OPENAI_TOKEN_EXPIRES=4102444800000\n",
+        ),
+    )
+    .expect("write tura env");
+
+    std::env::set_var("CODEX_HOME", &codex_home);
+    std::env::set_var("TURA_ENV_PATH", &env_path);
+    for key in [
+        "OPENAI_LOGIN",
+        "OPENAI_API_KEY",
+        "OPENAI_REFRESH_TOKEN",
+        "OPENAI_TOKEN_EXPIRES",
+        "OPENAI_ACCOUNT_ID",
+    ] {
+        std::env::remove_var(key);
+    }
+    let conf = crate::TuraConfig::new(".env.missing");
+
+    // Regression: a future expiry on stale .env data must not mask a newer Codex login.
+    let access = refresh_openai_access_token_if_needed(&conf)
+        .await
+        .expect("select codex access token");
+
+    assert_eq!(access, "fresh-codex-access");
+    assert_eq!(
+        std::env::var("OPENAI_API_KEY").as_deref(),
+        Ok("fresh-codex-access")
+    );
+    assert_eq!(
+        std::env::var("OPENAI_REFRESH_TOKEN").as_deref(),
+        Ok("fresh-codex-refresh")
+    );
+    assert_eq!(
+        std::env::var("OPENAI_ACCOUNT_ID").as_deref(),
+        Ok("fresh-account")
     );
 }
 

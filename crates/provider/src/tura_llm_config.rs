@@ -529,12 +529,17 @@ impl Settings {
     }
 
     pub fn provider_base_url(&self, provider: &str) -> Option<String> {
-        self.provider_base_url.get(provider).cloned().or_else(|| {
-            self.routes()
-                .flat_map(|route| route.providers.iter())
-                .find(|item| item.provider == provider)
-                .map(|item| item.base_url.clone())
-        })
+        let runtime_provider = crate::auth_registry::runtime_provider_id(provider);
+        self.provider_base_url
+            .get(provider)
+            .or_else(|| self.provider_base_url.get(runtime_provider))
+            .cloned()
+            .or_else(|| {
+                self.routes()
+                    .flat_map(|route| route.providers.iter())
+                    .find(|item| item.provider == provider || item.provider == runtime_provider)
+                    .map(|item| item.base_url.clone())
+            })
     }
 
     pub fn configured_model_catalog(&self) -> HashMap<String, Vec<String>> {
@@ -956,11 +961,15 @@ mod tests {
     }
 
     #[test]
-    fn provider_base_url_prefers_explicit_map_then_route_provider_url() {
+    fn provider_base_url_prefers_config_then_canonical_alias_then_route() {
         let mut settings = settings_with_catalog_and_routes();
         assert_eq!(
             settings.provider_base_url("openai").as_deref(),
             Some("https://api.openai.test/v1")
+        );
+        assert_eq!(
+            settings.provider_base_url("gemini-api").as_deref(),
+            Some("https://google.test/v1")
         );
 
         settings.provider_base_url.remove("google");
@@ -968,7 +977,18 @@ mod tests {
             settings.provider_base_url("google").as_deref(),
             Some("https://google.test/v1")
         );
-        assert_eq!(settings.provider_base_url("anthropic"), None);
+        assert_eq!(settings.provider_base_url("missing"), None);
+
+        let minimal_settings = Settings {
+            provider_base_url: HashMap::from([(
+                "openai".to_string(),
+                "https://openai.test/v1".to_string(),
+            )]),
+            routes: HashMap::new(),
+            model_catalog: ModelCatalog::default(),
+            provider_enums: ProviderEnumCatalog::default(),
+        };
+        assert_eq!(minimal_settings.provider_base_url("codex"), None);
     }
 
     #[test]
