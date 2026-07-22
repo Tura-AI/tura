@@ -41,6 +41,47 @@ test("render places composer at the bottom and reports its terminal cursor", () 
   assert.doesNotMatch(rendered.frame, /TURA_COMPOSER_CURSOR/);
 });
 
+test("render shows slash command completion and tracks an in-line composer cursor", () => {
+  let state = reducer(initialState("C:/repo"), { type: "composer", value: "/mo" });
+  const completion = withTerminalSize(80, 18, () => render(state, richCapabilities()));
+  const plainCompletion = stripAnsi(completion);
+  assert.match(plainCompletion, /Commands/u);
+  assert.match(plainCompletion, /> \/model <provider\/model>/u);
+  assert.match(plainCompletion, /Up\/Down: select · Tab: complete · Esc: dismiss/u);
+
+  state = reducer(state, { type: "composer", value: "hello", cursor: 2 });
+  const rendered = withTerminalSize(80, 18, () => renderFrame(state, richCapabilities()));
+  const composerIndex = rendered.frame
+    .split("\n")
+    .findIndex((line) => stripAnsi(line).includes("> hello"));
+  assert.deepEqual(rendered.cursor, { row: composerIndex + 1, column: 7 });
+});
+
+test("model menu keeps the selected model visible across pages", () => {
+  const models = Object.fromEntries(
+    Array.from({ length: 14 }, (_item, index) => [
+      `model-${index}`,
+      { id: `model-${index}`, name: `Model ${index}` },
+    ]),
+  );
+  const state = {
+    ...initialState("C:/repo"),
+    modelsOpen: true,
+    selectedModelIndex: 13,
+    providers: {
+      all: [{ id: "provider", name: "Provider", source: "test", models }],
+      default: {},
+      connected: [],
+      enums: providerEnums,
+    },
+  };
+  const output = withTerminalSize(72, 10, () => render(state, richCapabilities()));
+  const plain = stripAnsi(output);
+  assert.match(plain, /> provider\/model-13/u);
+  assert.match(plain, /model select page 7\/7/u);
+  assert.doesNotMatch(plain, /provider\/model-0/u);
+});
+
 test("render reports the composer cursor on the final visible input line", () => {
   const session = { id: "sess-full-composer", title: "Full Composer", status: "idle" as const };
   const composer = Array.from({ length: 9 }, (_item, index) => `input-line-${index + 1}`).join(
