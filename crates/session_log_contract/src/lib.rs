@@ -18,6 +18,5 @@ pub use protocol::{
     SessionFeedCommandUpdate, SessionFeedEntry, SessionFeedEvent, SessionLogCommand,
     SessionLogResponse, SessionMetadata, SessionMetadataPatch, SessionRecord,
     SessionRecordProjection, SessionSnapshot, SessionSummary, UpdateSessionRequest,
-    UpdateSessionTodosRequest,
-    WorkspaceSummary,
+    UpdateSessionTodosRequest, WorkspaceSummary,
 };

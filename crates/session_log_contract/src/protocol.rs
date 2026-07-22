@@ -671,8 +671,7 @@ mod tests {
         ExecuteSessionCommandRequest, GetSessionRequest, ListSessionRecordsRequest,
         ListSessionsRequest, MarkSessionInterruptedRequest, Page, PersistSessionDeltaRequest,
         RegisterRuntimeRequest, SessionCommandResult, SessionFeedEvent, SessionLogCommand,
-        SessionLogResponse, SessionMetadata, SessionMetadataPatch, SessionRecord,
-        SessionSnapshot,
+        SessionLogResponse, SessionMetadata, SessionMetadataPatch, SessionRecord, SessionSnapshot,
         UpdateSessionRequest, WorkspaceSummary,
     };
     use lifecycle::{
@@ -682,8 +681,8 @@ mod tests {
     use serde_json::json;
 
     fn snapshot_fixture(session_id: &str) -> SessionSnapshot {
-        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(1)
-            .expect("snapshot timestamp");
+        let timestamp =
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(1).expect("snapshot timestamp");
         let projection =
             SessionAggregate::new(session_id.to_string()).query(SessionQuery::Lifecycle);
         let mut management = SessionManagement::new(
@@ -946,8 +945,8 @@ mod tests {
 
     #[test]
     fn session_snapshot_requires_canonical_lifecycle_projection() {
-        let mut value = serde_json::to_value(snapshot_fixture("session"))
-            .expect("canonical snapshot json");
+        let mut value =
+            serde_json::to_value(snapshot_fixture("session")).expect("canonical snapshot json");
         value
             .as_object_mut()
             .expect("snapshot object")

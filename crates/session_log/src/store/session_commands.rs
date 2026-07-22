@@ -727,7 +727,7 @@ impl SessionLogStore {
             let projection_event_id = format!("{}:session-projection", request.command_id);
             let projection_event = SessionFeedEvent::SessionProjectionUpdated {
                 projection: projection.clone(),
-                session_name: name.clone(),
+                session_name: Some(name.clone()),
                 updated_at: final_row.updated_at,
             };
             let projection_cursor = super::feed::append_session_feed_event_tx(
@@ -747,7 +747,7 @@ impl SessionLogStore {
             let result = SessionCommandResult {
                 event,
                 projection,
-                session_name: name,
+                session_name: Some(name),
                 message_count: final_row.message_count as u64,
                 last_user_message_at: final_row.last_user_message_at,
             };
@@ -1542,7 +1542,7 @@ fn persist_command_message_projection(
          WHERE session_id = ?1",
         params![
             session_id,
-            projection.updated_at,
+            updated_at,
             last_user_message_at,
             message_count,
             management_json,

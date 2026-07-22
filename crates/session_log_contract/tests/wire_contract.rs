@@ -7,8 +7,8 @@ use session_log_contract::{
 };
 
 fn snapshot_fixture(session_id: &str, workspace: &str) -> SessionSnapshot {
-    let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(1)
-        .expect("snapshot timestamp");
+    let timestamp =
+        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(1).expect("snapshot timestamp");
     let projection = SessionAggregate::new(session_id.to_string()).query(SessionQuery::Lifecycle);
     let mut management = SessionManagement::new(
         session_id.to_string(),

@@ -138,7 +138,10 @@ fn stores_workspaces_sessions_and_last_record_page() {
         .expect("sessions");
     assert_eq!(page.total, 1);
     assert_eq!(sessions[0].session_id, session_id);
-    assert_eq!(sessions[0].lifecycle_projection.task_plan.plan_summary, "Plan");
+    assert_eq!(
+        sessions[0].lifecycle_projection.task_plan.plan_summary,
+        "Plan"
+    );
     assert!(sessions[0].todos.is_empty());
 
     let loaded = store
