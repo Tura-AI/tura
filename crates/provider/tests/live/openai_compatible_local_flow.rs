@@ -1,6 +1,8 @@
 #[path = "helpers/openai_compatible_local.rs"]
 mod helpers;
 
+#[path = "openai_compatible_local/codex_auth.rs"]
+mod codex_auth;
 #[path = "openai_compatible_local/content_variants.rs"]
 mod content_variants;
 #[path = "openai_compatible_local/core_tooling.rs"]

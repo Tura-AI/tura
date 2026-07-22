@@ -79,6 +79,14 @@ mod tests {
         assert!(settings
             .configured_model_catalog()
             .contains_key("openrouter"));
+        assert_eq!(
+            settings.provider_base_url("mistral").as_deref(),
+            Some("https://api.mistral.ai/v1")
+        );
+        assert_eq!(
+            settings.provider_base_url("github-copilot").as_deref(),
+            Some("https://api.githubcopilot.com")
+        );
 
         match previous_provider {
             Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),

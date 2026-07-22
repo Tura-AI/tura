@@ -729,7 +729,19 @@ mod tests {
             .set_write_timeout(Some(Duration::from_secs(10)))
             .expect("set client write timeout");
 
-        let (server_stream, _) = listener.accept().expect("accept queued client");
+        let accept_started = Instant::now();
+        let server_stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && accept_started.elapsed() < Duration::from_secs(5) =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept queued client: {error}"),
+            }
+        };
         let server = std::thread::spawn(move || {
             handle_connection(store, server_stream, SessionFeedHub::default())
         });
@@ -834,11 +846,10 @@ mod tests {
 
         drop(readers);
         drop(clients);
-        hub.publish(SessionFeedEntry {
-            cursor: 3,
-            event_id: "event-3".to_string(),
-            ..entry
-        });
+        hub.subscribers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
         server
             .join()
             .expect("subscription server thread")
