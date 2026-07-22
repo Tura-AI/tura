@@ -47,7 +47,14 @@ fn interrupted_persisted_session_resumes_without_losing_history() {
 
     assert_eq!(decoded.state, SessionState::Created);
     assert_eq!(decoded.input.user_input, "resume task");
-    assert_eq!(decoded.session_log, vec!["history before interruption"]);
+    assert_eq!(
+        decoded
+            .session_log
+            .iter()
+            .map(lifecycle::SessionLogEntry::raw)
+            .collect::<Vec<_>>(),
+        vec!["history before interruption"]
+    );
 }
 
 #[test]

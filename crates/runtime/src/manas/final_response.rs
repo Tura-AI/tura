@@ -218,7 +218,7 @@ pub(crate) fn summarize_tool_results_for_user(session: &SessionManagement) -> Op
     let tool_results: Vec<_> = session
         .session_log
         .iter()
-        .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+        .map(|entry| entry.value())
         .filter(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("tool_result"))
         .collect();
 

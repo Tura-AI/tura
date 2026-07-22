@@ -173,14 +173,11 @@ fn frontend_env(key: &str) -> Option<String> {
 fn session_has_initial_user_message(session: &SessionManagement) -> bool {
     let raw_input = &session.input.user_input;
     session.session_log.iter().any(|entry| {
-        serde_json::from_str::<serde_json::Value>(entry)
-            .ok()
-            .is_some_and(|value| {
-                value.get("role").and_then(serde_json::Value::as_str) == Some("user")
-                    && value
-                        .get("content")
-                        .is_some_and(|content| user_input_content_matches(content, raw_input))
-            })
+        let value = entry.value();
+        value.get("role").and_then(serde_json::Value::as_str) == Some("user")
+            && value
+                .get("content")
+                .is_some_and(|content| user_input_content_matches(content, raw_input))
     })
 }
 
@@ -189,13 +186,9 @@ fn session_has_runtime_context_message(
     content: &serde_json::Value,
 ) -> bool {
     session.session_log.iter().any(|entry| {
-        serde_json::from_str::<serde_json::Value>(entry)
-            .ok()
-            .is_some_and(|value| {
-                value.get("role").and_then(serde_json::Value::as_str)
-                    == Some(USER_AGENT_CONTEXT_ROLE)
-                    && value.get("content") == Some(content)
-            })
+        let value = entry.value();
+        value.get("role").and_then(serde_json::Value::as_str) == Some(USER_AGENT_CONTEXT_ROLE)
+            && value.get("content") == Some(content)
     })
 }
 

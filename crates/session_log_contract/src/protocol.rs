@@ -1,7 +1,7 @@
 use crate::CommandCheckpoint;
 use lifecycle::{
     ContextTokenStats, RuntimeAggregate, RuntimeEvent, RuntimeProjection, SessionCommand,
-    SessionEvent, SessionManagementDelta, SessionProjection, UsageReport,
+    SessionEvent, SessionManagement, SessionManagementDelta, SessionProjection, UsageReport,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,25 +37,99 @@ pub struct WorkspaceSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+pub struct SessionMetadata {
+    pub session_directory: String,
+    pub model: Option<String>,
+    pub agent: Option<String>,
+    pub session_type: String,
+    pub kill_processes_on_start: bool,
+    pub validator_enabled: bool,
+    pub force_planning: bool,
+    pub model_variant: Option<String>,
+    pub model_acceleration_enabled: bool,
+    pub disable_permission_restrictions: bool,
+    pub use_last_tool_call_response: bool,
+    pub auto_session_name: bool,
+    pub context_tokens: ContextTokenStats,
+    pub runtime_usage: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SessionSnapshot {
     pub session_id: String,
     pub workspace: String,
     pub name: Option<String>,
-    pub parent_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_user_message_at: Option<i64>,
-    pub state: Option<String>,
-    pub status: Option<String>,
     pub message_count: u64,
-    pub task_management: serde_json::Value,
     pub lifecycle_projection: SessionProjection,
-    pub management: serde_json::Value,
-    #[serde(default)]
-    pub session: serde_json::Value,
+    pub management: SessionManagement,
+    pub metadata: SessionMetadata,
     #[serde(default)]
     pub todos: Vec<serde_json::Value>,
+}
+
+impl SessionSnapshot {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.session_id != self.lifecycle_projection.session_id {
+            return Err(format!(
+                "snapshot session id {} does not match lifecycle projection {}",
+                self.session_id, self.lifecycle_projection.session_id
+            ));
+        }
+        if self.session_id != self.management.session_id {
+            return Err(format!(
+                "snapshot session id {} does not match management {}",
+                self.session_id, self.management.session_id
+            ));
+        }
+        let management_projection = self.management.lifecycle_projection();
+        if management_projection.state != self.lifecycle_projection.state
+            || management_projection.task_plan != self.lifecycle_projection.task_plan
+        {
+            return Err(format!(
+                "snapshot lifecycle projection does not match persisted management for {}",
+                self.session_id
+            ));
+        }
+        if self.name.as_deref() != Some(self.management.session_name.as_str()) {
+            return Err(format!(
+                "snapshot name does not match persisted management for {}",
+                self.session_id
+            ));
+        }
+        let management_directory = self.management.session_directory.to_string_lossy();
+        if self.metadata.session_directory != management_directory {
+            return Err(format!(
+                "snapshot metadata directory does not match persisted management for {}",
+                self.session_id
+            ));
+        }
+        if self.metadata.disable_permission_restrictions
+            != self.management.disable_permission_restrictions
+            || self.metadata.use_last_tool_call_response
+                != self.management.use_last_tool_call_response
+            || self.metadata.auto_session_name != self.management.auto_session_name
+            || self.metadata.context_tokens != self.management.context_tokens
+            || self.metadata.runtime_usage != self.management.runtime_usage
+        {
+            return Err(format!(
+                "snapshot metadata does not match persisted management for {}",
+                self.session_id
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn into_management(mut self) -> Result<SessionManagement, String> {
+        self.validate()?;
+        self.management
+            .replace_lifecycle_projection(self.lifecycle_projection);
+        Ok(self.management)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +232,8 @@ pub struct CreateSessionRequest {
     pub disable_permission_restrictions: bool,
     pub use_last_tool_call_response: bool,
     pub auto_session_name: bool,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub initial_task_plan_patch: Option<lifecycle::SessionTaskPlanPatch>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -595,7 +671,8 @@ mod tests {
         ExecuteSessionCommandRequest, GetSessionRequest, ListSessionRecordsRequest,
         ListSessionsRequest, MarkSessionInterruptedRequest, Page, PersistSessionDeltaRequest,
         RegisterRuntimeRequest, SessionCommandResult, SessionFeedEvent, SessionLogCommand,
-        SessionLogResponse, SessionMetadataPatch, SessionRecord, SessionSnapshot,
+        SessionLogResponse, SessionMetadata, SessionMetadataPatch, SessionRecord,
+        SessionSnapshot,
         UpdateSessionRequest, WorkspaceSummary,
     };
     use lifecycle::{
@@ -603,6 +680,58 @@ mod tests {
         SessionQuery,
     };
     use serde_json::json;
+
+    fn snapshot_fixture(session_id: &str) -> SessionSnapshot {
+        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(1)
+            .expect("snapshot timestamp");
+        let projection =
+            SessionAggregate::new(session_id.to_string()).query(SessionQuery::Lifecycle);
+        let mut management = SessionManagement::new(
+            session_id.to_string(),
+            "Session".to_string(),
+            "workspace".into(),
+            false,
+            Vec::<String>::new(),
+            SessionInput {
+                user_input: String::new(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            String::new(),
+            timestamp,
+        );
+        management.replace_lifecycle_projection(projection.clone());
+        SessionSnapshot {
+            session_id: session_id.to_string(),
+            workspace: "workspace".to_string(),
+            name: Some(management.session_name.clone()),
+            created_at: 1,
+            updated_at: 2,
+            last_user_message_at: Some(1),
+            message_count: 1,
+            lifecycle_projection: projection,
+            metadata: SessionMetadata {
+                session_directory: "workspace".to_string(),
+                model: None,
+                agent: None,
+                session_type: "coding".to_string(),
+                kill_processes_on_start: false,
+                validator_enabled: false,
+                force_planning: false,
+                model_variant: None,
+                model_acceleration_enabled: false,
+                disable_permission_restrictions: management.disable_permission_restrictions,
+                use_last_tool_call_response: management.use_last_tool_call_response,
+                auto_session_name: management.auto_session_name,
+                context_tokens: management.context_tokens,
+                runtime_usage: management.runtime_usage.clone(),
+            },
+            management,
+            todos: Vec::new(),
+        }
+    }
 
     #[test]
     fn page_defaults_match_public_pagination_contract() {
@@ -769,24 +898,7 @@ mod tests {
                 page_size: 10,
                 total: 11,
             },
-            sessions: vec![SessionSnapshot {
-                session_id: "session".to_string(),
-                workspace: "workspace".to_string(),
-                name: Some("Session".to_string()),
-                parent_id: None,
-                created_at: 1,
-                updated_at: 2,
-                last_user_message_at: Some(1),
-                state: Some("created".to_string()),
-                status: Some("idle".to_string()),
-                message_count: 1,
-                task_management: json!({}),
-                lifecycle_projection: SessionAggregate::new("session".to_string())
-                    .query(SessionQuery::Lifecycle),
-                management: json!({ "state": "created" }),
-                session: json!({ "id": "session" }),
-                todos: Vec::new(),
-            }],
+            sessions: vec![snapshot_fixture("session")],
         };
         let records = SessionLogResponse::Records {
             page: Page::default(),
@@ -834,21 +946,12 @@ mod tests {
 
     #[test]
     fn session_snapshot_requires_canonical_lifecycle_projection() {
-        let value = json!({
-            "session_id": "session",
-            "workspace": "workspace",
-            "name": "Session",
-            "parent_id": null,
-            "created_at": 1,
-            "updated_at": 2,
-            "state": "created",
-            "status": "idle",
-            "message_count": 0,
-            "task_management": {},
-            "management": {},
-            "session": {},
-            "todos": []
-        });
+        let mut value = serde_json::to_value(snapshot_fixture("session"))
+            .expect("canonical snapshot json");
+        value
+            .as_object_mut()
+            .expect("snapshot object")
+            .remove("lifecycle_projection");
 
         let error = serde_json::from_value::<SessionSnapshot>(value)
             .expect_err("snapshot without a canonical lifecycle projection must fail");
@@ -880,6 +983,7 @@ mod tests {
             disable_permission_restrictions: false,
             use_last_tool_call_response: false,
             auto_session_name: true,
+            initial_task_plan_patch: None,
         };
         let value = serde_json::to_value(create).expect("create json");
         assert!(serde_json::from_value::<CreateSessionRequest>(value).is_ok());

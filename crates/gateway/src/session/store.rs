@@ -1,7 +1,7 @@
-//! Session store - manages session persistence using mano state machine
+//! Session store - caches API projections backed by the Session lifecycle service.
 //!
-//! This module provides session storage functionality using the SessionInfo
-//! structure that wraps SessionManagement from mano.
+//! `SessionInfo` contains only the typed lifecycle projection and API metadata;
+//! canonical state and persistence remain owned by lifecycle and session_db.
 
 use crate::contracts::{
     GlobalEvent, Session as ApiSession, SessionContextTokens, SessionStatus as ApiSessionStatus,
@@ -11,7 +11,7 @@ use crate::session::config::{load_config, merge_config, TuraSessionConfig};
 use crate::session::manager::{
     agent_for_session_type, default_use_last_tool_call_response_for_session,
     normalize_session_type, runtime_provider_for_session, SessionInfo, SessionManager,
-    SessionStatus as SessionStatusMano, CODING_AGENT_NAME,
+    CODING_AGENT_NAME,
 };
 use crate::session_db_client::SessionDbClient;
 use chrono::{DateTime, Utc};
@@ -129,7 +129,7 @@ pub(crate) struct ProjectionCacheWrite {
 
 #[path = "store_task_management.rs"]
 mod store_task_management;
-use store_task_management::{apply_task_management_patch, parse_task_management_patch};
+use store_task_management::parse_task_management_patch;
 
 #[path = "store_frontend.rs"]
 mod store_frontend;
@@ -269,7 +269,7 @@ impl SessionStore {
         self.sessions
             .read()
             .get(session_id)
-            .map(|info| info.management.lifecycle_projection())
+            .map(|info| info.projection.clone())
     }
 
     pub fn insert_projection_cache(
@@ -306,26 +306,22 @@ impl SessionStore {
         if only_if_absent {
             if let Some(current) = sessions.get(&session_id) {
                 return ProjectionCacheWrite {
-                    session: api_session_from_info(
-                        current,
-                        current.management.lifecycle_projection().parent_id,
-                    ),
+                    session: api_session_from_info(current, current.projection.parent_id.clone()),
                     changed: false,
                     inserted: false,
                 };
             }
         }
         let previous = sessions.get(&session_id).map(|current| {
-            api_session_from_info(current, current.management.lifecycle_projection().parent_id)
+            api_session_from_info(current, current.projection.parent_id.clone())
         });
         info.id.clone_from(&session_id);
-        info.management.replace_lifecycle_projection(projection);
+        info.projection = projection;
         if let Some(session_name) = session_name {
-            info.management.session_name = session_name;
+            info.name = session_name;
         }
         info.message_count = message_count as usize;
         info.last_user_message_at = last_user_message_at;
-        info.status = SessionStatusMano::from_state(info.management.state);
         let session = api_session_from_info(&info, parent_id.clone());
         sessions.insert(session_id.clone(), info);
         drop(sessions);
@@ -416,7 +412,21 @@ impl SessionStore {
         info: SessionInfo,
         creation_command: SessionCommand,
     ) -> Result<ApiSession, String> {
-        self.create_canonical_session_with_context(info, creation_command, false)
+        self.create_canonical_session_with_context(info, creation_command, false, None)
+    }
+
+    pub fn create_canonical_session_with_patch(
+        &self,
+        info: SessionInfo,
+        creation_command: SessionCommand,
+        initial_task_plan_patch: Option<lifecycle::SessionTaskPlanPatch>,
+    ) -> Result<ApiSession, String> {
+        self.create_canonical_session_with_context(
+            info,
+            creation_command,
+            false,
+            initial_task_plan_patch,
+        )
     }
 
     pub fn create_canonical_fork(
@@ -429,6 +439,7 @@ impl SessionStore {
             info,
             SessionCommand::ForkSession { parent_id },
             copy_context,
+            None,
         )
     }
 
@@ -437,25 +448,20 @@ impl SessionStore {
         info: SessionInfo,
         creation_command: SessionCommand,
         copy_context: bool,
+        initial_task_plan_patch: Option<lifecycle::SessionTaskPlanPatch>,
     ) -> Result<ApiSession, String> {
-        let workspace = info.directory.clone().unwrap_or_else(|| {
-            info.management
-                .session_directory
-                .to_string_lossy()
-                .to_string()
-        });
+        let workspace = info
+            .directory
+            .clone()
+            .unwrap_or_else(|| info.session_directory.to_string_lossy().to_string());
         let request = CreateSessionDbRequest {
             command_id: format!("create:{}", info.id),
             session_id: info.id.clone(),
             creation_command,
             copy_context,
             workspace,
-            session_directory: info
-                .management
-                .session_directory
-                .to_string_lossy()
-                .to_string(),
-            name: info.management.session_name.clone(),
+            session_directory: info.session_directory.to_string_lossy().to_string(),
+            name: info.name.clone(),
             created_at: info.created_at,
             model: info.model.clone(),
             agent: info.agent.clone(),
@@ -470,7 +476,8 @@ impl SessionStore {
             model_acceleration_enabled: info.model_acceleration_enabled,
             disable_permission_restrictions: info.disable_permission_restrictions,
             use_last_tool_call_response: info.use_last_tool_call_response,
-            auto_session_name: info.management.auto_session_name,
+            auto_session_name: info.auto_session_name,
+            initial_task_plan_patch,
         };
         let result = SessionDbClient::discover()
             .and_then(|client| client.create_session(request))
@@ -494,12 +501,11 @@ impl SessionStore {
         Ok(self.remove_session_projection(session_id))
     }
 
-    pub fn apply_initial_task_management(
+    pub fn parse_initial_task_management(
         &self,
-        info: &mut SessionInfo,
         task_management: serde_json::Value,
-    ) -> Result<(), String> {
-        apply_task_management_patch(info, task_management)
+    ) -> Result<lifecycle::SessionTaskPlanPatch, String> {
+        parse_task_management_patch(task_management, Utc::now())
     }
 
     pub fn execute_task_management_patch(
@@ -581,10 +587,8 @@ impl SessionStore {
                 .is_some_and(|parent| parent.disable_permission_restrictions),
         );
         info.id = child_session_id.to_string();
-        info.management
-            .rebind_session_id(child_session_id.to_string());
-        info.management.session_name =
-            name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
+        info.projection.session_id = child_session_id.to_string();
+        info.name = name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
         let session = self.create_canonical_session(
             info,
             SessionCommand::RegisterChildSession {
@@ -739,27 +743,20 @@ impl SessionStore {
         let parent_id = projection.parent_id.clone();
         let mut sessions = self.sessions.write();
         let info = sessions.get_mut(&session_id)?;
-        let changed = info.management.lifecycle_projection() != projection
+        let changed = info.projection != projection
             || session_name
                 .as_ref()
-                .is_some_and(|name| info.management.session_name != *name);
+                .is_some_and(|name| info.name != *name);
         if changed {
-            info.management.replace_lifecycle_projection(projection);
+            info.projection = projection;
         }
         if let Some(session_name) = session_name {
-            info.management.session_name = session_name;
+            info.name = session_name;
         }
-        info.status = SessionStatusMano::from_state(info.management.state);
         if let Some(updated_at) = updated_at {
             info.updated_at = updated_at;
-            if let Some(updated_at) = DateTime::<Utc>::from_timestamp_millis(updated_at) {
-                info.management.session_last_update_at = updated_at;
-            }
         } else if changed {
             info.updated_at = Utc::now().timestamp_millis();
-            if let Some(updated_at) = DateTime::<Utc>::from_timestamp_millis(info.updated_at) {
-                info.management.session_last_update_at = updated_at;
-            }
         }
         let session = api_session_from_info(info, parent_id.clone());
         drop(sessions);
@@ -908,12 +905,10 @@ impl SessionStore {
         info.model_variant = model_variant.or(persisted_config.model_variant);
         info.model_acceleration_enabled = model_acceleration_enabled;
         info.disable_permission_restrictions = disable_permission_restrictions;
-        info.management.disable_permission_restrictions = disable_permission_restrictions;
         info.use_last_tool_call_response = default_use_last_tool_call_response_for_session(
             info.session_type.as_deref().unwrap_or("coding"),
             info.agent.as_deref(),
         );
-        info.management.use_last_tool_call_response = info.use_last_tool_call_response;
         info
     }
 
@@ -1183,10 +1178,10 @@ impl SessionStore {
         let Some(info) = sessions.get_mut(session_id) else {
             return false;
         };
-        if info.management.runtime_usage == usage {
+        if info.runtime_usage == usage {
             return false;
         }
-        info.management.runtime_usage = usage;
+        info.runtime_usage = usage;
         info.updated_at = Utc::now().timestamp_millis();
         true
     }
@@ -1200,12 +1195,12 @@ impl SessionStore {
         let Some(info) = sessions.get_mut(session_id) else {
             return false;
         };
-        if info.management.context_tokens.input == context_tokens.input
-            && info.management.context_tokens.limit == context_tokens.limit
+        if info.context_tokens.input == context_tokens.input
+            && info.context_tokens.limit == context_tokens.limit
         {
             return false;
         }
-        info.management.context_tokens = lifecycle::ContextTokenStats {
+        info.context_tokens = lifecycle::ContextTokenStats {
             input: context_tokens.input,
             limit: context_tokens.limit,
         };
@@ -1222,11 +1217,7 @@ impl SessionStore {
             properties: crate::contracts::SessionStatusProperties {
                 session_id: session_id.to_string(),
                 updated_at: info.updated_at,
-                status: match info.status {
-                    SessionStatusMano::Idle => serde_json::json!({ "type": "idle" }),
-                    SessionStatusMano::Busy => serde_json::json!({ "type": "busy" }),
-                    SessionStatusMano::Error => serde_json::json!({ "type": "error" }),
-                },
+                status: serde_json::json!({ "type": info.projection.state.ui_status() }),
                 context_tokens,
                 usage: session_usage_from_info(&info, context_tokens),
             },
@@ -1238,9 +1229,9 @@ impl SessionStore {
             .sessions
             .read()
             .values()
-            .filter(|info| matches!(info.status, SessionStatusMano::Idle))
+            .filter(|info| info.projection.state.ui_status() == "idle")
             .filter_map(|info| {
-                info.management
+                info.projection
                     .task_plan
                     .detailed_tasks
                     .iter()
@@ -1249,7 +1240,7 @@ impl SessionStore {
                         (
                             info.id.clone(),
                             task.task_id.clone(),
-                            task.display_summary(&info.management.task_plan.plan_summary),
+                            task.display_summary(&info.projection.task_plan.plan_summary),
                             task.start_condition,
                         )
                     })
@@ -1345,11 +1336,17 @@ impl SessionStore {
         (prompt, message)
     }
 
-    pub fn replace_management(&self, session_id: &str, management: lifecycle::SessionManagement) {
+    #[cfg(test)]
+    pub fn replace_projection_metrics(
+        &self,
+        session_id: &str,
+        context_tokens: lifecycle::ContextTokenStats,
+        runtime_usage: serde_json::Value,
+    ) {
         if let Some(info) = self.sessions.write().get_mut(session_id) {
-            info.management = management;
+            info.context_tokens = context_tokens;
+            info.runtime_usage = runtime_usage;
             info.updated_at = Utc::now().timestamp_millis();
-            info.status = SessionStatusMano::from_state(info.management.state);
         }
     }
 
@@ -1430,16 +1427,16 @@ impl SessionStore {
 }
 
 fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSession {
-    let plan_summary = info.management.task_plan.plan_summary.trim().to_string();
+    let plan_summary = info.projection.task_plan.plan_summary.trim().to_string();
     let plan_summary = (!plan_summary.is_empty()).then_some(plan_summary);
     let first_task_summary = info
-        .management
+        .projection
         .task_plan
         .detailed_tasks
         .first()
         .map(|task| task.task_summary.trim().to_string())
         .filter(|value| !value.is_empty());
-    let session_name = info.management.session_name.trim().to_string();
+    let session_name = info.name.trim().to_string();
     let session_name = (!session_name.is_empty()).then_some(session_name);
     let session_display_name = session_name
         .clone()
@@ -1458,20 +1455,23 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         model: info.model.clone(),
         agent: info.agent.clone(),
         session_type: info.session_type.clone(),
-        auto_session_name: info.management.auto_session_name,
+        auto_session_name: info.auto_session_name,
         kill_processes_on_start: info.kill_processes_on_start,
         validator_enabled: info.validator_enabled,
         force_planning: info.force_planning,
         disable_permission_restrictions: info.disable_permission_restrictions,
         model_variant: info.model_variant.clone(),
         model_acceleration_enabled: info.model_acceleration_enabled,
-        status: match info.status {
-            SessionStatusMano::Idle => ApiSessionStatus::Idle,
-            SessionStatusMano::Busy => ApiSessionStatus::Busy,
-            SessionStatusMano::Error => ApiSessionStatus::Error,
+        status: match info.projection.state.ui_status() {
+            "idle" => ApiSessionStatus::Idle,
+            "busy" => ApiSessionStatus::Busy,
+            _ => ApiSessionStatus::Error,
         },
         message_count: info.message_count,
-        task_management: info.management.task_management_json(),
+        task_management: info.projection.task_management_json(
+            DateTime::<Utc>::from_timestamp_millis(info.created_at)
+                .unwrap_or(DateTime::<Utc>::UNIX_EPOCH),
+        ),
         context_tokens: session_context_tokens(info),
         usage: session_usage_from_info(info, session_context_tokens(info)),
         plan_summary,
@@ -1480,20 +1480,20 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
 }
 
 fn session_task_start_at(info: &SessionInfo) -> Option<i64> {
-    info.management
+    info.projection
         .task_plan
         .detailed_tasks
         .iter()
         .find(|task| task.status == PlanStatus::Doing)
-        .or_else(|| info.management.task_plan.detailed_tasks.first())
+        .or_else(|| info.projection.task_plan.detailed_tasks.first())
         .map(|task| task.start_at.timestamp_millis())
-        .or_else(|| Some(info.management.session_started_at.timestamp_millis()))
+        .or(Some(info.created_at))
 }
 
 fn session_context_tokens(info: &SessionInfo) -> SessionContextTokens {
     SessionContextTokens {
-        input: info.management.context_tokens.input,
-        limit: info.management.context_tokens.limit,
+        input: info.context_tokens.input,
+        limit: info.context_tokens.limit,
     }
 }
 
@@ -1501,35 +1501,35 @@ fn session_usage_from_info(
     info: &SessionInfo,
     context_tokens: SessionContextTokens,
 ) -> crate::contracts::SessionUsage {
-    crate::contracts::SessionUsage::new(context_tokens, info.management.runtime_usage.clone())
-}
-
-fn apply_canonical_lifecycle_projection(info: &mut SessionInfo, snapshot: &SessionSnapshot) {
-    let projection = snapshot.lifecycle_projection.clone();
-    info.status = SessionStatusMano::from_state(projection.state);
-    info.management.replace_lifecycle_projection(projection);
-
-    if let Some(created_at) = DateTime::<Utc>::from_timestamp_millis(snapshot.created_at) {
-        info.management.session_created_at = created_at;
-    }
-
-    if let Some(updated_at) = DateTime::<Utc>::from_timestamp_millis(snapshot.updated_at) {
-        info.management.session_last_update_at = updated_at;
-    }
+    crate::contracts::SessionUsage::new(context_tokens, info.runtime_usage.clone())
 }
 
 fn session_info_from_snapshot(snapshot: &SessionSnapshot) -> Result<SessionInfo, String> {
-    let mut info = serde_json::from_value::<SessionInfo>(snapshot.session.clone())
-        .map_err(|error| format!("invalid typed Session snapshot: {error}"))?;
-    apply_canonical_lifecycle_projection(&mut info, snapshot);
-    info.id.clone_from(&snapshot.session_id);
-    info.created_at = snapshot.created_at;
-    info.updated_at = snapshot.updated_at;
-    info.last_user_message_at = snapshot.last_user_message_at;
-    if !snapshot.workspace.trim().is_empty() {
-        info.directory = Some(snapshot.workspace.clone());
-    }
-    Ok(info)
+    snapshot.validate()?;
+    Ok(SessionInfo {
+        id: snapshot.session_id.clone(),
+        created_at: snapshot.created_at,
+        updated_at: snapshot.updated_at,
+        last_user_message_at: snapshot.last_user_message_at,
+        directory: (!snapshot.workspace.trim().is_empty()).then(|| snapshot.workspace.clone()),
+        model: snapshot.metadata.model.clone(),
+        agent: snapshot.metadata.agent.clone(),
+        session_type: Some(snapshot.metadata.session_type.clone()),
+        kill_processes_on_start: snapshot.metadata.kill_processes_on_start,
+        validator_enabled: snapshot.metadata.validator_enabled,
+        force_planning: snapshot.metadata.force_planning,
+        model_variant: snapshot.metadata.model_variant.clone(),
+        model_acceleration_enabled: snapshot.metadata.model_acceleration_enabled,
+        disable_permission_restrictions: snapshot.metadata.disable_permission_restrictions,
+        use_last_tool_call_response: snapshot.metadata.use_last_tool_call_response,
+        message_count: snapshot.message_count as usize,
+        name: snapshot.name.clone().unwrap_or_default(),
+        auto_session_name: snapshot.metadata.auto_session_name,
+        session_directory: std::path::PathBuf::from(&snapshot.metadata.session_directory),
+        projection: snapshot.lifecycle_projection.clone(),
+        context_tokens: snapshot.metadata.context_tokens,
+        runtime_usage: snapshot.metadata.runtime_usage.clone(),
+    })
 }
 
 lazy_static::lazy_static! {

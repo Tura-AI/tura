@@ -2,7 +2,7 @@ use chrono::{DateTime, TimeZone, Utc};
 
 use crate::manas::prompt_messages::planning_objective_block;
 use crate::prompt_style::{runtime_prompt_manual, task_status};
-use lifecycle::SessionManagement;
+use lifecycle::{SessionLogEntry, SessionManagement};
 
 use super::char_budget::{
     compact_context_byte_budget, estimated_tokens_from_bytes, truncate_text_to_char_budget,
@@ -149,13 +149,10 @@ fn compact_session_context_with_options(
     Ok(())
 }
 
-fn compact_retained_log_start(session_log: &[String]) -> usize {
+fn compact_retained_log_start(session_log: &[SessionLogEntry]) -> usize {
     let mut index = session_log.len();
     while index > 0 {
-        let Some(value) = session_log
-            .get(index - 1)
-            .and_then(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
-        else {
+        let Some(value) = session_log.get(index - 1).map(SessionLogEntry::value) else {
             break;
         };
         if value.get("type").and_then(serde_json::Value::as_str) != Some("tool_result") {
@@ -367,11 +364,7 @@ fn compaction_timeline_entries(
         .session_log
         .iter()
         .enumerate()
-        .filter_map(|(index, entry)| {
-            serde_json::from_str::<serde_json::Value>(entry)
-                .ok()
-                .map(|value| (index, value))
-        })
+        .map(|(index, entry)| (index, entry.value().clone()))
         .collect::<Vec<_>>();
     let compact_count = values
         .iter()

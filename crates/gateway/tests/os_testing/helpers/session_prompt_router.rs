@@ -44,7 +44,7 @@ pub(crate) fn create_canonical_test_session(
         model_acceleration_enabled,
         disable_permission_restrictions,
     );
-    let task_plan = info.management.task_plan.clone();
+    let task_plan = info.projection.task_plan.clone();
     session_store()
         .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
         .expect("canonical router-flow session should be created")

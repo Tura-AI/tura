@@ -131,7 +131,8 @@ mod tests {
     fn streamed_command_events_are_audited_with_active_task_attribution() {
         let mut session = session();
         let large_output = "streamed log line\n".repeat(1_000);
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "task-aa".to_string(),
             step: 7,
             task_summary: "Inspect behavior".to_string(),
@@ -139,6 +140,7 @@ mod tests {
             status: PlanStatus::Doing,
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, Utc::now());
         let mut streamed_result = json!({
             "commands": [{
                 "step": 1,

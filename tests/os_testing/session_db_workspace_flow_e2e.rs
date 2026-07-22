@@ -335,6 +335,7 @@ fn create_session_with_messages(
         disable_permission_restrictions: false,
         use_last_tool_call_response: false,
         auto_session_name: false,
+        initial_task_plan_patch: None,
     };
     match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(request))? {
         SessionLogResponse::SessionCommandApplied { .. } => {}
@@ -425,8 +426,7 @@ fn session_management(session_id: &str) -> Result<SessionManagement> {
     ))? {
         SessionLogResponse::Session {
             session: Some(session),
-        } => serde_json::from_value(session.management)
-            .with_context(|| format!("invalid management for session {session_id}")),
+        } => Ok(session.management),
         SessionLogResponse::Session { session: None } => bail!("session {session_id} not found"),
         SessionLogResponse::Error { error } => bail!("get session returned error: {error}"),
         other => bail!("get session returned unexpected response: {other:?}"),

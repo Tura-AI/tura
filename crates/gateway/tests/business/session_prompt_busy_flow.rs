@@ -396,7 +396,7 @@ fn create_test_session(directory: String) -> gateway::contracts::Session {
         false,
         false,
     );
-    let task_plan = info.management.task_plan.clone();
+    let task_plan = info.projection.task_plan.clone();
     store
         .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
         .expect("canonical busy-flow session should be created")

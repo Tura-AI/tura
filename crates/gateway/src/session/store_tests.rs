@@ -18,7 +18,7 @@ fn create_canonical_test_session(store: &SessionStore, directory: String) -> Api
         false,
         false,
     );
-    let task_plan = info.management.task_plan.clone();
+    let task_plan = info.projection.task_plan.clone();
     store
         .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
         .expect("canonical test session should be created")
@@ -92,8 +92,9 @@ fn persist_session_messages_for_test(
         SessionLogResponse::Error { error } => panic!("session_log get failed: {error}"),
         other => panic!("unexpected session_log get response: {other:?}"),
     };
-    let mut management: lifecycle::SessionManagement =
-        serde_json::from_value(snapshot.management).expect("canonical session management");
+    let mut management = snapshot
+        .into_management()
+        .expect("test snapshot must contain one canonical lifecycle projection");
     management.session_log.clear();
     management.session_log_retention.omitted_entries = 0;
     let context = match session_log_contract::client::call_service(
@@ -167,19 +168,18 @@ fn update_session_status_updates_stored_status() {
     let store = SessionStore::new();
     let session = create_canonical_test_session(&store, "C:/workspace".to_string());
 
-    let mut info = store
-        .get_session_info(&session.id)
-        .expect("session info should exist");
-    info.management.context_tokens = lifecycle::ContextTokenStats {
+    assert!(store.update_session_context_tokens(
+        &session.id,
+        crate::contracts::SessionContextTokens {
         input: 12_345,
         limit: 76_800,
-    };
-    info.management.runtime_usage = serde_json::json!({
+        },
+    ));
+    assert!(store.update_session_runtime_usage(&session.id, serde_json::json!({
         "total_tokens": 99,
         "total_cost": 0.034,
         "currency": "USD",
-    });
-    store.replace_management(&session.id, info.management);
+    })));
     let mut cursor = store.event_cursor();
 
     execute_test_command(
@@ -549,11 +549,8 @@ fn child_session_derives_workspace_and_task_instruction_context() {
 
     assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
     assert_eq!(child.directory.as_deref(), Some(directory.as_str()));
-    assert_eq!(
-        child_info.management.session_directory,
-        PathBuf::from(&directory)
-    );
-    assert!(child_info.management.disable_permission_restrictions);
+    assert_eq!(child_info.session_directory, PathBuf::from(&directory));
+    assert!(child_info.disable_permission_restrictions);
     assert!(messages.iter().any(|message| {
         message.role == MessageRole::User
             && message.parts.iter().any(|part| {
@@ -637,7 +634,7 @@ fn update_session_title_persists_to_management_name() {
     assert_eq!(updated.name.as_deref(), Some("修复登录流程"));
     let info = store.sessions.read();
     let stored = info.get(&session.id).expect("session should remain stored");
-    assert_eq!(stored.management.session_name, "修复登录流程");
+    assert_eq!(stored.name, "修复登录流程");
 }
 
 #[test]
@@ -1170,8 +1167,8 @@ fn session_display_name_falls_back_to_new_session() {
         None,
         Some("coding".to_string()),
     );
-    info.management.session_name.clear();
-    info.management.task_plan.plan_summary.clear();
+    info.name.clear();
+    info.projection.task_plan.plan_summary.clear();
 
     let session = api_session_from_info(&info, None);
 
@@ -1179,7 +1176,7 @@ fn session_display_name_falls_back_to_new_session() {
 }
 
 #[test]
-fn user_messages_are_recorded_in_session_management_log() {
+fn user_messages_update_only_the_gateway_message_projection() {
     let store = SessionStore::new();
     let session = store.create_session(
         Some("C:/workspace".to_string()),
@@ -1194,24 +1191,21 @@ fn user_messages_are_recorded_in_session_management_log() {
         false,
     );
 
-    store
+    let before = store
+        .get_session_info(&session.id)
+        .expect("session info should exist before message");
+    let message = store
         .add_message(&session.id, MessageRole::User, "补充新的约束".to_string())
         .expect("message should be stored");
-    let info = store
+    let after = store
         .get_session_info(&session.id)
         .expect("session info should exist");
-    let user_log = info
-        .management
-        .session_log
-        .iter()
-        .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
-        .find(|entry| entry.get("role").and_then(serde_json::Value::as_str) == Some("user"))
-        .expect("user message should be recorded as structured JSON");
-    assert_eq!(user_log["role"], "user");
-    assert_eq!(user_log["parts"][0]["text"], "补充新的约束");
-    assert!(user_log["id"]
-        .as_str()
-        .is_some_and(|id| !id.trim().is_empty()));
+    assert_eq!(after.projection, before.projection);
+    assert_eq!(after.name, before.name);
+    assert_eq!(after.message_count, before.message_count + 1);
+    assert_eq!(message.role, MessageRole::User);
+    assert_eq!(message.parts[0].text.as_deref(), Some("补充新的约束"));
+    assert_eq!(store.get_messages(&session.id).last(), Some(&message));
 }
 
 #[test]
@@ -1836,28 +1830,16 @@ fn scheduler_claim_persists_next_polling_start() {
 
 #[test]
 fn api_session_exposes_runtime_context_token_stats() {
-    let now = chrono::Utc::now();
-    let mut management = lifecycle::SessionManagement::new(
-        "context-token-session".to_string(),
-        "context token session".to_string(),
-        PathBuf::from("C:/workspace/context-token-session"),
-        false,
-        "coding".to_string(),
-        lifecycle::SessionInput {
-            user_input: "track context".to_string(),
-            file_input: Vec::new(),
-            agent: Some("fast".to_string()),
-            runtime_context: None,
-            planning_mode_override: None,
-        },
-        "track context".to_string(),
-        now,
+    let mut info = SessionManager::create_session(
+        Some("C:/workspace/context-token-session".to_string()),
+        None,
+        Some("fast".to_string()),
+        Some("coding".to_string()),
     );
-    management.context_tokens = lifecycle::ContextTokenStats {
+    info.context_tokens = lifecycle::ContextTokenStats {
         input: 12_345,
         limit: 76_800,
     };
-    let info = SessionInfo::from_management(&management);
 
     let session = api_session_from_info(&info, None);
 

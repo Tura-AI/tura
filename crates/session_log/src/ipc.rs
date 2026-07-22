@@ -1169,6 +1169,7 @@ mod tests {
             disable_permission_restrictions: false,
             use_last_tool_call_response: false,
             auto_session_name: false,
+            initial_task_plan_patch: None,
         }
     }
 

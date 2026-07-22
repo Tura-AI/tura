@@ -11,24 +11,23 @@ use super::compaction::context_compaction_messages;
 use super::types::ContextState;
 use super::USER_AGENT_CONTEXT_ROLE;
 #[derive(Debug, Clone)]
-pub struct ContextInput {
-    pub session: SessionManagement,
-    pub runtime: RuntimeAggregate,
+pub struct ContextInput<'a> {
+    pub session: &'a SessionManagement,
+    pub runtime: &'a RuntimeAggregate,
     pub additional_messages: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ContextOutput {
-    pub session: SessionManagement,
     pub messages: Vec<serde_json::Value>,
     pub context_state: ContextState,
 }
 
-pub fn build_context(input: ContextInput) -> Result<ContextOutput, String> {
+pub fn build_context(input: ContextInput<'_>) -> Result<ContextOutput, String> {
     let total_start = Instant::now();
     let profiling = profile_timings::enabled();
     let build_messages_start = Instant::now();
-    let mut messages = build_messages_from_session_with_options(&input.session);
+    let mut messages = build_messages_from_session_with_options(input.session);
     let build_messages_elapsed = build_messages_start.elapsed();
     let initial_message_count = messages.len();
     let initial_messages_bytes = if profiling {
@@ -49,7 +48,6 @@ pub fn build_context(input: ContextInput) -> Result<ContextOutput, String> {
 
     let mut context_state = ContextState {
         session_id: input.session.session_id.clone(),
-        messages: Vec::new(),
         tool_results: Vec::new(),
         last_tool_call_response: None,
         reasoning_history: Vec::new(),
@@ -89,7 +87,7 @@ pub fn build_context(input: ContextInput) -> Result<ContextOutput, String> {
     }
 
     if input.session.use_last_tool_call_response {
-        if let Some(last_tool_call_response) = last_tool_call_response_from_session(&input.session)
+        if let Some(last_tool_call_response) = last_tool_call_response_from_session(input.session)
         {
             context_state.last_tool_call_response = Some(last_tool_call_response);
         }
@@ -98,23 +96,6 @@ pub fn build_context(input: ContextInput) -> Result<ContextOutput, String> {
     for msg in &input.additional_messages {
         messages.push(msg.clone());
     }
-
-    let clone_start = Instant::now();
-    context_state.messages = messages.clone();
-    let clone_elapsed = clone_start.elapsed();
-    profile_timings::log_duration(
-        "build_context.clone_messages_to_context_state",
-        clone_elapsed,
-        serde_json::json!({
-            "session_id": input.session.session_id,
-            "message_count": messages.len(),
-            "messages_bytes": if profiling {
-                profile_timings::json_vec_bytes(&messages)
-            } else {
-                0
-            },
-        }),
-    );
 
     info!(
         session_id = %input.session.session_id,
@@ -141,7 +122,6 @@ pub fn build_context(input: ContextInput) -> Result<ContextOutput, String> {
     );
 
     Ok(ContextOutput {
-        session: input.session,
         messages,
         context_state,
     })
@@ -194,24 +174,7 @@ pub fn accumulate_tool_result_with_provider_metadata(
         0
     };
     let now = Utc::now();
-    let sequence_start = Instant::now();
-    let sequence = session
-        .session_log
-        .iter()
-        .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
-        .filter(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("tool_result"))
-        .count()
-        + 1;
-    profile_timings::log_elapsed(
-        "accumulate_tool_result.sequence_scan",
-        sequence_start,
-        serde_json::json!({
-            "session_id": session.session_id,
-            "tool_name": tool_name,
-            "session_log_entries": session.session_log.len(),
-            "sequence": sequence,
-        }),
-    );
+    let sequence = session.next_tool_result_sequence();
     let strip_input_start = Instant::now();
     let stripped_input = strip_tool_reporting_fields(tool_input);
     let strip_input_elapsed = strip_input_start.elapsed();
@@ -434,25 +397,22 @@ fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<
     let mut messages = Vec::new();
     let mut raw_history_messages = Vec::new();
     let mut saw_context_compaction = false;
-    for value in session
-        .session_log
-        .iter()
-        .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
-    {
+    for entry in &session.session_log {
+        let value = entry.value();
         if value.get("type").and_then(|kind| kind.as_str()) == Some("context_compaction") {
             saw_context_compaction = true;
             messages.clear();
             messages.extend(context_compaction_messages(
-                &value,
+                value,
                 session,
                 &raw_history_messages,
             ));
-            raw_history_messages.push(value);
+            raw_history_messages.push(value.clone());
             continue;
         }
         let entry_messages = immutable_context_messages_from_log_entry(value.clone());
         messages.extend(entry_messages);
-        raw_history_messages.push(value);
+        raw_history_messages.push(value.clone());
     }
 
     let raw_initial_user_input = &session.input.user_input;
@@ -742,9 +702,10 @@ mod tests {
             )
             .expect("new tool result");
 
+        let runtime = runtime(&session);
         let output = build_context(ContextInput {
-            runtime: runtime(&session),
-            session,
+            runtime: &runtime,
+            session: &session,
             additional_messages: vec![],
         })
         .expect("context should build");
@@ -1216,8 +1177,9 @@ mod tests {
     #[test]
     fn compact_session_context_does_not_append_task_management_state() {
         let mut session = session();
-        session.task_plan.plan_summary = "Inspect workspace".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.plan_summary = "Inspect workspace".to_string();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "compact-task".to_string(),
             step: 1,
             task_summary: "Inspect workspace".to_string(),
@@ -1225,6 +1187,7 @@ mod tests {
             status: PlanStatus::Doing,
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, Utc::now());
 
         compact_session_context(&mut session, "handoff summary").expect("compact should succeed");
         let messages = build_messages_from_session(&session);
@@ -1794,8 +1757,9 @@ mod tests {
     #[test]
     fn compact_session_context_does_not_append_multi_task_management_state() {
         let mut session = session();
-        session.task_plan.plan_summary = "Release plan".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.plan_summary = "Release plan".to_string();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "inspect".to_string(),
             step: 1,
             task_summary: "Inspect release blockers".to_string(),
@@ -1811,7 +1775,7 @@ mod tests {
             status: PlanStatus::Question,
             ..TaskStep::default()
         });
-        session.task_plan.detailed_tasks.push(TaskStep {
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "verify".to_string(),
             step: 2,
             task_summary: "Verify release checklist".to_string(),
@@ -1827,6 +1791,7 @@ mod tests {
             status: PlanStatus::Done,
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, Utc::now());
 
         compact_session_context(&mut session, "multi task handoff")
             .expect("compact should succeed");
@@ -1856,9 +1821,10 @@ mod tests {
             .expect("assistant message should be logged");
         }
 
+        let runtime = runtime(&session);
         let output = build_context(ContextInput {
-            runtime: runtime(&session),
-            session,
+            runtime: &runtime,
+            session: &session,
             additional_messages: vec![],
         })
         .expect("context should build");
@@ -1902,9 +1868,10 @@ mod tests {
         )
         .expect("user-agent context should log");
 
+        let runtime = runtime(&session);
         let output = build_context(ContextInput {
-            runtime: runtime(&session),
-            session,
+            runtime: &runtime,
+            session: &session,
             additional_messages: vec![],
         })
         .expect("context should build");
@@ -1937,9 +1904,10 @@ mod tests {
         )
         .expect("environment context should log");
 
+        let runtime = runtime(&session);
         let output = build_context(ContextInput {
-            runtime: runtime(&session),
-            session,
+            runtime: &runtime,
+            session: &session,
             additional_messages: vec![],
         })
         .expect("context should build");

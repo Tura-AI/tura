@@ -143,7 +143,8 @@ pub(crate) fn stale_endpoints_are_replaced_gateway_restarts_and_conflicts_fail(
             "model_acceleration_enabled": false,
             "disable_permission_restrictions": false,
             "use_last_tool_call_response": false,
-            "auto_session_name": false
+            "auto_session_name": false,
+            "initial_task_plan_patch": null
         }),
     )?;
     assert_eq!(
@@ -763,7 +764,8 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
             "model_acceleration_enabled": false,
             "disable_permission_restrictions": false,
             "use_last_tool_call_response": false,
-            "auto_session_name": false
+            "auto_session_name": false,
+            "initial_task_plan_patch": null
         }),
     )?;
     assert_eq!(
@@ -848,8 +850,10 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
             "session_id": session_id,
         }),
     )?;
-    assert_eq!(before["session"]["state"], "running");
-    assert_eq!(before["session"]["status"], "busy");
+    assert_eq!(
+        before["session"]["lifecycle_projection"]["state"],
+        "running"
+    );
     assert_eq!(before["session"]["message_count"], 1);
 
     let shutdown = shutdown_session_db(&home)?;
@@ -872,12 +876,14 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
         }),
     )?;
     assert_eq!(
-        after["session"]["state"], "interrupted",
+        after["session"]["lifecycle_projection"]["state"], "interrupted",
         "session_db startup recovery must interrupt in-flight sessions without dropping them: {after}"
     );
-    assert_eq!(after["session"]["status"], "error");
     assert_eq!(after["session"]["message_count"], 1);
-    assert_eq!(after["session"]["session"]["id"], session_id);
+    assert_eq!(
+        after["session"]["lifecycle_projection"]["session_id"],
+        session_id
+    );
     assert_eq!(after["session"]["management"]["state"], "interrupted");
     assert!(
         after["session"]["management"]["session_last_update_at"]

@@ -138,10 +138,7 @@ fn stores_workspaces_sessions_and_last_record_page() {
         .expect("sessions");
     assert_eq!(page.total, 1);
     assert_eq!(sessions[0].session_id, session_id);
-    assert_eq!(
-        sessions[0].task_management,
-        serde_json::json!({"plan_summary": "Plan", "tasks": []})
-    );
+    assert_eq!(sessions[0].lifecycle_projection.task_plan.plan_summary, "Plan");
     assert!(sessions[0].todos.is_empty());
 
     let loaded = store
@@ -150,11 +147,8 @@ fn stores_workspaces_sessions_and_last_record_page() {
         })
         .expect("get session")
         .expect("session should exist");
-    assert_eq!(loaded.session["id"], session_id);
-    assert_eq!(
-        loaded.session["task_management"],
-        serde_json::json!({"plan_summary": "Plan", "tasks": []})
-    );
+    assert_eq!(loaded.session_id, session_id);
+    assert_eq!(loaded.lifecycle_projection.task_plan.plan_summary, "Plan");
     assert!(loaded.todos.is_empty());
 
     let (page, records) = store
@@ -236,9 +230,10 @@ fn running_sessions_are_marked_interrupted_with_one_canonical_state_source() {
             })
             .expect("get before mark")
             .expect("session exists")
-            .status
-            .as_deref(),
-        Some("busy"),
+            .lifecycle_projection
+            .state
+            .ui_status(),
+        "busy",
         "status must be derived from running state, not copied from session.status"
     );
 
@@ -253,15 +248,9 @@ fn running_sessions_are_marked_interrupted_with_one_canonical_state_source() {
         .expect("get after mark")
         .expect("session exists");
 
-    assert_eq!(loaded.state.as_deref(), Some("interrupted"));
-    assert_eq!(loaded.status.as_deref(), Some("error"));
-    assert_eq!(loaded.management["state"], "interrupted");
-    assert_eq!(loaded.session["status"], "error");
-    assert_eq!(
-        serde_json::from_value::<lifecycle::SessionState>(loaded.management["state"].clone())
-            .expect("persisted interrupted state should deserialize"),
-        lifecycle::SessionState::Interrupted
-    );
+    assert_eq!(loaded.lifecycle_projection.state, SessionState::Interrupted);
+    assert_eq!(loaded.lifecycle_projection.state.ui_status(), "error");
+    assert_eq!(loaded.management.state, SessionState::Interrupted);
 }
 
 #[test]
@@ -292,9 +281,8 @@ fn reads_do_not_mutate_historically_timestamped_running_sessions() {
         .iter()
         .find(|session| session.session_id == session_id)
         .expect("historically timestamped session listed");
-    assert_eq!(loaded.state.as_deref(), Some("running"));
-    assert_eq!(loaded.status.as_deref(), Some("busy"));
     assert_eq!(loaded.lifecycle_projection.state, SessionState::Running);
+    assert_eq!(loaded.lifecycle_projection.state.ui_status(), "busy");
 }
 
 #[test]
@@ -328,8 +316,6 @@ fn mark_session_interrupted_targets_only_one_session() {
         .expect("get other")
         .expect("other exists");
 
-    assert_eq!(target.state.as_deref(), Some("interrupted"));
-    assert_eq!(other.state.as_deref(), Some("running"));
     assert_eq!(target.lifecycle_projection.state, SessionState::Interrupted);
     assert_eq!(other.lifecycle_projection.state, SessionState::Running);
 }
@@ -368,10 +354,10 @@ fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
         })
         .expect("get session")
         .expect("session exists");
-    assert_eq!(loaded.state.as_deref(), Some("interrupted"));
-    assert_eq!(loaded.status.as_deref(), Some("error"));
+    assert_eq!(loaded.lifecycle_projection.state, SessionState::Interrupted);
+    assert_eq!(loaded.lifecycle_projection.state.ui_status(), "error");
     assert_eq!(loaded.updated_at, authoritative_updated_at);
-    assert_eq!(loaded.management["state"], "interrupted");
+    assert_eq!(loaded.management.state, SessionState::Interrupted);
 
     let (_page, sessions) = store
         .list_sessions(ListSessionsRequest {
@@ -384,8 +370,8 @@ fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
         .iter()
         .find(|snapshot| snapshot.session_id == session_id)
         .expect("listed session");
-    assert_eq!(listed.state.as_deref(), Some("interrupted"));
-    assert_eq!(listed.management["state"], "interrupted");
+    assert_eq!(listed.lifecycle_projection.state, SessionState::Interrupted);
+    assert_eq!(listed.management.state, SessionState::Interrupted);
 }
 
 #[test]
@@ -671,6 +657,7 @@ fn create_session_receipt_replays_result_and_repairs_missing_index() {
             disable_permission_restrictions: false,
             use_last_tool_call_response: false,
             auto_session_name: false,
+            initial_task_plan_patch: None,
         })
         .expect_err("conflicting create receipt must fail");
     assert!(
@@ -809,8 +796,7 @@ fn execute_session_command_receipt_is_idempotent_and_rejects_conflicts() {
         .expect("get session after atomic input")
         .expect("session exists after atomic input");
     assert_eq!(snapshot.last_user_message_at, Some(10));
-    let management: SessionManagement =
-        serde_json::from_value(snapshot.management).expect("typed management after input");
+    let management = snapshot.management;
     assert_eq!(management.input.user_input, "persist exactly once");
     assert_eq!(management.session_log.len(), 1);
 }
@@ -917,12 +903,11 @@ fn terminal_command_persists_assistant_message_without_user_metadata_side_effect
         })
         .expect("get terminal session")
         .expect("terminal session exists");
-    assert_eq!(snapshot.state.as_deref(), Some("completed"));
-    assert_eq!(snapshot.status.as_deref(), Some("idle"));
+    assert_eq!(snapshot.lifecycle_projection.state, SessionState::Completed);
+    assert_eq!(snapshot.lifecycle_projection.state.ui_status(), "idle");
     assert_eq!(snapshot.message_count, 1);
     assert_eq!(snapshot.last_user_message_at, Some(1));
-    let management: SessionManagement =
-        serde_json::from_value(snapshot.management).expect("typed terminal management");
+    let management = snapshot.management;
     assert!(management.input.user_input.is_empty());
     assert!(management.session_log.is_empty());
 
@@ -993,20 +978,18 @@ fn update_session_is_atomic_idempotent_and_durable() {
         .update_session(request.clone())
         .expect("update metadata and task plan atomically");
     assert_eq!(updated.name.as_deref(), Some("Durable title"));
-    assert_eq!(updated.session["model"], "durable-model");
-    assert_eq!(updated.session["agent"], "durable-agent");
-    assert_eq!(updated.session["session_type"], "general");
-    assert_eq!(updated.session["validator_enabled"], true);
-    assert_eq!(updated.session["force_planning"], true);
+    assert_eq!(updated.metadata.model.as_deref(), Some("durable-model"));
+    assert_eq!(updated.metadata.agent.as_deref(), Some("durable-agent"));
+    assert_eq!(updated.metadata.session_type, "general");
+    assert!(updated.metadata.validator_enabled);
+    assert!(updated.metadata.force_planning);
     assert_eq!(
         updated.lifecycle_projection.task_plan.plan_summary,
         "Durable plan"
     );
-    let management: SessionManagement =
-        serde_json::from_value(updated.management.clone()).expect("typed updated management");
-    assert!(management.auto_session_name);
-    assert!(management.disable_permission_restrictions);
-    assert!(!management.use_last_tool_call_response);
+    assert!(updated.management.auto_session_name);
+    assert!(updated.management.disable_permission_restrictions);
+    assert!(!updated.management.use_last_tool_call_response);
 
     let replay = store
         .update_session(request.clone())
@@ -1832,13 +1815,10 @@ fn runtime_event_store_rejects_duplicate_order_revision_and_stale_lease() {
         registered.updated_at > created.updated_at,
         "runtime registration must refresh the canonical activity timestamp before stale reads"
     );
-    let management_updated_at = chrono::DateTime::parse_from_rfc3339(
-        registered.management["session_last_update_at"]
-            .as_str()
-            .expect("registered management activity timestamp"),
-    )
-    .expect("parse registered management activity timestamp")
-    .timestamp_millis();
+    let management_updated_at = registered
+        .management
+        .session_last_update_at
+        .timestamp_millis();
     assert_eq!(management_updated_at, registered.updated_at);
     let conn = rusqlite::Connection::open(db.index_db()).expect("index db");
     let index_updated_at: i64 = conn
@@ -2938,6 +2918,7 @@ fn fork_copies_frontend_projection_across_workspaces_without_copying_raw_context
             disable_permission_restrictions: false,
             use_last_tool_call_response: false,
             auto_session_name: false,
+            initial_task_plan_patch: None,
         })
         .expect("create atomic fork");
     assert_eq!(result.message_count, 2);
@@ -3049,6 +3030,7 @@ fn invalid_fork_projection_does_not_create_target_session() {
             disable_permission_restrictions: false,
             use_last_tool_call_response: false,
             auto_session_name: false,
+            initial_task_plan_patch: None,
         })
         .expect_err("invalid source projection must fail the fork");
     assert!(error.to_string().contains("has no parts"));
@@ -3090,6 +3072,7 @@ fn typed_create_request(
         disable_permission_restrictions: false,
         use_last_tool_call_response: false,
         auto_session_name: false,
+        initial_task_plan_patch: None,
     }
 }
 
@@ -3127,7 +3110,9 @@ fn typed_management(store: &SessionLogStore, session_id: &str) -> SessionManagem
         })
         .expect("get typed session")
         .expect("typed session exists");
-    serde_json::from_value(snapshot.management).expect("typed session management")
+    snapshot
+        .into_management()
+        .expect("typed snapshot must contain one canonical lifecycle projection")
 }
 
 fn delta_request(

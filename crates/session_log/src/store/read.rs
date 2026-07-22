@@ -303,23 +303,21 @@ impl SessionLogStore {
             self.delete_index_session(&row.session_id)?;
             return Ok(None);
         };
-        Ok(Some(SessionSnapshot {
+        let snapshot = SessionSnapshot {
             session_id: row.session_id,
             workspace: workspace_payload.workspace,
             name: workspace_payload.name,
-            parent_id: workspace_payload.parent_id,
             created_at: workspace_payload.created_at,
             updated_at: workspace_payload.updated_at,
             last_user_message_at: workspace_payload.last_user_message_at,
-            state: workspace_payload.state,
-            status: workspace_payload.status,
             message_count: workspace_payload.message_count as u64,
-            task_management: workspace_payload.task_management,
             lifecycle_projection: workspace_payload.lifecycle_projection,
             management: workspace_payload.management,
-            session: workspace_payload.session,
+            metadata: workspace_payload.metadata,
             todos: workspace_payload.todos,
-        }))
+        };
+        snapshot.validate().map_err(anyhow::Error::msg)?;
+        Ok(Some(snapshot))
     }
 
     fn summary_from_index_row(&self, row: IndexSessionRow) -> Result<Option<SessionSummary>> {

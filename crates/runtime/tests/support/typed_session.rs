@@ -35,6 +35,7 @@ pub fn create_request(
         disable_permission_restrictions: false,
         use_last_tool_call_response: false,
         auto_session_name: false,
+        initial_task_plan_patch: None,
     }
 }
 
@@ -256,8 +257,7 @@ fn management_via_service(session_id: &str) -> Result<SessionManagement> {
     ))? {
         SessionLogResponse::Session {
             session: Some(session),
-        } => serde_json::from_value(session.management)
-            .with_context(|| format!("invalid management for session {session_id}")),
+        } => Ok(session.management),
         SessionLogResponse::Session { session: None } => bail!("session {session_id} not found"),
         SessionLogResponse::Error { error } => bail!("get session failed: {error}"),
         other => bail!("unexpected get session response: {other:?}"),

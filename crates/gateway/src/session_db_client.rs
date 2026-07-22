@@ -295,34 +295,67 @@ mod tests {
         is_gateway_command, records_response, session_response, sessions_response,
         workspaces_response,
     };
-    use lifecycle::{SessionAggregate, SessionCommand, SessionQuery, SessionState};
-    use serde_json::json;
+    use lifecycle::{
+        SessionAggregate, SessionCommand, SessionInput, SessionManagement, SessionQuery,
+        SessionState,
+    };
     use session_log_contract::{
         CommandCheckpoint, DeleteSessionRequest, MarkSessionInterruptedRequest, Page,
-        SessionLogCommand, SessionLogResponse, SessionSnapshot, UpdateSessionTodosRequest,
-        WorkspaceSummary,
+        SessionLogCommand, SessionLogResponse, SessionMetadata, SessionSnapshot,
+        UpdateSessionTodosRequest, WorkspaceSummary,
     };
 
     fn snapshot(session_id: &str) -> SessionSnapshot {
+        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(1)
+            .expect("snapshot timestamp");
+        let projection = {
+            let mut aggregate = SessionAggregate::new(session_id.to_string());
+            aggregate.state = SessionState::Running;
+            aggregate.query(SessionQuery::Lifecycle)
+        };
+        let mut management = SessionManagement::new(
+            session_id.to_string(),
+            "Session".to_string(),
+            "workspace".into(),
+            false,
+            Vec::<String>::new(),
+            SessionInput {
+                user_input: String::new(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            String::new(),
+            timestamp,
+        );
+        management.replace_lifecycle_projection(projection.clone());
         SessionSnapshot {
             session_id: session_id.to_string(),
             workspace: "workspace".to_string(),
             name: Some("Session".to_string()),
-            parent_id: None,
             created_at: 1,
             updated_at: 2,
             last_user_message_at: Some(1),
-            state: Some("running".to_string()),
-            status: Some("running".to_string()),
             message_count: 3,
-            task_management: json!({}),
-            lifecycle_projection: {
-                let mut aggregate = SessionAggregate::new(session_id.to_string());
-                aggregate.state = SessionState::Running;
-                aggregate.query(SessionQuery::Lifecycle)
+            lifecycle_projection: projection,
+            metadata: SessionMetadata {
+                session_directory: "workspace".to_string(),
+                model: None,
+                agent: None,
+                session_type: "coding".to_string(),
+                kill_processes_on_start: false,
+                validator_enabled: false,
+                force_planning: false,
+                model_variant: None,
+                model_acceleration_enabled: false,
+                disable_permission_restrictions: management.disable_permission_restrictions,
+                use_last_tool_call_response: management.use_last_tool_call_response,
+                auto_session_name: management.auto_session_name,
+                context_tokens: management.context_tokens,
+                runtime_usage: management.runtime_usage.clone(),
             },
-            management: json!({}),
-            session: json!({ "session_id": session_id }),
+            management,
             todos: Vec::new(),
         }
     }

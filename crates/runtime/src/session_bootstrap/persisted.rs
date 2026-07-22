@@ -24,7 +24,9 @@ pub(crate) fn load_persisted_gateway_session(
     {
         return Ok(None);
     }
-    let mut management = decode_persisted_management(session_id, snapshot.management)?;
+    let mut management = snapshot.into_management().map_err(|error| {
+        format!("invalid persisted session snapshot for {session_id}: {error}")
+    })?;
     let context = SessionLogClient::discover()
         .map_err(|err| format!("failed to discover session_log: {err}"))?
         .read_context_slice(
@@ -51,21 +53,14 @@ pub(crate) fn load_persisted_gateway_session(
             "persisted context for {session_id} contains a sequence gap"
         ));
     }
-    management.session_log = context
-        .records
-        .into_iter()
-        .map(|record| record.raw_record)
-        .collect();
+    management.replace_session_log(
+        context
+            .records
+            .into_iter()
+            .map(|record| record.raw_record),
+    );
     management.session_log_retention.omitted_entries = window_from_sequence;
     Ok(Some(management))
-}
-
-fn decode_persisted_management(
-    session_id: &str,
-    value: serde_json::Value,
-) -> Result<SessionManagement, String> {
-    serde_json::from_value(value)
-        .map_err(|err| format!("invalid persisted SessionManagement for {session_id}: {err}"))
 }
 
 fn normalize_workspace(value: &str) -> String {
@@ -190,13 +185,9 @@ fn router_health_check(addr: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_persisted_management, router_addr_from_file, router_health_check};
-    use chrono::Utc;
-    use lifecycle::SessionState;
-    use lifecycle::{SessionInput, SessionManagement};
+    use super::{router_addr_from_file, router_health_check};
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
-    use std::path::PathBuf;
     use std::thread;
 
     struct EnvGuard {
@@ -226,53 +217,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    fn persisted_management(state: SessionState) -> serde_json::Value {
-        let now = Utc::now();
-        serde_json::to_value(SessionManagement::new(
-            "persisted-session".to_string(),
-            "Persisted".to_string(),
-            PathBuf::from("C:/workspace"),
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "resume".to_string(),
-                file_input: Vec::new(),
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "resume".to_string(),
-            now,
-        ))
-        .map(|mut value| {
-            value["state"] = serde_json::to_value(state).expect("state should serialize");
-            value
-        })
-        .expect("management should serialize")
-    }
-
-    #[test]
-    fn interrupted_management_decodes_without_losing_history() {
-        let value = persisted_management(SessionState::Interrupted);
-        let decoded = decode_persisted_management("persisted-session", value)
-            .expect("interrupted state should be a first-class FSM state");
-
-        assert_eq!(decoded.state, SessionState::Interrupted);
-        assert_eq!(decoded.session_id, "persisted-session");
-    }
-
-    #[test]
-    fn invalid_internal_state_returns_an_error_instead_of_none() {
-        let mut value = persisted_management(SessionState::Running);
-        value["state"] = serde_json::json!("Running");
-
-        let error = decode_persisted_management("persisted-session", value)
-            .expect_err("PascalCase internal state should not be accepted");
-
-        assert!(error.contains("persisted-session"));
-        assert!(error.contains("invalid persisted SessionManagement"));
     }
 
     #[test]

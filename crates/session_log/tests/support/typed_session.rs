@@ -34,6 +34,7 @@ pub fn create_request(
         disable_permission_restrictions: false,
         use_last_tool_call_response: false,
         auto_session_name: false,
+        initial_task_plan_patch: None,
     }
 }
 
@@ -114,8 +115,9 @@ pub fn persist_in_store(
             session_id: session_id.to_string(),
         })?
         .with_context(|| format!("session {session_id} not found"))?;
-    let management = serde_json::from_value(snapshot.management)
-        .with_context(|| format!("invalid management for session {session_id}"))?;
+    let management = snapshot
+        .into_management()
+        .map_err(anyhow::Error::msg)?;
     let context = store.read_context_slice(ReadContextSliceRequest {
         session_id: session_id.to_string(),
         max_estimated_tokens: u64::MAX,
@@ -209,8 +211,7 @@ pub fn persist_via_service(
     )? {
         SessionLogResponse::Session {
             session: Some(session),
-        } => serde_json::from_value::<SessionManagement>(session.management)
-            .with_context(|| format!("invalid management for session {session_id}"))?,
+        } => session.management,
         SessionLogResponse::Session { session: None } => bail!("session {session_id} not found"),
         SessionLogResponse::Error { error } => bail!("get session failed: {error}"),
         other => bail!("unexpected get session response: {other:?}"),

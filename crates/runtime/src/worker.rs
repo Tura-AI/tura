@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
 use crate::mano::ManoProcessResult;
-use lifecycle::SessionInput;
+use lifecycle::{SessionInput, SessionLogEntry};
 use lifecycle::SessionState;
 
 /// Run the runtime worker loop: blocking read on stdin, write on stdout, until
@@ -294,11 +294,11 @@ fn response_from_mano_result(
     response
 }
 
-fn final_assistant_text(session_log: &[String]) -> Option<String> {
+fn final_assistant_text(session_log: &[SessionLogEntry]) -> Option<String> {
     session_log
         .iter()
         .rev()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .map(SessionLogEntry::value)
         .find_map(|value| {
             if value.get("role").and_then(Value::as_str) != Some("assistant") {
                 return None;
@@ -420,8 +420,10 @@ mod tests {
     #[test]
     fn final_assistant_text_ignores_tool_payloads() {
         let log = vec![
-            json!({"role":"assistant","content":"{\"commands\":[]}"}).to_string(),
-            json!({"role":"assistant","content":" done "}).to_string(),
+            SessionLogEntry::new(
+                json!({"role":"assistant","content":"{\"commands\":[]}"}).to_string(),
+            ),
+            SessionLogEntry::new(json!({"role":"assistant","content":" done "}).to_string()),
         ];
 
         assert_eq!(final_assistant_text(&log), Some("done".to_string()));
@@ -436,9 +438,10 @@ mod tests {
         session
             .transition(SessionState::Failed, Utc::now())
             .expect("failed transition");
-        session
-            .session_log
-            .push(json!({"role":"assistant","content":"stale fallback"}).to_string());
+        session.push_log(
+            json!({"role":"assistant","content":"stale fallback"}).to_string(),
+            Utc::now(),
+        );
 
         let reply = response_from_mano_result(
             "failed-provider-session",
@@ -468,9 +471,10 @@ mod tests {
         session
             .transition(SessionState::Running, Utc::now())
             .expect("running transition");
-        session
-            .session_log
-            .push(json!({"role":"assistant","content":"visible"}).to_string());
+        session.push_log(
+            json!({"role":"assistant","content":"visible"}).to_string(),
+            Utc::now(),
+        );
         session
             .transition(SessionState::Completed, Utc::now())
             .expect("completed transition");

@@ -222,9 +222,9 @@ fn session_db_restart_after_crash_marks_running_sessions_interrupted_and_keeps_h
         SessionLogResponse::Session { session } => {
             let session = session.ok_or_else(|| anyhow!("expected recovered session"))?;
             assert_eq!(session.session_id, session_id);
-            assert_eq!(session.state.as_deref(), Some("interrupted"));
-            assert_eq!(session.status.as_deref(), Some("error"));
-            assert_eq!(session.management["state"], "interrupted");
+            assert_eq!(session.lifecycle_projection.state, SessionState::Interrupted);
+            assert_eq!(session.lifecycle_projection.state.ui_status(), "error");
+            assert_eq!(session.management.state, SessionState::Interrupted);
             assert_eq!(session.message_count, 1);
         }
         other => bail!("unexpected get response after restart: {other:?}"),

@@ -430,6 +430,12 @@ pub struct SessionProjection {
     pub active_runtime_id: Option<RuntimeId>,
 }
 
+impl SessionProjection {
+    pub fn task_management_json(&self, session_started_at: DateTime<Utc>) -> serde_json::Value {
+        crate::session_projection::task_management_json(&self.task_plan, session_started_at)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionTransitionError {
     pub previous: SessionState,

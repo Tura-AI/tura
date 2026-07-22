@@ -217,6 +217,7 @@ fn ensure_canonical_session(session: &SessionManagement) -> Result<(), String> {
         disable_permission_restrictions: session.disable_permission_restrictions,
         use_last_tool_call_response: session.use_last_tool_call_response,
         auto_session_name: session.auto_session_name,
+        initial_task_plan_patch: None,
     }))? {
         SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
         SessionLogResponse::Error { error } => Err(format!(
@@ -599,7 +600,7 @@ mod tests {
         let stored_context = session
             .session_log
             .iter()
-            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .map(|entry| entry.value())
             .find(|entry| entry["content"] == "client runtime context")
             .expect("runtime context should be stored");
         assert_eq!(stored_context["role"], USER_AGENT_CONTEXT_ROLE);

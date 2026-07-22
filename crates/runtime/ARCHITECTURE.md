@@ -332,10 +332,13 @@ runtime prompts.
 After a compact checkpoint, `SessionManagement.session_log_retention` records the
 absolute compact boundary and the number of omitted `session_log` entries.
 Runtime trims the in-memory `session_log` before the retained boundary so the
-persisted `management_json` used for resume contains only entries still needed to
-rebuild provider context. The retained slice starts at the immediately preceding
-tail of `tool_result` entries, if any, because compact rebuild still replays that
-tool context.
+strict typed `SessionManagement` read model used for resume contains only entries
+still needed to rebuild provider context. Session DB currently stores that value
+in its internal `management_json` column; the column name is not a wire type or a
+second lifecycle authority. Resume validates the accompanying
+`SessionProjection` and merges its parent/runtime index into management before
+use. The retained slice starts at the immediately preceding tail of `tool_result`
+entries, if any, because compact rebuild still replays that tool context.
 
 The active compact threshold is capped at 260,000 tokens. Runtime still asks the
 agent to provide a `task_status.compact_context` handoff when provider-reported

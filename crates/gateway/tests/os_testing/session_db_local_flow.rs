@@ -61,7 +61,7 @@ fn gateway_session_db_business_flow_reads_written_session_and_records() -> Resul
     let loaded = client
         .get_session(session_id.clone())?
         .ok_or_else(|| anyhow!("expected persisted session"))?;
-    assert_eq!(loaded.session["id"], session_id);
+    assert_eq!(loaded.session_id, session_id);
 
     let (records_page, records) = client.list_session_records(session_id, 0, 50)?;
     assert_eq!(records_page.total, 2);

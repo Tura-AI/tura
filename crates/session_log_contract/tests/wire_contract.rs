@@ -1,9 +1,61 @@
-use lifecycle::{SessionAggregate, SessionQuery};
+use lifecycle::{SessionAggregate, SessionInput, SessionManagement, SessionQuery};
 use serde_json::json;
 use session_log_contract::{
     GetSessionRequest, ServiceEndpoint, SessionFeedEvent, SessionLogCommand, SessionLogResponse,
-    SessionMetadataPatch, SessionSnapshot, UpdateSessionRequest, UpdateSessionTodosRequest,
+    SessionMetadata, SessionMetadataPatch, SessionSnapshot, UpdateSessionRequest,
+    UpdateSessionTodosRequest,
 };
+
+fn snapshot_fixture(session_id: &str, workspace: &str) -> SessionSnapshot {
+    let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(1)
+        .expect("snapshot timestamp");
+    let projection = SessionAggregate::new(session_id.to_string()).query(SessionQuery::Lifecycle);
+    let mut management = SessionManagement::new(
+        session_id.to_string(),
+        "Session".to_string(),
+        workspace.into(),
+        false,
+        Vec::<String>::new(),
+        SessionInput {
+            user_input: String::new(),
+            file_input: Vec::new(),
+            agent: None,
+            runtime_context: None,
+            planning_mode_override: None,
+        },
+        String::new(),
+        timestamp,
+    );
+    management.replace_lifecycle_projection(projection.clone());
+    SessionSnapshot {
+        session_id: session_id.to_string(),
+        workspace: workspace.to_string(),
+        name: Some(management.session_name.clone()),
+        created_at: 1,
+        updated_at: 2,
+        last_user_message_at: None,
+        message_count: 0,
+        lifecycle_projection: projection,
+        metadata: SessionMetadata {
+            session_directory: workspace.to_string(),
+            model: None,
+            agent: None,
+            session_type: "coding".to_string(),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: management.disable_permission_restrictions,
+            use_last_tool_call_response: management.use_last_tool_call_response,
+            auto_session_name: management.auto_session_name,
+            context_tokens: management.context_tokens,
+            runtime_usage: management.runtime_usage.clone(),
+        },
+        management,
+        todos: Vec::new(),
+    }
+}
 
 #[test]
 fn session_database_command_and_endpoint_shapes_are_stable() {
@@ -108,24 +160,7 @@ fn update_session_todos_response_keeps_the_flat_shape() {
 
 #[test]
 fn session_snapshot_feed_event_shapes_are_stable() {
-    let projection = SessionAggregate::new("session-1".to_string()).query(SessionQuery::Lifecycle);
-    let snapshot = SessionSnapshot {
-        session_id: "session-1".to_string(),
-        workspace: "C:/workspace".to_string(),
-        name: Some("Session".to_string()),
-        parent_id: None,
-        created_at: 1,
-        updated_at: 2,
-        last_user_message_at: None,
-        state: Some("created".to_string()),
-        status: Some("idle".to_string()),
-        message_count: 0,
-        task_management: json!({}),
-        lifecycle_projection: projection,
-        management: json!({}),
-        session: json!({}),
-        todos: Vec::new(),
-    };
+    let snapshot = snapshot_fixture("session-1", "C:/workspace");
     for (event_name, event) in [
         (
             "session_snapshot_created",
@@ -150,7 +185,21 @@ fn session_snapshot_feed_event_shapes_are_stable() {
             "created"
         );
         assert!(value["snapshot"].get("management").is_some());
-        assert!(value["snapshot"].get("session").is_some());
+        assert!(value["snapshot"].get("metadata").is_some());
+        assert!(value["snapshot"].get("session").is_none());
+    }
+
+    let canonical = serde_json::to_value(&snapshot).expect("canonical snapshot");
+    for legacy_field in ["parent_id", "state", "status", "task_management", "session"] {
+        let mut legacy = canonical.clone();
+        legacy
+            .as_object_mut()
+            .expect("snapshot object")
+            .insert(legacy_field.to_string(), json!(null));
+        assert!(
+            serde_json::from_value::<SessionSnapshot>(legacy).is_err(),
+            "legacy snapshot field `{legacy_field}` must be rejected"
+        );
     }
 
     assert_eq!(
@@ -162,4 +211,43 @@ fn session_snapshot_feed_event_shapes_are_stable() {
         "snapshot": snapshot
     }))
     .is_err());
+}
+
+#[test]
+fn session_snapshot_rejects_split_lifecycle_truth_and_restores_full_projection() {
+    let mut projection_id_mismatch = snapshot_fixture("session-1", "C:/workspace");
+    projection_id_mismatch.lifecycle_projection.session_id = "session-2".to_string();
+    assert!(projection_id_mismatch.into_management().is_err());
+
+    let mut management_id_mismatch = snapshot_fixture("session-1", "C:/workspace");
+    management_id_mismatch
+        .management
+        .rebind_session_id("session-2".to_string());
+    assert!(management_id_mismatch.into_management().is_err());
+
+    let mut state_mismatch = snapshot_fixture("session-1", "C:/workspace");
+    state_mismatch.lifecycle_projection.state = lifecycle::SessionState::Running;
+    assert!(state_mismatch.into_management().is_err());
+
+    let mut task_plan_mismatch = snapshot_fixture("session-1", "C:/workspace");
+    task_plan_mismatch
+        .lifecycle_projection
+        .task_plan
+        .plan_summary = "different plan".to_string();
+    assert!(task_plan_mismatch.into_management().is_err());
+
+    let mut metadata_mismatch = snapshot_fixture("session-1", "C:/workspace");
+    metadata_mismatch.metadata.auto_session_name = false;
+    assert!(metadata_mismatch.into_management().is_err());
+
+    let mut canonical = snapshot_fixture("session-1", "C:/workspace");
+    canonical.lifecycle_projection.parent_id = Some("parent".to_string());
+    canonical.lifecycle_projection.pending_user_inputs = vec!["queued".to_string()];
+    canonical.lifecycle_projection.runtime_ids = vec!["runtime-1".to_string()];
+    canonical.lifecycle_projection.active_runtime_id = Some("runtime-1".to_string());
+    let expected = canonical.lifecycle_projection.clone();
+    let management = canonical
+        .into_management()
+        .expect("canonical snapshot should restore management");
+    assert_eq!(management.lifecycle_projection(), expected);
 }

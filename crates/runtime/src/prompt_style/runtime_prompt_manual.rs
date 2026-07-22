@@ -230,9 +230,7 @@ fn runtime_prompt_record_present_since_last_compact(
     id: &str,
 ) -> bool {
     for entry in session.session_log.iter().rev() {
-        let Ok(value) = serde_json::from_str::<Value>(entry) else {
-            continue;
-        };
+        let value = entry.value();
         if value.get("type").and_then(Value::as_str) == Some("context_compaction") {
             return false;
         }
@@ -531,7 +529,7 @@ mod tests {
         assert_eq!(runtime_prompt_manual_log_ids(&goal_session), vec!["debug"]);
 
         let mut reflection_session = goal_session.clone();
-        reflection_session.session_log.clear();
+        reflection_session.clear_session_log();
         reflection_session.goal_mode = false;
         reflection_session.reflection_enabled = true;
 

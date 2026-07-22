@@ -81,7 +81,7 @@ fn coding_agent_can_call_command_run_tool_e2e() {
         .session
         .session_log
         .iter()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .map(|entry| entry.value())
         .any(|entry| entry.get("role").and_then(Value::as_str) == Some("assistant")));
 
     let run_output = tool_results
@@ -357,7 +357,7 @@ fn non_planning_agent_visible_reply_with_task_status_doing_is_backfilled_on_foll
         .session
         .session_log
         .iter()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .map(|entry| entry.value())
         .any(
             |entry| entry.get("role").and_then(Value::as_str) == Some("assistant")
                 && entry
@@ -513,7 +513,7 @@ fn single_done_task_status_with_long_visible_reply_completes_without_backfill_tu
         .session
         .session_log
         .iter()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .map(|entry| entry.value())
         .any(
             |entry| entry.get("role").and_then(Value::as_str) == Some("assistant")
                 && entry

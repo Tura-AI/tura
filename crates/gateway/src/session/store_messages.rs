@@ -260,25 +260,6 @@ impl SessionStore {
                         .unwrap_or(projected.updated_at)
                         .max(projected.updated_at),
                 );
-                if let Some(timestamp) =
-                    chrono::DateTime::<Utc>::from_timestamp_millis(projected.updated_at)
-                {
-                    if timestamp > info.management.session_last_user_message_at {
-                        info.management.record_user_message_at(timestamp);
-                    }
-                }
-                if inserted {
-                    if info.management.input.user_input.trim().is_empty() {
-                        if let Some(text) =
-                            projected.parts.iter().find_map(|part| part.text.clone())
-                        {
-                            info.management.input.user_input = text;
-                        }
-                    }
-                    if let Ok(entry) = serde_json::to_string(&projected) {
-                        info.management.session_log.push(entry);
-                    }
-                }
             }
         }
         drop(messages);
@@ -623,17 +604,6 @@ impl SessionStore {
             info.updated_at = now;
             if role == MessageRole::User {
                 info.last_user_message_at = Some(now);
-                if let Some(timestamp) = chrono::DateTime::<Utc>::from_timestamp_millis(now) {
-                    info.management.record_user_message_at(timestamp);
-                }
-                if let Some(text) = message.parts.iter().find_map(|part| part.text.clone()) {
-                    if info.management.input.user_input.trim().is_empty() {
-                        info.management.input.user_input = text;
-                    }
-                    if let Ok(entry) = serde_json::to_string(&message) {
-                        info.management.session_log.push(entry);
-                    }
-                }
             }
         }
         drop(messages);

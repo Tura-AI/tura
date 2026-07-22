@@ -79,6 +79,7 @@ pub(crate) fn create_session_command(
         disable_permission_restrictions: false,
         use_last_tool_call_response: false,
         auto_session_name: false,
+        initial_task_plan_patch: None,
     })
 }
 
@@ -122,7 +123,7 @@ pub(crate) fn persist_session_delta_command(
         now,
     );
     management.auto_session_name = false;
-    management.task_plan = task_plan(tasks);
+    management.replace_task_plan(task_plan(tasks), now);
     SessionLogCommand::PersistSessionDelta(Box::new(PersistSessionDeltaRequest {
         session_id: session_id.to_string(),
         management_sequence,
@@ -313,14 +314,18 @@ pub(crate) fn assert_session_snapshot(
             let snapshot = session.ok_or_else(|| anyhow!("session {session_id} missing"))?;
             assert_eq!(snapshot.session_id, session_id);
             assert_eq!(snapshot.workspace, workspace);
-            assert_eq!(snapshot.state.as_deref(), Some(state));
-            assert_eq!(snapshot.status.as_deref(), Some(status));
+            assert_eq!(
+                session_state_name(snapshot.lifecycle_projection.state),
+                state
+            );
+            assert_eq!(snapshot.lifecycle_projection.state.ui_status(), status);
             assert_eq!(snapshot.message_count, message_count);
-            assert_eq!(snapshot.session["status"].as_str(), Some(status));
-            assert_eq!(snapshot.management["state"].as_str(), Some(state));
             if let Some(expected_task_status) = expected_task_status {
-                let tasks = snapshot
-                    .task_management
+                let task_management = snapshot.lifecycle_projection.task_management_json(
+                    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(snapshot.created_at)
+                        .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH),
+                );
+                let tasks = task_management
                     .get("tasks")
                     .and_then(serde_json::Value::as_array)
                     .ok_or_else(|| anyhow!("task management tasks missing"))?;
@@ -473,10 +478,13 @@ pub(crate) fn assert_index_state_matches_workspace_state(
         )?;
         let snapshot = get_session_snapshot(session_id)?
             .ok_or_else(|| anyhow!("snapshot missing for {session_id}"))?;
-        assert_eq!(Some(state.as_str()), snapshot.state.as_deref());
         assert_eq!(
-            snapshot.management["state"].as_str(),
-            snapshot.state.as_deref()
+            state,
+            session_state_name(snapshot.lifecycle_projection.state)
+        );
+        assert_eq!(
+            snapshot.management.state,
+            snapshot.lifecycle_projection.state
         );
     }
     Ok(())
@@ -514,7 +522,23 @@ pub(crate) fn session_message_count(session_id: &str) -> Option<u64> {
 
 pub(crate) fn session_state_status(session_id: &str) -> Option<(String, String)> {
     let snapshot = get_session_snapshot(session_id).ok().flatten()?;
-    Some((snapshot.state?, snapshot.status?))
+    let state = snapshot.lifecycle_projection.state;
+    Some((
+        session_state_name(state).to_string(),
+        state.ui_status().to_string(),
+    ))
+}
+
+fn session_state_name(state: SessionState) -> &'static str {
+    match state {
+        SessionState::Created => "created",
+        SessionState::Running => "running",
+        SessionState::Paused => "paused",
+        SessionState::Completed => "completed",
+        SessionState::Failed => "failed",
+        SessionState::Cancelled => "cancelled",
+        SessionState::Interrupted => "interrupted",
+    }
 }
 
 pub(crate) fn write_corrupt_pending_queue_item(home: &Path, label: &str) -> Result<PathBuf> {

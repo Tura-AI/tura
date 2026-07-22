@@ -581,10 +581,13 @@ impl SessionFeedReducer {
 mod tests {
     use super::*;
     use crate::contracts::GlobalEvent;
-    use lifecycle::{RuntimeProjection, RuntimeState};
+    use lifecycle::{
+        RuntimeProjection, RuntimeState, SessionInput, SessionManagement,
+    };
     use serde_json::json;
     use session_log_contract::{
-        SessionFeedCommandUpdate, SessionFeedEvent, SessionRecordProjection, SessionSnapshot,
+        SessionFeedCommandUpdate, SessionFeedEvent, SessionMetadata, SessionRecordProjection,
+        SessionSnapshot,
     };
 
     fn entry(cursor: u64, event: SessionFeedEvent) -> SessionFeedEntry {
@@ -618,28 +621,66 @@ mod tests {
             .get_session_info(session_id)
             .expect("snapshot source session");
         info.updated_at = updated_at;
-        info.management.session_name = name.to_string();
+        info.name = name.to_string();
         info.model = Some(format!("model-{name}"));
         info.agent = Some(format!("agent-{name}"));
         info.session_type = Some("general".to_string());
         info.validator_enabled = true;
         info.force_planning = true;
-        let projection = info.management.lifecycle_projection();
+        let projection = info.projection.clone();
+        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(info.created_at)
+            .expect("snapshot timestamp");
+        let mut management = SessionManagement::new(
+            session_id.to_string(),
+            name.to_string(),
+            info.session_directory.clone(),
+            false,
+            Vec::<String>::new(),
+            SessionInput {
+                user_input: String::new(),
+                file_input: Vec::new(),
+                agent: info.agent.clone(),
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            String::new(),
+            timestamp,
+        );
+        management.auto_session_name = info.auto_session_name;
+        management.disable_permission_restrictions = info.disable_permission_restrictions;
+        management.use_last_tool_call_response = info.use_last_tool_call_response;
+        management.context_tokens = info.context_tokens;
+        management.runtime_usage = info.runtime_usage.clone();
+        management.replace_lifecycle_projection(projection.clone());
         SessionSnapshot {
             session_id: session_id.to_string(),
             workspace: "C:/workspace".to_string(),
             name: Some(name.to_string()),
-            parent_id: projection.parent_id.clone(),
             created_at: info.created_at,
             updated_at,
             last_user_message_at: info.last_user_message_at,
-            state: Some("created".to_string()),
-            status: Some("idle".to_string()),
             message_count: info.message_count as u64,
-            task_management: info.management.task_management_json(),
             lifecycle_projection: projection,
-            management: serde_json::to_value(&info.management).expect("snapshot management"),
-            session: serde_json::to_value(&info).expect("snapshot session"),
+            metadata: SessionMetadata {
+                session_directory: info.session_directory.to_string_lossy().to_string(),
+                model: info.model.clone(),
+                agent: info.agent.clone(),
+                session_type: info
+                    .session_type
+                    .clone()
+                    .unwrap_or_else(|| "coding".to_string()),
+                kill_processes_on_start: info.kill_processes_on_start,
+                validator_enabled: info.validator_enabled,
+                force_planning: info.force_planning,
+                model_variant: info.model_variant.clone(),
+                model_acceleration_enabled: info.model_acceleration_enabled,
+                disable_permission_restrictions: info.disable_permission_restrictions,
+                use_last_tool_call_response: info.use_last_tool_call_response,
+                auto_session_name: info.auto_session_name,
+                context_tokens: info.context_tokens,
+                runtime_usage: info.runtime_usage.clone(),
+            },
+            management,
             todos: vec![json!({"id": format!("todo-{name}")})],
         }
     }
@@ -730,31 +771,14 @@ mod tests {
 
     #[test]
     fn rejected_generation_root_is_not_recorded_as_applied() {
-        let store = SessionStore::empty();
-        let mut reducer = SessionFeedReducer::new(store);
+        let (source, source_session_id) = test_store();
+        let mut malformed_snapshot = snapshot(&source, &source_session_id, "Malformed", 1);
+        malformed_snapshot.session_id = "different-session".to_string();
+        let mut reducer = SessionFeedReducer::new(SessionStore::empty());
         let malformed = entry(
             1,
             SessionFeedEvent::SessionSnapshotCreated {
-                snapshot: Box::new(SessionSnapshot {
-                    session_id: "different-session".to_string(),
-                    workspace: "C:/workspace".to_string(),
-                    name: None,
-                    parent_id: None,
-                    created_at: 1,
-                    updated_at: 1,
-                    last_user_message_at: None,
-                    state: None,
-                    status: None,
-                    message_count: 0,
-                    task_management: json!({}),
-                    lifecycle_projection: lifecycle::SessionAggregate::new(
-                        "different-session".to_string(),
-                    )
-                    .query(lifecycle::SessionQuery::Lifecycle),
-                    management: json!({}),
-                    session: json!({}),
-                    todos: Vec::new(),
-                }),
+                snapshot: Box::new(malformed_snapshot),
             },
         );
 
@@ -1068,6 +1092,9 @@ mod tests {
         let (store, session_id) = test_store();
         let mut reducer = SessionFeedReducer::new(store.clone());
         let mut event_cursor = store.event_cursor();
+        let lifecycle_before = store
+            .session_lifecycle_projection(&session_id)
+            .expect("lifecycle before message projection");
         let message = store.build_text_message_with_ids_and_times(
             &session_id,
             MessageRole::User,
@@ -1110,7 +1137,7 @@ mod tests {
             .get_session_info(&session_id)
             .expect("session projection cache");
         assert_eq!(info.message_count, messages.len());
-        assert_eq!(info.management.session_log.len(), 1);
+        assert_eq!(info.projection, lifecycle_before);
         let events = std::iter::from_fn(|| store.next_event(&mut event_cursor)).collect::<Vec<_>>();
         assert_eq!(
             events

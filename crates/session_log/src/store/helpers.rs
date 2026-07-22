@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use lifecycle::{SessionAggregate, SessionEvent, SessionProjection, SessionState, TaskPlan};
+use lifecycle::{SessionAggregate, SessionEvent, SessionState, TaskPlan};
 use rusqlite::{params, Connection};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -39,35 +39,6 @@ pub(super) fn task_management_value(task_plan: &TaskPlan) -> Value {
         "plan_summary": task_plan.plan_summary,
         "tasks": task_plan.detailed_tasks,
     })
-}
-
-pub(super) fn apply_lifecycle_projection(
-    management: &mut Value,
-    session: &mut Value,
-    projection: &SessionProjection,
-) -> Result<Value> {
-    let task_management = task_management_value(&projection.task_plan);
-    set_object_value(management, "state", serde_json::to_value(projection.state)?);
-    set_object_value(
-        management,
-        "task_plan",
-        serde_json::to_value(&projection.task_plan)?,
-    );
-    set_object_value(
-        management,
-        "is_child_session",
-        Value::Bool(projection.parent_id.is_some()),
-    );
-    set_object_string(session, "status", projection.state.ui_status());
-    set_object_value(session, "task_management", task_management.clone());
-    match projection.parent_id.as_deref() {
-        Some(parent_id) => {
-            set_object_value(session, "parent_id", Value::String(parent_id.to_string()))
-        }
-        None => remove_object_field(session, "parent_id"),
-    }
-    set_object_value(session, "management", management.clone());
-    Ok(task_management)
 }
 
 pub(super) fn replay_session_events(
@@ -123,30 +94,6 @@ pub(super) fn session_state_text(state: SessionState) -> Result<String> {
     match serde_json::to_value(state)? {
         Value::String(value) => Ok(value),
         _ => anyhow::bail!("session state did not serialize to a string"),
-    }
-}
-
-pub(super) fn set_object_string(value: &mut Value, key: &str, next: &str) {
-    if !value.is_object() {
-        *value = serde_json::json!({});
-    }
-    if let Some(object) = value.as_object_mut() {
-        object.insert(key.to_string(), Value::String(next.to_string()));
-    }
-}
-
-pub(super) fn set_object_value(value: &mut Value, key: &str, next: Value) {
-    if !value.is_object() {
-        *value = serde_json::json!({});
-    }
-    if let Some(object) = value.as_object_mut() {
-        object.insert(key.to_string(), next);
-    }
-}
-
-pub(super) fn remove_object_field(value: &mut Value, key: &str) {
-    if let Some(object) = value.as_object_mut() {
-        object.remove(key);
     }
 }
 

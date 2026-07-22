@@ -22,14 +22,16 @@ fn task_management_json_exposes_start_condition_for_gateway_and_gui() {
         "ship contract".to_string(),
         now,
     );
-    session.task_plan.plan_summary = "Contract plan".to_string();
-    session.task_plan.detailed_tasks.push(TaskStep {
+    let mut task_plan = session.task_plan.clone();
+    task_plan.plan_summary = "Contract plan".to_string();
+    task_plan.detailed_tasks.push(TaskStep {
         task_id: "idle-task".to_string(),
         step: 0,
         task_summary: "Queued work".to_string(),
         start_condition: StartCondition::SessionIdle,
         ..TaskStep::default()
     });
+    session.replace_task_plan(task_plan, now);
 
     let value = session.task_management_json();
 

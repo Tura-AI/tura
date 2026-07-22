@@ -1,19 +1,18 @@
 use super::helpers::{
-    append_session_event, apply_lifecycle_projection, millis_to_rfc3339, replay_session_events,
-    session_state_text,
+    append_session_event, replay_session_events, session_state_text, task_management_value,
 };
 use super::SessionLogStore;
 use anyhow::{Context, Result};
 use lifecycle::{
     RuntimeAggregate, RuntimeEvent, RuntimeQuery, RuntimeState, SessionAggregate, SessionCommand,
-    SessionQuery,
+    SessionManagement, SessionQuery,
 };
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::Value;
 use session_log_contract::{
     ActivateRuntimeLeaseRequest, CommitRuntimeEventRequest, RegisterRuntimeRequest,
     ReplayRuntimeRequest, RuntimeEventCommitOutcome, RuntimeLeaseOutcome,
-    RuntimeRegistrationOutcome, RuntimeReplay, SessionFeedEvent,
+    RuntimeRegistrationOutcome, RuntimeReplay, SessionFeedEvent, SessionMetadata,
 };
 use std::path::{Path, PathBuf};
 
@@ -513,8 +512,8 @@ fn load_runtime_events(conn: &rusqlite::Connection, runtime_id: &str) -> Result<
 }
 
 struct SessionProjectionRow {
-    management: Value,
-    session: Value,
+    management: SessionManagement,
+    metadata: SessionMetadata,
     updated_at: i64,
 }
 
@@ -538,7 +537,7 @@ fn load_session_projection_row(
     .map(|(management_json, session_json, updated_at)| {
         Ok(SessionProjectionRow {
             management: serde_json::from_str(&management_json)?,
-            session: serde_json::from_str(&session_json)?,
+            metadata: serde_json::from_str(&session_json)?,
             updated_at,
         })
     })
@@ -554,20 +553,17 @@ fn persist_session_projection(
 ) -> Result<()> {
     let projection = aggregate.query(SessionQuery::Lifecycle);
     let updated_at = row.updated_at.max(updated_at);
-    let timestamp = millis_to_rfc3339(updated_at)?;
+    row.management.session_last_update_at =
+        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(updated_at)
+            .context("runtime terminal timestamp is outside the supported range")?;
     row.management
-        .as_object_mut()
-        .context("session management projection is not an object")?
-        .insert(
-            "session_last_update_at".to_string(),
-            Value::String(timestamp),
-        );
-    row.session
-        .as_object_mut()
-        .context("session projection is not an object")?
-        .insert("updated_at".to_string(), Value::Number(updated_at.into()));
-    let task_management =
-        apply_lifecycle_projection(&mut row.management, &mut row.session, &projection)?;
+        .replace_lifecycle_projection(projection.clone());
+    row.metadata.disable_permission_restrictions = row.management.disable_permission_restrictions;
+    row.metadata.use_last_tool_call_response = row.management.use_last_tool_call_response;
+    row.metadata.auto_session_name = row.management.auto_session_name;
+    row.metadata.context_tokens = row.management.context_tokens;
+    row.metadata.runtime_usage.clone_from(&row.management.runtime_usage);
+    let task_management = task_management_value(&projection.task_plan);
     tx.execute(
         "UPDATE sessions SET parent_id = ?2, state = ?3, status = ?4,
             task_management_json = ?5, management_json = ?6,
@@ -580,7 +576,7 @@ fn persist_session_projection(
             projection.state.ui_status(),
             serde_json::to_string(&task_management)?,
             serde_json::to_string(&row.management)?,
-            serde_json::to_string(&row.session)?,
+            serde_json::to_string(&row.metadata)?,
             updated_at,
         ],
     )?;

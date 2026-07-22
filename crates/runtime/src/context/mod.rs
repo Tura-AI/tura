@@ -67,7 +67,6 @@ pub mod types {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ContextState {
         pub session_id: SessionId,
-        pub messages: Vec<serde_json::Value>,
         pub tool_results: Vec<serde_json::Value>,
         pub last_tool_call_response: Option<serde_json::Value>,
         pub reasoning_history: Vec<String>,

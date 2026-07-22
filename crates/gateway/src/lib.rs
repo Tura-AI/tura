@@ -24,7 +24,7 @@ pub use channel::ChannelSender;
 pub use handler::ProcessedMessageHandler;
 pub use media::GatewayMediaProcessor;
 pub use runtime::GatewayRuntime;
-pub use session::{session_store, SessionInfo, SessionManager, SessionStatus, SessionStore};
+pub use session::{session_store, SessionInfo, SessionManager, SessionStore};
 pub use simple_runtime::{SimpleGatewayRuntime, SimpleMessageHandler};
 pub use types::*;
 

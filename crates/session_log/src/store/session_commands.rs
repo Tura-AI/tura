@@ -1,19 +1,22 @@
 use super::helpers::{
-    append_session_event, apply_lifecycle_projection, i64_at, millis_to_rfc3339, path_text,
-    replay_session_events, session_state_text, string_at, task_management_value,
+    append_session_event, i64_at, path_text, replay_session_events, session_state_text, string_at,
+    task_management_value,
 };
 use super::SessionLogStore;
 use crate::path::{normalize_workspace, workspace_session_log_db};
 use anyhow::{Context, Result};
-use lifecycle::{SessionAggregate, SessionCommand, SessionManagement, SessionQuery};
+use lifecycle::{
+    SessionAggregate, SessionCommand, SessionInput, SessionManagement, SessionQuery,
+};
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{json, Value};
 use session_log_contract::{
     CreateSessionRequest, ExecuteSessionCommandRequest, PersistSessionDeltaRequest,
-    SessionCommandResult, SessionFeedEntry, SessionFeedEvent, SessionMetadataPatch,
+    SessionCommandResult, SessionFeedEntry, SessionFeedEvent, SessionMetadata, SessionMetadataPatch,
     SessionRecordProjection, SessionSnapshot, UpdateSessionRequest,
 };
 use std::collections::HashMap;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 impl SessionLogStore {
@@ -52,7 +55,7 @@ impl SessionLogStore {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let row = load_delta_session_row(&tx, &session_id)?
                 .with_context(|| format!("session {session_id} not found"))?;
-            let mut session = row.session;
+            let mut metadata = row.metadata;
             let aggregate = replay_session_events(&tx, &session_id)?;
             let projection = aggregate.query(SessionQuery::Lifecycle);
             let mut management: SessionManagement = serde_json::from_str(&row.management_json)
@@ -106,9 +109,8 @@ impl SessionLogStore {
                     .session_last_user_message_at
                     .timestamp_millis(),
             );
-            let mut management_value = serde_json::to_value(&management)?;
-            let task_management =
-                apply_lifecycle_projection(&mut management_value, &mut session, &projection)?;
+            sync_metadata_from_management(&mut metadata, &management);
+            let task_management = task_management_value(&projection.task_plan);
 
             let mut next_sequence = row.next_context_sequence;
             let mut inserted_messages = 0_i64;
@@ -219,17 +221,18 @@ impl SessionLogStore {
             let state_text = session_state_text(projection.state)?;
             let status = projection.state.ui_status().to_string();
             let task_management_json = serde_json::to_string(&task_management)?;
-            let management_json = serde_json::to_string(&management_value)?;
-            let session_json = serde_json::to_string(&session)?;
+            let management_json = serde_json::to_string(&management)?;
+            let session_json = serde_json::to_string(&metadata)?;
             tx.execute(
-                "UPDATE sessions SET updated_at = ?2, last_user_message_at = ?3,
-                    state = ?4, status = ?5, message_count = ?6,
-                    task_management_json = ?7, management_json = ?8, session_json = ?9,
-                    next_context_sequence = ?10, retained_from_sequence = ?11,
-                    next_management_sequence = ?12
+                "UPDATE sessions SET name = ?2, updated_at = ?3, last_user_message_at = ?4,
+                    state = ?5, status = ?6, message_count = ?7,
+                    task_management_json = ?8, management_json = ?9, session_json = ?10,
+                    next_context_sequence = ?11, retained_from_sequence = ?12,
+                    next_management_sequence = ?13
                  WHERE session_id = ?1",
                 params![
                     session_id,
+                    management.session_name,
                     updated_at,
                     last_user_message_at,
                     state_text,
@@ -344,85 +347,76 @@ impl SessionLogStore {
         let todos_json = serde_json::to_string(&fork_projection.todos)?;
         let mut aggregate = SessionAggregate::new(request.session_id.clone());
         let event = aggregate.execute(request.creation_command.clone())?;
+        let mut lifecycle_events = vec![event.clone()];
+        if let Some(patch) = request.initial_task_plan_patch.clone() {
+            lifecycle_events.push(
+                aggregate.execute(SessionCommand::ApplyTaskPlanPatch { patch })?,
+            );
+        }
         let projection = aggregate.query(SessionQuery::Lifecycle);
         let state_text = session_state_text(projection.state)?;
         let status = projection.state.ui_status();
-        let timestamp = millis_to_rfc3339(request.created_at)?;
-        let last_user_timestamp =
-            millis_to_rfc3339(last_user_message_at.unwrap_or(request.created_at))?;
+        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(request.created_at)
+            .context("session creation timestamp is outside the supported range")?;
+        let last_user_timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+            last_user_message_at.unwrap_or(request.created_at),
+        )
+        .context("session last-user timestamp is outside the supported range")?;
         let task_management = task_management_value(&projection.task_plan);
-        let management = json!({
-            "session_id": &request.session_id,
-            "session_name": &request.name,
-            "auto_session_name": request.auto_session_name,
-            "session_directory": &request.session_directory,
-            "session_uses_docker": false,
-            "task_type": [],
-            "session_capabilities": [],
-            "session_current_turn": 0,
-            "session_log": [],
-            "session_log_retention": { "omitted_entries": 0 },
-            "session_created_at": timestamp,
-            "session_last_update_at": timestamp,
-            "session_last_user_message_at": last_user_timestamp,
-            "session_started_at": timestamp,
-            "input": {
-                "user_input": "",
-                "file_input": [],
-                "agent": &request.agent,
-                "runtime_context": null,
-                "planning_mode_override": null
+        let mut management = SessionManagement::new(
+            request.session_id.clone(),
+            request.name.clone(),
+            PathBuf::from(&request.session_directory),
+            false,
+            Vec::<String>::new(),
+            SessionInput {
+                user_input: String::new(),
+                file_input: Vec::new(),
+                agent: request.agent.clone(),
+                runtime_context: None,
+                planning_mode_override: None,
             },
-            "user_goal": "",
-            "current_objective": "",
-            "task_plan": &projection.task_plan,
-            "state": projection.state,
-            "use_last_tool_call_response": request.use_last_tool_call_response,
-            "is_child_session": projection.parent_id.is_some(),
-            "disable_permission_restrictions": request.disable_permission_restrictions,
-            "planning_enabled": false,
-            "reflection_enabled": false,
-            "op_manual_enabled": true,
-            "no_op_manual": false,
-            "goal_mode": false,
-            "last_goal_user_input": "",
-            "context_tokens": { "input": 0, "limit": 260000 },
-            "runtime_usage": null
-        });
-        let directory = if workspace.is_empty() {
-            Value::Null
-        } else {
-            Value::String(workspace.clone())
+            String::new(),
+            timestamp,
+        );
+        management.auto_session_name = request.auto_session_name;
+        management.session_last_user_message_at = last_user_timestamp;
+        management.use_last_tool_call_response = request.use_last_tool_call_response;
+        management.disable_permission_restrictions = request.disable_permission_restrictions;
+        management.replace_lifecycle_projection(projection.clone());
+        if request.auto_session_name {
+            if let Some(name) = request
+                .initial_task_plan_patch
+                .as_ref()
+                .and_then(task_plan_patch_summary_for_auto_name)
+            {
+                management.session_name = name;
+            }
+        }
+        let metadata = SessionMetadata {
+            session_directory: request.session_directory.clone(),
+            model: request.model.clone(),
+            agent: request.agent.clone(),
+            session_type: request.session_type.clone(),
+            kill_processes_on_start: request.kill_processes_on_start,
+            validator_enabled: request.validator_enabled,
+            force_planning: request.force_planning,
+            model_variant: request.model_variant.clone(),
+            model_acceleration_enabled: request.model_acceleration_enabled,
+            disable_permission_restrictions: management.disable_permission_restrictions,
+            use_last_tool_call_response: management.use_last_tool_call_response,
+            auto_session_name: management.auto_session_name,
+            context_tokens: management.context_tokens,
+            runtime_usage: management.runtime_usage.clone(),
         };
-        let session = json!({
-            "id": &request.session_id,
-            "created_at": request.created_at,
-            "updated_at": request.created_at,
-            "last_user_message_at": last_user_message_at,
-            "directory": directory,
-            "model": &request.model,
-            "agent": &request.agent,
-            "session_type": &request.session_type,
-            "kill_processes_on_start": request.kill_processes_on_start,
-            "validator_enabled": request.validator_enabled,
-            "force_planning": request.force_planning,
-            "model_variant": &request.model_variant,
-            "model_acceleration_enabled": request.model_acceleration_enabled,
-            "disable_permission_restrictions": request.disable_permission_restrictions,
-            "use_last_tool_call_response": request.use_last_tool_call_response,
-            "status": status,
-            "message_count": message_count,
-            "management": management,
-            "task_management": task_management
-        });
         let management_json = serde_json::to_string(&management)?;
-        let session_json = serde_json::to_string(&session)?;
+        let session_json = serde_json::to_string(&metadata)?;
         let task_management_json = serde_json::to_string(&task_management)?;
 
         let result = SessionCommandResult {
             event: event.clone(),
             projection: projection.clone(),
-            session_name: Some(request.name.clone()),
+            session_name: Some(management.session_name.clone()),
             message_count: message_count as u64,
             last_user_message_at,
         };
@@ -462,7 +456,9 @@ impl SessionLogStore {
                         todos_json,
                     ],
                 )?;
-                append_session_event(&tx, &request.session_id, &event)?;
+                for lifecycle_event in &lifecycle_events {
+                    append_session_event(&tx, &request.session_id, lifecycle_event)?;
+                }
                 let feed_entries = {
                     let snapshot =
                         load_session_snapshot_tx(&tx, &request.session_id, projection.clone())?;
@@ -664,49 +660,41 @@ impl SessionLogStore {
             let projection = aggregate.query(SessionQuery::Lifecycle);
             let task_plan_changed = projection.task_plan != previous_task_plan;
             let publish_task_projection = task_projection_requested || task_plan_changed;
-            let mut management: Value =
+            let mut management: SessionManagement =
                 serde_json::from_str(&row.management_json).with_context(|| {
                     format!("invalid management_json for session {}", request.session_id)
                 })?;
-            let mut session: Value =
+            let mut metadata: SessionMetadata =
                 serde_json::from_str(&row.session_json).with_context(|| {
                     format!("invalid session_json for session {}", request.session_id)
                 })?;
-            let timestamp = millis_to_rfc3339(now_ms)?;
             let state_text = session_state_text(projection.state)?;
             let status = projection.state.ui_status();
-            set_json_field(
-                &mut management,
-                "session_last_update_at",
-                Value::String(timestamp),
-            );
+            management.session_last_update_at =
+                chrono::DateTime::<chrono::Utc>::from_timestamp_millis(now_ms)
+                    .context("session command timestamp is outside the supported range")?;
             if let Some(name) = auto_name
                 .filter(|_| task_plan_changed)
-                .filter(|_| management["auto_session_name"].as_bool().unwrap_or(true))
+                .filter(|_| management.auto_session_name)
             {
-                set_json_field(&mut management, "session_name", Value::String(name.clone()));
-                set_json_field(&mut session, "name", Value::String(name));
+                management.session_name = name;
             }
-            set_json_field(&mut session, "updated_at", Value::Number(now_ms.into()));
-            let projected_task_management =
-                apply_lifecycle_projection(&mut management, &mut session, &projection)?;
+            management.replace_lifecycle_projection(projection.clone());
             let task_management = if publish_task_projection {
-                projected_task_management
+                task_management_value(&projection.task_plan)
             } else {
-                let task_management: Value = serde_json::from_str(&row.task_management_json)
-                    .with_context(|| {
-                        format!(
-                            "invalid task_management_json for session {}",
-                            request.session_id
-                        )
-                    })?;
-                set_json_field(&mut session, "task_management", task_management.clone());
-                task_management
+                serde_json::from_str(&row.task_management_json).with_context(|| {
+                    format!(
+                        "invalid task_management_json for session {}",
+                        request.session_id
+                    )
+                })?
             };
+            sync_metadata_from_management(&mut metadata, &management);
             let management_json = serde_json::to_string(&management)?;
-            let session_json = serde_json::to_string(&session)?;
+            let session_json = serde_json::to_string(&metadata)?;
             let task_management_json = serde_json::to_string(&task_management)?;
-            let name = management["session_name"].as_str().map(ToString::to_string);
+            let name = management.session_name.clone();
             tx.execute(
                 "UPDATE sessions
                  SET name = ?2, parent_id = ?3, updated_at = MAX(updated_at, ?4),
@@ -848,41 +836,27 @@ impl SessionLogStore {
                 .with_context(|| {
                     format!("invalid management_json for session {}", request.session_id)
                 })?;
-            let mut session: Value =
+            let mut metadata: SessionMetadata =
                 serde_json::from_str(&row.session_json).with_context(|| {
                     format!("invalid session_json for session {}", request.session_id)
                 })?;
             let updated_at = row.updated_at.max(now_ms);
-            apply_metadata_patch(&mut management, &mut session, &request.metadata);
+            apply_metadata_patch(&mut management, &mut metadata, &request.metadata);
             if request.metadata.name.is_none() && management.auto_session_name {
                 if let Some(name) = request
                     .task_plan_patch
                     .as_ref()
                     .and_then(task_plan_patch_summary_for_auto_name)
                 {
-                    management.session_name = name.clone();
-                    set_json_field(&mut session, "name", Value::String(name));
+                    management.session_name = name;
                 }
             }
             management.session_last_update_at =
                 chrono::DateTime::<chrono::Utc>::from_timestamp_millis(updated_at)
                     .context("session update timestamp is outside the supported range")?;
-            let mut management_value = serde_json::to_value(&management)?;
-            let task_management = if request.task_plan_patch.is_some() {
-                apply_lifecycle_projection(&mut management_value, &mut session, &projection)?
-            } else {
-                let task_management: Value = serde_json::from_str(&row.task_management_json)
-                    .with_context(|| {
-                        format!(
-                            "invalid task_management_json for session {}",
-                            request.session_id
-                        )
-                    })?;
-                set_json_field(&mut session, "management", management_value.clone());
-                set_json_field(&mut session, "task_management", task_management.clone());
-                task_management
-            };
-            set_json_field(&mut session, "updated_at", Value::Number(updated_at.into()));
+            management.replace_lifecycle_projection(projection.clone());
+            sync_metadata_from_management(&mut metadata, &management);
+            let task_management = task_management_value(&projection.task_plan);
             let state_text = session_state_text(projection.state)?;
             let status = projection.state.ui_status();
             let name = management.session_name.clone();
@@ -900,8 +874,8 @@ impl SessionLogStore {
                     state_text,
                     status,
                     serde_json::to_string(&task_management)?,
-                    serde_json::to_string(&management_value)?,
-                    serde_json::to_string(&session)?,
+                    serde_json::to_string(&management)?,
+                    serde_json::to_string(&metadata)?,
                 ],
             )?;
             let snapshot = load_session_snapshot_tx(&tx, &request.session_id, projection)?;
@@ -1370,7 +1344,7 @@ fn load_command_indexes(
 
 struct DeltaSessionRow {
     message_count: i64,
-    session: Value,
+    metadata: SessionMetadata,
     management_json: String,
     next_context_sequence: u64,
     retained_from_sequence: u64,
@@ -1419,7 +1393,7 @@ fn load_delta_session_row(
         |row| {
             Ok(DeltaSessionRow {
                 message_count: row.get(0)?,
-                session: serde_json::from_str(&row.get::<_, String>(1)?).map_err(|error| {
+                metadata: serde_json::from_str(&row.get::<_, String>(1)?).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
                         1,
                         rusqlite::types::Type::Text,
@@ -1525,7 +1499,7 @@ fn persist_command_message_projection(
     let (inserted, projection) = upsert_delta_projection(tx, &session_id, projection)?;
     let mut management: SessionManagement = serde_json::from_str(&row.management_json)
         .with_context(|| format!("invalid management_json for session {session_id}"))?;
-    let mut session: Value = serde_json::from_str(&row.session_json)
+    let metadata: SessionMetadata = serde_json::from_str(&row.session_json)
         .with_context(|| format!("invalid session_json for session {session_id}"))?;
     let message_count = row.message_count.saturating_add(inserted);
     let mut last_user_message_at = row.last_user_message_at;
@@ -1560,23 +1534,7 @@ fn persist_command_message_projection(
         }
     }
     let management_json = serde_json::to_string(&management)?;
-    let updated_at = row_updated_at(&session).max(projection.updated_at);
-    set_json_field(&mut session, "updated_at", Value::Number(updated_at.into()));
-    set_json_field(
-        &mut session,
-        "last_user_message_at",
-        serde_json::to_value(last_user_message_at)?,
-    );
-    set_json_field(
-        &mut session,
-        "message_count",
-        Value::Number(message_count.into()),
-    );
-    set_json_field(
-        &mut session,
-        "management",
-        serde_json::to_value(&management)?,
-    );
+    let updated_at = row.updated_at.max(projection.updated_at);
     tx.execute(
         "UPDATE sessions
          SET updated_at = MAX(updated_at, ?2), last_user_message_at = ?3,
@@ -1588,7 +1546,7 @@ fn persist_command_message_projection(
             last_user_message_at,
             message_count,
             management_json,
-            serde_json::to_string(&session)?,
+            serde_json::to_string(&metadata)?,
         ],
     )?;
     let event_id = format!("{command_id}:message:{}", projection.message_id);
@@ -1604,13 +1562,6 @@ fn persist_command_message_projection(
         event_id,
         event,
     })
-}
-
-fn row_updated_at(session: &Value) -> i64 {
-    session
-        .get("updated_at")
-        .and_then(Value::as_i64)
-        .unwrap_or_default()
 }
 
 fn merge_delta_projection(mut existing: Value, incoming: Value) -> Value {
@@ -1730,54 +1681,52 @@ fn validate_metadata_patch(patch: &SessionMetadataPatch) -> Result<()> {
 
 fn apply_metadata_patch(
     management: &mut SessionManagement,
-    session: &mut Value,
+    metadata: &mut SessionMetadata,
     patch: &SessionMetadataPatch,
 ) {
     if let Some(name) = &patch.name {
         management.session_name = name.clone();
-        set_json_field(session, "name", Value::String(name.clone()));
     }
-    set_optional_json_field(session, "model", patch.model.as_ref());
+    if let Some(model) = &patch.model {
+        metadata.model = Some(model.clone());
+    }
     if patch.clear_agent {
-        set_json_field(session, "agent", Value::Null);
-    } else {
-        set_optional_json_field(session, "agent", patch.agent.as_ref());
+        metadata.agent = None;
+    } else if let Some(agent) = &patch.agent {
+        metadata.agent = Some(agent.clone());
     }
-    set_optional_json_field(session, "session_type", patch.session_type.as_ref());
-    set_optional_bool_field(
-        session,
-        "kill_processes_on_start",
-        patch.kill_processes_on_start,
-    );
-    set_optional_bool_field(session, "validator_enabled", patch.validator_enabled);
-    set_optional_bool_field(session, "force_planning", patch.force_planning);
+    if let Some(session_type) = &patch.session_type {
+        metadata.session_type = session_type.clone();
+    }
+    if let Some(value) = patch.kill_processes_on_start {
+        metadata.kill_processes_on_start = value;
+    }
+    if let Some(value) = patch.validator_enabled {
+        metadata.validator_enabled = value;
+    }
+    if let Some(value) = patch.force_planning {
+        metadata.force_planning = value;
+    }
     if let Some(value) = patch.disable_permission_restrictions {
         management.disable_permission_restrictions = value;
-        set_json_field(
-            session,
-            "disable_permission_restrictions",
-            Value::Bool(value),
-        );
     }
     if let Some(value) = patch.use_last_tool_call_response {
         management.use_last_tool_call_response = value;
-        set_json_field(session, "use_last_tool_call_response", Value::Bool(value));
     }
     if let Some(value) = patch.auto_session_name {
         management.auto_session_name = value;
     }
 }
 
-fn set_optional_json_field(session: &mut Value, key: &str, value: Option<&String>) {
-    if let Some(value) = value {
-        set_json_field(session, key, Value::String(value.clone()));
-    }
-}
-
-fn set_optional_bool_field(session: &mut Value, key: &str, value: Option<bool>) {
-    if let Some(value) = value {
-        set_json_field(session, key, Value::Bool(value));
-    }
+fn sync_metadata_from_management(
+    metadata: &mut SessionMetadata,
+    management: &SessionManagement,
+) {
+    metadata.disable_permission_restrictions = management.disable_permission_restrictions;
+    metadata.use_last_tool_call_response = management.use_last_tool_call_response;
+    metadata.auto_session_name = management.auto_session_name;
+    metadata.context_tokens = management.context_tokens;
+    metadata.runtime_usage.clone_from(&management.runtime_usage);
 }
 
 pub(super) fn load_session_snapshot_tx(
@@ -1786,26 +1735,21 @@ pub(super) fn load_session_snapshot_tx(
     lifecycle_projection: lifecycle::SessionProjection,
 ) -> Result<SessionSnapshot> {
     tx.query_row(
-        "SELECT workspace, name, parent_id, created_at, updated_at,
-                last_user_message_at, state, status, message_count,
-                task_management_json, management_json, session_json, todos_json
+        "SELECT workspace, name, created_at, updated_at,
+                last_user_message_at, message_count, management_json, session_json, todos_json
          FROM sessions WHERE session_id = ?1",
         params![session_id],
         |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<String>>(2)?,
+                row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, Option<i64>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, i64>(8)?,
-                row.get::<_, String>(9)?,
-                row.get::<_, String>(10)?,
-                row.get::<_, String>(11)?,
-                row.get::<_, String>(12)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
             ))
         },
     )
@@ -1814,35 +1758,29 @@ pub(super) fn load_session_snapshot_tx(
         |(
             workspace,
             name,
-            parent_id,
             created_at,
             updated_at,
             last_user_message_at,
-            state,
-            status,
             message_count,
-            task_management_json,
             management_json,
             session_json,
             todos_json,
         )| {
-            Ok(SessionSnapshot {
+            let snapshot = SessionSnapshot {
                 session_id: session_id.to_string(),
                 workspace,
                 name,
-                parent_id,
                 created_at,
                 updated_at,
                 last_user_message_at,
-                state,
-                status,
                 message_count: message_count as u64,
-                task_management: serde_json::from_str(&task_management_json)?,
                 lifecycle_projection,
                 management: serde_json::from_str(&management_json)?,
-                session: serde_json::from_str(&session_json)?,
+                metadata: serde_json::from_str(&session_json)?,
                 todos: serde_json::from_str(&todos_json)?,
-            })
+            };
+            snapshot.validate().map_err(anyhow::Error::msg)?;
+            Ok(snapshot)
         },
     )
 }

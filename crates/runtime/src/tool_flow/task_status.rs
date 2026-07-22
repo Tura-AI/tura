@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::prompt_style::runtime_prompt_manual;
 use lifecycle::SessionManagement;
-use lifecycle::{PlanStatus, StartCondition, TaskStep};
+use lifecycle::{PlanStatus, StartCondition, TaskPlan, TaskStep};
 
 const COMMAND_RUN_TOOL: &str = "command_run";
 const PLANNING_TOOL: &str = "planning";
@@ -17,8 +17,10 @@ pub(crate) fn apply_tool_result_session_state_update(
     result: &mut serde_json::Value,
 ) -> bool {
     let mut changed = false;
+    let mut task_plan = session.task_plan.clone();
+    let mut task_topology_log = None;
     if tool_name == COMMAND_RUN_TOOL {
-        changed |= apply_status_result(session, result);
+        changed |= apply_status_result(session, &mut task_plan, result);
     }
     if tool_name == COMMAND_RUN_TOOL || tool_name == PLANNING_TOOL {
         let plan = if tool_name == PLANNING_TOOL && result.get("steps").is_some() {
@@ -32,20 +34,19 @@ pub(crate) fn apply_tool_result_session_state_update(
                 .and_then(|value| value.as_str())
                 .filter(|value| !value.trim().is_empty())
             {
-                session.task_plan.plan_summary = user_task.to_string();
-            } else if session.task_plan.plan_summary.trim().is_empty() {
-                session.task_plan.plan_summary = session.user_goal.clone();
+                task_plan.plan_summary = user_task.to_string();
+            } else if task_plan.plan_summary.trim().is_empty() {
+                task_plan.plan_summary = session.user_goal.clone();
             }
             let steps = plan
                 .get("steps")
                 .and_then(|value| value.as_array())
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
-            let previous_tasks = task_plan_snapshot(session);
-            replace_active_task_with_planning(session, steps);
+            let previous_tasks = task_plan_snapshot(&task_plan);
+            replace_active_task_with_planning(&mut task_plan, steps);
             if session.auto_session_name {
-                if let Some(summary) = session
-                    .task_plan
+                if let Some(summary) = task_plan
                     .detailed_tasks
                     .iter()
                     .rev()
@@ -54,10 +55,17 @@ pub(crate) fn apply_tool_result_session_state_update(
                     session.session_name = summary;
                 }
             }
-            activate_first_planned_task_if_needed(session);
-            record_task_topology_applied(session, steps, previous_tasks);
+            activate_first_planned_task_if_needed(&mut task_plan);
+            task_topology_log = Some(task_topology_log_entry(&task_plan, steps, previous_tasks));
             changed = true;
         }
+    }
+    if task_plan != session.task_plan {
+        session.replace_task_plan(task_plan, Utc::now());
+        changed = true;
+    }
+    if let Some((entry, now)) = task_topology_log {
+        session.push_log(entry, now);
     }
     if changed {
         session.session_last_update_at = Utc::now();
@@ -65,7 +73,11 @@ pub(crate) fn apply_tool_result_session_state_update(
     changed
 }
 
-fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json::Value) -> bool {
+fn apply_status_result(
+    session: &mut SessionManagement,
+    task_plan: &mut TaskPlan,
+    result: &mut serde_json::Value,
+) -> bool {
     let Some(items) = result
         .get_mut("results")
         .and_then(serde_json::Value::as_array_mut)
@@ -103,7 +115,7 @@ fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json:
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
         if let Some(group) = requested_group {
-            changed |= apply_task_group(session, group);
+            changed |= apply_task_group(session, task_plan, group);
         }
         if let Some(task_type) = status.get("task_type") {
             let task_type = runtime_prompt_manual::task_type_ids_from_value(task_type);
@@ -120,29 +132,33 @@ fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json:
                 .unwrap_or(false);
         }
         match status.get("status").and_then(serde_json::Value::as_str) {
-            Some("doing") => changed |= mark_active_task_doing(session),
-            Some("done") => changed |= complete_active_task(session),
-            Some("question") => changed |= question_active_task(session),
+            Some("doing") => changed |= mark_active_task_doing(task_plan, &session.user_goal),
+            Some("done") => changed |= complete_active_task(task_plan, &session.user_goal),
+            Some("question") => changed |= question_active_task(task_plan, &session.user_goal),
             _ => {}
         }
     }
     changed
 }
 
-fn apply_task_group(session: &mut SessionManagement, group: String) -> bool {
+fn apply_task_group(
+    session: &mut SessionManagement,
+    task_plan: &mut TaskPlan,
+    group: String,
+) -> bool {
     let mut changed = false;
     if session.auto_session_name && session.session_name.trim() != group.trim() {
         session.session_name = group.clone();
         changed = true;
     }
-    if session.task_plan.plan_summary.trim() != group.trim() {
-        session.task_plan.plan_summary = group.clone();
+    if task_plan.plan_summary.trim() != group.trim() {
+        task_plan.plan_summary = group.clone();
         changed = true;
     }
-    if session.task_plan.detailed_tasks.is_empty() {
-        ensure_single_task(session, Utc::now());
+    if task_plan.detailed_tasks.is_empty() {
+        ensure_single_task(task_plan, &session.user_goal, Utc::now());
     }
-    if let Some(task) = session.task_plan.detailed_tasks.iter_mut().find(|task| {
+    if let Some(task) = task_plan.detailed_tasks.iter_mut().find(|task| {
         matches!(
             task.status,
             PlanStatus::Doing | PlanStatus::Todo | PlanStatus::Question
@@ -161,9 +177,9 @@ fn non_empty_string(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-fn complete_active_task(session: &mut SessionManagement) -> bool {
-    ensure_single_task(session, Utc::now());
-    if let Some(current) = session.task_plan.detailed_tasks.iter_mut().find(|task| {
+fn complete_active_task(task_plan: &mut TaskPlan, user_goal: &str) -> bool {
+    ensure_single_task(task_plan, user_goal, Utc::now());
+    if let Some(current) = task_plan.detailed_tasks.iter_mut().find(|task| {
         matches!(
             task.status,
             PlanStatus::Doing | PlanStatus::Todo | PlanStatus::Question
@@ -175,9 +191,9 @@ fn complete_active_task(session: &mut SessionManagement) -> bool {
     false
 }
 
-fn mark_active_task_doing(session: &mut SessionManagement) -> bool {
-    ensure_single_task(session, Utc::now());
-    if let Some(current) = session.task_plan.detailed_tasks.iter_mut().find(|task| {
+fn mark_active_task_doing(task_plan: &mut TaskPlan, user_goal: &str) -> bool {
+    ensure_single_task(task_plan, user_goal, Utc::now());
+    if let Some(current) = task_plan.detailed_tasks.iter_mut().find(|task| {
         matches!(
             task.status,
             PlanStatus::Doing | PlanStatus::Todo | PlanStatus::Question
@@ -192,10 +208,9 @@ fn mark_active_task_doing(session: &mut SessionManagement) -> bool {
     false
 }
 
-fn question_active_task(session: &mut SessionManagement) -> bool {
-    ensure_single_task(session, Utc::now());
-    if let Some(current) = session
-        .task_plan
+fn question_active_task(task_plan: &mut TaskPlan, user_goal: &str) -> bool {
+    ensure_single_task(task_plan, user_goal, Utc::now());
+    if let Some(current) = task_plan
         .detailed_tasks
         .iter_mut()
         .find(|task| matches!(task.status, PlanStatus::Doing | PlanStatus::Todo))
@@ -206,16 +221,16 @@ fn question_active_task(session: &mut SessionManagement) -> bool {
     false
 }
 
-fn ensure_single_task(session: &mut SessionManagement, now: chrono::DateTime<Utc>) {
-    if !session.task_plan.detailed_tasks.is_empty() {
+fn ensure_single_task(task_plan: &mut TaskPlan, user_goal: &str, now: chrono::DateTime<Utc>) {
+    if !task_plan.detailed_tasks.is_empty() {
         return;
     }
-    let summary = if session.task_plan.plan_summary.trim().is_empty() {
-        session.user_goal.clone()
+    let summary = if task_plan.plan_summary.trim().is_empty() {
+        user_goal.to_string()
     } else {
-        session.task_plan.plan_summary.clone()
+        task_plan.plan_summary.clone()
     };
-    session.task_plan.detailed_tasks.push(TaskStep {
+    task_plan.detailed_tasks.push(TaskStep {
         task_id: random_task_id(),
         step: 1,
         start_at: now,
@@ -226,7 +241,7 @@ fn ensure_single_task(session: &mut SessionManagement, now: chrono::DateTime<Utc
     });
 }
 
-fn replace_active_task_with_planning(session: &mut SessionManagement, steps: &[serde_json::Value]) {
+fn replace_active_task_with_planning(task_plan: &mut TaskPlan, steps: &[serde_json::Value]) {
     let mut incoming = steps
         .iter()
         .enumerate()
@@ -242,14 +257,12 @@ fn replace_active_task_with_planning(session: &mut SessionManagement, steps: &[s
         }
     }
 
-    let replace_index = session
-        .task_plan
+    let replace_index = task_plan
         .detailed_tasks
         .iter()
         .position(|task| matches!(task.status, PlanStatus::Doing | PlanStatus::Question))
         .or_else(|| {
-            session
-                .task_plan
+            task_plan
                 .detailed_tasks
                 .iter()
                 .position(|task| task.status == PlanStatus::Todo)
@@ -257,27 +270,24 @@ fn replace_active_task_with_planning(session: &mut SessionManagement, steps: &[s
 
     match replace_index {
         Some(index) => {
-            session
-                .task_plan
-                .detailed_tasks
+            task_plan.detailed_tasks
                 .splice(index..=index, incoming);
         }
-        None => session.task_plan.detailed_tasks.extend(incoming),
+        None => task_plan.detailed_tasks.extend(incoming),
     }
 
-    renumber_task_steps(&mut session.task_plan.detailed_tasks);
+    renumber_task_steps(&mut task_plan.detailed_tasks);
 }
 
-fn activate_first_planned_task_if_needed(session: &mut SessionManagement) {
-    let has_active = session
-        .task_plan
+fn activate_first_planned_task_if_needed(task_plan: &mut TaskPlan) {
+    let has_active = task_plan
         .detailed_tasks
         .iter()
         .any(|task| matches!(task.status, PlanStatus::Doing | PlanStatus::Question));
     if has_active {
         return;
     }
-    if let Some(first_todo) = session.task_plan.detailed_tasks.iter_mut().find(|task| {
+    if let Some(first_todo) = task_plan.detailed_tasks.iter_mut().find(|task| {
         task.status == PlanStatus::Todo && task.start_condition == StartCondition::UserAction
     }) {
         first_todo.status = PlanStatus::Doing;
@@ -290,29 +300,28 @@ fn renumber_task_steps(tasks: &mut [TaskStep]) {
     }
 }
 
-fn record_task_topology_applied(
-    session: &mut SessionManagement,
+fn task_topology_log_entry(
+    task_plan: &TaskPlan,
     steps: &[serde_json::Value],
     previous_tasks: serde_json::Value,
-) {
+) -> (String, chrono::DateTime<Utc>) {
     let now = Utc::now();
-    session.push_log(
+    (
         serde_json::json!({
             "type": "task_topology_applied",
             "input_steps": steps,
             "previous_tasks": previous_tasks,
-            "current_tasks": task_plan_snapshot(session),
+            "current_tasks": task_plan_snapshot(task_plan),
             "timestamp": now.to_rfc3339(),
         })
         .to_string(),
         now,
-    );
+    )
 }
 
-fn task_plan_snapshot(session: &SessionManagement) -> serde_json::Value {
+fn task_plan_snapshot(task_plan: &TaskPlan) -> serde_json::Value {
     serde_json::Value::Array(
-        session
-            .task_plan
+        task_plan
             .detailed_tasks
             .iter()
             .map(|task| {
@@ -422,7 +431,9 @@ mod tests {
     use crate::context::compact_session_context;
     use crate::prompt_style::runtime_prompt_manual::RUNTIME_PROMPT_MANUAL_RECORD_TYPE;
     use chrono::Utc;
-    use lifecycle::{PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep};
+    use lifecycle::{
+        PlanStatus, SessionInput, SessionManagement, StartCondition, TaskPlan, TaskStep,
+    };
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -444,6 +455,15 @@ mod tests {
             "fix the task".to_string(),
             now,
         )
+    }
+
+    fn update_task_plan(
+        session: &mut SessionManagement,
+        update: impl FnOnce(&mut TaskPlan),
+    ) {
+        let mut task_plan = session.task_plan.clone();
+        update(&mut task_plan);
+        session.replace_task_plan(task_plan, Utc::now());
     }
 
     #[test]
@@ -477,20 +497,22 @@ mod tests {
     #[test]
     fn task_status_output_marks_current_planned_task_done() {
         let mut session = session();
-        session.task_plan.plan_summary = "ProgramBench rebuild".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "inspect-contract".to_string(),
-            step: 1,
-            task_summary: "Inspect available behavior clues".to_string(),
-            status: PlanStatus::Doing,
-            ..TaskStep::default()
-        });
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "rebuild-source".to_string(),
-            step: 2,
-            task_summary: "Recreate Rust implementation".to_string(),
-            status: PlanStatus::Todo,
-            ..TaskStep::default()
+        update_task_plan(&mut session, |task_plan| {
+            task_plan.plan_summary = "ProgramBench rebuild".to_string();
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "inspect-contract".to_string(),
+                step: 1,
+                task_summary: "Inspect available behavior clues".to_string(),
+                status: PlanStatus::Doing,
+                ..TaskStep::default()
+            });
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "rebuild-source".to_string(),
+                step: 2,
+                task_summary: "Recreate Rust implementation".to_string(),
+                status: PlanStatus::Todo,
+                ..TaskStep::default()
+            });
         });
         let mut result = json!({
             "results": [{
@@ -541,13 +563,15 @@ mod tests {
     #[test]
     fn status_question_marks_current_task_question() {
         let mut session = session();
-        session.task_plan.plan_summary = "Fix startup crash".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "nonce-1".to_string(),
-            step: 1,
-            task_summary: "Fix startup crash".to_string(),
-            status: PlanStatus::Doing,
-            ..TaskStep::default()
+        update_task_plan(&mut session, |task_plan| {
+            task_plan.plan_summary = "Fix startup crash".to_string();
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "nonce-1".to_string(),
+                step: 1,
+                task_summary: "Fix startup crash".to_string(),
+                status: PlanStatus::Doing,
+                ..TaskStep::default()
+            });
         });
         let mut result = json!({
             "results": [{
@@ -575,13 +599,15 @@ mod tests {
     #[test]
     fn status_doing_marks_current_task_doing() {
         let mut session = session();
-        session.task_plan.plan_summary = "Continue implementation".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "nonce-1".to_string(),
-            step: 1,
-            task_summary: "Continue implementation".to_string(),
-            status: PlanStatus::Todo,
-            ..TaskStep::default()
+        update_task_plan(&mut session, |task_plan| {
+            task_plan.plan_summary = "Continue implementation".to_string();
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "nonce-1".to_string(),
+                step: 1,
+                task_summary: "Continue implementation".to_string(),
+                status: PlanStatus::Todo,
+                ..TaskStep::default()
+            });
         });
         let mut result = json!({
             "results": [{
@@ -808,14 +834,16 @@ mod tests {
     #[test]
     fn task_group_refreshes_auto_session_name_after_summary_exists() {
         let mut session = session();
-        session.task_plan.plan_summary = "Existing task".to_string();
         session.session_name = "Existing task".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "nonce-1".to_string(),
-            step: 1,
-            task_summary: "Existing task".to_string(),
-            status: PlanStatus::Doing,
-            ..TaskStep::default()
+        update_task_plan(&mut session, |task_plan| {
+            task_plan.plan_summary = "Existing task".to_string();
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "nonce-1".to_string(),
+                step: 1,
+                task_summary: "Existing task".to_string(),
+                status: PlanStatus::Doing,
+                ..TaskStep::default()
+            });
         });
         let mut result = json!({
             "results": [{
@@ -853,13 +881,15 @@ mod tests {
         session.auto_session_name = false;
         session.session_name = "Manual title".to_string();
         session.task_type = vec!["debug".to_string()];
-        session.task_plan.plan_summary = "Previous runtime work".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "nonce-1".to_string(),
-            step: 1,
-            task_summary: "Previous runtime work".to_string(),
-            status: PlanStatus::Doing,
-            ..TaskStep::default()
+        update_task_plan(&mut session, |task_plan| {
+            task_plan.plan_summary = "Previous runtime work".to_string();
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "nonce-1".to_string(),
+                step: 1,
+                task_summary: "Previous runtime work".to_string(),
+                status: PlanStatus::Doing,
+                ..TaskStep::default()
+            });
         });
         let mut result = json!({
             "results": [{
@@ -891,7 +921,6 @@ mod tests {
     #[test]
     fn task_group_refresh_does_not_block_incremental_task_type_manuals_and_capabilities() {
         let mut session = session();
-        session.task_plan.plan_summary = "Existing visual work".to_string();
         session.session_name = "Existing visual work".to_string();
         session.task_type = vec!["visual".to_string()];
         assert!(
@@ -903,12 +932,15 @@ mod tests {
         );
         assert!(session.has_session_capability("read_media"));
         assert!(!session.has_session_capability("apply_patch"));
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "nonce-1".to_string(),
-            step: 1,
-            task_summary: "Existing visual work".to_string(),
-            status: PlanStatus::Doing,
-            ..TaskStep::default()
+        update_task_plan(&mut session, |task_plan| {
+            task_plan.plan_summary = "Existing visual work".to_string();
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "nonce-1".to_string(),
+                step: 1,
+                task_summary: "Existing visual work".to_string(),
+                status: PlanStatus::Doing,
+                ..TaskStep::default()
+            });
         });
         let mut result = json!({
             "results": [{
@@ -1019,28 +1051,30 @@ mod tests {
     #[test]
     fn planning_replaces_active_task_and_preserves_queued_tail() {
         let mut session = session();
-        session.task_plan.plan_summary = "Existing task".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "a".to_string(),
-            step: 1,
-            task_summary: "Heavy task".to_string(),
-            step_deliverable_description: "Heavy delivery".to_string(),
-            status: PlanStatus::Doing,
-            ..TaskStep::default()
-        });
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "b".to_string(),
-            step: 2,
-            task_summary: "Queued b".to_string(),
-            status: PlanStatus::Todo,
-            ..TaskStep::default()
-        });
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "c".to_string(),
-            step: 3,
-            task_summary: "Queued c".to_string(),
-            status: PlanStatus::Todo,
-            ..TaskStep::default()
+        update_task_plan(&mut session, |task_plan| {
+            task_plan.plan_summary = "Existing task".to_string();
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "a".to_string(),
+                step: 1,
+                task_summary: "Heavy task".to_string(),
+                step_deliverable_description: "Heavy delivery".to_string(),
+                status: PlanStatus::Doing,
+                ..TaskStep::default()
+            });
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "b".to_string(),
+                step: 2,
+                task_summary: "Queued b".to_string(),
+                status: PlanStatus::Todo,
+                ..TaskStep::default()
+            });
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "c".to_string(),
+                step: 3,
+                task_summary: "Queued c".to_string(),
+                status: PlanStatus::Todo,
+                ..TaskStep::default()
+            });
         });
         let mut result = json!({
             "results": [{
@@ -1154,13 +1188,15 @@ mod tests {
     #[test]
     fn command_run_applies_status_before_later_planning_topology() {
         let mut session = session();
-        session.task_plan.plan_summary = "Existing task".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "active".to_string(),
-            step: 1,
-            task_summary: "Active task".to_string(),
-            status: PlanStatus::Doing,
-            ..TaskStep::default()
+        update_task_plan(&mut session, |task_plan| {
+            task_plan.plan_summary = "Existing task".to_string();
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "active".to_string(),
+                step: 1,
+                task_summary: "Active task".to_string(),
+                status: PlanStatus::Doing,
+                ..TaskStep::default()
+            });
         });
         let mut result = json!({
             "results": [
@@ -1211,20 +1247,22 @@ mod tests {
     #[test]
     fn done_does_not_auto_activate_scheduled_or_polling_task() {
         let mut session = session();
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "current".to_string(),
-            step: 1,
-            task_summary: "Current".to_string(),
-            status: PlanStatus::Doing,
-            ..TaskStep::default()
-        });
-        session.task_plan.detailed_tasks.push(TaskStep {
-            task_id: "scheduled".to_string(),
-            step: 2,
-            task_summary: "Scheduled".to_string(),
-            status: PlanStatus::Todo,
-            start_condition: StartCondition::ScheduledTask,
-            ..TaskStep::default()
+        update_task_plan(&mut session, |task_plan| {
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "current".to_string(),
+                step: 1,
+                task_summary: "Current".to_string(),
+                status: PlanStatus::Doing,
+                ..TaskStep::default()
+            });
+            task_plan.detailed_tasks.push(TaskStep {
+                task_id: "scheduled".to_string(),
+                step: 2,
+                task_summary: "Scheduled".to_string(),
+                status: PlanStatus::Todo,
+                start_condition: StartCondition::ScheduledTask,
+                ..TaskStep::default()
+            });
         });
         let mut result = json!({
             "results": [{

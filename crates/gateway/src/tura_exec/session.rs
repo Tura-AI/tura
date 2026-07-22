@@ -126,6 +126,7 @@ pub(crate) fn ensure_cli_session(config: &CliConfig, session_id: &str) -> Result
             disable_permission_restrictions: false,
             use_last_tool_call_response: false,
             auto_session_name: true,
+            initial_task_plan_patch: None,
         },
     ))
     .map_err(|error| format!("failed to create CLI session `{session_id}`: {error}"))?;
@@ -279,8 +280,6 @@ mod tests {
     #[test]
     fn busy_session_detection_uses_only_canonical_lifecycle_state() {
         let mut session = test_snapshot();
-        session.status = Some("idle".to_string());
-        session.state = Some("completed".to_string());
         session.lifecycle_projection = test_projection(SessionState::Running);
         assert_eq!(session_state(&session), SessionState::Running);
         assert!(session_state(&session).is_recoverable_running());
@@ -303,21 +302,51 @@ mod tests {
     }
 
     fn test_snapshot() -> SessionSnapshot {
+        let timestamp = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+        let projection = test_projection(SessionState::Created);
+        let mut management = lifecycle::SessionManagement::new(
+            "session-123".to_string(),
+            "Session".to_string(),
+            "C:/workspace".into(),
+            false,
+            Vec::<String>::new(),
+            lifecycle::SessionInput {
+                user_input: String::new(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            String::new(),
+            timestamp,
+        );
+        management.replace_lifecycle_projection(projection.clone());
         SessionSnapshot {
             session_id: "session-123".to_string(),
             workspace: "C:/workspace".to_string(),
-            name: None,
-            parent_id: None,
+            name: Some(management.session_name.clone()),
             created_at: 0,
             updated_at: 0,
             last_user_message_at: None,
-            state: None,
-            status: None,
             message_count: 0,
-            task_management: serde_json::json!({}),
-            lifecycle_projection: test_projection(SessionState::Created),
-            management: serde_json::json!({}),
-            session: serde_json::json!({}),
+            lifecycle_projection: projection,
+            metadata: session_log_contract::SessionMetadata {
+                session_directory: "C:/workspace".to_string(),
+                model: None,
+                agent: None,
+                session_type: "coding".to_string(),
+                kill_processes_on_start: false,
+                validator_enabled: false,
+                force_planning: false,
+                model_variant: None,
+                model_acceleration_enabled: false,
+                disable_permission_restrictions: management.disable_permission_restrictions,
+                use_last_tool_call_response: management.use_last_tool_call_response,
+                auto_session_name: management.auto_session_name,
+                context_tokens: management.context_tokens,
+                runtime_usage: management.runtime_usage.clone(),
+            },
+            management,
             todos: Vec::new(),
         }
     }

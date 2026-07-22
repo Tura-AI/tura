@@ -151,13 +151,15 @@ mod tests {
             "commit workspace".to_string(),
             Utc::now(),
         );
-        session.task_plan.plan_summary = "Runtime git checkpoint".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.plan_summary = "Runtime git checkpoint".to_string();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "task-1".to_string(),
             task_summary: "Runtime git checkpoint".to_string(),
             status: PlanStatus::Doing,
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, Utc::now());
 
         let hash = commit_session_checkpoint(&session, "completed")
             .expect("session checkpoint commit")
@@ -209,7 +211,9 @@ mod tests {
     fn commit_session_checkpoint_normalizes_multiline_event_and_task_group() {
         let temp = tempfile::tempdir().expect("temp workspace");
         let mut session = test_session(temp.path(), "session-normalized-commit", "Fallback");
-        session.task_plan.plan_summary = "  Runtime\nterminal\tcheckpoint  ".to_string();
+        let mut task_plan = session.task_plan.clone();
+        task_plan.plan_summary = "  Runtime\nterminal\tcheckpoint  ".to_string();
+        session.replace_task_plan(task_plan, Utc::now());
 
         commit_session_checkpoint(&session, "  completed\nwith\tspacing  ")
             .expect("normalized checkpoint commit")

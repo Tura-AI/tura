@@ -3,7 +3,7 @@
 use crate::session_log_client::SessionLogClient;
 use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
 use chrono::{DateTime, Utc};
-use lifecycle::SessionManagement;
+use lifecycle::{SessionLogEntry, SessionManagement};
 use serde_json::Value;
 use session_log_contract::{
     PersistSessionDeltaRequest, SessionContextRecord, SessionDeltaEntry, SessionRecordProjection,
@@ -52,9 +52,15 @@ impl SessionDeltaWriter {
                     )
                 })?
                 .ok_or_else(|| format!("session {} not found", session.session_id))?;
+            let management = snapshot.into_management().map_err(|error| {
+                format!(
+                    "invalid persisted session snapshot for {}: {error}",
+                    session.session_id
+                )
+            })?;
             Some(persisted_management_baseline(
                 &session.session_id,
-                snapshot.management,
+                management,
                 context.retained_from_sequence,
             )?)
         } else {
@@ -113,9 +119,7 @@ impl SessionDeltaWriter {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let expected_next = self.next_sequence.saturating_add(entries.len() as u64);
-        let mut management = session.clone();
-        management.session_log.clear();
-        management.session_log_retention.omitted_entries = retained_from_sequence;
+        let management = session.persistence_view(retained_from_sequence);
         let management_delta =
             SessionManagement::persistence_delta(self.last_management.as_ref(), &management);
         let expected_next_management = self.next_management_sequence.saturating_add(1);
@@ -151,19 +155,16 @@ impl SessionDeltaWriter {
 
 fn persisted_management_baseline(
     session_id: &str,
-    value: Value,
+    mut management: SessionManagement,
     retained_from_sequence: u64,
 ) -> Result<SessionManagement, String> {
-    let mut management: SessionManagement = serde_json::from_value(value).map_err(|error| {
-        format!("invalid persisted management for session {session_id}: {error}")
-    })?;
     if management.session_id != session_id {
         return Err(format!(
             "persisted management session id {} does not match {session_id}",
             management.session_id
         ));
     }
-    management.session_log.clear();
+    management.clear_session_log();
     management.session_log_retention.omitted_entries = retained_from_sequence;
     Ok(management)
 }
@@ -183,13 +184,13 @@ pub(crate) fn persist_session_checkpoint(
 fn session_delta_entry(
     session: &SessionManagement,
     sequence: u64,
-    raw_record: &str,
+    entry: &SessionLogEntry,
 ) -> Result<SessionDeltaEntry, String> {
     let index = usize::try_from(sequence)
         .map_err(|_| format!("session context sequence {sequence} does not fit platform index"))?;
     let base_time = session.session_created_at.timestamp_millis();
     let record = if let Some((runtime_id, tool_part, created_at, updated_at)) =
-        runtime_tool_part_from_log_entry(index, raw_record, base_time)
+        runtime_tool_part_from_value(index, entry.value(), base_time)
     {
         serde_json::json!({
             "id": crate::gateway_events::runtime_message_id(&runtime_id),
@@ -201,13 +202,13 @@ fn session_delta_entry(
             "updated_at": updated_at,
         })
     } else {
-        persisted_message(session, index, raw_record, base_time)
+        persisted_message_from_value(session, index, entry.value(), entry.raw(), base_time)
     };
     let projection = session_message_projection(&session.session_id, record);
     Ok(SessionDeltaEntry {
         context: SessionContextRecord {
             sequence,
-            raw_record: raw_record.to_string(),
+            raw_record: entry.raw().to_string(),
         },
         projection,
     })
@@ -238,18 +239,14 @@ fn session_message_projection(session_id: &str, record: Value) -> Option<Session
     })
 }
 
-fn persisted_message(
+fn persisted_message_from_value(
     session: &SessionManagement,
     index: usize,
-    entry: &str,
+    parsed: &Value,
+    raw: &str,
     base_time: i64,
 ) -> Value {
-    let mut value = serde_json::from_str::<Value>(entry).unwrap_or_else(|_| {
-        serde_json::json!({
-            "type": "log",
-            "content": entry,
-        })
-    });
+    let mut value = parsed.clone();
     if !value.is_object() {
         value = serde_json::json!({
             "type": "log",
@@ -267,7 +264,7 @@ fn persisted_message(
             "id": format!("{}:log:{index}", session.session_id),
             "role": "event",
             "type": "log",
-            "content": entry,
+            "content": raw,
             "created_at": base_time.saturating_add(index as i64),
             "updated_at": base_time.saturating_add(index as i64),
             "session_id": session.session_id.clone(),
@@ -317,12 +314,22 @@ fn persisted_message(
     value
 }
 
-fn runtime_tool_part_from_log_entry(
+#[cfg(test)]
+fn persisted_message(
+    session: &SessionManagement,
     index: usize,
-    entry: &str,
+    raw: &str,
+    base_time: i64,
+) -> Value {
+    let entry = SessionLogEntry::new(raw);
+    persisted_message_from_value(session, index, entry.value(), entry.raw(), base_time)
+}
+
+fn runtime_tool_part_from_value(
+    index: usize,
+    value: &Value,
     base_time: i64,
 ) -> Option<(String, Value, i64, i64)> {
-    let value = serde_json::from_str::<Value>(entry).ok()?;
     let object = value.as_object()?;
     if object.get("type").and_then(Value::as_str) != Some("tool_result") {
         return None;
@@ -617,14 +624,14 @@ mod tests {
     #[test]
     fn persisted_management_is_the_delta_baseline_after_in_memory_changes() {
         let mut persisted = session();
-        persisted.session_log = vec!["persisted context".to_string()];
+        persisted.replace_session_log(["persisted context".to_string()]);
         let mut current = persisted.clone();
         current.planning_enabled = true;
         current.reflection_enabled = true;
 
         let baseline = persisted_management_baseline(
             &persisted.session_id,
-            serde_json::to_value(&persisted).expect("persisted management json"),
+            persisted,
             4,
         )
         .expect("persisted management baseline");

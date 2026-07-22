@@ -145,7 +145,7 @@ fn concurrent_clients_share_single_owner_over_socket() {
             {
                 SessionLogResponse::Session { session } => {
                     let session = session.expect("session should exist");
-                    assert_eq!(session.session["id"], session_id);
+                    assert_eq!(session.session_id, session_id);
                 }
                 other => panic!("unexpected get response: {other:?}"),
             }

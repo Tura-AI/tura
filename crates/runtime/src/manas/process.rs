@@ -420,8 +420,8 @@ pub(crate) fn process_manas_internal(
                 );
 
                 let context_output = build_context(ContextInput {
-                    session: session.clone(),
-                    runtime: runtime.clone(),
+                    session,
+                    runtime: &runtime,
                     additional_messages: Vec::new(),
                 })?;
 
@@ -454,8 +454,8 @@ pub(crate) fn process_manas_internal(
                 );
 
                 let context_output = build_context(ContextInput {
-                    session: session.clone(),
-                    runtime: runtime.clone(),
+                    session,
+                    runtime: &runtime,
                     additional_messages: Vec::new(),
                 })?;
 
@@ -468,8 +468,8 @@ pub(crate) fn process_manas_internal(
             }
 
             let context_output = build_context(ContextInput {
-                session: session.clone(),
-                runtime: runtime.clone(),
+                session,
+                runtime: &runtime,
                 additional_messages: Vec::new(),
             })?;
 
@@ -580,8 +580,8 @@ pub(crate) fn process_manas_internal(
                 );
 
                 let context_output = build_context(ContextInput {
-                    session: session.clone(),
-                    runtime: runtime.clone(),
+                    session,
+                    runtime: &runtime,
                     additional_messages: Vec::new(),
                 })?;
 
@@ -594,8 +594,8 @@ pub(crate) fn process_manas_internal(
             }
 
             let context_output = build_context(ContextInput {
-                session: session.clone(),
-                runtime: runtime.clone(),
+                session,
+                runtime: &runtime,
                 additional_messages: Vec::new(),
             })?;
 
@@ -825,8 +825,8 @@ fn complete_active_doing_task_after_non_planning_reply(
     if !has_visible_reply {
         return false;
     }
-    let Some(task) = session
-        .task_plan
+    let mut task_plan = session.task_plan.clone();
+    let Some(task) = task_plan
         .detailed_tasks
         .iter_mut()
         .find(|task| task.status == PlanStatus::Doing)
@@ -834,7 +834,7 @@ fn complete_active_doing_task_after_non_planning_reply(
         return false;
     };
     task.status = PlanStatus::Done;
-    session.session_last_update_at = Utc::now();
+    session.replace_task_plan(task_plan, Utc::now());
     true
 }
 
@@ -1156,13 +1156,15 @@ mod tests {
     #[test]
     fn non_planning_visible_reply_auto_completes_active_doing_task() {
         let mut session = test_session("session-auto-done");
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "active".to_string(),
             step: 1,
             task_summary: "Answer directly".to_string(),
             status: PlanStatus::Doing,
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, Utc::now());
 
         assert!(complete_active_doing_task_after_non_planning_reply(
             &mut session,
@@ -1175,13 +1177,15 @@ mod tests {
     #[test]
     fn non_planning_without_visible_reply_keeps_active_doing_task_open() {
         let mut session = test_session("session-no-visible-reply");
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "active".to_string(),
             step: 1,
             task_summary: "Wait for real output".to_string(),
             status: PlanStatus::Doing,
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, Utc::now());
 
         assert!(!complete_active_doing_task_after_non_planning_reply(
             &mut session,

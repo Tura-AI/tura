@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use lifecycle::SessionCommand;
+use lifecycle::{SessionCommand, SessionState};
 use runtime::session_log_client::SessionLogClient;
 use serde_json::json;
 use session_log_contract::SessionLogCommand;
@@ -455,7 +455,7 @@ fn runtime_session_log_business_flow_restart_marks_running_session_interrupted()
         )?,
     )?;
     wait_for_session(&client, &session_id, |snapshot| {
-        snapshot.state.as_deref() == Some("running") && snapshot.message_count == 1
+        snapshot.lifecycle_projection.state == SessionState::Running && snapshot.message_count == 1
     })?;
     drop(service);
     wait_until(Duration::from_secs(5), || {
@@ -464,17 +464,19 @@ fn runtime_session_log_business_flow_restart_marks_running_session_interrupted()
 
     let restarted = ServiceThread::start()?;
     wait_for_session(&client, &session_id, |snapshot| {
-        snapshot.state.as_deref() == Some("interrupted")
-            && snapshot.status.as_deref() == Some("error")
+        snapshot.lifecycle_projection.state == SessionState::Interrupted
             && snapshot.message_count == 1
     })?;
     let recovered = client
         .get_session(session_id.clone())?
         .ok_or_else(|| anyhow!("expected recovered runtime session"))?;
     assert_eq!(recovered.session_id, session_id);
-    assert_eq!(recovered.state.as_deref(), Some("interrupted"));
-    assert_eq!(recovered.status.as_deref(), Some("error"));
-    assert_eq!(recovered.management["state"], "interrupted");
+    assert_eq!(recovered.lifecycle_projection.state, SessionState::Interrupted);
+    assert_eq!(recovered.lifecycle_projection.state.ui_status(), "error");
+    assert_eq!(
+        recovered.management.lifecycle_projection(),
+        recovered.lifecycle_projection
+    );
     assert_eq!(recovered.message_count, 1);
     let (_page, records) = client.list_session_records(session_id, 0, 10)?;
     assert_eq!(records.len(), 1);
@@ -519,7 +521,7 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
         )?,
     )?;
     wait_for_session(&client, &session_id, |snapshot| {
-        snapshot.state.as_deref() == Some("running") && snapshot.message_count == 2
+        snapshot.lifecycle_projection.state == SessionState::Running && snapshot.message_count == 2
     })?;
     drop(service);
     wait_until(Duration::from_secs(5), || {
@@ -528,15 +530,17 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
 
     let restarted = ServiceThread::start()?;
     wait_for_session(&client, &session_id, |snapshot| {
-        snapshot.state.as_deref() == Some("interrupted")
-            && snapshot.status.as_deref() == Some("error")
+        snapshot.lifecycle_projection.state == SessionState::Interrupted
             && snapshot.message_count == 2
     })?;
     let interrupted = client
         .get_session(session_id.clone())?
         .ok_or_else(|| anyhow!("expected interrupted runtime session"))?;
-    assert_eq!(interrupted.state.as_deref(), Some("interrupted"));
-    assert_eq!(interrupted.status.as_deref(), Some("error"));
+    assert_eq!(
+        interrupted.lifecycle_projection.state,
+        SessionState::Interrupted
+    );
+    assert_eq!(interrupted.lifecycle_projection.state.ui_status(), "error");
     assert_eq!(interrupted.message_count, 2);
 
     typed_session::enqueue_execute(&session_id, SessionCommand::SubmitUserInput)?;
@@ -554,8 +558,7 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
         )?,
     )?;
     wait_for_session(&client, &session_id, |snapshot| {
-        snapshot.state.as_deref() == Some("created")
-            && snapshot.status.as_deref() == Some("idle")
+        snapshot.lifecycle_projection.state == SessionState::Created
             && snapshot.message_count == 4
     })?;
 
@@ -563,9 +566,12 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
         .get_session(session_id.clone())?
         .ok_or_else(|| anyhow!("expected resumed runtime session"))?;
     assert_eq!(resumed.session_id, session_id);
-    assert_eq!(resumed.state.as_deref(), Some("created"));
-    assert_eq!(resumed.status.as_deref(), Some("idle"));
-    assert_eq!(resumed.management["state"], "created");
+    assert_eq!(resumed.lifecycle_projection.state, SessionState::Created);
+    assert_eq!(resumed.lifecycle_projection.state.ui_status(), "idle");
+    assert_eq!(
+        resumed.management.lifecycle_projection(),
+        resumed.lifecycle_projection
+    );
     assert_eq!(resumed.message_count, 4);
 
     let (all_page, all_records) = client.list_session_records(session_id.clone(), 0, 10)?;
