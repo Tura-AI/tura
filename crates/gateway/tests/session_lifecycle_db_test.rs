@@ -71,7 +71,10 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
     assert_eq!(forked.parent_id.as_deref(), Some(source.id.as_str()));
 
     let persisted = get_persisted_session(&forked.id)?.expect("forked session should be in DB");
-    assert_eq!(persisted.parent_id.as_deref(), Some(source.id.as_str()));
+    assert_eq!(
+        persisted.lifecycle_projection.parent_id.as_deref(),
+        Some(source.id.as_str())
+    );
     assert_eq!(persisted.message_count, 1);
     let records = list_persisted_records(&forked.id)?;
     assert_eq!(records.len(), 1);

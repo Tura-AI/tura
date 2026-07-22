@@ -54,27 +54,28 @@ pub(super) fn load_workspace_session_payload(
         return Ok(None);
     }
     with_connection(workspace_db_path, init_workspace_db, |conn| {
-        let payload = conn.query_row(
-            "SELECT workspace, name, created_at, updated_at, last_user_message_at,
+        let payload = conn
+            .query_row(
+                "SELECT workspace, name, created_at, updated_at, last_user_message_at,
                     message_count, management_json, session_json, todos_json
              FROM sessions
              WHERE session_id = ?1",
-            params![session_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Option<i64>>(4)?,
-                    row.get::<_, i64>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, String>(7)?,
-                    row.get::<_, String>(8)?,
-                ))
-            },
-        )
-        .optional()?;
+                params![session_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                    ))
+                },
+            )
+            .optional()?;
         payload
             .map(
                 |(

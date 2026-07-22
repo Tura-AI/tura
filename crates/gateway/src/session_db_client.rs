@@ -27,7 +27,7 @@ impl SessionDbClient {
     pub fn create_session(&self, request: CreateSessionRequest) -> Result<SessionCommandResult> {
         session_command_response(
             "create_session",
-            self.call(SessionLogCommand::CreateSession(request))?,
+            self.call(SessionLogCommand::CreateSession(Box::new(request)))?,
         )
     }
 
@@ -299,6 +299,7 @@ mod tests {
         SessionAggregate, SessionCommand, SessionInput, SessionManagement, SessionQuery,
         SessionState,
     };
+    use serde_json::json;
     use session_log_contract::{
         CommandCheckpoint, DeleteSessionRequest, MarkSessionInterruptedRequest, Page,
         SessionLogCommand, SessionLogResponse, SessionMetadata, SessionSnapshot,
@@ -306,8 +307,8 @@ mod tests {
     };
 
     fn snapshot(session_id: &str) -> SessionSnapshot {
-        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(1)
-            .expect("snapshot timestamp");
+        let timestamp =
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(1).expect("snapshot timestamp");
         let projection = {
             let mut aggregate = SessionAggregate::new(session_id.to_string());
             aggregate.state = SessionState::Running;

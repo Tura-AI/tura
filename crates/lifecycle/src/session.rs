@@ -149,13 +149,52 @@ impl TaskStep {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct TaskPlan {
     #[serde(default)]
     pub plan_summary: String,
     #[serde(default)]
     pub detailed_tasks: Vec<TaskStep>,
+}
+
+impl<'de> Deserialize<'de> for TaskPlan {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct TaskPlanVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for TaskPlanVisitor {
+            type Value = TaskPlan;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a task plan object")
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Wire {
+                    #[serde(default)]
+                    plan_summary: String,
+                    #[serde(default)]
+                    detailed_tasks: Vec<TaskStep>,
+                }
+
+                let wire = Wire::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(TaskPlan {
+                    plan_summary: wire.plan_summary,
+                    detailed_tasks: wire.detailed_tasks,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(TaskPlanVisitor)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1379,6 +1418,14 @@ mod tests {
 
     #[test]
     fn serde_accepts_only_the_current_canonical_names() {
+        let task_plan = TaskPlan::default();
+        let task_plan_json = serde_json::to_value(&task_plan).expect("serialize task plan");
+        assert_eq!(
+            serde_json::from_value::<TaskPlan>(task_plan_json).expect("deserialize task plan"),
+            task_plan
+        );
+        assert!(serde_json::from_value::<TaskPlan>(serde_json::json!([])).is_err());
+
         for (state, encoded) in [
             (SessionState::Created, "\"created\""),
             (SessionState::Running, "\"running\""),

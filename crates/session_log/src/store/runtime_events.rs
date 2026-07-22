@@ -8,7 +8,6 @@ use lifecycle::{
     SessionManagement, SessionQuery,
 };
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
-use serde_json::Value;
 use session_log_contract::{
     ActivateRuntimeLeaseRequest, CommitRuntimeEventRequest, RegisterRuntimeRequest,
     ReplayRuntimeRequest, RuntimeEventCommitOutcome, RuntimeLeaseOutcome,
@@ -562,7 +561,9 @@ fn persist_session_projection(
     row.metadata.use_last_tool_call_response = row.management.use_last_tool_call_response;
     row.metadata.auto_session_name = row.management.auto_session_name;
     row.metadata.context_tokens = row.management.context_tokens;
-    row.metadata.runtime_usage.clone_from(&row.management.runtime_usage);
+    row.metadata
+        .runtime_usage
+        .clone_from(&row.management.runtime_usage);
     let task_management = task_management_value(&projection.task_plan);
     tx.execute(
         "UPDATE sessions SET parent_id = ?2, state = ?3, status = ?4,

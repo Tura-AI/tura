@@ -57,7 +57,7 @@ pub(crate) fn create_session_command(
     created_at: i64,
     tasks: &[(&str, PlanStatus)],
 ) -> SessionLogCommand {
-    SessionLogCommand::CreateSession(CreateSessionRequest {
+    SessionLogCommand::CreateSession(Box::new(CreateSessionRequest {
         command_id: format!("create:{session_id}"),
         session_id: session_id.to_string(),
         creation_command: SessionCommand::CreateSession {
@@ -80,7 +80,7 @@ pub(crate) fn create_session_command(
         use_last_tool_call_response: false,
         auto_session_name: false,
         initial_task_plan_patch: None,
-    })
+    }))
 }
 
 pub(crate) fn execute_session_command(
@@ -303,7 +303,7 @@ pub(crate) fn assert_session_snapshot(
     state: &str,
     status: &str,
     message_count: u64,
-    expected_task_status: Option<&str>,
+    expected_task_status: Option<PlanStatus>,
 ) -> Result<()> {
     match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
         GetSessionRequest {
@@ -321,19 +321,15 @@ pub(crate) fn assert_session_snapshot(
             assert_eq!(snapshot.lifecycle_projection.state.ui_status(), status);
             assert_eq!(snapshot.message_count, message_count);
             if let Some(expected_task_status) = expected_task_status {
-                let task_management = snapshot.lifecycle_projection.task_management_json(
-                    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(snapshot.created_at)
-                        .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH),
-                );
-                let tasks = task_management
-                    .get("tasks")
-                    .and_then(serde_json::Value::as_array)
-                    .ok_or_else(|| anyhow!("task management tasks missing"))?;
                 assert!(
-                    tasks
+                    snapshot
+                        .lifecycle_projection
+                        .task_plan
+                        .detailed_tasks
                         .iter()
-                        .any(|task| task["status"].as_str() == Some(expected_task_status)),
-                    "session {session_id} should retain task status {expected_task_status}: {tasks:?}"
+                        .any(|task| task.status == expected_task_status),
+                    "session {session_id} should retain task status {expected_task_status:?}: {:?}",
+                    snapshot.lifecycle_projection.task_plan.detailed_tasks
                 );
             }
             Ok(())

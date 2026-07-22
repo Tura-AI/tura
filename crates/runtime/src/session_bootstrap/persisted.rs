@@ -24,9 +24,9 @@ pub(crate) fn load_persisted_gateway_session(
     {
         return Ok(None);
     }
-    let mut management = snapshot.into_management().map_err(|error| {
-        format!("invalid persisted session snapshot for {session_id}: {error}")
-    })?;
+    let mut management = snapshot
+        .into_management()
+        .map_err(|error| format!("invalid persisted session snapshot for {session_id}: {error}"))?;
     let context = SessionLogClient::discover()
         .map_err(|err| format!("failed to discover session_log: {err}"))?
         .read_context_slice(
@@ -53,12 +53,7 @@ pub(crate) fn load_persisted_gateway_session(
             "persisted context for {session_id} contains a sequence gap"
         ));
     }
-    management.replace_session_log(
-        context
-            .records
-            .into_iter()
-            .map(|record| record.raw_record),
-    );
+    management.replace_session_log(context.records.into_iter().map(|record| record.raw_record));
     management.session_log_retention.omitted_entries = window_from_sequence;
     Ok(Some(management))
 }

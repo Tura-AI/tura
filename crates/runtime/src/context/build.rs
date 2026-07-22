@@ -87,8 +87,7 @@ pub fn build_context(input: ContextInput<'_>) -> Result<ContextOutput, String> {
     }
 
     if input.session.use_last_tool_call_response {
-        if let Some(last_tool_call_response) = last_tool_call_response_from_session(input.session)
-        {
+        if let Some(last_tool_call_response) = last_tool_call_response_from_session(input.session) {
             context_state.last_tool_call_response = Some(last_tool_call_response);
         }
     }

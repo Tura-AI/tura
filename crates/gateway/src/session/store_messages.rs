@@ -239,17 +239,17 @@ impl SessionStore {
     pub fn upsert_feed_message(&self, session_id: &str, message: Message) -> bool {
         let mut messages = self.messages.write();
         let session_messages = messages.entry(session_id.to_string()).or_default();
-        let (projected, inserted, changed) = if let Some(existing) = session_messages
+        let (projected, changed) = if let Some(existing) = session_messages
             .iter_mut()
             .find(|candidate| candidate.id == message.id)
         {
             let merged = merge_message_parts(existing.clone(), message);
             let changed = *existing != merged;
             *existing = merged;
-            (existing.clone(), false, changed)
+            (existing.clone(), changed)
         } else {
             session_messages.push(message.clone());
-            (message, true, true)
+            (message, true)
         };
         if let Some(info) = self.sessions.write().get_mut(session_id) {
             info.message_count = session_messages.len();

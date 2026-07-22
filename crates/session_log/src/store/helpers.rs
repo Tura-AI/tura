@@ -97,6 +97,7 @@ pub(super) fn session_state_text(state: SessionState) -> Result<String> {
     }
 }
 
+#[cfg(test)]
 pub(super) fn millis_to_rfc3339(millis: i64) -> Result<String> {
     let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis)
         .context("invalid session timestamp millis")?;

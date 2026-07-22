@@ -921,7 +921,10 @@ pub(crate) fn session_db_restart_marks_running_sessions_interrupted_without_losi
     )?;
     assert_eq!(listed["page"]["total"], 1);
     assert_eq!(listed["sessions"][0]["session_id"], session_id);
-    assert_eq!(listed["sessions"][0]["state"], "interrupted");
+    assert_eq!(
+        listed["sessions"][0]["lifecycle_projection"]["state"],
+        "interrupted"
+    );
     assert_eq!(listed["sessions"][0]["message_count"], 1);
 
     let shutdown = shutdown_session_db(&home)?;

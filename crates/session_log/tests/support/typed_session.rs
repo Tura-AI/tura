@@ -115,9 +115,7 @@ pub fn persist_in_store(
             session_id: session_id.to_string(),
         })?
         .with_context(|| format!("session {session_id} not found"))?;
-    let management = snapshot
-        .into_management()
-        .map_err(anyhow::Error::msg)?;
+    let management = snapshot.into_management().map_err(anyhow::Error::msg)?;
     let context = store.read_context_slice(ReadContextSliceRequest {
         session_id: session_id.to_string(),
         max_estimated_tokens: u64::MAX,
@@ -175,9 +173,9 @@ pub fn create_via_service(
     created_at: i64,
     task_plan: TaskPlan,
 ) -> Result<()> {
-    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(
+    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(Box::new(
         create_request(session_id, workspace, name, created_at, task_plan),
-    ))? {
+    )))? {
         SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
         SessionLogResponse::Error { error } => bail!("create session failed: {error}"),
         other => bail!("unexpected create session response: {other:?}"),

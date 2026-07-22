@@ -292,7 +292,7 @@ fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and
         "workspace A page 0 should return newest updated session first"
     );
     assert_eq!(
-        sessions_a0[0].parent_id.as_deref(),
+        sessions_a0[0].lifecycle_projection.parent_id.as_deref(),
         Some(session_a1.as_str())
     );
 
@@ -471,7 +471,10 @@ fn runtime_session_log_business_flow_restart_marks_running_session_interrupted()
         .get_session(session_id.clone())?
         .ok_or_else(|| anyhow!("expected recovered runtime session"))?;
     assert_eq!(recovered.session_id, session_id);
-    assert_eq!(recovered.lifecycle_projection.state, SessionState::Interrupted);
+    assert_eq!(
+        recovered.lifecycle_projection.state,
+        SessionState::Interrupted
+    );
     assert_eq!(recovered.lifecycle_projection.state.ui_status(), "error");
     assert_eq!(
         recovered.management.lifecycle_projection(),
@@ -558,8 +561,7 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
         )?,
     )?;
     wait_for_session(&client, &session_id, |snapshot| {
-        snapshot.lifecycle_projection.state == SessionState::Created
-            && snapshot.message_count == 4
+        snapshot.lifecycle_projection.state == SessionState::Created && snapshot.message_count == 4
     })?;
 
     let resumed = client

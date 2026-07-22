@@ -881,7 +881,7 @@ fn terminal_command_persists_assistant_message_without_user_metadata_side_effect
         })
         .expect("get session after rejected terminal command")
         .expect("session remains after rejected terminal command");
-    assert_eq!(running.state.as_deref(), Some("running"));
+    assert_eq!(running.lifecycle_projection.state, SessionState::Running);
 
     let result = store
         .execute_session_command(ExecuteSessionCommandRequest {
@@ -3377,12 +3377,14 @@ fn file_queue_session_log_helper() {
     let workspace = std::env::var("SESSION_LOG_FILE_QUEUE_WORKSPACE").expect("workspace");
     let store = SessionLogStore::open_default().expect("store");
 
-    enqueue_command(&SessionLogCommand::CreateSession(typed_create_request(
-        &workspace,
-        &session_id,
-        "File Queue",
-        1,
-        TaskPlan::default(),
+    enqueue_command(&SessionLogCommand::CreateSession(Box::new(
+        typed_create_request(
+            &workspace,
+            &session_id,
+            "File Queue",
+            1,
+            TaskPlan::default(),
+        ),
     )))
     .expect("enqueue create");
     assert_eq!(file_queue::drain_queue(&store, 10).expect("drain"), 1);
@@ -3430,13 +3432,13 @@ fn file_queue_recovers_orphaned_processing_items() {
     let store = SessionLogStore::open_default().expect("store");
     let workspace = db.workspace("file-queue-recover-workspace");
     let session_id = format!("file-queue-recover-{}", uuid::Uuid::new_v4());
-    let command = SessionLogCommand::CreateSession(typed_create_request(
+    let command = SessionLogCommand::CreateSession(Box::new(typed_create_request(
         &workspace,
         &session_id,
         "Recovered queue session",
         1,
         TaskPlan::default(),
-    ));
+    )));
 
     let pending = enqueue_command(&command).expect("enqueue");
     let root = db.root().join("session_log").join("message_queue");

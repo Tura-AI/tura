@@ -629,12 +629,8 @@ mod tests {
         current.planning_enabled = true;
         current.reflection_enabled = true;
 
-        let baseline = persisted_management_baseline(
-            &persisted.session_id,
-            persisted,
-            4,
-        )
-        .expect("persisted management baseline");
+        let baseline = persisted_management_baseline(&current.session_id, persisted, 4)
+            .expect("persisted management baseline");
         let delta = SessionManagement::persistence_delta(Some(&baseline), &current);
 
         assert_eq!(delta.planning_enabled, Some(true));

@@ -572,7 +572,7 @@ pub struct DeleteWorkspaceRequest {
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionLogCommand {
     Health,
-    CreateSession(CreateSessionRequest),
+    CreateSession(Box<CreateSessionRequest>),
     ExecuteSessionCommand(ExecuteSessionCommandRequest),
     UpdateSession(UpdateSessionRequest),
     UpdateSessionTodos(UpdateSessionTodosRequest),
@@ -984,6 +984,17 @@ mod tests {
             auto_session_name: true,
             initial_task_plan_patch: None,
         };
+        let command = SessionLogCommand::CreateSession(Box::new(create.clone()));
+        let command_value = serde_json::to_value(&command).expect("create command json");
+        assert_eq!(command_value["command"], "create_session");
+        assert_eq!(command_value["session_id"], "session");
+        assert!(command_value.get("payload").is_none());
+        assert!(matches!(
+            serde_json::from_value::<SessionLogCommand>(command_value)
+                .expect("create command round trip"),
+            SessionLogCommand::CreateSession(payload) if payload.session_id == "session"
+        ));
+
         let value = serde_json::to_value(create).expect("create json");
         assert!(serde_json::from_value::<CreateSessionRequest>(value).is_ok());
         assert!(serde_json::from_value::<CreateSessionRequest>(json!({

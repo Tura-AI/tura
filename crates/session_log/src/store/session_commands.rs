@@ -5,15 +5,13 @@ use super::helpers::{
 use super::SessionLogStore;
 use crate::path::{normalize_workspace, workspace_session_log_db};
 use anyhow::{Context, Result};
-use lifecycle::{
-    SessionAggregate, SessionCommand, SessionInput, SessionManagement, SessionQuery,
-};
+use lifecycle::{SessionAggregate, SessionCommand, SessionInput, SessionManagement, SessionQuery};
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
-use serde_json::{json, Value};
+use serde_json::Value;
 use session_log_contract::{
     CreateSessionRequest, ExecuteSessionCommandRequest, PersistSessionDeltaRequest,
-    SessionCommandResult, SessionFeedEntry, SessionFeedEvent, SessionMetadata, SessionMetadataPatch,
-    SessionRecordProjection, SessionSnapshot, UpdateSessionRequest,
+    SessionCommandResult, SessionFeedEntry, SessionFeedEvent, SessionMetadata,
+    SessionMetadataPatch, SessionRecordProjection, SessionSnapshot, UpdateSessionRequest,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -349,9 +347,7 @@ impl SessionLogStore {
         let event = aggregate.execute(request.creation_command.clone())?;
         let mut lifecycle_events = vec![event.clone()];
         if let Some(patch) = request.initial_task_plan_patch.clone() {
-            lifecycle_events.push(
-                aggregate.execute(SessionCommand::ApplyTaskPlanPatch { patch })?,
-            );
+            lifecycle_events.push(aggregate.execute(SessionCommand::ApplyTaskPlanPatch { patch })?);
         }
         let projection = aggregate.query(SessionQuery::Lifecycle);
         let state_text = session_state_text(projection.state)?;
@@ -414,7 +410,7 @@ impl SessionLogStore {
         let task_management_json = serde_json::to_string(&task_management)?;
 
         let result = SessionCommandResult {
-            event: event.clone(),
+            event,
             projection: projection.clone(),
             session_name: Some(management.session_name.clone()),
             message_count: message_count as u64,
@@ -443,7 +439,7 @@ impl SessionLogStore {
                     params![
                         request.session_id,
                         workspace,
-                        request.name,
+                        management.session_name,
                         projection.parent_id,
                         request.created_at,
                         last_user_message_at,
@@ -660,12 +656,12 @@ impl SessionLogStore {
             let projection = aggregate.query(SessionQuery::Lifecycle);
             let task_plan_changed = projection.task_plan != previous_task_plan;
             let publish_task_projection = task_projection_requested || task_plan_changed;
-            let mut management: SessionManagement =
-                serde_json::from_str(&row.management_json).with_context(|| {
+            let mut management: SessionManagement = serde_json::from_str(&row.management_json)
+                .with_context(|| {
                     format!("invalid management_json for session {}", request.session_id)
                 })?;
-            let mut metadata: SessionMetadata =
-                serde_json::from_str(&row.session_json).with_context(|| {
+            let mut metadata: SessionMetadata = serde_json::from_str(&row.session_json)
+                .with_context(|| {
                     format!("invalid session_json for session {}", request.session_id)
                 })?;
             let state_text = session_state_text(projection.state)?;
@@ -836,8 +832,8 @@ impl SessionLogStore {
                 .with_context(|| {
                     format!("invalid management_json for session {}", request.session_id)
                 })?;
-            let mut metadata: SessionMetadata =
-                serde_json::from_str(&row.session_json).with_context(|| {
+            let mut metadata: SessionMetadata = serde_json::from_str(&row.session_json)
+                .with_context(|| {
                     format!("invalid session_json for session {}", request.session_id)
                 })?;
             let updated_at = row.updated_at.max(now_ms);
@@ -1662,12 +1658,6 @@ fn task_plan_patch_summary_for_auto_name(
         .filter(|value| !value.is_empty())
 }
 
-fn set_json_field(value: &mut Value, key: &str, field: Value) {
-    if let Some(object) = value.as_object_mut() {
-        object.insert(key.to_string(), field);
-    }
-}
-
 fn validate_metadata_patch(patch: &SessionMetadataPatch) -> Result<()> {
     if patch
         .name
@@ -1718,10 +1708,7 @@ fn apply_metadata_patch(
     }
 }
 
-fn sync_metadata_from_management(
-    metadata: &mut SessionMetadata,
-    management: &SessionManagement,
-) {
+fn sync_metadata_from_management(metadata: &mut SessionMetadata, management: &SessionManagement) {
     metadata.disable_permission_restrictions = management.disable_permission_restrictions;
     metadata.use_last_tool_call_response = management.use_last_tool_call_response;
     metadata.auto_session_name = management.auto_session_name;

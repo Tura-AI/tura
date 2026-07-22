@@ -44,9 +44,9 @@ pub fn create_via_service(
     created_at: i64,
     task_plan: TaskPlan,
 ) -> Result<()> {
-    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(
+    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(Box::new(
         create_request(session_id, workspace, name, created_at, task_plan),
-    ))? {
+    )))? {
         SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
         SessionLogResponse::Error { error } => bail!("create session failed: {error}"),
         other => bail!("unexpected create session response: {other:?}"),

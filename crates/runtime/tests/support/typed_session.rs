@@ -108,7 +108,9 @@ pub fn entries_from_messages(
 }
 
 pub fn enqueue_create(request: CreateSessionRequest) -> Result<()> {
-    session_log_contract::client::enqueue_command(&SessionLogCommand::CreateSession(request))?;
+    session_log_contract::client::enqueue_command(&SessionLogCommand::CreateSession(Box::new(
+        request,
+    )))?;
     Ok(())
 }
 
@@ -180,7 +182,9 @@ pub fn enqueue_delta_from_management(
 }
 
 pub fn create_via_service(request: CreateSessionRequest) -> Result<()> {
-    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(request))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(Box::new(
+        request,
+    )))? {
         SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
         SessionLogResponse::Error { error } => bail!("create session failed: {error}"),
         other => bail!("unexpected create session response: {other:?}"),

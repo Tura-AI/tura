@@ -581,9 +581,7 @@ impl SessionFeedReducer {
 mod tests {
     use super::*;
     use crate::contracts::GlobalEvent;
-    use lifecycle::{
-        RuntimeProjection, RuntimeState, SessionInput, SessionManagement,
-    };
+    use lifecycle::{RuntimeProjection, RuntimeState, SessionInput, SessionManagement};
     use serde_json::json;
     use session_log_contract::{
         SessionFeedCommandUpdate, SessionFeedEvent, SessionMetadata, SessionRecordProjection,

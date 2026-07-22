@@ -29,33 +29,23 @@
         "snapshot",
         "task_management"
       ],
-      "reason": "The Phase 0 fixture injected an arbitrary weakly typed object. The direct-switch fixture creates a typed task plan and interruption changes its doing task to waiting_user.",
+      "reason": "The Phase 0 fixture injected an arbitrary weakly typed object. The direct-switch fixture exposes the canonical active-task summary projection, and interruption changes its doing task to waiting_user.",
       "expected_candidate": {
+        "deliverable": "",
         "plan_summary": "Fixed store task",
-        "tasks": [
-          {
-            "task_id": "task-fixed",
-            "step": 1,
-            "sub_session_id": "",
-            "start_at": "2026-07-19T00:00:00Z",
-            "poll_interval": {
-              "m": 0,
-              "d": 0,
-              "h": 0,
-              "s": 0
-            },
-            "start_condition": "user_action",
-            "status": "waiting_user",
-            "task_summary": "Fixed store task",
-            "step_task": "Capture canonical store state",
-            "step_turn": 0,
-            "step_tool": "",
-            "step_context": "",
-            "step_agent_name": "",
-            "step_deliverable_description": "",
-            "step_deliverable_path": ""
-          }
-        ]
+        "poll_interval": {
+          "m": 0,
+          "d": 0,
+          "h": 0,
+          "s": 0
+        },
+        "start_at": "2026-07-19T00:00:00Z",
+        "start_condition": "user_action",
+        "status": "waiting_user",
+        "step": 1,
+        "sub_session_id": "",
+        "task_id": "task-fixed",
+        "task_summary": "Fixed store task"
       }
     },
     {

@@ -71,7 +71,7 @@ fn router_crash_leaves_session_db_alive_and_next_router_adopts_it() -> Result<()
     );
 
     let queued_while_router_dead = "queued-while-router-dead";
-    enqueue_command(&SessionLogCommand::CreateSession(
+    enqueue_command(&SessionLogCommand::CreateSession(Box::new(
         typed_session::create_request(
             queued_while_router_dead,
             &workspace_key,
@@ -79,7 +79,7 @@ fn router_crash_leaves_session_db_alive_and_next_router_adopts_it() -> Result<()
             10,
             TaskPlan::default(),
         ),
-    ))?;
+    )))?;
     wait_until(Duration::from_secs(10), || {
         session_visible(queued_while_router_dead).unwrap_or(false)
     })

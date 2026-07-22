@@ -171,15 +171,18 @@ fn update_session_status_updates_stored_status() {
     assert!(store.update_session_context_tokens(
         &session.id,
         crate::contracts::SessionContextTokens {
-        input: 12_345,
-        limit: 76_800,
+            input: 12_345,
+            limit: 76_800,
         },
     ));
-    assert!(store.update_session_runtime_usage(&session.id, serde_json::json!({
-        "total_tokens": 99,
-        "total_cost": 0.034,
-        "currency": "USD",
-    })));
+    assert!(store.update_session_runtime_usage(
+        &session.id,
+        serde_json::json!({
+            "total_tokens": 99,
+            "total_cost": 0.034,
+            "currency": "USD",
+        })
+    ));
     let mut cursor = store.event_cursor();
 
     execute_test_command(

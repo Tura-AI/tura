@@ -15,10 +15,7 @@ use crate::session::manager::{
 };
 use crate::session_db_client::SessionDbClient;
 use chrono::{DateTime, Utc};
-use lifecycle::{
-    PlanStatus, PollInterval, SessionCommand, SessionEvent, SessionProjection, StartCondition,
-    TaskStep,
-};
+use lifecycle::{PlanStatus, SessionCommand, SessionEvent, SessionProjection, StartCondition};
 use parking_lot::RwLock;
 use session_log_contract::{
     CreateSessionRequest as CreateSessionDbRequest, SessionCommandResult, SessionMetadataPatch,
@@ -312,9 +309,9 @@ impl SessionStore {
                 };
             }
         }
-        let previous = sessions.get(&session_id).map(|current| {
-            api_session_from_info(current, current.projection.parent_id.clone())
-        });
+        let previous = sessions
+            .get(&session_id)
+            .map(|current| api_session_from_info(current, current.projection.parent_id.clone()));
         info.id.clone_from(&session_id);
         info.projection = projection;
         if let Some(session_name) = session_name {
@@ -744,9 +741,7 @@ impl SessionStore {
         let mut sessions = self.sessions.write();
         let info = sessions.get_mut(&session_id)?;
         let changed = info.projection != projection
-            || session_name
-                .as_ref()
-                .is_some_and(|name| info.name != *name);
+            || session_name.as_ref().is_some_and(|name| info.name != *name);
         if changed {
             info.projection = projection;
         }

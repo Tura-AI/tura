@@ -18,8 +18,8 @@ use serde_json::{json, Value};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
 use crate::mano::ManoProcessResult;
-use lifecycle::{SessionInput, SessionLogEntry};
 use lifecycle::SessionState;
+use lifecycle::{SessionInput, SessionLogEntry};
 
 /// Run the runtime worker loop: blocking read on stdin, write on stdout, until
 /// the peer closes or one-shot mode completes a call.

@@ -84,7 +84,7 @@ pub(crate) fn execute_command_with_feed(
     let response = match command {
         SessionLogCommand::Health => SessionLogResponse::Ok,
         SessionLogCommand::CreateSession(payload) => {
-            let outcome = store.create_session_with_feed(payload)?;
+            let outcome = store.create_session_with_feed(*payload)?;
             committed_feed_entries.extend(outcome.feed_entries);
             SessionLogResponse::SessionCommandApplied {
                 result: Box::new(outcome.result),
@@ -861,10 +861,10 @@ mod tests {
         let root = tempfile::tempdir().expect("temp db root");
         let workspace = tempfile::tempdir().expect("temp workspace");
         let store = SessionLogStore::open(root.path()).expect("open session store");
-        let command = SessionLogCommand::CreateSession(test_create_request(
+        let command = SessionLogCommand::CreateSession(Box::new(test_create_request(
             workspace.path(),
             "dispatch-replay-session",
-        ));
+        )));
 
         let first = execute_command_with_feed(&store, command.clone()).expect("first dispatch");
         assert_eq!(first.committed_feed_entries.len(), 1);

@@ -270,8 +270,7 @@ fn replace_active_task_with_planning(task_plan: &mut TaskPlan, steps: &[serde_js
 
     match replace_index {
         Some(index) => {
-            task_plan.detailed_tasks
-                .splice(index..=index, incoming);
+            task_plan.detailed_tasks.splice(index..=index, incoming);
         }
         None => task_plan.detailed_tasks.extend(incoming),
     }
@@ -457,10 +456,7 @@ mod tests {
         )
     }
 
-    fn update_task_plan(
-        session: &mut SessionManagement,
-        update: impl FnOnce(&mut TaskPlan),
-    ) {
+    fn update_task_plan(session: &mut SessionManagement, update: impl FnOnce(&mut TaskPlan)) {
         let mut task_plan = session.task_plan.clone();
         update(&mut task_plan);
         session.replace_task_plan(task_plan, Utc::now());

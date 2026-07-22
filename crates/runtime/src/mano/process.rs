@@ -195,30 +195,32 @@ fn ensure_canonical_session(session: &SessionManagement) -> Result<(), String> {
     }
 
     let directory = session.session_directory.to_string_lossy().to_string();
-    match client.call_typed_sync(SessionLogCommand::CreateSession(CreateSessionRequest {
-        command_id: format!("create:{}", session.session_id),
-        session_id: session.session_id.clone(),
-        creation_command: SessionCommand::CreateSession {
-            task_plan: session.task_plan.clone(),
+    match client.call_typed_sync(SessionLogCommand::CreateSession(Box::new(
+        CreateSessionRequest {
+            command_id: format!("create:{}", session.session_id),
+            session_id: session.session_id.clone(),
+            creation_command: SessionCommand::CreateSession {
+                task_plan: session.task_plan.clone(),
+            },
+            copy_context: false,
+            workspace: directory.clone(),
+            session_directory: directory,
+            name: session.session_name.clone(),
+            created_at: session.session_created_at.timestamp_millis(),
+            model: None,
+            agent: session.input.agent.clone(),
+            session_type: "coding".to_string(),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: session.disable_permission_restrictions,
+            use_last_tool_call_response: session.use_last_tool_call_response,
+            auto_session_name: session.auto_session_name,
+            initial_task_plan_patch: None,
         },
-        copy_context: false,
-        workspace: directory.clone(),
-        session_directory: directory,
-        name: session.session_name.clone(),
-        created_at: session.session_created_at.timestamp_millis(),
-        model: None,
-        agent: session.input.agent.clone(),
-        session_type: "coding".to_string(),
-        kill_processes_on_start: false,
-        validator_enabled: false,
-        force_planning: false,
-        model_variant: None,
-        model_acceleration_enabled: false,
-        disable_permission_restrictions: session.disable_permission_restrictions,
-        use_last_tool_call_response: session.use_last_tool_call_response,
-        auto_session_name: session.auto_session_name,
-        initial_task_plan_patch: None,
-    }))? {
+    )))? {
         SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
         SessionLogResponse::Error { error } => Err(format!(
             "failed to create canonical session {}: {error}",

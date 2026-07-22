@@ -337,7 +337,9 @@ fn create_session_with_messages(
         auto_session_name: false,
         initial_task_plan_patch: None,
     };
-    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(request))? {
+    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(Box::new(
+        request,
+    )))? {
         SessionLogResponse::SessionCommandApplied { .. } => {}
         SessionLogResponse::Error { error } => bail!("create session returned error: {error}"),
         other => bail!("create session returned unexpected response: {other:?}"),

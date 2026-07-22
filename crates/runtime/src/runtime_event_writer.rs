@@ -435,7 +435,7 @@ mod tests {
         let runtime_id = "writer-feed-runtime".to_string();
         let workspace = root.path().join("workspace").to_string_lossy().to_string();
         let now = Utc::now();
-        session_log_contract::client::call_service(&SessionLogCommand::CreateSession(
+        session_log_contract::client::call_service(&SessionLogCommand::CreateSession(Box::new(
             CreateSessionRequest {
                 command_id: format!("create:{session_id}"),
                 session_id: session_id.clone(),
@@ -460,7 +460,7 @@ mod tests {
                 auto_session_name: false,
                 initial_task_plan_patch: None,
             },
-        ))
+        )))
         .expect("create session");
 
         let provider = RuntimeProviderConfig {

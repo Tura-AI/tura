@@ -1,6 +1,18 @@
 use super::*;
 use lifecycle::{SessionTaskPatch, SessionTaskPlanPatch};
 
+const TASK_MANAGEMENT_TASK_PATCH_FIELDS: &[&str] = &[
+    "task_id",
+    "step",
+    "task_summary",
+    "deliverable",
+    "sub_session_id",
+    "start_condition",
+    "start_at",
+    "poll_interval",
+    "status",
+];
+
 pub(super) fn parse_task_management_patch(
     patch: serde_json::Value,
     now: DateTime<Utc>,

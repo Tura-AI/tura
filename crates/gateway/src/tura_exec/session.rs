@@ -104,7 +104,7 @@ pub(crate) fn ensure_cli_session(config: &CliConfig, session_id: &str) -> Result
     let workspace = config.cwd.to_string_lossy().to_string();
     let created_at = chrono::Utc::now().timestamp_millis();
     let response = session_log_contract::client::call_service(&SessionLogCommand::CreateSession(
-        CreateSessionRequest {
+        Box::new(CreateSessionRequest {
             command_id: format!("create:{session_id}"),
             session_id: session_id.to_string(),
             creation_command: SessionCommand::CreateSession {
@@ -127,7 +127,7 @@ pub(crate) fn ensure_cli_session(config: &CliConfig, session_id: &str) -> Result
             use_last_tool_call_response: false,
             auto_session_name: true,
             initial_task_plan_patch: None,
-        },
+        }),
     ))
     .map_err(|error| format!("failed to create CLI session `{session_id}`: {error}"))?;
     match response {
