@@ -151,7 +151,7 @@ async function runWebTerminalE2e(gateway) {
         }
         if (profile === "rich") {
           assert.match(terminalText, /Rich Fixture/);
-          assert.match(terminalText, /Enter: send .*\/help .*\/settings/);
+          assert.match(terminalText, /Enter: send .*Tab: complete\/sessions .*\/: commands/);
           assert.doesNotMatch(terminalText, /\/commands/);
           assert.doesNotMatch(terminalText, /\[MEDIA:/);
           assert.doesNotMatch(terminalText, /Agent:direct/);
