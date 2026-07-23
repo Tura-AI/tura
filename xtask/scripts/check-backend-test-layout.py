@@ -227,13 +227,22 @@ def main() -> int:
     validate_typed_directory_shape("workspace", workspace_tests_root, errors)
     workspace_e2e_root = workspace_tests_root / "e2e"
     if workspace_e2e_root.exists():
-        errors.append(
-            "workspace: tests/e2e/ is not an allowed test directory; "
-            "required local E2E flows belong under tests/business, live flows "
-            "under tests/live, release binary checks under tests/release, "
-            "process/OS flows under tests/os_testing, performance under "
-            "tests/performance, and scoring under tests/benchmark"
+        nested = sorted(path for path in workspace_e2e_root.iterdir() if path.is_dir())
+        for path in nested:
+            errors.append(
+                f"workspace: {normalize(path.relative_to(repo))}/ is not allowed; "
+                "tests/e2e entrypoints and fixtures must stay flat"
+            )
+        runnable = sorted(
+            path
+            for path in workspace_e2e_root.glob("*.mjs")
+            if not path.name.endswith("_fixture.mjs")
         )
+        if not runnable:
+            errors.append(
+                "workspace: tests/e2e/ must contain at least one runnable *.mjs "
+                "entrypoint in addition to any *_fixture.mjs support modules"
+            )
 
     if errors:
         for error in errors:

@@ -6,6 +6,7 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 JOBS=${TURA_CI_JOBS:-4}
 CRATE_TIMEOUT_SECONDS=600
 BUSINESS_TIMEOUT_SECONDS=300
+BACKEND_E2E_TIMEOUT_SECONDS=300
 TUI_TIMEOUT_SECONDS=600
 SKIP_QUALITY=0
 
@@ -26,6 +27,11 @@ while [ "$#" -gt 0 ]; do
       if [ "$#" -eq 0 ]; then echo "--business-timeout-seconds requires a number" >&2; exit 2; fi
       BUSINESS_TIMEOUT_SECONDS=$1
       ;;
+    --backend-e2e-timeout-seconds)
+      shift
+      if [ "$#" -eq 0 ]; then echo "--backend-e2e-timeout-seconds requires a number" >&2; exit 2; fi
+      BACKEND_E2E_TIMEOUT_SECONDS=$1
+      ;;
     --tui-timeout-seconds)
       shift
       if [ "$#" -eq 0 ]; then echo "--tui-timeout-seconds requires a number" >&2; exit 2; fi
@@ -39,7 +45,8 @@ Usage:
 
 Runs the local GitHub-style CI flow:
   1. check-backend-quality smell gate
-  2. in parallel: crate clippy/tests, backend business tests, TUI unit+e2e tests
+  2. in parallel: crate clippy/tests, backend business tests,
+     backend full-chain e2e tests, TUI unit+e2e tests
 EOF
       exit 0
       ;;
@@ -90,10 +97,12 @@ case "$(uname -s 2>/dev/null || true)" in
     run_job tui-local "$TUI_TIMEOUT_SECONDS" npm --prefix apps/tui run test:unit &
     wait
     run_job backend-business "$((BUSINESS_TIMEOUT_SECONDS * 2))" sh xtask/scripts/run-backend-business-tests.sh --jobs "$JOBS" --timeout-seconds "$BUSINESS_TIMEOUT_SECONDS"
+    run_job backend-e2e "$((BACKEND_E2E_TIMEOUT_SECONDS + 30))" sh xtask/scripts/run-backend-e2e-tests.sh --timeout-seconds "$BACKEND_E2E_TIMEOUT_SECONDS"
     ;;
   *)
     run_job crates "$((CRATE_TIMEOUT_SECONDS * 2))" sh xtask/scripts/run-ci-crate-tests.sh --jobs "$JOBS" --timeout-seconds "$CRATE_TIMEOUT_SECONDS" &
     run_job backend-business "$((BUSINESS_TIMEOUT_SECONDS * 2))" sh xtask/scripts/run-backend-business-tests.sh --jobs "$JOBS" --timeout-seconds "$BUSINESS_TIMEOUT_SECONDS" &
+    run_job backend-e2e "$((BACKEND_E2E_TIMEOUT_SECONDS + 30))" sh xtask/scripts/run-backend-e2e-tests.sh --timeout-seconds "$BACKEND_E2E_TIMEOUT_SECONDS" &
     run_job tui-local "$TUI_TIMEOUT_SECONDS" npm --prefix apps/tui run test:unit &
     wait
     ;;

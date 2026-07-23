@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fsp from "node:fs/promises";
 import process from "node:process";
-import { startBackendStressEnvironment } from "./full_chain_backend_fixture.mjs";
+import { startBackendStressEnvironment } from "../e2e/full_chain_backend_fixture.mjs";
 
 async function main() {
   const backend = await startBackendStressEnvironment({ runIdPrefix: "backend-full-chain" });

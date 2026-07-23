@@ -42,7 +42,6 @@ async fn dispatch_run_agent_inner(
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("router-{}", uuid::Uuid::new_v4()));
-    let runtime_id = req.runtime_id.clone();
     if router_debug_enabled() {
         eprintln!(
             "router debug: dispatch_run_agent start session_id={} agent={:?} model={:?}",
@@ -222,19 +221,7 @@ async fn dispatch_run_agent_inner(
         );
     }
 
-    let call_input = json!({
-        "runtime_id": runtime_id,
-        "session_id": session_id,
-        "directory": req.directory,
-        "model": req.model,
-        "agent": agent_spec.agent_name,
-        "agent_spec": agent_spec,
-        "prompt": prompt,
-        "runtime_context": req.runtime_context,
-        "planning_mode_override": req.planning_mode_override,
-        "no_op_manual": req.no_op_manual,
-        "return_log": req.return_log,
-    });
+    let call_input = runtime_worker_call_input(&req, &session_id, &agent_spec, &prompt);
     let ctx = CallContext {
         request_id: if ipc_request_id.trim().is_empty() {
             uuid::Uuid::new_v4().to_string()
@@ -286,6 +273,28 @@ async fn dispatch_run_agent_inner(
             }),
         ),
     }
+}
+
+fn runtime_worker_call_input(
+    req: &RunAgentRequest,
+    session_id: &str,
+    agent_spec: &tura_router::registry::agent::AgentSpec,
+    prompt: &str,
+) -> Value {
+    json!({
+        "runtime_id": req.runtime_id,
+        "lease_id": req.lease_id,
+        "session_id": session_id,
+        "directory": req.directory,
+        "model": req.model,
+        "agent": agent_spec.agent_name,
+        "agent_spec": agent_spec,
+        "prompt": prompt,
+        "runtime_context": req.runtime_context,
+        "planning_mode_override": req.planning_mode_override,
+        "no_op_manual": req.no_op_manual,
+        "return_log": req.return_log,
+    })
 }
 
 fn resolve_runtime_worker_binary(root: &std::path::Path) -> Option<std::path::PathBuf> {
@@ -361,6 +370,34 @@ fn router_debug_enabled() -> bool {
 mod tests {
     use super::*;
     use crate::{build_state, runtime_utils::tokio_runtime};
+
+    #[test]
+    fn runtime_worker_call_input_preserves_runtime_and_lease_identity() -> anyhow::Result<()> {
+        let state = build_state();
+        let request: RunAgentRequest = serde_json::from_value(json!({
+            "runtime_id": "runtime-lease-regression",
+            "lease_id": "lease-regression",
+            "session_id": "session-lease-regression",
+            "prompt": "exercise the runtime worker envelope"
+        }))?;
+        let agent_spec = state
+            .registry
+            .agents
+            .resolve(Some("direct-text-only"), Some("coding"));
+
+        let input = runtime_worker_call_input(
+            &request,
+            "session-lease-regression",
+            &agent_spec,
+            "exercise the runtime worker envelope",
+        );
+
+        assert_eq!(input["runtime_id"], "runtime-lease-regression");
+        assert_eq!(input["lease_id"], "lease-regression");
+        assert_eq!(input["session_id"], "session-lease-regression");
+        assert_eq!(input["prompt"], "exercise the runtime worker envelope");
+        Ok(())
+    }
 
     #[test]
     fn dispatch_run_agent_rejects_requests_over_runtime_worker_limit() -> anyhow::Result<()> {
