@@ -60,7 +60,6 @@ import {
 } from "./composer-editor.js";
 import {
   completedSlashCommand,
-  slashCommandQuery,
   slashCommandSuggestions,
   type SlashCommandDefinition,
 } from "./slash-commands.js";
@@ -610,13 +609,10 @@ export async function handleTuiKeypress(
         return;
       }
       const suggestions = activeSlashCommandSuggestions(state);
-      const query = slashCommandQuery(state.composer);
       const selectedSuggestion = selectedSlashCommand(state, suggestions);
-      if (selectedSuggestion && query !== selectedSuggestion.name) {
-        applySlashCommandCompletion(state, dispatch, suggestions);
-        return;
-      }
-      const value = state.composer.trim();
+      const value = selectedSuggestion
+        ? completedSlashCommand(selectedSuggestion).trim()
+        : state.composer.trim();
       dispatch({ type: "composer", value: "" });
       if (!value) return;
       if (value.startsWith("/")) {

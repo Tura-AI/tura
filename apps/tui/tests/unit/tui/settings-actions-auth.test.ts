@@ -8,6 +8,43 @@ import { settingsLines } from "../../../src/tui/render/settings.js";
 import { setActiveCapabilities, stripAnsi } from "../../../src/tui/render-terminal.js";
 import { plainCapabilities, richCapabilities } from "../../../src/tui/capabilities.js";
 
+test("applying a leaf setting returns to chat and shows the selected value", async () => {
+  let state: AppState = {
+    ...initialState("C:/repo"),
+    settingsOpen: true,
+    settingDetail: "persona",
+    sessionConfig: {
+      active_provider: "mock",
+      active_agent: "balanced",
+      active_persona: "tura",
+      active_model: "mock-fast",
+      model: "mock/mock-fast",
+      model_variant: "high",
+      model_acceleration_enabled: false,
+    },
+    personas: [
+      { summary: { id: "tura", source: "static" } },
+      { summary: { id: "wonderful", source: "static" } },
+    ],
+    selectedSettingOptionIndex: 1,
+  };
+
+  await applySelectedSetting(
+    mockClient({
+      patchSessionConfig: async (patch) => ({ ...state.sessionConfig, ...patch }),
+    }),
+    () => state,
+    (action) => {
+      state = reducer(state, action);
+    },
+  );
+
+  assert.equal(state.settingsOpen, false);
+  assert.equal(state.settingDetail, undefined);
+  assert.equal(state.sessionConfig?.active_persona, "wonderful");
+  assert.equal(state.notice, "Persona set to wonderful");
+});
+
 test("provider OAuth setting opens the browser and starts callback input", async () => {
   let state = providerAuthState();
   const opened: string[] = [];

@@ -32,15 +32,13 @@ export async function applySelectedSetting(
   if (detail === "model") {
     if (typeof value !== "string") return;
     const config = await client.patchSessionConfig(settingPatch(detail, value) ?? { model: value });
-    dispatch({ type: "session-config", value: config });
-    dispatch({ type: "notice", value: undefined });
+    completeSettingSelection(dispatch, config, detail, selected[0]);
     return;
   }
   if (detail === "agent") {
     if (typeof value !== "string") return;
     const config = await client.patchSessionConfig({ active_agent: value });
-    dispatch({ type: "session-config", value: config });
-    dispatch({ type: "notice", value: undefined });
+    completeSettingSelection(dispatch, config, detail, selected[0]);
     return;
   }
   if (detail === "provider" && typeof value === "string") {
@@ -59,8 +57,40 @@ export async function applySelectedSetting(
   if (detail === "language" && typeof value === "string") {
     setLanguage(parseLanguage(value));
   }
+  completeSettingSelection(dispatch, config, detail, selected[0]);
+}
+
+function completeSettingSelection(
+  dispatch: TuiDispatch,
+  config: AppState["sessionConfig"],
+  detail: Exclude<AppState["settingDetail"], undefined>,
+  value: string,
+): void {
+  if (!config) return;
   dispatch({ type: "session-config", value: config });
-  dispatch({ type: "notice", value: undefined });
+  dispatch({ type: "close-panels" });
+  dispatch({
+    type: "notice",
+    value: t("settingApplied", { setting: settingLabel(detail), value }),
+  });
+}
+
+function settingLabel(detail: Exclude<AppState["settingDetail"], undefined>): string {
+  const labels: Record<Exclude<AppState["settingDetail"], undefined>, string> = {
+    model: t("settingModel"),
+    provider: t("settingProvider"),
+    providerAuth: t("settingProvider"),
+    agent: t("settingAgent"),
+    persona: t("settingPersona"),
+    language: t("settingLanguage"),
+    session: t("settingSession"),
+    variant: t("settingReasoning"),
+    priority: t("settingPriority"),
+    validator: t("settingValidator"),
+    stallGuard: t("settingStallGuard"),
+    about: t("settingAbout"),
+  };
+  return labels[detail];
 }
 
 export async function applyAboutAction(
