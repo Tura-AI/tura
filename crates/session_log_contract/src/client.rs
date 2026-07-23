@@ -116,7 +116,7 @@ pub struct SessionFeedSubscriptionCancellation {
 }
 
 impl SessionFeedSubscriptionCancellation {
-    pub fn cancel(&self) -> Result<()> {
+    pub fn cancel(self) -> Result<()> {
         self.cancelled.store(true, Ordering::SeqCst);
         match self.stream.shutdown(Shutdown::Both) {
             Ok(()) => Ok(()),
@@ -646,10 +646,14 @@ mod tests {
                 .expect("terminate subscription acknowledgement");
             stream.flush().expect("flush subscription acknowledgement");
 
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("bound cancelled subscription observation");
             let mut closed = String::new();
-            BufReader::new(stream)
+            let read = BufReader::new(stream)
                 .read_line(&mut closed)
                 .expect("observe cancelled subscription");
+            assert_eq!(read, 0, "cancelled subscription should close its socket");
         });
 
         let mut subscription =

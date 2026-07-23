@@ -24,6 +24,13 @@ fn create_canonical_test_session(store: &SessionStore, directory: String) -> Api
         .expect("canonical test session should be created")
 }
 
+fn create_isolated_canonical_test_session(
+    service: &SessionDbTestService,
+    store: &SessionStore,
+) -> ApiSession {
+    create_canonical_test_session(store, service.workspace_directory())
+}
+
 fn execute_test_command(store: &SessionStore, session_id: &str, command: SessionCommand) {
     store
         .execute_canonical_session_command_with_status_event(session_id, command)
@@ -164,9 +171,9 @@ fn test_delta_entry(sequence: u64, record: serde_json::Value) -> SessionDeltaEnt
 
 #[test]
 fn update_session_status_updates_stored_status() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     assert!(store.update_session_context_tokens(
         &session.id,
@@ -408,16 +415,17 @@ fn add_tool_message_normalizes_running_state_with_final_output_metadata() {
 
 #[test]
 fn user_commands_are_shared_from_parent_to_child_sessions() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
     let child_id = format!("child-{}", Uuid::new_v4());
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let directory = service.workspace_directory();
+    let session = create_canonical_test_session(&store, directory.clone());
 
     store
         .register_canonical_child_session(
             &session.id,
             &child_id,
-            Some("C:/workspace".to_string()),
+            Some(directory),
             Some("Subtask".to_string()),
             Some("read files".to_string()),
         )
@@ -615,9 +623,9 @@ fn cancellation_scope_includes_root_and_descendants_from_child() {
 
 #[test]
 fn update_session_title_persists_to_management_name() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     let updated = store
         .update_session(
@@ -642,9 +650,9 @@ fn update_session_title_persists_to_management_name() {
 
 #[test]
 fn update_session_task_management_persists_and_lists_status() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     let updated = store
         .update_session(
@@ -692,9 +700,9 @@ fn update_session_task_management_persists_and_lists_status() {
 
 #[test]
 fn session_display_name_prefers_auto_session_name_over_plan_summary() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     let planned = store
         .update_session(
@@ -746,9 +754,9 @@ fn session_display_name_prefers_auto_session_name_over_plan_summary() {
 
 #[test]
 fn auto_session_name_can_be_disabled_for_task_summary_patches() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     let updated = store
         .update_session_auto_session_name(&session.id, false)
@@ -780,9 +788,9 @@ fn auto_session_name_can_be_disabled_for_task_summary_patches() {
 
 #[test]
 fn scheduled_task_patch_clears_previous_polling_interval() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     store
         .update_session(
@@ -833,9 +841,9 @@ fn scheduled_task_patch_clears_previous_polling_interval() {
 
 #[test]
 fn single_task_patch_defaults_nonce_to_session_step_zero() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     let updated = store
         .update_session(
@@ -865,9 +873,9 @@ fn single_task_patch_defaults_nonce_to_session_step_zero() {
 
 #[test]
 fn multi_task_patch_matches_task_id_and_creates_defaulted_tasks() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     let planned = store
         .update_session(
@@ -956,9 +964,9 @@ fn multi_task_patch_matches_task_id_and_creates_defaulted_tasks() {
 
 #[test]
 fn multi_task_patch_reorders_tasks_by_request_order() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     store
         .update_session(
@@ -1018,9 +1026,9 @@ fn multi_task_patch_reorders_tasks_by_request_order() {
 
 #[test]
 fn task_management_patch_accepts_all_contract_enums() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
 
     for status in [
         "todo",
@@ -1681,10 +1689,10 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
 
 #[test]
 fn new_session_idle_task_added_while_idle_waits_for_user_action() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
     let now = Utc::now();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
     store.update_session(
         &session.id,
         None,
@@ -1714,10 +1722,10 @@ fn new_session_idle_task_added_while_idle_waits_for_user_action() {
 
 #[test]
 fn new_session_idle_task_added_while_busy_runs_after_idle_edge() {
-    let _service = SessionDbTestService::start();
+    let service = SessionDbTestService::start();
     let store = SessionStore::new();
     let now = Utc::now();
-    let session = create_canonical_test_session(&store, "C:/workspace".to_string());
+    let session = create_isolated_canonical_test_session(&service, &store);
     execute_test_command(
         &store,
         &session.id,
