@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "targetPrCount": 200,
   "currentContributorLimit": 12,
-  "verifiedQualifyingPrCount": 56,
+  "verifiedQualifyingPrCount": 62,
   "pendingContributorReverificationCount": 4,
   "knownNonQualifyingHistoricalPrCount": 6,
-  "lastEligibilityAuditAt": "2026-07-23T19:17:04.8005893+02:00",
+  "lastEligibilityAuditAt": "2026-07-23T23:25:09.5270121+02:00",
   "records": [
     {
       "repository": "penecho/penecho",
@@ -1377,6 +1377,196 @@
       "validation": "The English, Simplified Chinese, and Japanese README files each contain 6 Markdown headings, 3 list items, 1 fenced code block, 8 Markdown links, and 10 inline-code tokens. Both translations preserve byte-identical fenced blocks after newline normalization, identical non-navigation link targets, and identical technical inline-code multisets. Every relative link resolves; all files have a final newline and no trailing whitespace; git diff --check passed. Upstream main remained at ceab000a84d252ca63d20489126852a27918b16a throughout publication. All three remote fork blobs exactly match the validated local files (README.md c8a0c8249c6b1dae6f1561cc304adf826f70fedd, README.zh-CN.md 86fc306d3441599ffeedb7306a85b0cbb9db7d07, README.ja.md d8b7e0a7f4c36fbfce0531ebd7a998e70d890b0b).",
       "contributorAgreementAccepted": false,
       "notes": "GitTrend Rising #12. The public, unarchived, non-fork repository uses main and is dual-licensed under MIT and Apache-2.0. README.md, LICENSE-MIT, LICENSE-APACHE, the root and .github trees, recent history, and all open PR titles were reviewed; no existing localized root README, AGENTS.md, CONTRIBUTING file, PR template, SECURITY file, or overlapping translation PR was present. The only pre-existing open PR was an unrelated maintainer feature change. The Chrome profile corresponding to yy3636989@gmail.com was used and its GitHub menu confirmed the exact account tura-ai-agent. Signed-in searches returned 0 prior pull requests, issues, comments, reviews, and commits; the fork URL was missing before this run; and the persistent ledger had no prior entry. The ready-for-review PR changes only README.md, README.zh-CN.md, and README.ja.md with 82 additions and 0 deletions across 3 browser-created commits. The GitHub API reports the PR open, non-draft, mergeable, and conflict-free; there are 0 check runs. No CLA or contributor-agreement prompt appeared."
+    },
+    {
+      "repository": "unicity-aos/capsule-fs",
+      "sourceUrl": "https://gittrend.io/rising",
+      "checkedAt": "2026-07-23T19:50:33.4178210+02:00",
+      "contributorCount": 1,
+      "contributorCountVerifiedAt": "2026-07-23T19:50:33.4178210+02:00",
+      "contributorCountVerification": "GitHub Contributors API with anon=true and per_page=100 returned 1 entry on page 1 with no Link header; an explicit page 2 request returned 0 entries. The sole entry was joshuajbouw. The full pagination check was repeated immediately before publication and again immediately after PR creation.",
+      "qualifiesCurrentContributorLimit": true,
+      "existingInteractions": false,
+      "translationLanguages": [
+        "zh-CN",
+        "ja"
+      ],
+      "branch": "tura-ai-agent:patch-1",
+      "commit": "52ee83f55dde2bcd84d813161f6eeaa144c38b1e",
+      "prUrl": "https://github.com/unicity-aos/capsule-fs/pull/22",
+      "status": "open",
+      "validation": "The English, Simplified Chinese, and Japanese README files each contain 37 lines, 4 Markdown headings, 10 table rows, 1 fenced code block, 8 Markdown links, and the same 10 inline-code identifiers. Both translations preserve a byte-identical fenced block after newline normalization, identical non-navigation link targets, and identical technical inline-code multisets. Every relative link resolves; all files have a final newline and no trailing whitespace; git diff --check passed. Upstream main remained at 663e9b3ee7783f70654758031b860a32661edbbf throughout publication. All three remote fork blobs exactly match the validated local files (README.md e60caed9d2d2c9c7f6f0711815693ee7e92d24f2, README.zh-CN.md f013a7356fa7eddde44b2d0bf7580aaf17ef8988, README.ja.md 153ea5943eb3bebf63dd93681a4363f9271ced24). cargo test --locked could not start because rustup failed while downloading the Rust 1.94 rustc component with a local file-renaming error; no code-test result is claimed for this documentation-only change.",
+      "contributorAgreementAccepted": false,
+      "notes": "GitTrend Rising #13. The public, unarchived, non-fork repository uses main and is dual-licensed under MIT and Apache-2.0. README.md, LICENSE-MIT, LICENSE-APACHE, the root and .github trees, recent history, and all open PR titles were reviewed; no existing localized root README, AGENTS.md, CONTRIBUTING file, PR template, SECURITY file, open PR, or overlapping translation PR was present. The Chrome profile corresponding to yy3636989@gmail.com was used, and GitHub's edit page explicitly confirmed that the fork destination was tura-ai-agent/capsule-fs. Signed-in GitHub searches and GitHub Search API queries returned 0 prior pull requests, issues, comments, reviews, and commits; the fork URL was missing before publication; and the persistent ledger had no prior record. The ready-for-review PR changes only README.md, README.zh-CN.md, and README.ja.md with 76 additions and 0 deletions across 3 browser-created commits. The GitHub API reports the PR open, non-draft, mergeable, clean, and conflict-free; there are 0 check runs. No CLA or contributor-agreement prompt appeared."
+    },
+    {
+      "repository": "erdwin90/crypto-bar-mac",
+      "sourceUrl": "https://gittrend.io/hidden-gems",
+      "sourceRank": "GitTrend Hidden Gems #13",
+      "checkedAt": "2026-07-23T20:25:38.2475224+02:00",
+      "contributorCount": 1,
+      "contributorCountVerifiedAt": "2026-07-23T20:25:38.2475224+02:00",
+      "contributorCountVerification": "GitHub Contributors API with anon=true and per_page=100 returned 1 entry on page 1 with no Link header; an explicit page 2 request returned 0 entries. The sole entry was erdwin90. The full pagination check was repeated immediately before publication and again immediately after PR creation.",
+      "qualifiesCurrentContributorLimit": true,
+      "existingInteractions": false,
+      "interactionVerification": "Signed-in GitHub searches and GitHub Search API queries returned 0 prior pull requests, issues, comments, reviews, and commits by tura-ai-agent before publication. The persistent ledger contained no prior record or skipped entry for this repository, and the resumed fork contained no translation branch or pull request before this run.",
+      "translationLanguages": [
+        "zh-CN",
+        "ja"
+      ],
+      "branch": "tura-ai-agent:docs/readme-translations",
+      "commit": "e53662a2165447992bf019bafc145aa85f72664f",
+      "upstreamCommit": "ec58cea05b3a26edefa18e9556d06ee043791322",
+      "prUrl": "https://github.com/erdwin90/crypto-bar-mac/pull/1",
+      "status": "open",
+      "files": [
+        "README.md",
+        "README.zh-CN.md",
+        "README.ja.md"
+      ],
+      "blobHashes": {
+        "README.md": "814ebe9a56db6235e576b6cada229d41fc7fad3d",
+        "README.zh-CN.md": "c2fa886a95789d4b1c25253403cdc3966534d52f",
+        "README.ja.md": "72b3502e1a2f1f64bfefd3ebed0edb25199f97e9"
+      },
+      "validation": "The English, Simplified Chinese, and Japanese README files each contain 97 lines, 8 Markdown headings, 12 bullet items, 4 ordered steps, 1 fenced code block, 5 Markdown links, 6 image sources, 6 paragraph tags, 8 table-related tags, and 1 balanced HTML comment. Both translations preserve a byte-identical fenced block after newline normalization, identical link targets, identical image sources, and every source URL. Every relative link and image resolves; both new files have a final newline and no trailing whitespace; git diff --check passed. The source README contains one pre-existing whitespace-only line that was not changed. All three remote fork blobs exactly match the validated local files (README.md 814ebe9a56db6235e576b6cada229d41fc7fad3d, README.zh-CN.md c2fa886a95789d4b1c25253403cdc3966534d52f, README.ja.md 72b3502e1a2f1f64bfefd3ebed0edb25199f97e9). Upstream main remained at ec58cea05b3a26edefa18e9556d06ee043791322 throughout publication.",
+      "contributorAgreementAccepted": false,
+      "notes": "GitTrend Hidden Gems #13. The public, unarchived, non-fork repository uses main and has a root MIT license. README.md, LICENSE, the complete root tree, branches, recent history, and repository policies were reviewed; no existing localized root README, AGENTS.md, CONTRIBUTING file, PR template, SECURITY file, open PR, or overlapping translation PR was present. The Chrome profile corresponding to yy3636989@gmail.com was used and the signed-in GitHub account was tura-ai-agent. The ready-for-review PR changes only README.md, README.zh-CN.md, and README.ja.md with 196 additions and 0 deletions across 3 verified browser-created commits. The GitHub API reports the PR open, non-draft, mergeable, clean, and conflict-free; there are 0 check runs. No CLA or contributor-agreement prompt appeared."
+    },
+    {
+      "repository": "BlackLabelHQ/RecompOne",
+      "sourceUrl": "https://gittrend.io/hidden-gems",
+      "sourceRank": "GitTrend Hidden Gems #12",
+      "checkedAt": "2026-07-23T20:43:30.7506538+02:00",
+      "contributorCount": 1,
+      "contributorCountVerifiedAt": "2026-07-23T22:07:03.5203905+02:00",
+      "contributorCountVerification": "Direct GitHub Contributors REST API verification with anon=true and per_page=100 returned exactly one contributor (flafmg, 54 contributions) on page 1 and the raw empty JSON array [] on page 2, completing pagination. The full pagination check was performed immediately before publication and repeated immediately after PR creation.",
+      "qualifiesCurrentContributorLimit": true,
+      "existingInteractions": false,
+      "interactionVerification": "Before publication, GitHub Search API returned 0 prior pull requests, issues, and commits by tura-ai-agent; signed-in GitHub searches returned 0 pull-request comments and 0 reviews. The tura-ai-agent/RecompOne fork did not exist, no same-head pull request existed, and the persistent ledger contained no prior entry.",
+      "translationLanguages": [
+        "zh-CN",
+        "ja"
+      ],
+      "branch": "tura-ai-agent:docs/readme-translations",
+      "commit": "249fec2e502a26e9a0d75fd21095dbb87c040ef3",
+      "upstreamCommit": "d4a32efa3e27edcc3cd32101d7913aea78521593",
+      "prUrl": "https://github.com/BlackLabelHQ/RecompOne/pull/1",
+      "status": "open",
+      "files": [
+        "README.md",
+        "README.zh-CN.md",
+        "README.ja.md"
+      ],
+      "blobHashes": {
+        "README.md": "0d532211837e2f9b8ae3fbfbe9b525cf15d368ac",
+        "README.zh-CN.md": "7902724f95c85e021fda81ad9672430f576c3505",
+        "README.ja.md": "c3d052d6c303811a9966fbb9fa2fbf1b8614d9b5"
+      },
+      "validation": "The English, Simplified Chinese, and Japanese README files each contain 79 lines, 8 Markdown headings, 1 task-list item, 10 fence markers forming 5 byte-identical fenced code blocks, 6 Markdown links, 5 URLs, and 3 HTML tags. Both translations preserve identical link targets, URLs, HTML structure, commands, identifiers, addresses, class and method names, and checklist state. Every relative link resolves; all files end with a newline and contain no trailing whitespace; git diff --check passed. All three remote fork blobs exactly match the validated local files (README.md 0d532211837e2f9b8ae3fbfbe9b525cf15d368ac, README.zh-CN.md 7902724f95c85e021fda81ad9672430f576c3505, README.ja.md c3d052d6c303811a9966fbb9fa2fbf1b8614d9b5). Upstream master remained at d4a32efa3e27edcc3cd32101d7913aea78521593 throughout publication.",
+      "contributorAgreementAccepted": false,
+      "notes": "GitTrend Hidden Gems #12. The public, unarchived, non-fork repository uses master and has a root MIT license. README.md, LICENSE, the complete root tree, single branch, recent history, and open pull requests were reviewed; no localized root README, AGENTS.md, CONTRIBUTING file, PR template, SECURITY file, or overlapping translation PR was present. The README says AI does not replace human judgment, so both translations were reviewed paragraph-by-paragraph and structurally validated. The Chrome profile corresponding to yy3636989@gmail.com was used, and its GitHub menu confirmed the exact account tura-ai-agent immediately before publication. The ready-for-review PR changes only README.md, README.zh-CN.md, and README.ja.md with 159 additions and 0 deletions across 3 verified browser-created commits. The GitHub API reports the PR open, non-draft, mergeable, clean, and conflict-free; there are 0 check runs. No CLA or contributor-agreement prompt appeared."
+    },
+    {
+      "repository": "ion-design/ditto.site",
+      "sourceUrl": "https://gittrend.io/hidden-gems",
+      "sourceRank": "GitTrend Hidden Gems #15",
+      "checkedAt": "2026-07-23T22:22:04.9594025+02:00",
+      "contributorCount": 4,
+      "contributorCountVerifiedAt": "2026-07-23T22:29:44.9854291+02:00",
+      "contributorCountVerification": "Direct GitHub Contributors REST API verification with anon=true and per_page=100 returned exactly four entries (Samraaj, michaelgbcole, dependabot[bot], and devteamaegis) on page 1 and the raw empty JSON array [] on page 2, completing pagination. The full pagination check was performed immediately before publication and repeated immediately after PR creation.",
+      "qualifiesCurrentContributorLimit": true,
+      "existingInteractions": false,
+      "interactionVerification": "Before publication, GitHub Search API returned 0 prior pull requests, issues, and commits by tura-ai-agent; signed-in GitHub searches returned 0 pull-request comments and 0 reviews. The tura-ai-agent/ditto.site fork did not exist, there was no open README pull request or same-head pull request, and the persistent ledger contained no prior entry.",
+      "translationLanguages": [
+        "zh-CN",
+        "ja"
+      ],
+      "branch": "tura-ai-agent:docs/readme-translations",
+      "commit": "a50c109ce84d7147cb8be17c42330d7ac1f45f4e",
+      "upstreamCommit": "eb18ecea462ccc4d59dd52d76b28073699369680",
+      "prUrl": "https://github.com/ion-design/ditto.site/pull/39",
+      "status": "open",
+      "files": [
+        "README.md",
+        "README.zh-CN.md",
+        "README.ja.md"
+      ],
+      "blobHashes": {
+        "README.md": "ee6771b7730594dfb20a30bd1a4063f9e528f442",
+        "README.zh-CN.md": "ddb57de9270f9b74cad2fec0a9c45191954bdf36",
+        "README.ja.md": "a2b46bd87c694a8a41abb394969b4ba2abc0720a"
+      },
+      "validation": "README.md, README.zh-CN.md, and README.ja.md preserve 15 fenced code blocks byte-for-byte, 35 Markdown table rows, 8 bullet items, 8 blockquote lines, 22 Markdown links, 24 URLs, 94 inline-code spans, and the same HTML tag sequence and src/href targets. Both translations preserve identical link-target order, URL values, technical identifiers, API paths, commands, option names, environment variables, and responsible-use restrictions. All relative links resolve; every file ends with a newline and has no trailing whitespace; git diff --check passed. The three remote fork blobs exactly match the validated local files (README.md ee6771b7730594dfb20a30bd1a4063f9e528f442, README.zh-CN.md ddb57de9270f9b74cad2fec0a9c45191954bdf36, README.ja.md a2b46bd87c694a8a41abb394969b4ba2abc0720a). Upstream main remained at eb18ecea462ccc4d59dd52d76b28073699369680 throughout publication.",
+      "contributorAgreementAccepted": false,
+      "notes": "GitTrend Hidden Gems #15. The public, unarchived, non-fork repository uses main and has a root MIT license. README.md, CONTRIBUTING.md, SECURITY.md, LICENSE, CODE_OF_CONDUCT.md, SUPPORT.md, the complete root and .github trees, the PR template, localized root files, and open README pull requests were reviewed. The exact Chrome profile corresponding to yy3636989@gmail.com was used and its GitHub user menu confirmed tura-ai-agent. The ready-for-review PR changes only README.md, README.zh-CN.md, and README.ja.md with 688 additions and 0 deletions across 3 verified browser-created commits. GitHub reports it open, non-draft, and mergeable; merging is currently blocked by one expected test status and a required code-owner approval. There are presently 0 check runs. No CLA or contributor-agreement prompt appeared."
+    },
+    {
+      "repository": "openshiporg/openship",
+      "sourceUrl": "https://gittrend.io/hidden-gems",
+      "sourceRank": "GitTrend Hidden Gems #20",
+      "checkedAt": "2026-07-23T22:44:35.3424699+02:00",
+      "contributorCount": 3,
+      "contributorCountVerifiedAt": "2026-07-23T23:08:18.7338420+02:00",
+      "contributorCountVerification": "Direct GitHub Contributors REST API verification with anon=true and per_page=100 returned exactly three entries (junaid33, sven3270350, and dmikushin) on page 1 and the raw empty JSON array [] on page 2, completing pagination. The full pagination check was performed before publication and repeated after PR creation.",
+      "qualifiesCurrentContributorLimit": true,
+      "existingInteractions": false,
+      "interactionVerification": "Before publication, GitHub search returned 0 prior pull requests, issues, and commits by tura-ai-agent. Signed-in GitHub searches returned 0 pull-request comments, 0 reviews, and 0 issue comments. The tura-ai-agent/openship fork did not exist, no same-head pull request existed, the open-pull-request search found no README overlap, and the persistent ledger contained no prior entry.",
+      "translationLanguages": [
+        "zh-CN",
+        "ja"
+      ],
+      "branch": "tura-ai-agent:docs/readme-translations",
+      "commit": "fd4eb92ba1d9e0df2689c1d75b9111c5c54fbcde",
+      "upstreamCommit": "789081f7ed5d0cab039f94d699d650f3fbe37108",
+      "prUrl": "https://github.com/openshiporg/openship/pull/33",
+      "status": "open",
+      "files": [
+        "README.md",
+        "README.zh-CN.md",
+        "README.ja.md"
+      ],
+      "blobHashes": {
+        "README.md": "8fb7003e0aaace35c1b55f510b8823246b768064",
+        "README.zh-CN.md": "bd727b54fb8851989c596d47bb12ad7bfa3d6b9f",
+        "README.ja.md": "a84ed80bdfa1865fce72c2ca41b95a678cb42d4f"
+      },
+      "validation": "README.md, README.zh-CN.md, and README.ja.md each contain 219 lines, 26 Markdown headings, 62 bullet items, 6 ordered-list items, 5 table rows, 5 byte-identical fenced code blocks, 16 Markdown links, 9 inline-code spans, and 3 HTML tags. Both translations preserve identical link-target order, inline-code values, HTML structure, href/src targets, commands, paths, URLs, credentials, configuration keys, and environment variables. All relative links resolve; each file ends with a newline and has no trailing whitespace; git diff --check passed. The three remote fork blobs exactly match the validated local files (README.md 8fb7003e0aaace35c1b55f510b8823246b768064, README.zh-CN.md bd727b54fb8851989c596d47bb12ad7bfa3d6b9f, README.ja.md a84ed80bdfa1865fce72c2ca41b95a678cb42d4f). Upstream main remained at 789081f7ed5d0cab039f94d699d650f3fbe37108 throughout publication.",
+      "contributorAgreementAccepted": false,
+      "notes": "GitTrend Hidden Gems #20. The public, unarchived, non-fork repository uses main and is AGPL-3.0 licensed. README.md, LICENSE.md, the complete root tree, local repository guidance files, open pull requests, and translation-file naming were reviewed. No AGENTS.md, CONTRIBUTING file, .github directory, PR template, existing localized README, or contribution agreement was present. The README explicitly welcomes contributions. The exact Chrome profile corresponding to yy3636989@gmail.com was used and its GitHub user menu confirmed tura-ai-agent. The ready-for-review PR changes only README.md, README.zh-CN.md, and README.ja.md with 440 additions and 0 deletions across 3 verified browser-created commits. GitHub reports it open, non-draft, mergeable, clean, and conflict-free; there are 0 check runs. No CLA or contributor-agreement prompt appeared."
+    },
+    {
+      "repository": "GaoSSR/best-claude-hud",
+      "sourceUrl": "https://gittrend.io/hidden-gems",
+      "sourceRank": "GitTrend Hidden Gems #27",
+      "checkedAt": "2026-07-23T23:19:19.7110953+02:00",
+      "contributorCount": 1,
+      "contributorCountVerifiedAt": "2026-07-23T23:25:09.5270121+02:00",
+      "contributorCountVerification": "Direct GitHub Contributors REST API verification with anon=true and per_page=100 returned exactly one entry (GaoSSR, 29 contributions) on page 1 and the raw empty JSON array [] on page 2, completing pagination. The full pagination check was performed before publication and repeated after PR creation.",
+      "qualifiesCurrentContributorLimit": true,
+      "existingInteractions": false,
+      "interactionVerification": "Before publication, GitHub search returned 0 prior pull requests, issues, and commits by tura-ai-agent. Signed-in GitHub searches returned 0 pull-request comments, 0 reviews, and 0 issue comments. The tura-ai-agent/best-claude-hud fork did not exist, no same-head pull request existed, the open-pull-request search found no README overlap, and the persistent ledger contained no prior entry.",
+      "translationLanguages": [
+        "ja"
+      ],
+      "branch": "tura-ai-agent:docs/readme-translations",
+      "commit": "a69050078ad61657f43bcc8e18336dd1665afe54",
+      "upstreamCommit": "cbeb208a38b5ae9e42a82b7e6bae93c6d921a521",
+      "prUrl": "https://github.com/GaoSSR/best-claude-hud/pull/2",
+      "status": "open",
+      "files": [
+        "README.md",
+        "README_CN.md",
+        "README_JA.md"
+      ],
+      "blobHashes": {
+        "README.md": "167c2e0869acf0e9a4f432a3f019a6549daa8574",
+        "README_CN.md": "456a165df0c48733c1d62cdc6f35ef4ddc909a5e",
+        "README_JA.md": "46f044e95d2d3ee1d2c6988b7486d40f95245c0a"
+      },
+      "validation": "The complete 355-line Japanese translation preserves all 20 Markdown headings, 43 bullet items, 7 table rows, 23 fenced code blocks, 8 Markdown link targets, and 66 inline-code values from the 369-line English README. All fenced code blocks are byte-identical after line-ending normalization; all relative links resolve; every file ends with a newline and has no trailing whitespace; git diff --check passed. README.md and README_CN.md only add the Japanese language link. The three remote fork blobs exactly match the validated local files (README.md 167c2e0869acf0e9a4f432a3f019a6549daa8574, README_CN.md 456a165df0c48733c1d62cdc6f35ef4ddc909a5e, README_JA.md 46f044e95d2d3ee1d2c6988b7486d40f95245c0a). Upstream main remained at cbeb208a38b5ae9e42a82b7e6bae93c6d921a521 throughout publication.",
+      "contributorAgreementAccepted": false,
+      "notes": "GitTrend Hidden Gems #27. The public, unarchived, non-fork repository uses main and is Apache-2.0 licensed. README.md, README_CN.md, AGENTS.md, CONTRIBUTING.md, SECURITY.md, LICENSE, the root tree, GitHub workflows, and open pull requests were reviewed. No pull-request template or contribution-agreement prompt was present. The exact Chrome profile corresponding to yy3636989@gmail.com was used and its GitHub user menu confirmed tura-ai-agent. The ready-for-review PR changes only README.md, README_CN.md, and README_JA.md with 357 additions and 2 deletions across 3 verified browser-created commits. GitHub reports it open, non-draft, API-mergeable, and conflict-free. One Sourcery review check is in progress and the repository workflow awaits maintainer approval. No CLA or contributor-agreement prompt appeared."
     }
   ],
   "skipped": [
@@ -2619,43 +2809,51 @@
       "reason": "The first GitHub Contributors API page with anon=true and per_page=100 returned 13 entries, which already proves that the repository exceeds the current maximum of 12.",
       "status": "skipped",
       "notes": "GitTrend Hidden Gems #14. Do not retry unless the contributor-limit policy changes."
+    },
+    {
+      "repository": "aresrpg/aresrpg",
+      "sourceUrl": "https://trendshift.io/",
+      "checkedAt": "2026-07-23T20:43:30.7506538+02:00",
+      "existingInteractions": false,
+      "reason": "The required ICLA and DCO sign-off include representations about the contributor's legal identity, original authorship, and any employer intellectual-property rights. The user authorized acceptance of copyright agreements, but the workflow explicitly forbids making unverifiable employer, client, or third-party authorization statements; the required Signed-off-by identity also cannot be completed reliably from the available account data.",
+      "status": "skipped",
+      "notes": "Trendshift Daily #10. The public, unarchived repository uses master and explicitly welcomes documentation contributions, but it is source-available rather than open source. README.md, CONTRIBUTING.md, CLA.md, LICENSE, SECURITY.md, FROZEN.md, and CLAUDE.md were reviewed. Do not retry unless the user supplies a valid sign-off identity and confirms the ICLA representations, including employer-rights status."
     }
   ],
   "prepared": [
     {
-      "repository": "unicity-aos/capsule-fs",
-      "sourceUrl": "https://gittrend.io/rising",
-      "sourceRank": "GitTrend Rising #13",
-      "checkedAt": "2026-07-23T19:37:39.6424126+02:00",
-      "contributorCount": 1,
-      "contributorCountVerifiedAt": "2026-07-23T19:27:12.0815017+02:00",
-      "contributorCountVerification": "GitHub Contributors API with anon=true and per_page=100 returned 1 entry on page 1 with no Link header; an explicit page 2 request returned 0 entries. The sole entry was joshuajbouw. This full pagination check was repeated immediately before the attempted browser publication.",
+      "repository": "safaiyeh/app-store-review-skill",
+      "sourceUrl": "https://gittrend.io/hidden-gems",
+      "sourceRank": "GitTrend Hidden Gems API page 4, item 20",
+      "checkedAt": "2026-07-23T23:34:43.5074532+02:00",
+      "contributorCount": 2,
+      "contributorCountVerifiedAt": "2026-07-23T23:30:36.3838748+02:00",
+      "contributorCountVerification": "Direct GitHub Contributors REST API verification with anon=true and per_page=100 returned exactly two entries (safaiyeh and claude) on page 1 and the raw empty JSON array [] on page 2, completing pagination.",
       "qualifiesCurrentContributorLimit": true,
       "existingInteractions": false,
-      "interactionVerification": "Signed-in GitHub searches and GitHub Search API queries each returned 0 prior pull requests, issues, comments, reviews, and commits by tura-ai-agent. The tura-ai-agent/capsule-fs fork URL and repository API both returned not found before this run. The persistent ledger contained no record, skipped entry, or prepared entry for this repository.",
+      "interactionVerification": "GitHub search returned 0 prior pull requests, issues, pull-request comments, reviews, issue comments, and commits by tura-ai-agent. The tura-ai-agent/app-store-review-skill fork did not exist, no same-head pull request existed, and the open-pull-request search found no README overlap.",
       "translationLanguages": [
         "zh-CN",
         "ja"
       ],
-      "branch": "docs/readme-translations",
-      "commit": "a12d876ffa8990d40da9abc33a2bbbe26e453e08",
-      "upstreamCommit": "663e9b3ee7783f70654758031b860a32661edbbf",
-      "localPath": "C:\\Users\\liuliu\\Documents\\Codex\\2026-07-22\\s\\work\\candidates\\capsule-fs",
+      "localPath": "C:\\Users\\liuliu\\Documents\\Codex\\2026-07-22\\s\\work\\candidates\\app-store-review-skill",
+      "branch": "tura-ai-agent:docs/readme-translations",
+      "commit": "f46ceea72edb3cf86828c1bbb3c2f4cef46be50c",
+      "upstreamCommit": "47a864672bc97774466a287acbad1b1ad24bca62",
+      "status": "prepared",
       "files": [
         "README.md",
         "README.zh-CN.md",
         "README.ja.md"
       ],
       "blobHashes": {
-        "README.md": "e60caed9d2d2c9c7f6f0711815693ee7e92d24f2",
-        "README.zh-CN.md": "f013a7356fa7eddde44b2d0bf7580aaf17ef8988",
-        "README.ja.md": "153ea5943eb3bebf63dd93681a4363f9271ced24"
+        "README.md": "c672e4223c39680c191e9fb77852a462143f0ec3",
+        "README.zh-CN.md": "48a18c10deb906aef7e2748bef2a2060caefbf9b",
+        "README.ja.md": "0b3f556af50f4254a7998ffed83f0512772ccd93"
       },
-      "validation": "The English, Simplified Chinese, and Japanese README files each contain 37 lines, 4 Markdown headings, 10 table rows, 1 fenced code block, 8 Markdown links, and the same 10 inline-code identifiers. Both translations preserve a byte-identical fenced block after newline normalization, identical non-navigation link targets, and identical technical inline-code multisets. Every relative link resolves; all files have a final newline and no trailing whitespace; git diff --check passed. cargo test --locked could not start because rustup failed while downloading the Rust 1.94 rustc component with a local file-renaming error; no test result is claimed for this documentation-only change.",
-      "status": "prepared",
-      "publicationState": "Local translation commit is complete, but no fork, remote branch, or PR was created. Resume this item before selecting another candidate. Reconfirm upstream HEAD, full contributor pagination, all interaction searches, and the exact tura-ai-agent browser account before publishing.",
+      "validation": "The complete 205-line Simplified Chinese and 205-line Japanese translations preserve all 25 Markdown headings, 77 bullet items, 4 numbered steps, 12 code fences, and every link target from the 205-line English README. Executable bash blocks are byte-identical after line-ending normalization, all relative links resolve, every file ends with a newline and has no trailing whitespace, and git diff --check passed. README.md only adds the language selector.",
       "contributorAgreementAccepted": false,
-      "notes": "The repository is public, unarchived, non-fork, uses main, has no open pull requests, and is dual-licensed under MIT and Apache-2.0. README.md, LICENSE-MIT, LICENSE-APACHE, the root and .github trees, recent history, and repository policies were reviewed; there is no existing localized root README, AGENTS.md, CONTRIBUTING file, PR template, or SECURITY file. The Chrome profile was confirmed earlier in this run as the exact GitHub account tura-ai-agent, but repeated Chrome control-session resets prevented safe publication. No GitHub write occurred."
+      "notes": "The public, unarchived, non-fork repository uses main and is MIT licensed. README.md, LICENSE, the complete root tree, and all root contribution-guidance filenames were reviewed; no CONTRIBUTING file, pull-request template, or contributor agreement was present. Prepared locally and committed before any GitHub write."
     }
   ]
 }

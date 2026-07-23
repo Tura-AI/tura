@@ -231,6 +231,188 @@ test("reducer commits active live stream when session becomes idle", () => {
   assert.equal(assistant?.parts[0]?.text, "idle commit response");
 });
 
+test("reducer does not duplicate a live delta when its full part snapshot arrives", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "sess-1",
+          messageID: "runtime-snapshot.message",
+          partID: "runtime-snapshot.message",
+          createdAt: 50,
+          updatedAt: 51,
+          field: "text",
+          delta: "streamed once",
+        },
+      },
+    },
+  });
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: {
+          sessionID: "sess-1",
+          info: {
+            id: "runtime-snapshot.message",
+            sessionID: "sess-1",
+            role: "assistant",
+            created_at: 50,
+            updated_at: 52,
+            parts: [
+              {
+                id: "runtime-snapshot.message",
+                sessionID: "sess-1",
+                messageID: "runtime-snapshot.message",
+                type: "text",
+                text: "streamed once",
+              },
+              {
+                id: "runtime-snapshot.tool.command_run",
+                sessionID: "sess-1",
+                messageID: "runtime-snapshot.message",
+                type: "tool",
+                tool: "command_run",
+                state: { status: "running" },
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "sess-1",
+          createdAt: 50,
+          updatedAt: 52,
+          part: {
+            id: "runtime-snapshot.message",
+            sessionID: "sess-1",
+            messageID: "runtime-snapshot.message",
+            type: "text",
+            text: "streamed once",
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(Object.values(state.liveStreams).length, 1);
+  assert.equal(
+    displayMessages(state).find((message) => message.id === "runtime-snapshot.message")?.parts[0]
+      .text,
+    "streamed once",
+  );
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "session.status",
+        properties: { sessionID: "sess-1", updatedAt: 53, status: "idle" },
+      },
+    },
+  });
+
+  assert.equal(Object.values(state.liveStreams).length, 0);
+  assert.equal(
+    state.messages.find((message) => message.id === "runtime-snapshot.message")?.parts[0].text,
+    "streamed once",
+  );
+});
+
+test("reducer preserves a durable content prefix when a live part snapshot arrives", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [
+      {
+        id: "runtime-prefix.message",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 60,
+        updated_at: 60,
+        parts: [
+          {
+            id: "runtime-prefix.message",
+            sessionID: "sess-1",
+            messageID: "runtime-prefix.message",
+            type: "text",
+            content: "durable prefix ",
+          },
+        ],
+      },
+    ],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "sess-1",
+          messageID: "runtime-prefix.message",
+          partID: "runtime-prefix.message",
+          createdAt: 60,
+          updatedAt: 61,
+          field: "content",
+          delta: "live suffix",
+        },
+      },
+    },
+  });
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "sess-1",
+          createdAt: 60,
+          updatedAt: 62,
+          part: {
+            id: "runtime-prefix.message",
+            sessionID: "sess-1",
+            messageID: "runtime-prefix.message",
+            type: "text",
+            content: "durable prefix live suffix",
+            metadata: { phase: "complete" },
+          },
+        },
+      },
+    },
+  });
+
+  const durablePart = state.messages[0]?.parts[0];
+  const visiblePart = displayMessages(state)[0]?.parts[0];
+  assert.equal(durablePart?.content, "durable prefix ");
+  assert.deepEqual(durablePart?.metadata, { phase: "complete" });
+  assert.equal(visiblePart?.content, "durable prefix live suffix");
+});
+
 test("reducer keeps repeated runtime message and command callbacks in one message", () => {
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",

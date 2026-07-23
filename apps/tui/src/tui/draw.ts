@@ -1,6 +1,6 @@
 import type { AppState } from "./reducer.js";
 import { renderChatFrameParts, renderFrame, type RenderedChatCache } from "./render.js";
-import { clear as terminalClear, padVisible } from "./render-terminal.js";
+import { clear as terminalClear, padVisible, stripAnsi } from "./render-terminal.js";
 import type { TerminalCapabilities } from "./capabilities.js";
 
 let lastDrawSurface = "";
@@ -148,6 +148,7 @@ function drawChatFrame(
   const finalizingLiveToCache = lastChatActiveLiveMessageCount > 0 && stableTailCacheToBody;
   if (stableTailCacheToBody) target = promoteLiveFrameToScrollbackBody(target);
   target = preserveSpilledLivePrefix(target, previousBodyLineCount);
+  target = preserveCommittedSpilledPresentation(target);
   const bodyShrank = previousBodyLineCount !== 0 && target.bodyLines.length < previousBodyLineCount;
   const firstChatDraw = lastChatRenderCols === 0;
   const spilledLiveFrame = target.spilledLiveLines.join("\n");
@@ -402,6 +403,32 @@ function preserveSpilledLivePrefix(
     spilledLiveLines,
     pendingLiveLines,
     mutableLines,
+    bodyLines: [...target.cacheLines, ...spilledLiveLines],
+  };
+}
+
+function preserveCommittedSpilledPresentation(target: ChatScrollbackTarget): ChatScrollbackTarget {
+  if (lastChatSpilledLiveLineCount <= 0 || !lastChatSpilledLiveFrame) return target;
+  if (target.spilledLiveLines.length < lastChatSpilledLiveLineCount) return target;
+
+  const previousSpilledLines = lastChatSpilledLiveFrame.split("\n");
+  const nextCommittedLines = target.spilledLiveLines.slice(0, lastChatSpilledLiveLineCount);
+  if (
+    previousSpilledLines.length !== lastChatSpilledLiveLineCount ||
+    previousSpilledLines.some(
+      (line, index) => stripAnsi(line) !== stripAnsi(nextCommittedLines[index] ?? ""),
+    )
+  ) {
+    return target;
+  }
+
+  const spilledLiveLines = [
+    ...previousSpilledLines,
+    ...target.spilledLiveLines.slice(lastChatSpilledLiveLineCount),
+  ];
+  return {
+    ...target,
+    spilledLiveLines,
     bodyLines: [...target.cacheLines, ...spilledLiveLines],
   };
 }

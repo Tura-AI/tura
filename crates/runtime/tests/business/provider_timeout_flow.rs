@@ -226,6 +226,111 @@ async fn streamed_command_run_waits_for_commands_after_provider_stream_completes
 }
 
 #[tokio::test]
+async fn failed_apply_patch_finishes_tool_turn_without_cancelling_runtime() {
+    let _guard = TEST_ENV.lock().await;
+    let workspace = tempfile::tempdir().expect("workspace");
+    let source_path = workspace.path().join("app.txt");
+    let skipped_path = workspace.path().join("must-not-run.txt");
+    std::fs::write(&source_path, "actual\n").expect("write patch fixture");
+    let provider = CompletedResponsesProvider::start_batch(vec![
+        failed_apply_patch_command(),
+        marker_command(&skipped_path, 2),
+    ]);
+    let router_addr = mock_command_run_router_addr();
+    let _api_key = EnvGuard::set("OPENAI_API_KEY", "local-stream-patch-key");
+    let _router_addr = EnvGuard::set("TURA_ROUTER_ADDR", router_addr.as_str());
+    let _gateway_callbacks = EnvGuard::set("TURA_GATEWAY_CALLBACKS", "0");
+    let settings = Arc::new(Settings {
+        provider_base_url: HashMap::new(),
+        routes: HashMap::from([(
+            "stream-patch-route".to_string(),
+            RouteConfig {
+                default_temperature: 0.0,
+                providers: vec![LlmProviderConfig {
+                    provider: "openai".to_string(),
+                    base_url: provider.endpoint.clone(),
+                    model: "local-stream-patch-model".to_string(),
+                    temperature: 0.0,
+                }],
+            },
+        )]),
+        model_catalog: ModelCatalog::default(),
+        provider_enums: ProviderEnumCatalog::default(),
+    });
+    let runtime = runtime_for_provider(
+        "runtime-stream-patch-failure-business",
+        30_000,
+        true,
+        "stream-patch-route",
+        "openai",
+        "local-stream-patch-model",
+    );
+
+    let result = call_runtime(
+        CallRuntimeInput {
+            runtime,
+            messages: vec![json!({
+                "role": "user",
+                "content": "apply a stale patch, then run a command"
+            })],
+            tools: Vec::new(),
+            provider_name: "stream-patch-route".to_string(),
+            stream: true,
+            max_tokens: 128,
+            tool_choice: None,
+            session_directory: workspace.path().to_path_buf(),
+            allowed_command_run_commands: Some(BTreeSet::from([
+                "apply_patch".to_string(),
+                "shell_command".to_string(),
+            ])),
+            require_startup_task_state: false,
+        },
+        settings,
+        Arc::new(TuraConfig::new(
+            ".env.runtime-stream-patch-business-missing",
+        )),
+    )
+    .await
+    .expect("failed apply_patch should return a tool result");
+
+    assert_eq!(result.state, RuntimeState::Finished);
+    assert_eq!(
+        result.call_result_status(),
+        RuntimeCallResultStatus::Succeeded
+    );
+    assert_eq!(result.error, None);
+    assert_eq!(
+        std::fs::read_to_string(&source_path).expect("read unchanged patch fixture"),
+        "actual\n"
+    );
+    assert!(
+        !skipped_path.exists(),
+        "commands after the failed apply_patch must not execute"
+    );
+    let output = result.output.as_ref().expect("runtime output");
+    assert_eq!(
+        output.pointer("/streamed_command_run_result/early_finish_reason"),
+        Some(&json!("apply_patch_failed"))
+    );
+    assert!(output
+        .pointer("/streamed_command_run_result/cancelled")
+        .is_none());
+    assert_eq!(
+        output.pointer("/streamed_command_run_result/results/0/success"),
+        Some(&json!(false))
+    );
+    assert_eq!(
+        output
+            .pointer("/streamed_command_run_result/results")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(result.tool_call.len(), 1);
+    assert_eq!(result.tool_call[0].tool_called_name, "command_run");
+}
+
+#[tokio::test]
 async fn streamed_command_run_gateway_callbacks_do_not_gate_command_execution_business_flow() {
     let _guard = TEST_ENV.lock().await;
     let workspace = tempfile::tempdir().expect("workspace");
@@ -507,6 +612,10 @@ struct CompletedResponsesProvider {
 
 impl CompletedResponsesProvider {
     fn start(command: serde_json::Value) -> Self {
+        Self::start_batch(vec![command])
+    }
+
+    fn start_batch(commands: Vec<serde_json::Value>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind completed provider");
         let addr = listener.local_addr().expect("completed provider addr");
         let request = Arc::new(Mutex::new(None));
@@ -519,7 +628,7 @@ impl CompletedResponsesProvider {
             *thread_request
                 .lock()
                 .expect("completed provider request lock") = Some(request);
-            write_completed_command_run_stream(&mut stream, command);
+            write_completed_command_run_stream(&mut stream, commands);
         });
         Self {
             endpoint: format!("http://{addr}"),
@@ -574,9 +683,45 @@ fn delayed_command(output_path: &std::path::Path) -> serde_json::Value {
     })
 }
 
-fn write_completed_command_run_stream(stream: &mut TcpStream, command: serde_json::Value) {
+fn failed_apply_patch_command() -> serde_json::Value {
+    let command_line = concat!(
+        "*** Begin Patch\n",
+        "*** Update File: app.txt\n",
+        "@@\n",
+        "-expected\n",
+        "+patched\n",
+        "*** End Pa",
+        "tch\n",
+    );
+    json!({
+        "step": 1,
+        "command": "apply_patch",
+        "command_type": "apply_patch",
+        "command_line": command_line
+    })
+}
+
+fn marker_command(output_path: &std::path::Path, step: u64) -> serde_json::Value {
+    json!({
+        "step": step,
+        "command": "shell_command",
+        "command_type": "shell_command",
+        "command_line": json!({
+            "command": format!(
+                "python -c \"from pathlib import Path; Path(r'{}').write_text('must not run')\"",
+                output_path.display()
+            ),
+            "timeout_ms": 3_000
+        }).to_string()
+    })
+}
+
+fn write_completed_command_run_stream(
+    stream: &mut TcpStream,
+    commands: Vec<serde_json::Value>,
+) {
     let arguments = json!({
-        "commands": [command],
+        "commands": commands,
         "step_summary": "Run a single local command before the provider stream completes."
     })
     .to_string();

@@ -38,8 +38,8 @@ use crate::turn_loop::provider_step::accumulate_session_from_runtime;
 use crate::turn_loop::retry_policy::env_flag;
 use crate::turn_loop::task_progress::{
     active_doing_task_user_message, active_task_user_message, command_run_result_has_command,
-    command_run_result_is_single_task_status, command_run_result_terminal_task_status,
-    record_task_focus_message, record_task_focus_message_for_terminal_done,
+    command_run_result_terminal_task_status, record_task_focus_message,
+    record_task_focus_message_for_terminal_done,
 };
 use crate::turn_loop::tool_step::{command_run_results_empty, extract_compact_context_results};
 use lifecycle::RuntimeAggregate;
@@ -47,7 +47,6 @@ use lifecycle::SessionManagement;
 use lifecycle::{PlanStatus, RuntimeId, RuntimeState, SessionState};
 
 const DEFAULT_MANAS_MAX_TURNS: u64 = 2_560;
-const DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF: usize = 1_000;
 
 pub(crate) struct ManasInput<'a> {
     pub(crate) agents: &'a mut [AgentManagement],
@@ -381,22 +380,6 @@ pub(crate) fn process_manas_internal(
             }
             persist_session_checkpoint(&mut session_delta_writer, session, "tool_results")?;
 
-            if pending_compact_contexts.is_empty()
-                && should_end_turn_without_task_status_backfill(
-                    &tool_results,
-                    terminal_task_status.as_deref(),
-                    visible_reply_before_tool.as_deref(),
-                )
-            {
-                info!(
-                    session_id = %session.session_id,
-                    turn = turn,
-                    runtime_id = %runtime.runtime_id,
-                    "single done task_status followed a long visible assistant reply; ending turn without tool-result backfill"
-                );
-                break;
-            }
-
             if !pending_compact_contexts.is_empty() {
                 for pending in &pending_compact_contexts {
                     compact_session_context_with_agent_message_and_capabilities(
@@ -505,7 +488,6 @@ pub(crate) fn process_manas_internal(
                 let final_response_published = if terminal_status_needs_final_response_turn(
                     terminal_task_status.as_deref(),
                     visible_reply_published_before_terminal_status,
-                    terminal_status_followed_command,
                 ) {
                     run_terminal_final_response_turn(
                         agents,
@@ -850,30 +832,6 @@ fn should_auto_complete_non_planning_doing_after_tool_turn(
     false
 }
 
-fn should_end_turn_without_task_status_backfill(
-    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
-    terminal_task_status: Option<&str>,
-    visible_reply: Option<&str>,
-) -> bool {
-    let Some(status @ ("done" | "question")) = terminal_task_status else {
-        return false;
-    };
-
-    visible_reply.is_some_and(|reply| reply.len() > DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF)
-        && command_run_has_only_terminal_task_status_result(tool_results, status)
-}
-
-fn command_run_has_only_terminal_task_status_result(
-    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
-    status: &str,
-) -> bool {
-    let [tool_result] = tool_results else {
-        return false;
-    };
-    tool_result.tool_name == crate::manas::COMMAND_RUN_TOOL
-        && command_run_result_is_single_task_status(&tool_result.result, status)
-}
-
 fn messages_with_initial_context_prefix(
     initial_messages: &[serde_json::Value],
     session_messages: Vec<serde_json::Value>,
@@ -1045,11 +1003,9 @@ fn estimated_new_context_tokens(
 fn terminal_status_needs_final_response_turn(
     terminal_task_status: Option<&str>,
     visible_reply_already_published: bool,
-    terminal_status_followed_command: bool,
 ) -> bool {
     match terminal_task_status {
-        Some("done") => true,
-        Some("question") => !visible_reply_already_published || terminal_status_followed_command,
+        Some("done" | "question") => !visible_reply_already_published,
         _ => false,
     }
 }
@@ -1061,9 +1017,8 @@ mod tests {
         complete_active_doing_task_after_non_planning_reply, increment_turn_with_fresh_timestamp,
         manas_max_turns, messages_with_initial_context_prefix,
         should_auto_complete_non_planning_doing_after_tool_turn,
-        should_continue_no_tool_task_status_retry, should_end_turn_without_task_status_backfill,
-        should_retry_no_tool_task_status, terminal_status_needs_final_response_turn,
-        DEFAULT_MANAS_MAX_TURNS,
+        should_continue_no_tool_task_status_retry, should_retry_no_tool_task_status,
+        terminal_status_needs_final_response_turn, DEFAULT_MANAS_MAX_TURNS,
     };
     use crate::tool_router::execute_tool::ToolExecutionResult;
     use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
@@ -1315,120 +1270,28 @@ mod tests {
     }
 
     #[test]
-    fn long_visible_terminal_task_status_can_end_without_backfill_only_when_single_status_call() {
-        let status_result = ToolExecutionResult {
-            tool_name: "command_run".to_string(),
-            arguments: json!({"commands":[{"command_type":"task_status"}]}),
-            result: json!({"results":[{
-                "command_type":"task_status",
-                "success":true,
-                "output":{"task_status":{"status":"done"}}
-            }]}),
-            success: true,
-            error: None,
-        };
-        let question_status_result = ToolExecutionResult {
-            tool_name: "command_run".to_string(),
-            arguments: json!({"commands":[{"command_type":"task_status"}]}),
-            result: json!({"results":[{
-                "command_type":"task_status",
-                "success":true,
-                "output":{"task_status":{"status":"question"}}
-            }]}),
-            success: true,
-            error: None,
-        };
-        let doing_status_result = ToolExecutionResult {
-            tool_name: "command_run".to_string(),
-            arguments: json!({"commands":[{"command_type":"task_status"}]}),
-            result: json!({"results":[{
-                "command_type":"task_status",
-                "success":true,
-                "output":{"task_status":{"status":"doing"}}
-            }]}),
-            success: true,
-            error: None,
-        };
-        let long_reply = "x".repeat(1_001);
-
-        assert!(should_end_turn_without_task_status_backfill(
-            std::slice::from_ref(&status_result),
+    fn terminal_status_only_needs_final_response_when_no_reply_is_visible() {
+        assert!(!terminal_status_needs_final_response_turn(
             Some("done"),
-            Some(&long_reply),
-        ));
-        assert!(!should_end_turn_without_task_status_backfill(
-            std::slice::from_ref(&status_result),
-            Some("done"),
-            Some(&"x".repeat(1_000)),
-        ));
-        assert!(should_end_turn_without_task_status_backfill(
-            std::slice::from_ref(&question_status_result),
-            Some("question"),
-            Some(&long_reply),
-        ));
-        assert!(!should_end_turn_without_task_status_backfill(
-            std::slice::from_ref(&doing_status_result),
-            Some("doing"),
-            Some(&long_reply),
-        ));
-
-        let mut with_command = status_result.clone();
-        with_command.result = json!({"results":[
-            {"command_type":"shell_command","success":true,"output":"ok"},
-            {"command_type":"task_status","success":true,"output":{"task_status":{"status":"done"}}}
-        ]});
-        assert!(!should_end_turn_without_task_status_backfill(
-            &[with_command],
-            Some("done"),
-            Some(&long_reply),
-        ));
-
-        let multibyte_reply_over_byte_cutoff = "完".repeat(400);
-        assert!(should_end_turn_without_task_status_backfill(
-            &[status_result],
-            Some("done"),
-            Some(&multibyte_reply_over_byte_cutoff),
-        ));
-    }
-
-    #[test]
-    fn terminal_done_skips_final_response_turn_when_reply_is_already_visible() {
-        assert!(terminal_status_needs_final_response_turn(
-            Some("done"),
-            true,
-            false,
+            true
         ));
         assert!(terminal_status_needs_final_response_turn(
             Some("done"),
-            false,
-            false,
-        ));
-        assert!(terminal_status_needs_final_response_turn(
-            Some("done"),
-            true,
-            true,
+            false
         ));
         assert!(!terminal_status_needs_final_response_turn(
             Some("question"),
             true,
-            false,
         ));
         assert!(terminal_status_needs_final_response_turn(
             Some("question"),
             false,
-            false,
-        ));
-        assert!(terminal_status_needs_final_response_turn(
-            Some("question"),
-            true,
-            true,
         ));
         assert!(!terminal_status_needs_final_response_turn(
             Some("doing"),
-            false,
-            true,
+            false
         ));
-        assert!(!terminal_status_needs_final_response_turn(None, true, true));
+        assert!(!terminal_status_needs_final_response_turn(None, true));
     }
 
     #[test]

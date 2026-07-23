@@ -519,7 +519,7 @@ fn single_done_task_status_with_long_visible_reply_completes_without_backfill_tu
                 && entry
                     .get("content")
                     .and_then(Value::as_str)
-                    .is_some_and(|content| content.len() > 1_000)
+                    .is_some_and(|content| content.len() > 200)
         ));
     assert_eq!(
         provider
@@ -528,12 +528,12 @@ fn single_done_task_status_with_long_visible_reply_completes_without_backfill_tu
             .expect("mock provider requests lock")
             .len(),
         1,
-        "runtime must not send the single done task_status tool result back to the provider when the assistant message already exceeds 1000 characters"
+        "an already-visible completion summary must not trigger another provider runtime"
     );
 }
 
 #[test]
-fn single_done_task_status_with_short_visible_reply_is_backfilled() {
+fn single_done_task_status_with_short_visible_reply_is_not_generated_twice() {
     let _session_db = session_db_support::SessionDbTestService::start(&ENV_LOCK);
     let workspace = create_rust_workspace();
     let provider = MockProvider::start_task_status_done_with_short_visible_reply();
@@ -572,28 +572,31 @@ fn single_done_task_status_with_short_visible_reply_is_backfilled() {
         },
         workspace,
     )
-    .expect("single done task_status with a short visible reply should backfill");
+    .expect("single done task_status with a short visible reply should complete");
 
     assert_eq!(result.session.state, SessionState::Completed);
+    let visible_reply_count = result
+        .session
+        .session_log
+        .iter()
+        .map(|entry| entry.value())
+        .filter(|entry| {
+            entry.get("role").and_then(Value::as_str) == Some("assistant")
+                && entry.get("content").and_then(Value::as_str)
+                    == Some("Done. Short visible reply.")
+        })
+        .count();
+    assert_eq!(
+        visible_reply_count, 1,
+        "the visible completion summary must be persisted exactly once"
+    );
     let requests = provider
         .requests
         .lock()
         .expect("mock provider requests lock");
-    assert!(
-        requests.len() >= 2,
-        "runtime must send a short single done task_status result back to the provider before ending; requests={requests:#?}"
-    );
-    let second_request = requests
-        .get(1)
-        .expect("second provider request should exist");
-    let serialized = second_request.to_string();
-    assert!(
-        serialized.contains("function_call_output"),
-        "second provider request should replay command_run function output: {second_request:#?}"
-    );
-    assert!(
-        serialized.contains("call_task_status_done_short"),
-        "second provider request should bind the tool output to the original provider call id: {second_request:#?}"
+    assert_eq!(
+        requests.len(), 1,
+        "an already-visible completion summary must not trigger another provider runtime; requests={requests:#?}"
     );
 }
 

@@ -12,6 +12,7 @@ import {
   delay,
   listen,
   composerHintPattern,
+  markerCount,
   regexCount,
   scrollTerminalTo,
   seedTerminalScrollback,
@@ -21,6 +22,7 @@ import {
   submitTypedPrompt,
   terminalBufferText,
   terminalText,
+  terminalViewportPosition,
   waitForComposer,
   waitForSessionPicker,
   waitForUrl,
@@ -578,6 +580,7 @@ async function main() {
     });
     session = { ...session, status: "idle" };
     gatewayEvent("session.status", { sessionID, status: "idle" });
+    await scrollTerminalTo(page, "bottom");
     await waitForComposer(page);
     captures.push(await capture(page, "07-final"));
 
@@ -671,23 +674,40 @@ async function main() {
 
     const round2MessageID = "msg-stream-round-2";
     const round2PartID = "part-stream-round-2";
+    const round2Opening = "<strong>ROUND2_STREAM_MARKER_A second round starts.\n";
+    const round2Middle =
+      Array.from(
+        { length: 100 },
+        (_item, index) =>
+          `ROUND2_STREAM_MARKER_B_${String(index + 1).padStart(3, "0")} keeps streaming while scrolled to the middle.\n`,
+      ).join("") + "</strong>\n";
     const round2Text =
-      "ROUND2_STREAM_MARKER_A second round starts.\n" +
-      "ROUND2_STREAM_MARKER_B keeps streaming while scrolled to top.\n" +
-      "ROUND2_STREAM_MARKER_C finishes after returning to bottom.\n";
-    await streamShortChunks(
-      "ROUND2_STREAM_MARKER_A second round starts.\n",
-      round2MessageID,
-      round2PartID,
-      "envelope",
+      round2Opening + round2Middle + "ROUND2_STREAM_MARKER_C finishes after returning to bottom.\n";
+    await streamShortChunks(round2Opening, round2MessageID, round2PartID, "envelope");
+    await scrollTerminalTo(page, "middle");
+    const middleViewportBeforeStream = await terminalViewportPosition(page);
+    assert.ok(
+      middleViewportBeforeStream.viewportY > 0 &&
+        middleViewportBeforeStream.viewportY < middleViewportBeforeStream.baseY,
+      `test setup should place the viewport in the middle: ${JSON.stringify(middleViewportBeforeStream)}`,
     );
-    await scrollTerminalTo(page, "top");
-    await streamShortChunks(
-      "ROUND2_STREAM_MARKER_B keeps streaming while scrolled to top.\n",
-      round2MessageID,
-      round2PartID,
-      "envelope",
+    streamDeltaFor(round2MessageID, round2PartID, round2Middle, "envelope");
+    await delay(500);
+    const middleViewportAfterStream = await terminalViewportPosition(page);
+    assert.equal(
+      middleViewportAfterStream.viewportY,
+      middleViewportBeforeStream.viewportY,
+      `live output must preserve the user's middle viewport: ${JSON.stringify({
+        before: middleViewportBeforeStream,
+        after: middleViewportAfterStream,
+      })}`,
     );
+    assert.ok(
+      middleViewportAfterStream.viewportY > 0 &&
+        middleViewportAfterStream.viewportY < middleViewportAfterStream.baseY,
+      `live output must not pull the viewport to either edge: ${JSON.stringify(middleViewportAfterStream)}`,
+    );
+    captures.push(await capture(page, "11-round2-stream-middle"));
     await scrollTerminalTo(page, "bottom");
     await streamShortChunks(
       "ROUND2_STREAM_MARKER_C finishes after returning to bottom.\n",
@@ -739,7 +759,11 @@ async function main() {
     gatewayEvent("session.status", { sessionID, status: "busy" });
     const handoffMessageID = "msg-frame-handoff-text";
     const handoffPartID = "part-frame-handoff-text";
-    const handoffText = "FRAME_HANDOFF_TEXT_MARKER stays visible during live-to-cache.\n";
+    const handoffText =
+      Array.from(
+        { length: 28 },
+        (_item, index) => `Summary detail ${String(index + 1).padStart(2, "0")} remains stable.`,
+      ).join("\n") + "\nFRAME_HANDOFF_TEXT_MARKER stays visible during live-to-cache.\n";
     const handoffCommand = {
       id: "msg-frame-handoff-command",
       cmd: "FRAME_HANDOFF_COMMAND_MARKER",
@@ -779,7 +803,16 @@ async function main() {
     assertNoMarkerBlink(handoffSamples, handoffMarkers, "frame handoff");
     captures.push(await capture(page, "13-frame-handoff-final"));
     const handoffBuffer = await terminalBufferText(page);
-    assert.ok(nonEmptyLineCount(handoffBuffer) >= nonEmptyLineCount(round2Buffer));
+    assert.equal(
+      markerCount(handoffBuffer, "Summary detail 01 remains stable."),
+      1,
+      "the first finalized summary line must appear exactly once in terminal scrollback",
+    );
+    assert.equal(
+      markerCount(handoffBuffer, "FRAME_HANDOFF_TEXT_MARKER"),
+      1,
+      "finalized handoff text must appear exactly once in terminal scrollback",
+    );
     assert.equal(messagePartCount(handoffMessageID), 1, "handoff text should finalize into cache");
     assert.equal(
       completedCommandCount([handoffCommand.id]),
