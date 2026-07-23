@@ -290,7 +290,20 @@ jobs:
         working-directory: apps/tui
         run: npx playwright install --with-deps chromium
       - name: Run TUI unit tests
-        run: npm --prefix apps/tui run test:unit
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          npm --prefix apps/tui run test:unit 2>&1 | tee tui-unit.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail_output="$(tail -n 120 tui-unit.log)"
+            tail_output="${tail_output//'%'/'%25'}"
+            tail_output="${tail_output//$'\r'/'%0D'}"
+            tail_output="${tail_output//$'\n'/'%0A'}"
+            echo "::error title=TUI unit test failure::$tail_output"
+          fi
+          exit "$status"
       - name: Run TUI e2e tests
         shell: bash
         run: |
@@ -305,13 +318,15 @@ jobs:
             echo "::error title=TUI E2E failure::$tail_output"
           fi
           exit "$status"
-      - name: Upload TUI e2e failure log
+      - name: Upload TUI failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: tui-e2e-failure-log
-          path: tui-e2e.log
-          if-no-files-found: error
+          name: tui-failure-logs
+          path: |
+            tui-unit.log
+            tui-e2e.log
+          if-no-files-found: warn
 
   gui-tests:
     name: GUI Check Unit And E2E

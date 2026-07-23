@@ -362,7 +362,7 @@ async function main() {
     await sendTerminalInput(i18n, "rich", "i18n", "/language zh-CN\r");
     await waitForText(i18n, /设置/u);
     await sendTerminalInput(i18n, "rich", "i18n", "\x1b");
-    await waitForText(i18n, /Enter：发送/u);
+    await waitForText(i18n, /Enter: 发送/u);
     await sendTerminalInput(i18n, "rich", "i18n", "/personas\r");
     await waitForText(i18n, /均衡而有活力/);
     const chinesePersona = await terminalViewportText(i18n);
