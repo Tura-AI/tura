@@ -716,10 +716,7 @@ fn marker_command(output_path: &std::path::Path, step: u64) -> serde_json::Value
     })
 }
 
-fn write_completed_command_run_stream(
-    stream: &mut TcpStream,
-    commands: Vec<serde_json::Value>,
-) {
+fn write_completed_command_run_stream(stream: &mut TcpStream, commands: Vec<serde_json::Value>) {
     let arguments = json!({
         "commands": commands,
         "step_summary": "Run a single local command before the provider stream completes."
