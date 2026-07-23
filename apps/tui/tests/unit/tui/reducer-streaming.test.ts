@@ -231,7 +231,7 @@ test("reducer commits active live stream when session becomes idle", () => {
   assert.equal(assistant?.parts[0]?.text, "idle commit response");
 });
 
-test("reducer does not duplicate a live delta when its full part snapshot arrives", () => {
+test("reducer does not duplicate summary text when its full part snapshot arrives", () => {
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",
     session: { ...session, status: "busy" },
@@ -252,7 +252,7 @@ test("reducer does not duplicate a live delta when its full part snapshot arrive
           createdAt: 50,
           updatedAt: 51,
           field: "text",
-          delta: "streamed once",
+          delta: "Final summary appears once.",
         },
       },
     },
@@ -277,7 +277,7 @@ test("reducer does not duplicate a live delta when its full part snapshot arrive
                 sessionID: "sess-1",
                 messageID: "runtime-snapshot.message",
                 type: "text",
-                text: "streamed once",
+                text: "Final summary appears once.",
               },
               {
                 id: "runtime-snapshot.tool.command_run",
@@ -308,7 +308,7 @@ test("reducer does not duplicate a live delta when its full part snapshot arrive
             sessionID: "sess-1",
             messageID: "runtime-snapshot.message",
             type: "text",
-            text: "streamed once",
+            text: "Final summary appears once.",
           },
         },
       },
@@ -319,7 +319,7 @@ test("reducer does not duplicate a live delta when its full part snapshot arrive
   assert.equal(
     displayMessages(state).find((message) => message.id === "runtime-snapshot.message")?.parts[0]
       .text,
-    "streamed once",
+    "Final summary appears once.",
   );
 
   state = reducer(state, {
@@ -336,7 +336,7 @@ test("reducer does not duplicate a live delta when its full part snapshot arrive
   assert.equal(Object.values(state.liveStreams).length, 0);
   assert.equal(
     state.messages.find((message) => message.id === "runtime-snapshot.message")?.parts[0].text,
-    "streamed once",
+    "Final summary appears once.",
   );
 });
 

@@ -173,6 +173,12 @@ tests, and all architecture docs in one change.
 - Execute tool calls.
 - Force final response when needed.
 
+When a provider emits visible text and then only a terminal `task_status`,
+`manas/process.rs` treats replies of 200 bytes or fewer as incomplete and
+replays the tool result for a final response. Replies over 200 bytes end the
+turn without that backfill. The threshold is byte-based so it matches the
+provider payload boundary used by the runtime.
+
 Keep both `mod.rs` files as declaration and override seams. Do not place large
 loops, prompt assembly, tool filtering, or JSON parsing there.
 

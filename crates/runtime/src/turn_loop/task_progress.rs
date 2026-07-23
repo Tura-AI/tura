@@ -35,6 +35,17 @@ fn command_run_item_terminal_task_status(item: &serde_json::Value) -> Option<Str
         .map(ToString::to_string)
 }
 
+pub(crate) fn command_run_result_is_single_task_status(
+    result: &serde_json::Value,
+    status: &str,
+) -> bool {
+    let items = command_run_result_items(result);
+    let [item] = items.as_slice() else {
+        return false;
+    };
+    command_run_item_terminal_task_status(item).as_deref() == Some(status)
+}
+
 pub(crate) fn command_run_result_has_command(result: &serde_json::Value) -> bool {
     command_run_result_items(result).into_iter().any(|item| {
         command_result_type(item).is_some_and(|command_type| command_type != TASK_STATUS_COMMAND)
@@ -254,6 +265,10 @@ mod tests {
             }]
         });
         assert!(!super::command_run_result_has_command(&status_only));
+        assert!(super::command_run_result_is_single_task_status(
+            &status_only,
+            "done"
+        ));
 
         let batched_status_only = json!({
             "results": [{
@@ -266,6 +281,10 @@ mod tests {
             }]
         });
         assert!(!super::command_run_result_has_command(&batched_status_only));
+        assert!(super::command_run_result_is_single_task_status(
+            &batched_status_only,
+            "done"
+        ));
     }
 
     fn session_with_tasks(tasks: Vec<TaskStep>) -> SessionManagement {
