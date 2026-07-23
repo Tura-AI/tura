@@ -878,7 +878,7 @@ fn wait_for_session_parent(
             .get_session(session_id.to_string())
             .ok()
             .flatten()
-            .and_then(|snapshot| snapshot.parent_id)
+            .and_then(|snapshot| snapshot.lifecycle_projection.parent_id)
             .as_deref()
             == Some(parent_id)
         {
@@ -890,7 +890,7 @@ fn wait_for_session_parent(
         .get_session(session_id.to_string())
         .ok()
         .flatten()
-        .and_then(|snapshot| snapshot.parent_id);
+        .and_then(|snapshot| snapshot.lifecycle_projection.parent_id);
     panic!(
         "session parent was not applied within 10s; session={session_id}; expected_parent={parent_id}; latest_parent={latest_parent:?}"
     );

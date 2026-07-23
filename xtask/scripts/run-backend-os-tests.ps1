@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
+$ScriptStartedAt = Get-Date
 
 Set-Location $RepoRoot
 
@@ -72,6 +73,54 @@ function Get-CargoTestArguments {
   $arguments
 }
 
+function Stop-ProcessTree {
+  param([int]$ProcessId)
+  if ($IsWindows -or $env:OS -eq "Windows_NT") {
+    try {
+      & taskkill.exe /PID $ProcessId /T /F *> $null
+      if ($LASTEXITCODE -ne 0) {
+        Write-Host "warning: taskkill could not terminate process tree $ProcessId (exit $LASTEXITCODE)"
+      }
+    } catch {
+      Write-Host "warning: taskkill could not terminate process tree ${ProcessId}: $($_.Exception.Message)"
+    }
+    return
+  }
+  Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+function Test-IsRepoTargetProcess {
+  param([string]$ProcessPath)
+  if (-not $ProcessPath) {
+    return $false
+  }
+  $comparison = [System.StringComparison]::OrdinalIgnoreCase
+  if (-not $ProcessPath.StartsWith($RepoRoot.Path, $comparison)) {
+    return $false
+  }
+  $separator = [System.IO.Path]::DirectorySeparatorChar
+  $targetMarker = "${separator}target${separator}"
+  $ProcessPath.IndexOf($targetMarker, $comparison) -ge 0
+}
+
+function Stop-RepoTuraProcesses {
+  $names = @("tura", "tura_gui", "tura_gateway", "tura_router", "tura_session_db", "tura_runtime", "tura_exec")
+  foreach ($candidate in (Get-Process -Name $names -ErrorAction SilentlyContinue)) {
+    try {
+      $path = $candidate.Path
+      $startedAt = $candidate.StartTime
+    } catch {
+      continue
+    }
+    if ($startedAt -lt $ScriptStartedAt) {
+      continue
+    }
+    if (Test-IsRepoTargetProcess $path) {
+      Stop-ProcessTree -ProcessId $candidate.Id
+    }
+  }
+}
+
 function Invoke-CargoTestWithTimeout {
   param([string[]]$Arguments, [int]$TimeoutSeconds, [string]$Label)
   $stdoutLog = New-TemporaryFile
@@ -84,19 +133,28 @@ function Invoke-CargoTestWithTimeout {
     -RedirectStandardOutput $stdoutLog `
     -RedirectStandardError $stderrLog `
     -PassThru
+  $processHandle = $process.Handle
   if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    $process.WaitForExit()
+    Stop-ProcessTree -ProcessId $process.Id
+    if ($process.WaitForExit(5000)) {
+      $process.Refresh()
+    } else {
+      Write-Host "warning: cargo process $($process.Id) did not exit within 5s after forced tree termination"
+    }
+    Stop-RepoTuraProcesses
     $lines = Write-CargoLogOutput $stdoutLog $stderrLog
     Write-BackendOsFailureAnnotation $Label "timeout after ${TimeoutSeconds}s" $lines
     Remove-Item -LiteralPath $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
     throw "cargo $($Arguments -join ' ') exceeded ${TimeoutSeconds}s"
   }
+  $process.Refresh()
+  $exitCode = $process.ExitCode
   $lines = Write-CargoLogOutput $stdoutLog $stderrLog
-  if ($process.ExitCode -ne 0) {
-    Write-BackendOsFailureAnnotation $Label "exit code $($process.ExitCode)" $lines
+  if ($exitCode -ne 0) {
+    Stop-RepoTuraProcesses
+    Write-BackendOsFailureAnnotation $Label "exit code $exitCode" $lines
     Remove-Item -LiteralPath $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
-    exit $process.ExitCode
+    exit $exitCode
   }
   Remove-Item -LiteralPath $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
 }

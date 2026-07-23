@@ -8,6 +8,7 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { performance } from "node:perf_hooks";
+import { pipeline } from "node:stream";
 
 export const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 
@@ -70,6 +71,7 @@ export function defaultBackendStressConfig(env = process.env, overrides = {}) {
     ensureBuilds: boolEnv("TURA_FULL_CHAIN_ENSURE_BUILDS", false, env),
     forceKillTrackedChildren: boolEnv("TURA_FULL_CHAIN_FORCE_KILL_TRACKED_CHILDREN", false, env),
     gatewayVerifyConcurrency: intEnv("TURA_FULL_CHAIN_GATEWAY_VERIFY_CONCURRENCY", 20, env),
+    binaryProfile: env.TURA_FULL_CHAIN_BINARY_PROFILE === "release" ? "release" : "debug",
   };
   Object.assign(config, overrides);
   config.sessionCount = config.workspaces * config.tasksPerWorkspace;
@@ -97,7 +99,7 @@ export class BackendStressHarness {
     this.logsDir = path.join(this.runRoot, "logs");
     this.summaryPath = path.join(this.runRoot, "summary.json");
     this.turaHome = path.join(this.runRoot, "tura-home");
-    this.debugDir = path.join(repoRoot, "target", "debug");
+    this.binaryDir = path.join(repoRoot, "target", this.config.binaryProfile);
     this.exeSuffix = process.platform === "win32" ? ".exe" : "";
     this.timings = [];
     this.checks = [];
@@ -179,10 +181,10 @@ export class BackendStressHarness {
 
   requireArtifacts() {
     const required = [
-      path.join(this.debugDir, `tura_gateway${this.exeSuffix}`),
-      path.join(this.debugDir, `tura_router${this.exeSuffix}`),
-      path.join(this.debugDir, `tura_runtime${this.exeSuffix}`),
-      path.join(this.debugDir, `tura_session_db${this.exeSuffix}`),
+      path.join(this.binaryDir, `tura_gateway${this.exeSuffix}`),
+      path.join(this.binaryDir, `tura_router${this.exeSuffix}`),
+      path.join(this.binaryDir, `tura_runtime${this.exeSuffix}`),
+      path.join(this.binaryDir, `tura_session_db${this.exeSuffix}`),
     ];
     const missing = required.filter((file) => !fs.existsSync(file));
     if (missing.length > 0) {
@@ -193,10 +195,12 @@ export class BackendStressHarness {
   }
 
   ensureBuilds() {
+    const profileArgs = this.config.binaryProfile === "release" ? ["--release"] : [];
     runChecked(
       "cargo",
       [
         "build",
+        ...profileArgs,
         "-p",
         "gateway",
         "--bin",
@@ -295,7 +299,15 @@ export class BackendStressHarness {
 
   async writeProviderConfig(providerUrl) {
     const routes = {};
-    for (const route of ["fast", "thinking", "codex/gpt-5.5", "embedding_high", "embedding_low"]) {
+    for (const route of [
+      "fast",
+      "thinking",
+      "codex/gpt-5.5",
+      "codex/gpt-5.6-sol",
+      "codex/gpt-5.6-terra",
+      "embedding_high",
+      "embedding_low",
+    ]) {
       routes[route] = {
         default_temperature: 0,
         providers: [{ provider: "openai", model: "mock-coder", temperature: 0 }],
@@ -333,7 +345,7 @@ export class BackendStressHarness {
     return {
       ...process.env,
       ...extra,
-      PATH: `${this.debugDir}${path.delimiter}${process.env.PATH || ""}`,
+      PATH: `${this.binaryDir}${path.delimiter}${process.env.PATH || ""}`,
       TURA_HOME: this.turaHome,
       TURA_PROJECT_ROOT: repoRoot,
       OPENAI_API_KEY: "local-stress-key",
@@ -358,24 +370,17 @@ export class BackendStressHarness {
     });
     const stdoutStream = child.stdout && options.stdout ? fs.createWriteStream(options.stdout) : undefined;
     const stderrStream = child.stderr && options.stderr ? fs.createWriteStream(options.stderr) : undefined;
-    if (stdoutStream) {
-      stdoutStream.on("error", (error) => {
+    const pipeLog = (source, destination, label) => {
+      if (!source || !destination) return;
+      pipeline(source, destination, (error) => {
+        if (!error) return;
         this.recordCleanup({
           action: "log-stream-error",
-          label: `${options.label}:stdout`,
+          label: `${options.label}:${label}`,
           error: String(error?.message || error),
         });
       });
-    }
-    if (stderrStream) {
-      stderrStream.on("error", (error) => {
-        this.recordCleanup({
-          action: "log-stream-error",
-          label: `${options.label}:stderr`,
-          error: String(error?.message || error),
-        });
-      });
-    }
+    };
     const entry = {
       child,
       label: options.label || path.basename(command),
@@ -386,13 +391,13 @@ export class BackendStressHarness {
       stderrStream,
     };
     this.processes.push(entry);
-    if (child.stdout && stdoutStream) child.stdout.pipe(stdoutStream);
-    if (child.stderr && stderrStream) child.stderr.pipe(stderrStream);
+    pipeLog(child.stdout, stdoutStream, "stdout");
+    pipeLog(child.stderr, stderrStream, "stderr");
     return child;
   }
 
   async startGateway(port, workspace, providerConfig) {
-    const child = this.startLoggedProcess(path.join(this.debugDir, `tura_gateway${this.exeSuffix}`), [], {
+    const child = this.startLoggedProcess(path.join(this.binaryDir, `tura_gateway${this.exeSuffix}`), [], {
       cwd: workspace,
       env: this.testEnv({
         PORT: String(port),
@@ -864,6 +869,25 @@ export class BackendStressHarness {
     });
   }
 
+  async waitForGatewaySessionIdle(session, timeoutMs = 10_000) {
+    const deadline = Math.min(Date.now() + timeoutMs, this.stressDeadline ?? Number.POSITIVE_INFINITY);
+    let detail;
+    while (Date.now() < deadline) {
+      detail = await this.requestJson(
+        this.gateway.url,
+        "GET",
+        `/session/${encodeURIComponent(session.sessionId)}`,
+        undefined,
+        session.workspace,
+      );
+      if (detail?.status === "idle" || detail?.status === "error") return detail;
+      await delay(100);
+    }
+    throw new Error(
+      `timed out waiting for gateway session ${session.sessionId} to become idle; last status: ${detail?.status || "unknown"}`,
+    );
+  }
+
   async verifyGatewayVisibleSessions() {
     for (const workspace of [...new Set(this.sessions.map((session) => session.workspace))]) {
       const hydrated = await this.requestJson(
@@ -882,13 +906,7 @@ export class BackendStressHarness {
     let visibleMessages = 0;
     const samples = [];
     await mapLimit(this.sessions, this.config.gatewayVerifyConcurrency, async (session) => {
-      const detail = await this.requestJson(
-        this.gateway.url,
-        "GET",
-        `/session/${encodeURIComponent(session.sessionId)}`,
-        undefined,
-        session.workspace,
-      );
+      const detail = await this.waitForGatewaySessionIdle(session);
       this.recordCheck("gateway-session-detail-visible", detail?.id === session.sessionId, {
         sessionId: session.sessionId,
         mode: session.mode,

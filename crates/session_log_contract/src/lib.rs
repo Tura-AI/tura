@@ -16,7 +16,7 @@ pub use protocol::{
     RuntimeEventCommitOutcome, RuntimeLeaseOutcome, RuntimeRegistrationOutcome, RuntimeReplay,
     SessionCommandResult, SessionContextRecord, SessionDeltaEntry, SessionFeedAppendOutcome,
     SessionFeedCommandUpdate, SessionFeedEntry, SessionFeedEvent, SessionLogCommand,
-    SessionLogResponse, SessionMetadataPatch, SessionRecord, SessionRecordProjection,
-    SessionSnapshot, SessionSummary, UpdateSessionRequest, UpdateSessionTodosRequest,
-    WorkspaceSummary,
+    SessionLogResponse, SessionMetadata, SessionMetadataPatch, SessionRecord,
+    SessionRecordProjection, SessionSnapshot, SessionSummary, UpdateSessionRequest,
+    UpdateSessionTodosRequest, WorkspaceSummary,
 };

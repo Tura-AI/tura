@@ -937,19 +937,17 @@ dependencies = [
  "futures",
  "image",
  "lazy_static",
+ "lifecycle",
  "once_cell",
  "parking_lot",
  "personas",
  "provider",
  "reqwest",
- "router",
  "router_contract",
- "runtime",
  "runtime_contract",
  "semver",
  "serde",
  "serde_json",
- "session_log",
  "session_log_contract",
  "sha2",
  "sysinfo",
@@ -1847,7 +1845,9 @@ dependencies = [
 name = "lifecycle"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2925,31 +2925,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "router"
-version = "0.1.0"
-dependencies = [
- "agents",
- "anyhow",
- "fs2",
- "parking_lot",
- "personas",
- "router_contract",
- "runtime_contract",
- "serde",
- "serde_json",
- "session_log",
- "session_log_contract",
- "sysinfo",
- "tokio",
- "toml 0.8.2",
- "tools",
- "tracing",
- "tura_path",
- "uuid",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "router_contract"
 version = "0.1.0"
 dependencies = [
@@ -2968,13 +2943,10 @@ dependencies = [
  "personas",
  "provider",
  "redis",
- "reqwest",
- "router",
  "router_contract",
  "runtime_contract",
  "serde",
  "serde_json",
- "session_log",
  "session_log_contract",
  "sysinfo",
  "tokio",
@@ -2991,6 +2963,7 @@ dependencies = [
  "chrono",
  "gateway",
  "lifecycle",
+ "proc-macro2",
  "runtime",
  "serde",
  "serde_json",
@@ -3005,6 +2978,7 @@ dependencies = [
 name = "runtime_contract"
 version = "0.1.0"
 dependencies = [
+ "lifecycle",
  "serde",
  "serde_json",
  "uuid",
@@ -3242,14 +3216,20 @@ dependencies = [
  "session_log_contract",
  "tracing",
  "tura_path",
+ "uuid",
 ]
 
 [[package]]
 name = "session_log_contract"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
+ "fs2",
+ "lifecycle",
  "serde",
  "serde_json",
+ "tura_path",
 ]
 
 [[package]]
@@ -3784,7 +3764,6 @@ dependencies = [
  "async-trait",
  "futures",
  "provider",
- "regex",
  "serde",
  "serde_json",
  "tokio",

@@ -500,7 +500,6 @@ mod tests {
                 need_validator: false,
                 validator_name: None,
             },
-            chrono::Utc::now(),
         );
 
         let identity = turn_identity(&agent, "Local User", "gpt-5.5", "codex", 255_000, "en");
@@ -821,7 +820,6 @@ mod tests {
                 need_validator: false,
                 validator_name: None,
             },
-            chrono::Utc::now(),
         )
     }
 

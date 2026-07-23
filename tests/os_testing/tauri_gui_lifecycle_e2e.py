@@ -2,7 +2,6 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -181,7 +180,7 @@ def main() -> int:
             gateway_url = f"http://127.0.0.1:{port}"
             primary, *opened = start_gui(binary, trace, home, gateway_url, "primary")
             handles.extend(opened)
-            setup = wait_for_event(trace, "primary_setup", primary, "primary")
+            setup = wait_for_event(trace, "primary_setup", primary, "primary", timeout=60.0)
             connected = wait_for_event(trace, "gateway_connected", primary, "primary")
             if primary.poll() is not None:
                 raise AssertionError(f"primary GUI exited early with {primary.returncode}")

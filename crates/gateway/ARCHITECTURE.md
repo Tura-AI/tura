@@ -225,9 +225,9 @@ The gateway binary also exposes the raw router/session-log bridge:
 '{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_gateway.exe session-log
 ```
 
-Use `get_session` when debugging the persisted `SessionInfo`, `management`,
-`task_management`, and todos. Use `list_session_records` when debugging
-message/event history.
+Use `get_session` when debugging the typed `SessionSnapshot`: canonical
+`lifecycle_projection`, persisted `management`, frontend `metadata`, and todos.
+Use `list_session_records` when debugging message/event history.
 
 ## Persistence Model
 

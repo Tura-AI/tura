@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from playwright.async_api import async_playwright, expect
+from playwright.async_api import async_playwright
 
 
 ROOT = Path(__file__).resolve().parents[5]

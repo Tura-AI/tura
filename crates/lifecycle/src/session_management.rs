@@ -1,8 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
+use std::borrow::Borrow;
 use std::collections::HashSet;
-use std::ops::{Deref, DerefMut};
+use std::fmt;
+use std::ops::Deref;
 use std::path::PathBuf;
 
 /// UTC timestamp with millisecond precision.
@@ -14,7 +17,7 @@ pub type UtcDateTimeMs = DateTime<Utc>;
 
 use crate::{
     ContextTokenStats, PlanStatus, SessionAggregate, SessionCommand, SessionId, SessionProjection,
-    SessionQuery, SessionState, TaskPlan, TaskStep,
+    SessionQuery, SessionState, TaskPlan,
 };
 
 pub type AgentName = String;
@@ -34,8 +37,178 @@ pub type UserInputText = String;
 /// Summarized user goal extracted from the original request.
 pub type UserGoal = String;
 
-/// Free-form execution log entry.
-pub type SessionLogEntry = String;
+/// Canonical execution record retaining its exact wire bytes and parsed value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionLogEntry {
+    raw: String,
+    value: Value,
+}
+
+impl SessionLogEntry {
+    pub fn new(raw: impl Into<String>) -> Self {
+        let raw = raw.into();
+        let value = serde_json::from_str(&raw).unwrap_or_else(|_| Value::String(raw.clone()));
+        Self { raw, value }
+    }
+
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
+    pub fn into_raw(self) -> String {
+        self.raw
+    }
+}
+
+impl From<String> for SessionLogEntry {
+    fn from(raw: String) -> Self {
+        Self::new(raw)
+    }
+}
+
+impl From<&str> for SessionLogEntry {
+    fn from(raw: &str) -> Self {
+        Self::new(raw)
+    }
+}
+
+impl AsRef<str> for SessionLogEntry {
+    fn as_ref(&self) -> &str {
+        self.raw()
+    }
+}
+
+impl Borrow<str> for SessionLogEntry {
+    fn borrow(&self) -> &str {
+        self.raw()
+    }
+}
+
+impl Deref for SessionLogEntry {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.raw()
+    }
+}
+
+impl fmt::Display for SessionLogEntry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.raw())
+    }
+}
+
+impl PartialEq<String> for SessionLogEntry {
+    fn eq(&self, other: &String) -> bool {
+        self.raw() == other
+    }
+}
+
+impl Serialize for SessionLogEntry {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.raw())
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionLogEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self::new)
+    }
+}
+
+/// Retained execution history with append-time indexes owned by the collection.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SessionLog {
+    entries: Vec<SessionLogEntry>,
+    tool_result_count: u64,
+}
+
+impl SessionLog {
+    pub fn from_raw(entries: impl IntoIterator<Item = String>) -> Self {
+        let entries = entries
+            .into_iter()
+            .map(SessionLogEntry::new)
+            .collect::<Vec<_>>();
+        let tool_result_count = count_tool_results(&entries);
+        Self {
+            entries,
+            tool_result_count,
+        }
+    }
+
+    pub fn push(&mut self, raw: impl Into<String>) {
+        let entry = SessionLogEntry::new(raw);
+        if is_tool_result(entry.value()) {
+            self.tool_result_count = self.tool_result_count.saturating_add(1);
+        }
+        self.entries.push(entry);
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.tool_result_count = 0;
+    }
+
+    fn retain_from(&mut self, index: usize) {
+        self.entries.drain(0..index);
+        self.tool_result_count = count_tool_results(&self.entries);
+    }
+
+    fn next_tool_result_sequence(&self) -> u64 {
+        self.tool_result_count.saturating_add(1)
+    }
+}
+
+impl Deref for SessionLog {
+    type Target = [SessionLogEntry];
+
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+
+impl<'a> IntoIterator for &'a SessionLog {
+    type Item = &'a SessionLogEntry;
+    type IntoIter = std::slice::Iter<'a, SessionLogEntry>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter()
+    }
+}
+
+impl Serialize for SessionLog {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.entries.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionLog {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<SessionLogEntry>::deserialize(deserializer).map(|entries| {
+            let tool_result_count = count_tool_results(&entries);
+            Self {
+                entries,
+                tool_result_count,
+            }
+        })
+    }
+}
 
 /// JSON text describing the tools needed by a step.
 pub type StepToolJson = String;
@@ -132,7 +305,7 @@ pub struct SessionManagement {
     /// Total turn count across the whole tree of the session.
     pub session_current_turn: u64,
     /// Historical execution log entries.
-    pub session_log: Vec<SessionLogEntry>,
+    pub session_log: SessionLog,
     /// Retention state for compacted session_log history.
     pub session_log_retention: SessionLogRetention,
     /// Session creation timestamp in UTC.
@@ -231,54 +404,37 @@ impl<'de> Deserialize<'de> for SessionManagement {
         D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct Wire {
             session_id: SessionId,
             session_name: SessionName,
-            #[serde(default = "default_auto_session_name")]
             auto_session_name: bool,
             session_directory: PathBuf,
             session_uses_docker: bool,
-            #[serde(default, deserialize_with = "deserialize_task_type")]
             task_type: SessionTaskType,
-            #[serde(default, deserialize_with = "deserialize_session_capabilities")]
             session_capabilities: SessionCapabilities,
             session_current_turn: u64,
-            session_log: Vec<SessionLogEntry>,
-            #[serde(default)]
+            session_log: SessionLog,
             session_log_retention: SessionLogRetention,
             session_created_at: UtcDateTimeMs,
             session_last_update_at: UtcDateTimeMs,
-            #[serde(default = "Utc::now")]
             session_last_user_message_at: UtcDateTimeMs,
             session_started_at: UtcDateTimeMs,
             input: SessionInput,
             user_goal: UserGoal,
-            #[serde(default)]
             current_objective: String,
-            #[serde(default, deserialize_with = "deserialize_task_plan")]
             task_plan: TaskPlan,
             state: SessionState,
-            #[serde(default = "default_use_last_tool_call_response")]
             use_last_tool_call_response: bool,
-            #[serde(default)]
             is_child_session: bool,
-            #[serde(default)]
             disable_permission_restrictions: bool,
-            #[serde(default)]
             planning_enabled: bool,
-            #[serde(default)]
             reflection_enabled: bool,
-            #[serde(default = "default_op_manual_enabled")]
             op_manual_enabled: bool,
-            #[serde(default)]
             no_op_manual: bool,
-            #[serde(default)]
             goal_mode: bool,
-            #[serde(default)]
             last_goal_user_input: String,
-            #[serde(default)]
             context_tokens: ContextTokenStats,
-            #[serde(default)]
             runtime_usage: serde_json::Value,
         }
 
@@ -385,24 +541,6 @@ impl Deref for SessionManagement {
     }
 }
 
-impl DerefMut for SessionManagement {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.lifecycle
-    }
-}
-
-fn default_use_last_tool_call_response() -> bool {
-    true
-}
-
-fn default_auto_session_name() -> bool {
-    true
-}
-
-fn default_op_manual_enabled() -> bool {
-    true
-}
-
 fn no_op_manual_enabled_from_env() -> bool {
     std::env::var("TURA_NO_OP_MANUAL")
         .ok()
@@ -506,7 +644,8 @@ impl SessionManagement {
         self.lifecycle.session_id = session_id;
     }
 
-    pub fn restore_state(&mut self, state: SessionState) {
+    #[cfg(test)]
+    fn restore_state(&mut self, state: SessionState) {
         self.lifecycle.state = state;
     }
 
@@ -549,7 +688,7 @@ impl SessionManagement {
             task_type: task_type.into_session_task_type(),
             session_capabilities: Vec::new(),
             session_current_turn: 0,
-            session_log: Vec::new(),
+            session_log: SessionLog::default(),
             session_log_retention: SessionLogRetention::default(),
             session_created_at: now,
             session_last_update_at: now,
@@ -579,6 +718,14 @@ impl SessionManagement {
             .map_err(|error| error.to_string())?;
         self.session_last_update_at = now;
         Ok(())
+    }
+
+    /// Replaces the task plan through the lifecycle state machine.
+    pub fn replace_task_plan(&mut self, task_plan: TaskPlan, now: UtcDateTimeMs) {
+        self.lifecycle
+            .execute(SessionCommand::ApplyTaskStatus { task_plan })
+            .expect("replacing a task plan is always valid");
+        self.session_last_update_at = now;
     }
 
     /// Prepares an existing conversation session for a new user turn.
@@ -677,8 +824,57 @@ impl SessionManagement {
 
     /// Appends a log entry and refreshes the update timestamp.
     pub fn push_log(&mut self, entry: impl Into<String>, now: UtcDateTimeMs) {
-        self.session_log.push(entry.into());
+        self.session_log.push(entry);
         self.session_last_update_at = now;
+    }
+
+    /// Replaces retained history at the persistence boundary and parses it once.
+    pub fn replace_session_log(&mut self, entries: impl IntoIterator<Item = String>) {
+        self.session_log = SessionLog::from_raw(entries);
+    }
+
+    pub fn clear_session_log(&mut self) {
+        self.session_log.clear();
+    }
+
+    pub fn next_tool_result_sequence(&self) -> u64 {
+        self.session_log.next_tool_result_sequence()
+    }
+
+    /// Builds the persisted management view without copying retained history.
+    pub fn persistence_view(&self, retained_from_sequence: u64) -> Self {
+        let mut session_log_retention = self.session_log_retention;
+        session_log_retention.omitted_entries = retained_from_sequence;
+        Self {
+            lifecycle: self.lifecycle.clone(),
+            session_name: self.session_name.clone(),
+            auto_session_name: self.auto_session_name,
+            session_directory: self.session_directory.clone(),
+            session_uses_docker: self.session_uses_docker,
+            task_type: self.task_type.clone(),
+            session_capabilities: self.session_capabilities.clone(),
+            session_current_turn: self.session_current_turn,
+            session_log: SessionLog::default(),
+            session_log_retention,
+            session_created_at: self.session_created_at,
+            session_last_update_at: self.session_last_update_at,
+            session_last_user_message_at: self.session_last_user_message_at,
+            session_started_at: self.session_started_at,
+            input: self.input.clone(),
+            user_goal: self.user_goal.clone(),
+            current_objective: self.current_objective.clone(),
+            use_last_tool_call_response: self.use_last_tool_call_response,
+            is_child_session: self.is_child_session,
+            disable_permission_restrictions: self.disable_permission_restrictions,
+            planning_enabled: self.planning_enabled,
+            reflection_enabled: self.reflection_enabled,
+            op_manual_enabled: self.op_manual_enabled,
+            no_op_manual: self.no_op_manual,
+            goal_mode: self.goal_mode,
+            last_goal_user_input: self.last_goal_user_input.clone(),
+            context_tokens: self.context_tokens,
+            runtime_usage: self.runtime_usage.clone(),
+        }
     }
 
     /// Records a compact boundary and drops log entries before the retained slice.
@@ -695,7 +891,7 @@ impl SessionManagement {
         let compact_entry_absolute = previous_omitted.saturating_add(compact_entry_index as u64);
 
         if retained_from_index > 0 {
-            self.session_log.drain(0..retained_from_index);
+            self.session_log.retain_from(retained_from_index);
             self.session_log_retention.omitted_entries = retained_from_absolute;
         }
 
@@ -721,12 +917,6 @@ impl SessionManagement {
         self.session_last_update_at = now;
     }
 
-    /// Adds one planned task step.
-    pub fn add_task_step(&mut self, step: TaskStep, now: UtcDateTimeMs) {
-        self.task_plan.detailed_tasks.push(step);
-        self.session_last_update_at = now;
-    }
-
     /// Increments the total turn count by one.
     pub fn increment_turn(&mut self, now: UtcDateTimeMs) {
         self.session_current_turn += 1;
@@ -742,7 +932,7 @@ impl SessionManagement {
     }
 
     pub fn task_management_json(&self) -> serde_json::Value {
-        crate::session_projection::task_management_json(self)
+        crate::session_projection::task_management_json(&self.task_plan, self.session_started_at)
     }
 }
 
@@ -781,6 +971,17 @@ fn normalize_task_type_values(values: impl IntoIterator<Item = String>) -> Sessi
         }
     }
     out
+}
+
+fn is_tool_result(value: &Value) -> bool {
+    value.get("type").and_then(Value::as_str) == Some("tool_result")
+}
+
+fn count_tool_results(entries: &[SessionLogEntry]) -> u64 {
+    entries
+        .iter()
+        .filter(|entry| is_tool_result(entry.value()))
+        .count() as u64
 }
 
 fn normalize_session_capability(value: &str) -> Option<String> {
@@ -848,27 +1049,6 @@ fn is_legacy_session_kind(value: &str) -> bool {
     )
 }
 
-fn deserialize_session_capabilities<'de, D>(
-    deserializer: D,
-) -> Result<SessionCapabilities, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    match value {
-        serde_json::Value::Array(values) => Ok(normalize_session_capabilities(
-            values
-                .into_iter()
-                .filter_map(|value| value.as_str().map(ToString::to_string)),
-        )),
-        serde_json::Value::String(value) => Ok(normalize_session_capabilities([value])),
-        serde_json::Value::Null => Ok(Vec::new()),
-        other => Err(serde::de::Error::custom(format!(
-            "session_capabilities must be a string array, got {other}"
-        ))),
-    }
-}
-
 fn goal_mode_enabled_from_env() -> bool {
     std::env::var("TURA_GOAL_MODE")
         .ok()
@@ -882,45 +1062,10 @@ fn env_bool_flag(value: &str) -> bool {
     )
 }
 
-fn deserialize_task_plan<'de, D>(deserializer: D) -> Result<TaskPlan, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    if value.is_array() {
-        let detailed_tasks: Vec<TaskStep> =
-            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
-        return Ok(TaskPlan {
-            plan_summary: String::new(),
-            detailed_tasks,
-        });
-    }
-    serde_json::from_value(value).map_err(serde::de::Error::custom)
-}
-
-fn deserialize_task_type<'de, D>(deserializer: D) -> Result<SessionTaskType, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    match value {
-        serde_json::Value::String(value) => Ok(normalize_task_type_values([value])),
-        serde_json::Value::Array(values) => {
-            Ok(normalize_task_type_values(values.into_iter().filter_map(
-                |value| value.as_str().map(ToString::to_string),
-            )))
-        }
-        serde_json::Value::Null => Ok(Vec::new()),
-        other => Err(serde::de::Error::custom(format!(
-            "task_type must be a string array, got {other}"
-        ))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{PlanStatus, SessionInput, SessionManagement, TaskStep};
-    use crate::{SessionState, StartCondition};
+    use super::{PlanStatus, SessionInput, SessionManagement};
+    use crate::{SessionState, StartCondition, TaskStep};
     use chrono::Utc;
     use std::ffi::OsString;
     use std::path::PathBuf;
@@ -1038,22 +1183,36 @@ mod tests {
     }
 
     #[test]
-    fn session_capabilities_persist_and_normalize_legacy_shapes() {
-        let mut value =
-            serde_json::to_value(session_in_state(SessionState::Running)).expect("serialize");
-        value["session_capabilities"] =
-            serde_json::json!(["shell_command", "command_run", "read_media", "read_media"]);
-
+    fn session_management_wire_is_strict_and_canonical() {
+        let session = session_in_state(SessionState::Running);
+        let value = serde_json::to_value(&session).expect("serialize canonical management");
         let decoded: SessionManagement =
-            serde_json::from_value(value).expect("session capabilities should deserialize");
+            serde_json::from_value(value.clone()).expect("canonical management round trip");
+        assert_eq!(decoded, session);
 
-        assert_eq!(
-            decoded.session_capabilities,
-            vec![
-                super::active_shell_command_name().to_string(),
-                "read_media".to_string()
-            ]
-        );
+        let mut unknown = value.clone();
+        unknown["legacy_state"] = serde_json::json!("running");
+        assert!(serde_json::from_value::<SessionManagement>(unknown).is_err());
+
+        let mut missing = value.clone();
+        missing
+            .as_object_mut()
+            .expect("management object")
+            .remove("auto_session_name");
+        assert!(serde_json::from_value::<SessionManagement>(missing).is_err());
+
+        for (field, legacy_value) in [
+            ("task_type", serde_json::json!("coding")),
+            ("session_capabilities", serde_json::json!("read_media")),
+            ("task_plan", serde_json::json!([])),
+        ] {
+            let mut legacy = value.clone();
+            legacy[field] = legacy_value;
+            assert!(
+                serde_json::from_value::<SessionManagement>(legacy).is_err(),
+                "legacy management field shape `{field}` must be rejected"
+            );
+        }
     }
 
     #[test]
@@ -1149,8 +1308,9 @@ mod tests {
     #[test]
     fn task_management_json_single_task_is_object() {
         let mut session = session_in_state(SessionState::Running);
-        session.task_plan.plan_summary = "Fix issue".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.plan_summary = "Fix issue".to_string();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "task-1".to_string(),
             step: 1,
             start_condition: StartCondition::SessionIdle,
@@ -1159,6 +1319,7 @@ mod tests {
             status: PlanStatus::Doing,
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, Utc::now());
 
         let value = session.task_management_json();
 
@@ -1174,21 +1335,23 @@ mod tests {
     #[test]
     fn task_management_json_multi_task_includes_start_conditions() {
         let mut session = session_in_state(SessionState::Running);
-        session.task_plan.plan_summary = "Release plan".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.plan_summary = "Release plan".to_string();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "idle".to_string(),
             step: 1,
             start_condition: StartCondition::SessionIdle,
             task_summary: "Wait for idle".to_string(),
             ..TaskStep::default()
         });
-        session.task_plan.detailed_tasks.push(TaskStep {
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "timer".to_string(),
             step: 2,
             start_condition: StartCondition::ScheduledTask,
             task_summary: "Run later".to_string(),
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, Utc::now());
 
         let value = session.task_management_json();
         let tasks = value["tasks"]

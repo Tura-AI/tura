@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
-use router_contract::{ConfigurableEntry, ExecuteCommandRequest, ToolPatch};
+use router_contract::{ExecuteCommandRequest, ToolPatch};
 use serde_json::json;
 use tura_router::registry::agent::UpsertAgentRequest;
 use tura_router::registry::persona::UpsertPersonaRequest;
@@ -500,7 +500,6 @@ fn router_registry_business_flow_bundle_uses_same_public_registries_without_cros
             .id,
         "bundle-persona"
     );
-    assert!(reloaded.tools.get("shell_command").is_some());
     assert!(reloaded
         .agents
         .delete("bundle-agent")

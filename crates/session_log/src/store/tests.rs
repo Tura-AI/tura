@@ -4,9 +4,13 @@ use super::helpers::{
     string_at, task_management_value,
 };
 use super::payload::load_workspace_session_payload;
-use lifecycle::{SessionAggregate, SessionEvent, SessionState, TaskPlan};
+use lifecycle::{
+    SessionAggregate, SessionEvent, SessionInput, SessionManagement, SessionQuery, SessionState,
+    TaskPlan,
+};
 use rusqlite::params;
 use serde_json::{json, Value};
+use session_log_contract::SessionMetadata;
 use std::path::Path;
 
 fn insert_workspace_session(
@@ -16,25 +20,11 @@ fn insert_workspace_session(
     updated_at: i64,
 ) {
     let state_text = session_state_text(state).expect("state text");
-    let management = json!({
-        "session_id": session_id,
-        "session_name": "Test session",
-        "state": state_text,
-        "session_last_update_at": "2026-01-01T00:00:00.000Z",
-        "task_plan": {
-            "plan_summary": "Plan",
-            "detailed_tasks": [{"task_id": "task-1"}]
-        }
-    });
-    let session = json!({
-        "id": session_id,
-        "directory": "C:/workspace",
-        "updated_at": updated_at,
-        "status": state.ui_status(),
-        "management": management
-    });
-    let task_plan =
-        serde_json::from_value::<TaskPlan>(management["task_plan"].clone()).expect("task plan");
+    let task_plan = serde_json::from_value::<TaskPlan>(json!({
+        "plan_summary": "Plan",
+        "detailed_tasks": [{"task_id": "task-1"}]
+    }))
+    .expect("task plan");
     let mut events = vec![SessionEvent::SessionCreated {
         task_plan: task_plan.clone(),
     }];
@@ -65,6 +55,42 @@ fn insert_workspace_session(
     }
     let aggregate = SessionAggregate::replay(session_id.to_string(), events.clone())
         .expect("fixture events should replay");
+    let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(updated_at)
+        .expect("fixture timestamp");
+    let projection = aggregate.query(SessionQuery::Lifecycle);
+    let mut management = SessionManagement::new(
+        session_id.to_string(),
+        "Test session".to_string(),
+        "C:/workspace".into(),
+        false,
+        Vec::<String>::new(),
+        SessionInput {
+            user_input: String::new(),
+            file_input: Vec::new(),
+            agent: None,
+            runtime_context: None,
+            planning_mode_override: None,
+        },
+        String::new(),
+        timestamp,
+    );
+    management.replace_lifecycle_projection(projection);
+    let metadata = SessionMetadata {
+        session_directory: "C:/workspace".to_string(),
+        model: None,
+        agent: None,
+        session_type: "coding".to_string(),
+        kill_processes_on_start: false,
+        validator_enabled: false,
+        force_planning: false,
+        model_variant: None,
+        model_acceleration_enabled: false,
+        disable_permission_restrictions: management.disable_permission_restrictions,
+        use_last_tool_call_response: management.use_last_tool_call_response,
+        auto_session_name: management.auto_session_name,
+        context_tokens: management.context_tokens,
+        runtime_usage: management.runtime_usage.clone(),
+    };
     with_connection(db_path, init_workspace_db, |conn| {
         conn.execute(
             "INSERT INTO sessions(
@@ -84,7 +110,7 @@ fn insert_workspace_session(
                 serde_json::to_string(&task_management_value(&aggregate.task_plan))
                     .expect("task json"),
                 serde_json::to_string(&management).expect("management json"),
-                serde_json::to_string(&session).expect("session json"),
+                serde_json::to_string(&metadata).expect("session json"),
                 "[]",
             ],
         )?;

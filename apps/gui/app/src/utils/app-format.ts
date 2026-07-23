@@ -25,19 +25,6 @@ export function copyText(value: string): void {
   }
 }
 
-export function formatModelLimit(value?: number): string {
-  if (!value) {
-    return "--";
-  }
-  if (value >= 1_000_000) {
-    return `${Math.round(value / 1_000_000)}M`;
-  }
-  if (value >= 1_000) {
-    return `${Math.round(value / 1_000)}K`;
-  }
-  return String(value);
-}
-
 export function eventBelongsToState(state: AppState, directory?: string | null): boolean {
   if (!directory || directory === "global") {
     return true;
@@ -107,52 +94,6 @@ function documentDirectoryFromHome(home: string): string {
 function joinPath(root: string, child: string): string {
   const separator = root.includes("\\") ? "\\" : "/";
   return `${root.replace(/[\\/]+$/u, "")}${separator}${child}`;
-}
-
-export function fixtureFiles(fixture: string | undefined, path = ""): FileInfo[] {
-  if (fixture !== "plan-sessions") {
-    return [];
-  }
-  const root = "C:\\Users\\liuliu\\Documents\\tura";
-  const makeFile = (
-    name: string,
-    relativePath: string,
-    type: "directory" | "file",
-    size = type === "directory" ? null : 128,
-  ): FileInfo => ({
-    name,
-    path: relativePath,
-    type,
-    absolute: `${root}\\${relativePath.replaceAll("/", "\\")}`,
-    ignored: false,
-    git_status: "not_git",
-    size_bytes: size,
-    modified_at: Date.now() - 12_000,
-  });
-  const tree: Record<string, FileInfo[]> = {
-    "": [
-      makeFile("apps", "apps", "directory"),
-      makeFile("crates", "crates", "directory"),
-      makeFile("README.md", "README.md", "file"),
-      makeFile("package.json", "package.json", "file"),
-    ],
-    apps: [
-      makeFile("gui", "apps/gui", "directory"),
-      makeFile("tui", "apps/tui", "directory"),
-      makeFile("app.config.ts", "apps/app.config.ts", "file"),
-    ],
-    "apps/gui": [
-      makeFile("app", "apps/gui/app", "directory"),
-      makeFile("e2e", "apps/gui/e2e", "directory"),
-      makeFile("package.json", "apps/gui/package.json", "file"),
-    ],
-    crates: [
-      makeFile("gateway", "crates/gateway", "directory"),
-      makeFile("runtime", "crates/runtime", "directory"),
-      makeFile("Cargo.toml", "crates/Cargo.toml", "file"),
-    ],
-  };
-  return tree[path] ?? [];
 }
 
 export function shortSessionTitle(title: string): string {
@@ -247,14 +188,6 @@ export function readConfigBoolean(
     }
   }
   return undefined;
-}
-
-export function inputHeight(value: string): string {
-  const lines = Math.min(
-    12,
-    Math.max(3, value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 72)),
-  );
-  return `${lines * 24 + 36}px`;
 }
 
 export function fileGitRemark(file: FileInfo): string {

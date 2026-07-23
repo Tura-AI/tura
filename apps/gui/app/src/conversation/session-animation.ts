@@ -4,10 +4,6 @@ export function sessionShowsBusyAnimation(status: Session["status"] | undefined)
   return status === "busy";
 }
 
-export function sessionIsWorking(status: Session["status"] | undefined): boolean {
-  return sessionShowsBusyAnimation(status);
-}
-
 export function sessionHasRunningCommand(messages: Message[]): boolean {
   return messages.some((message) =>
     message.parts.some((part) => {

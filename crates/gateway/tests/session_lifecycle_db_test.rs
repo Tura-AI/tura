@@ -33,8 +33,7 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
         false,
         false,
     );
-    let source_task_plan = source_info.management.task_plan.clone();
-    let mut source_management = source_info.management.clone();
+    let source_task_plan = source_info.projection.task_plan.clone();
     let source = session_store()
         .create_canonical_session(
             source_info,
@@ -43,6 +42,9 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
             },
         )
         .map_err(anyhow::Error::msg)?;
+    let mut source_management = get_persisted_session(&source.id)?
+        .expect("source session should be in DB")
+        .management;
     source_management.session_log.clear();
     source_management.session_log_retention.omitted_entries = 0;
     persist_source_message(&source.id, source_management)?;
@@ -69,7 +71,10 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
     assert_eq!(forked.parent_id.as_deref(), Some(source.id.as_str()));
 
     let persisted = get_persisted_session(&forked.id)?.expect("forked session should be in DB");
-    assert_eq!(persisted.parent_id.as_deref(), Some(source.id.as_str()));
+    assert_eq!(
+        persisted.lifecycle_projection.parent_id.as_deref(),
+        Some(source.id.as_str())
+    );
     assert_eq!(persisted.message_count, 1);
     let records = list_persisted_records(&forked.id)?;
     assert_eq!(records.len(), 1);

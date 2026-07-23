@@ -40,11 +40,6 @@ impl ExecutionService {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn enqueue_turn(&self, state: &AppState, input: Value) -> Result<Value> {
-        self.enqueue_turn_request(state, input, "").await
-    }
-
     pub async fn enqueue_turn_request(
         &self,
         state: &AppState,
@@ -620,7 +615,7 @@ mod tests {
         service.set_session_lease_for_test("active-session", true);
 
         let response = service
-            .enqueue_turn(
+            .enqueue_turn_request(
                 &state,
                 json!({
                     "runtime_id": "active-runtime-2",
@@ -629,6 +624,7 @@ mod tests {
                         "prompt": "append instead of failing"
                     }
                 }),
+                "active-session-test",
             )
             .await
             .expect("active-session rejection is a gateway-handled payload");

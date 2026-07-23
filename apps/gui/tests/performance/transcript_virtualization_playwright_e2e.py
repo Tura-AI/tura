@@ -1,7 +1,6 @@
 import asyncio
 import os
 import subprocess
-import time
 import traceback
 from pathlib import Path
 from urllib.request import urlopen

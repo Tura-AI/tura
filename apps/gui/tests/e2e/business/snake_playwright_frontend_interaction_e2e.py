@@ -172,7 +172,7 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
             self.wfile.write(b'data: {"payload":{"type":"server.connected","properties":{}}}\n\n')
             self.wfile.flush()
             time.sleep(0.1)
-            return
+            return None
         if path == "/global/health":
             return self.json({"healthy": True, "version": "snake-playwright-e2e"})
         if path == "/service/status":

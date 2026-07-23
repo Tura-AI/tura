@@ -577,7 +577,6 @@ mod tests {
     }
 
     fn command_run_agent_with_capabilities(capabilities: &[&str]) -> AgentManagement {
-        let now = Utc::now();
         let mut agent = AgentManagement::new(
             "agent-1".to_string(),
             "thoughtful".to_string(),
@@ -601,16 +600,12 @@ mod tests {
                 need_validator: false,
                 validator_name: None,
             },
-            now,
         );
         for capability_name in capabilities {
-            agent.add_capability(
-                AgentCapabilityItem {
-                    capability_name: (*capability_name).to_string(),
-                    capability_directory: std::path::PathBuf::from("crates/tools/src"),
-                },
-                now,
-            );
+            agent.add_capability(AgentCapabilityItem {
+                capability_name: (*capability_name).to_string(),
+                capability_directory: std::path::PathBuf::from("crates/tools/src"),
+            });
         }
         agent
     }
@@ -1145,7 +1140,6 @@ mod tests {
         )
         .expect("command_run schema should be written");
 
-        let now = Utc::now();
         let mut agent = AgentManagement::new(
             "agent".to_string(),
             "general".to_string(),
@@ -1169,23 +1163,16 @@ mod tests {
                 need_validator: false,
                 validator_name: None,
             },
-            now,
         );
-        agent.add_capability(
-            AgentCapabilityItem {
-                capability_name: COMMAND_RUN_TOOL.to_string(),
-                capability_directory: root.clone(),
-            },
-            now,
-        );
+        agent.add_capability(AgentCapabilityItem {
+            capability_name: COMMAND_RUN_TOOL.to_string(),
+            capability_directory: root.clone(),
+        });
         for capability_name in ["apply_patch", "shells", "task_status", "planning"] {
-            agent.add_capability(
-                AgentCapabilityItem {
-                    capability_name: capability_name.to_string(),
-                    capability_directory: root.clone(),
-                },
-                now,
-            );
+            agent.add_capability(AgentCapabilityItem {
+                capability_name: capability_name.to_string(),
+                capability_directory: root.clone(),
+            });
         }
 
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");

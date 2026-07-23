@@ -551,7 +551,9 @@ export function Composer(props: {
       </Show>
       <div class="composer-input">
         <div
-          ref={editor}
+          ref={(element) => {
+            editor = element;
+          }}
           class="composer-rich-editor"
           contentEditable
           role="textbox"
@@ -590,7 +592,9 @@ export function Composer(props: {
           <Plus size={18} strokeWidth={1.7} />
         </button>
         <input
-          ref={fileInput}
+          ref={(element) => {
+            fileInput = element;
+          }}
           class="composer-file-input"
           type="file"
           multiple
@@ -718,10 +722,6 @@ export function composerPreviewSegments(text: string): ComposerPreviewSegment[] 
     segments.push({ type: "text", value: text.slice(cursor) });
   }
   return segments.length > 0 ? segments : [{ type: "text", value: text }];
-}
-
-export function removeComposerImageToken(text: string, id: string): string {
-  return removeComposerAttachmentToken(text, id);
 }
 
 export function removeComposerAttachmentToken(text: string, id: string): string {

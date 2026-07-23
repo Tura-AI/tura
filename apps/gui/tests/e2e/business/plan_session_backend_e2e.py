@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import shutil
 import socket
 import subprocess
 import threading
@@ -169,7 +168,7 @@ class PlanGatewayHandler(BaseHTTPRequestHandler):
             self.wfile.write(b'data: {"payload":{"type":"server.connected","properties":{}}}\n\n')
             self.wfile.flush()
             time.sleep(0.2)
-            return
+            return None
         if path == "/__records":
             return self.send_json({"records": self.server.records, "requests": self.server.requests, "sessions": self.server.sessions})
         if path == "/global/health":

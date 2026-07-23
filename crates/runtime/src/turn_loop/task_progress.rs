@@ -138,15 +138,15 @@ pub(crate) fn record_task_focus_message_for_terminal_done(
     };
     let task_id = task.task_id.as_str();
     if session.session_log.iter().rev().any(|entry| {
-        serde_json::from_str::<serde_json::Value>(entry)
-            .ok()
-            .filter(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("task_focus"))
-            .and_then(|value| {
+        let value = entry.value();
+        (value.get("type").and_then(|kind| kind.as_str()) == Some("task_focus"))
+            .then(|| {
                 value
                     .get("task_id")
                     .and_then(serde_json::Value::as_str)
                     .map(|seen| seen == task_id)
             })
+            .flatten()
             .unwrap_or(false)
     }) {
         return;
@@ -304,7 +304,9 @@ mod tests {
             "finish queued work".to_string(),
             now,
         );
-        session.task_plan.detailed_tasks = tasks;
+        let mut task_plan = session.task_plan.clone();
+        task_plan.detailed_tasks = tasks;
+        session.replace_task_plan(task_plan, now);
         session
     }
 

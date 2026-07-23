@@ -1,10 +1,10 @@
-//! Session management using mano state machine
+//! Session projection construction for the Gateway API cache.
 //!
-//! This module provides session creation and management using the mano service's
-//! session state machine (SessionManagement, SessionState, etc.)
+//! Canonical lifecycle state remains owned by `lifecycle` and session_db; this
+//! module combines its typed projection with frontend-facing metadata.
 
 use chrono::Utc;
-use lifecycle::{SessionId, SessionState};
+use lifecycle::{ContextTokenStats, SessionId, SessionProjection};
 use lifecycle::{SessionInput, SessionManagement, UserGoal};
 use std::path::PathBuf;
 use tura_agents::coding_agent::CodingAgent;
@@ -76,6 +76,7 @@ impl SessionManager {
             now,
         );
         management.use_last_tool_call_response = use_last_tool_call_response;
+        let projection = management.lifecycle_projection();
 
         SessionInfo {
             id: session_id,
@@ -93,18 +94,14 @@ impl SessionManager {
             model_acceleration_enabled: false,
             disable_permission_restrictions: false,
             use_last_tool_call_response,
-            status: SessionStatus::from_state(management.state),
             message_count: 0,
-            management,
+            name: management.session_name,
+            auto_session_name: management.auto_session_name,
+            session_directory: management.session_directory,
+            projection,
+            context_tokens: management.context_tokens,
+            runtime_usage: management.runtime_usage,
         }
-    }
-
-    pub fn select_session(management: &SessionManagement) -> SessionInfo {
-        SessionInfo::from_management(management)
-    }
-
-    pub fn get_state(management: &SessionManagement) -> SessionState {
-        management.state
     }
 
     fn generate_session_id(
@@ -147,39 +144,17 @@ pub struct SessionInfo {
     pub disable_permission_restrictions: bool,
     #[serde(default = "default_true")]
     pub use_last_tool_call_response: bool,
-    pub status: SessionStatus,
     pub message_count: usize,
-    pub management: SessionManagement,
+    pub name: String,
+    pub auto_session_name: bool,
+    pub session_directory: PathBuf,
+    pub projection: SessionProjection,
+    pub context_tokens: ContextTokenStats,
+    pub runtime_usage: serde_json::Value,
 }
 
 fn default_true() -> bool {
     true
-}
-
-impl SessionInfo {
-    pub fn from_management(management: &SessionManagement) -> Self {
-        let lifecycle = management.lifecycle_projection();
-        Self {
-            id: lifecycle.session_id,
-            created_at: management.session_created_at.timestamp_millis(),
-            updated_at: management.session_last_update_at.timestamp_millis(),
-            last_user_message_at: Some(management.session_last_user_message_at.timestamp_millis()),
-            directory: Some(management.session_directory.to_string_lossy().to_string()),
-            model: Some(coding_agent_provider()),
-            agent: Some(CODING_AGENT_NAME.to_string()),
-            session_type: Some("coding".to_string()),
-            kill_processes_on_start: false,
-            validator_enabled: false,
-            force_planning: false,
-            model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
-            model_acceleration_enabled: false,
-            disable_permission_restrictions: management.disable_permission_restrictions,
-            use_last_tool_call_response: management.use_last_tool_call_response,
-            status: SessionStatus::from_state(lifecycle.state),
-            message_count: management.session_current_turn as usize,
-            management: management.clone(),
-        }
-    }
 }
 
 pub fn normalize_session_type(session_type: Option<String>, agent: Option<&str>) -> String {
@@ -249,26 +224,6 @@ pub fn default_use_last_tool_call_response_for_session(
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SessionStatus {
-    Idle,
-    Busy,
-    Error,
-}
-
-impl SessionStatus {
-    pub fn from_state(state: SessionState) -> Self {
-        match state {
-            SessionState::Created | SessionState::Completed => SessionStatus::Idle,
-            SessionState::Running | SessionState::Paused => SessionStatus::Busy,
-            SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {
-                SessionStatus::Error
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,10 +240,9 @@ mod tests {
         assert_eq!(info.agent.as_deref(), Some(CODING_AGENT_NAME));
         assert_eq!(info.model.as_deref(), Some("fast"));
         assert_eq!(info.session_type.as_deref(), Some("coding"));
-        assert!(info.management.task_type.is_empty());
+        assert_eq!(info.projection.task_plan, lifecycle::TaskPlan::default());
         assert!(!info.use_last_tool_call_response);
-        assert!(!info.management.use_last_tool_call_response);
-        assert!(info.management.auto_session_name);
+        assert!(info.auto_session_name);
         assert!(info.id.starts_with("sessions-"));
     }
 
@@ -318,8 +272,7 @@ mod tests {
         assert_eq!(info.agent.as_deref(), Some("general_agent"));
         assert_eq!(info.model.as_deref(), Some("openai/gpt-5"));
         assert_eq!(info.session_type.as_deref(), Some("general"));
-        assert!(info.management.task_type.is_empty());
+        assert_eq!(info.projection.task_plan, lifecycle::TaskPlan::default());
         assert!(info.use_last_tool_call_response);
-        assert!(info.management.use_last_tool_call_response);
     }
 }

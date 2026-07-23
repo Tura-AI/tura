@@ -255,19 +255,11 @@ States:
 
 ### Agent
 
-Owned by `state_machine/agent_management.rs`.
-
-States:
-
-- `inactive`
-- `activating`
-- `ready`
-- `thinking`
-- `tooling`
-- `delegating`
-- `summarizing`
-- `completed`
-- `failed`
+`state_machine/agent_management.rs` owns agent configuration: identity, prompt
+and capability bindings, provider selection, and validator settings. It does
+not own execution lifecycle state. Session progress is represented by the
+canonical Session state machine, while each provider invocation is represented
+by the canonical Runtime state machine in `crates/lifecycle`.
 
 ### Runtime
 
@@ -277,17 +269,13 @@ driven by Runtime provider/tool orchestration.
 States:
 
 - `created`
-- `context_building`
-- `tool_catalog_building`
-- `provider_pending`
-- `provider_streaming`
-- `provider_completed`
-- `tool_calls_pending`
-- `tools_running`
-- `tools_completed`
-- `finalizing`
-- `completed`
+- `dispatching`
+- `waiting_first_token`
+- `streaming`
+- `finished`
 - `failed`
+- `timed_out`
+- `cancelled`
 
 Use transition methods instead of assigning states directly except in narrow
 initialization or test setup paths.
@@ -344,10 +332,13 @@ runtime prompts.
 After a compact checkpoint, `SessionManagement.session_log_retention` records the
 absolute compact boundary and the number of omitted `session_log` entries.
 Runtime trims the in-memory `session_log` before the retained boundary so the
-persisted `management_json` used for resume contains only entries still needed to
-rebuild provider context. The retained slice starts at the immediately preceding
-tail of `tool_result` entries, if any, because compact rebuild still replays that
-tool context.
+strict typed `SessionManagement` read model used for resume contains only entries
+still needed to rebuild provider context. Session DB currently stores that value
+in its internal `management_json` column; the column name is not a wire type or a
+second lifecycle authority. Resume validates the accompanying
+`SessionProjection` and merges its parent/runtime index into management before
+use. The retained slice starts at the immediately preceding tail of `tool_result`
+entries, if any, because compact rebuild still replays that tool context.
 
 The active compact threshold is capped at 260,000 tokens. Runtime still asks the
 agent to provide a `task_status.compact_context` handoff when provider-reported

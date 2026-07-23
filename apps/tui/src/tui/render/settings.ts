@@ -22,10 +22,6 @@ export type SettingEntry = {
   value: unknown;
 };
 
-export function settingsCommandEntries(state: AppState): Array<[string, unknown]> {
-  return settingsEntries(state).map((entry) => [settingCommandLabel(entry.detail), entry.value]);
-}
-
 export function settingsEntries(state: AppState): SettingEntry[] {
   const config = state.sessionConfig;
   if (!config) return [];
@@ -206,24 +202,6 @@ function settingLabel(detail: Exclude<SettingDetail, "providerAuth">): string {
     validator: t("settingValidator"),
     stallGuard: t("settingStallGuard"),
     about: t("settingAbout"),
-  };
-  return labels[detail];
-}
-
-function settingCommandLabel(detail: SettingDetail): string {
-  const labels: Record<SettingDetail, string> = {
-    model: "/model <provider/model>",
-    provider: "/provider <id>",
-    providerAuth: "/provider <id>",
-    agent: "/agent <name>",
-    persona: "/persona <id>",
-    language: "/language <zh-CN|en>",
-    session: "/session <type>",
-    variant: "/variant <name>",
-    priority: "/priority <on/off>",
-    validator: "/validator <on/off>",
-    stallGuard: "/stall-guard <profile>",
-    about: "/settings",
   };
   return labels[detail];
 }

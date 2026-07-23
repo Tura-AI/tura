@@ -19,8 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use lifecycle::SessionInput;
-use lifecycle::SessionState;
+use lifecycle::{SessionInput, SessionLogEntry, SessionState};
 use runtime::mano;
 use serde_json::{json, Value};
 
@@ -112,7 +111,7 @@ fn claude_code_gateway_session_tool_calling_mock_e2e() {
             .session
             .session_log
             .iter()
-            .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+            .map(|entry| entry.value())
             .any(|entry| entry.get("role").and_then(Value::as_str) == Some("assistant")),
         "expected a final assistant message; log={:#?}",
         result.session.session_log
@@ -384,9 +383,9 @@ fn create_rust_workspace() -> PathBuf {
     root
 }
 
-fn tool_results(log: &[String]) -> Vec<Value> {
+fn tool_results(log: &[SessionLogEntry]) -> Vec<Value> {
     log.iter()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .map(|entry| entry.value().clone())
         .filter(|value| value.get("type").and_then(Value::as_str) == Some("tool_result"))
         .collect()
 }

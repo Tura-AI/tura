@@ -725,11 +725,6 @@ fn strip_verbatim(path: &str) -> String {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-fn gateway_health_reachable(endpoint: &GatewayEndpoint) -> bool {
-    gateway_identity(endpoint).is_some()
-}
-
 fn default_gateway_endpoint() -> GatewayEndpoint {
     if let Ok(port) = std::env::var(tura_path::TURA_GATEWAY_PORT_ENV)
         .unwrap_or_default()
@@ -1700,7 +1695,7 @@ mod tests {
                 )
                 .expect("write health response");
         });
-        assert!(gateway_health_reachable(&endpoint));
+        assert!(gateway_identity(&endpoint).is_some());
     }
 
     #[test]
@@ -1716,7 +1711,7 @@ mod tests {
             let (_stream, _) = listener.accept().expect("accept probe");
             std::thread::sleep(Duration::from_millis(1_200));
         });
-        assert!(!gateway_health_reachable(&endpoint));
+        assert!(gateway_identity(&endpoint).is_none());
     }
 
     #[test]

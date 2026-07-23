@@ -38,7 +38,6 @@ sysinfo.workspace = true
 windows-sys.workspace = true
 
 [dev-dependencies]
-session_log = { workspace = true }
 tempfile.workspace = true
 
 [features]

@@ -49,13 +49,6 @@ export function runtimeOverridesFromAssignment(entry: string): RuntimeConfigOver
   return overrides;
 }
 
-export function mergeRuntimeOverrides(
-  left: RuntimeConfigOverrides,
-  right: RuntimeConfigOverrides,
-): RuntimeConfigOverrides {
-  return { ...left, ...right };
-}
-
 function assignSessionConfigValue(
   patch: Partial<SessionConfig>,
   key: string,

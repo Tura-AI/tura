@@ -3804,7 +3804,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dotenvy",
- "futures",
  "futures-util",
  "regex",
  "reqwest 0.12.28",
@@ -3813,7 +3812,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
- "tokio-test",
  "tracing",
  "tura_path",
  "uuid",
@@ -4201,7 +4199,6 @@ dependencies = [
  "runtime_contract",
  "serde",
  "serde_json",
- "session_log",
  "session_log_contract",
  "sysinfo",
  "tempfile",
@@ -4233,7 +4230,6 @@ dependencies = [
  "personas",
  "provider",
  "redis",
- "reqwest 0.12.28",
  "router_contract",
  "runtime_contract",
  "rusqlite",
@@ -4244,7 +4240,6 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "tokio",
- "tokio-test",
  "tools",
  "tracing",
  "tura_path",
@@ -5492,28 +5487,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-stream"
-version = "0.1.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
-dependencies = [
- "futures-core",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6d24790a10a7af737693a3e8f1d03faef7e6ca0cc99aae5066f533766de545"
-dependencies = [
- "futures-core",
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
 name = "tokio-tungstenite"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5666,7 +5639,6 @@ dependencies = [
  "futures",
  "image",
  "provider",
- "regex",
  "serde",
  "serde_json",
  "tokio",
@@ -5870,7 +5842,6 @@ dependencies = [
  "router",
  "router_contract",
  "runtime",
- "runtime_contract",
  "rusqlite",
  "serde_json",
  "session_log",

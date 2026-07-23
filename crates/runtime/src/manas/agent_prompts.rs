@@ -225,14 +225,10 @@ mod tests {
         std::env::remove_var("TURA_FRONTEND_SOURCE");
 
         let mut agent = test_agent(&agent_dir, "coding_agent");
-        let now = Utc::now();
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: "coding_agent".to_string(),
-                prompt_directory: agent_dir,
-            },
-            now,
-        );
+        agent.add_prompt(AgentPromptItem {
+            agent_prompt: "coding_agent".to_string(),
+            prompt_directory: agent_dir,
+        });
 
         let messages =
             load_agent_system_prompt_messages(&agent).expect("system prompts should load");
@@ -301,14 +297,10 @@ mod tests {
         std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
 
         let mut agent = test_agent(&agent_dir, "coding_agent");
-        let now = Utc::now();
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: "coding_agent".to_string(),
-                prompt_directory: agent_dir,
-            },
-            now,
-        );
+        agent.add_prompt(AgentPromptItem {
+            agent_prompt: "coding_agent".to_string(),
+            prompt_directory: agent_dir,
+        });
 
         let messages =
             load_agent_system_prompt_messages(&agent).expect("system prompts should load");
@@ -384,14 +376,10 @@ mod tests {
         .expect("persona config should be written");
 
         let mut agent = test_agent(&agent_dir, "coding_agent");
-        let now = Utc::now();
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: "coding_agent".to_string(),
-                prompt_directory: agent_dir,
-            },
-            now,
-        );
+        agent.add_prompt(AgentPromptItem {
+            agent_prompt: "coding_agent".to_string(),
+            prompt_directory: agent_dir,
+        });
 
         std::env::set_var("TURA_PROJECT_ROOT", &root);
 
@@ -445,14 +433,10 @@ mod tests {
             .expect("legacy prompt should be written");
 
         let mut agent = test_agent(&root, "coding_agent");
-        let now = Utc::now();
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: "legacy_agent".to_string(),
-                prompt_directory: prompt_dir,
-            },
-            now,
-        );
+        agent.add_prompt(AgentPromptItem {
+            agent_prompt: "legacy_agent".to_string(),
+            prompt_directory: prompt_dir,
+        });
 
         let messages = load_agent_prompt_messages(&agent).expect("prompt loading should succeed");
         let contents = message_contents(&messages);
@@ -478,14 +462,10 @@ mod tests {
         .expect("fallback prompt should be written");
 
         let mut agent = test_agent(&root, "coding_agent");
-        let now = Utc::now();
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: "fallback_agent".to_string(),
-                prompt_directory: prompt_dir,
-            },
-            now,
-        );
+        agent.add_prompt(AgentPromptItem {
+            agent_prompt: "fallback_agent".to_string(),
+            prompt_directory: prompt_dir,
+        });
 
         let messages = load_agent_prompt_messages(&agent).expect("prompt loading should succeed");
         let contents = message_contents(&messages);
@@ -519,14 +499,10 @@ mod tests {
         .expect("command prompt should be written");
 
         let mut agent = test_agent(&root, "coding_agent");
-        let now = Utc::now();
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: "coding_agent".to_string(),
-                prompt_directory: agent_prompt_dir,
-            },
-            now,
-        );
+        agent.add_prompt(AgentPromptItem {
+            agent_prompt: "coding_agent".to_string(),
+            prompt_directory: agent_prompt_dir,
+        });
 
         let messages = load_agent_prompt_messages(&agent).expect("prompt loading should succeed");
         let joined = message_contents(&messages).join("\n");
@@ -561,7 +537,6 @@ mod tests {
                 need_validator: false,
                 validator_name: None,
             },
-            Utc::now(),
         )
     }
 
@@ -591,7 +566,6 @@ mod prompt_resource_tests {
     use lifecycle::{ProviderConfig, ToolChoice};
     #[test]
     fn prompt_loading_only_includes_agent_prompt() {
-        let now = chrono::Utc::now();
         let unique = format!(
             "mano-prompt-test-{:x}",
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
@@ -628,22 +602,15 @@ mod prompt_resource_tests {
             false,
             provider,
             validator,
-            now,
         );
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: "agent".to_string(),
-                prompt_directory: agent_prompt_dir,
-            },
-            now,
-        );
-        agent.add_capability(
-            AgentCapabilityItem {
-                capability_name: COMMAND_RUN_TOOL.to_string(),
-                capability_directory: tool_dir,
-            },
-            now,
-        );
+        agent.add_prompt(AgentPromptItem {
+            agent_prompt: "agent".to_string(),
+            prompt_directory: agent_prompt_dir,
+        });
+        agent.add_capability(AgentCapabilityItem {
+            capability_name: COMMAND_RUN_TOOL.to_string(),
+            capability_directory: tool_dir,
+        });
 
         let messages = load_agent_prompt_messages(&agent).expect("prompt loading should succeed");
         let content = messages

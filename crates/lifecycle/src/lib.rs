@@ -19,7 +19,7 @@ pub use session::{
 };
 pub use session_management::{
     AgentName, DeliverableDescription, DeliverablePath, FileInput, IntoSessionTaskType,
-    SessionCapabilities, SessionInput, SessionLogCompactionPoint, SessionLogEntry,
+    SessionCapabilities, SessionInput, SessionLog, SessionLogCompactionPoint, SessionLogEntry,
     SessionLogRetention, SessionManagement, SessionManagementDelta, SessionName, SessionTaskType,
     StepContext, StepToolJson, TaskStatus, UserGoal, UserInputText, UtcDateTimeMs,
     SESSION_CONTEXT_TOKEN_LIMIT,

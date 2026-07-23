@@ -19,8 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use lifecycle::SessionInput;
-use lifecycle::SessionState;
+use lifecycle::{SessionInput, SessionLogEntry, SessionState};
 use runtime::mano;
 use serde_json::{json, Value};
 
@@ -182,9 +181,9 @@ fn create_rust_workspace() -> PathBuf {
     root
 }
 
-fn tool_results(log: &[String]) -> Vec<Value> {
+fn tool_results(log: &[SessionLogEntry]) -> Vec<Value> {
     log.iter()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .map(|entry| entry.value().clone())
         .filter(|value| value.get("type").and_then(Value::as_str) == Some("tool_result"))
         .collect()
 }

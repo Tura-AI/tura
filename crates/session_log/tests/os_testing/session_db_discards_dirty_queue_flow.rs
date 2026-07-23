@@ -74,7 +74,7 @@ fn session_db_start_quarantines_dirty_file_queue_items_and_accepts_clean_writes(
             }
         }
     });
-    enqueue_command(&SessionLogCommand::CreateSession(
+    enqueue_command(&SessionLogCommand::CreateSession(Box::new(
         typed_session::create_request(
             "clean-file-queue",
             &workspace_key,
@@ -82,7 +82,7 @@ fn session_db_start_quarantines_dirty_file_queue_items_and_accepts_clean_writes(
             20,
             TaskPlan::default(),
         ),
-    ))?;
+    )))?;
     wait_until(Duration::from_secs(10), || {
         session_visible("clean-file-queue").unwrap_or(false)
     })

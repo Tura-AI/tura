@@ -1,7 +1,7 @@
 use chrono::Utc;
 use tracing::{error, info};
 
-use crate::agent_router::{activate_agents_by_session_type, initialize_agent_state_machine};
+use crate::agent_router::activate_agents_by_session_type;
 use crate::checkpoint::session_snapshot::{persist_session_checkpoint, SessionDeltaWriter};
 use crate::manas::{process_manas_internal, ManasInput};
 use crate::mano::{ManoOverrides, ManoProcessResult};
@@ -126,11 +126,6 @@ fn orchestrate_with_config_and_session(
     session.reflection_enabled = agents.first().is_some_and(|agent| agent.reflection);
     session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agents);
 
-    if let Err(e) = initialize_agent_state_machine(&mut agents, &session) {
-        error!(error = %e, "failed to initialize agent state machine");
-        return Err(format!("failed to initialize agent state machine: {e}"));
-    }
-
     info!(
         session_id = %session.session_id,
         agent_count = agents.len(),
@@ -200,29 +195,32 @@ fn ensure_canonical_session(session: &SessionManagement) -> Result<(), String> {
     }
 
     let directory = session.session_directory.to_string_lossy().to_string();
-    match client.call_typed_sync(SessionLogCommand::CreateSession(CreateSessionRequest {
-        command_id: format!("create:{}", session.session_id),
-        session_id: session.session_id.clone(),
-        creation_command: SessionCommand::CreateSession {
-            task_plan: session.task_plan.clone(),
+    match client.call_typed_sync(SessionLogCommand::CreateSession(Box::new(
+        CreateSessionRequest {
+            command_id: format!("create:{}", session.session_id),
+            session_id: session.session_id.clone(),
+            creation_command: SessionCommand::CreateSession {
+                task_plan: session.task_plan.clone(),
+            },
+            copy_context: false,
+            workspace: directory.clone(),
+            session_directory: directory,
+            name: session.session_name.clone(),
+            created_at: session.session_created_at.timestamp_millis(),
+            model: None,
+            agent: session.input.agent.clone(),
+            session_type: "coding".to_string(),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: session.disable_permission_restrictions,
+            use_last_tool_call_response: session.use_last_tool_call_response,
+            auto_session_name: session.auto_session_name,
+            initial_task_plan_patch: None,
         },
-        copy_context: false,
-        workspace: directory.clone(),
-        session_directory: directory,
-        name: session.session_name.clone(),
-        created_at: session.session_created_at.timestamp_millis(),
-        model: None,
-        agent: session.input.agent.clone(),
-        session_type: "coding".to_string(),
-        kill_processes_on_start: false,
-        validator_enabled: false,
-        force_planning: false,
-        model_variant: None,
-        model_acceleration_enabled: false,
-        disable_permission_restrictions: session.disable_permission_restrictions,
-        use_last_tool_call_response: session.use_last_tool_call_response,
-        auto_session_name: session.auto_session_name,
-    }))? {
+    )))? {
         SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
         SessionLogResponse::Error { error } => Err(format!(
             "failed to create canonical session {}: {error}",
@@ -302,7 +300,6 @@ pub fn process_from_user_internal(
             session.planning_enabled = agts.first().is_some_and(agent_has_planning_capability);
             session.reflection_enabled = agts.first().is_some_and(|agent| agent.reflection);
             session.op_manual_enabled = operation_manual_enabled_for_session(&session, &agts);
-            initialize_agent_state_machine(&mut agts, &session)?;
             agts
         }
     };
@@ -605,7 +602,7 @@ mod tests {
         let stored_context = session
             .session_log
             .iter()
-            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .map(|entry| entry.value())
             .find(|entry| entry["content"] == "client runtime context")
             .expect("runtime context should be stored");
         assert_eq!(stored_context["role"], USER_AGENT_CONTEXT_ROLE);

@@ -196,10 +196,14 @@ management_deltas
 `SessionAggregate`; there is no aggregate JSON authority. `management_deltas`
 stores ordered `SessionManagementDelta` values with a cursor independent from
 the context cursor. The `sessions` row is updated in the same transaction and
-is only a read projection: `management_json` supports bounded resume,
-`session_json` hydrates Gateway, and the task/todo/state/status/count columns
-serve queries. The index row only locates the workspace database and provides a
-lightweight listing projection.
+is only a read projection. Its historical column names are storage details:
+`management_json` contains strict typed `SessionManagement`, `session_json`
+contains strict typed `SessionMetadata`, and `task_management_json` is a derived
+list projection. Full reads pair those values with a `SessionProjection` replayed
+from canonical lifecycle events; consumers validate their shared identity,
+state, and task plan before restoring the complete parent/runtime index. The
+remaining task/todo/state/status/count columns serve queries. The index row only
+locates the workspace database and provides a lightweight listing projection.
 
 `session_command_receipts` is an inbox, not lifecycle state. Create and execute
 requests carry a stable command id. The owner writes the canonical request and
@@ -256,10 +260,13 @@ operations.
 '{"command":"delete_workspace","workspace":"C:/repo"}' | target\debug\tura_gateway.exe session-log
 ```
 
-`list_sessions` returns full snapshots for runtime/debug clients.
+`list_sessions` returns full typed `SessionSnapshot` values for runtime/debug
+clients. Each snapshot contains `SessionManagement`, `SessionMetadata`, and the
+event-replayed `lifecycle_projection`; it does not expose storage-column JSON as
+an independent protocol.
 `list_session_summaries` returns lightweight list rows for GUI/sidebar use and
-does not include `management_json` or `session_json`. `get_session` returns one
-full snapshot by id. `list_session_records` returns ordered records; page `0`
+does not include full management or metadata. `get_session` returns one full
+typed snapshot by id. `list_session_records` returns ordered records; page `0`
 means the last page for records.
 
 ## HTTP Projection

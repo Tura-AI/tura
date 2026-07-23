@@ -27,10 +27,6 @@ pub(super) struct GithubDeviceCodeResponse {
     pub(super) device_code: String,
     pub(super) user_code: String,
     pub(super) verification_uri: String,
-    #[allow(dead_code)]
-    pub(super) expires_in: Option<i64>,
-    #[allow(dead_code)]
-    interval: Option<i64>,
 }
 
 pub(super) async fn start_github_copilot_device_flow(

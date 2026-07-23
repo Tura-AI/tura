@@ -118,15 +118,15 @@ pub(super) fn last_tool_call_response_from_session(
         .session_log
         .iter()
         .rev()
-        .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+        .map(|entry| entry.value())
         .find(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("tool_result"))
         .map(|value| {
             serde_json::json!({
                 "tool_name": value.get("tool_name").cloned().unwrap_or(serde_json::Value::Null),
                 "input": compact_json_for_context(strip_context_reporting_fields(value.get("input").cloned().unwrap_or(serde_json::Value::Null))),
-                "output": cached_context_output_for_tool_result(&value),
+                "output": cached_context_output_for_tool_result(value),
                 "success": value.get("success").cloned().unwrap_or(serde_json::Value::Bool(true)),
-                "error": cached_context_error_for_tool_result(&value),
+                "error": cached_context_error_for_tool_result(value),
             })
         })
 }

@@ -1090,9 +1090,9 @@ pub(crate) fn write_codex_llm_config(workspace: &Path) -> PathBuf {
     path
 }
 
-pub(crate) fn tool_results(log: &[String]) -> Vec<Value> {
+pub(crate) fn tool_results(log: &[lifecycle::SessionLogEntry]) -> Vec<Value> {
     log.iter()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .map(|entry| entry.value().clone())
         .filter(|value| value.get("type").and_then(Value::as_str) == Some("tool_result"))
         .collect()
 }

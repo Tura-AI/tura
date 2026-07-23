@@ -49,15 +49,6 @@ export function conversationReactionItems(messages: Message[]): ConversationReac
   return items;
 }
 
-export function isReactionOnlyMessage(message: Message): boolean {
-  return (
-    message.role === "assistant" &&
-    messageReactionEmojis(message).length > 0 &&
-    messageWithoutReactionsText(message).trim().length === 0 &&
-    message.parts.every((part) => !isToolPart(part))
-  );
-}
-
 function messageReactionEmojis(message: Message): string[] {
   return message.parts
     .filter((part) => !isToolPart(part))

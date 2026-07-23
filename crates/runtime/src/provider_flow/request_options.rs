@@ -208,6 +208,7 @@ fn prompt_cache_session_id(session_id: &SessionId) -> String {
             _ => return current,
         };
         let Some(parent_id) = snapshot
+            .lifecycle_projection
             .parent_id
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())

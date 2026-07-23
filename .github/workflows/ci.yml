@@ -213,6 +213,64 @@ jobs:
             tests/equivalence/runtime_session/failure-injection.json
           if-no-files-found: warn
 
+  backend-e2e:
+    name: Backend Full Chain E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: backend-e2e
+          cache-on-failure: true
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            pkg-config
+      - name: Run backend full-chain E2E tests
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          mkdir -p .ci-results
+          sh xtask/scripts/run-backend-e2e-tests.sh --timeout-seconds 300 2>&1 |
+            tee .ci-results/backend-e2e.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail_output="$(tail -n 100 .ci-results/backend-e2e.log)"
+            tail_output="${tail_output//'%'/'%25'}"
+            tail_output="${tail_output//$'\r'/'%0D'}"
+            tail_output="${tail_output//$'\n'/'%0A'}"
+            echo "::error title=Backend E2E failure::$tail_output"
+          fi
+          exit "$status"
+      - name: Upload backend E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-e2e-diagnostics
+          path: |
+            .ci-results/backend-e2e.log
+            target/full-chain-e2e-stress/**/summary.json
+            target/full-chain-e2e-stress/**/logs/**
+          if-no-files-found: warn
+
   tui-tests:
     name: TUI Unit And E2E
     runs-on: ubuntu-latest
@@ -396,6 +454,7 @@ jobs:
     needs:
       - crate-tests
       - backend-business
+      - backend-e2e
       - tui-tests
       - gui-tests
       - install-script-tests

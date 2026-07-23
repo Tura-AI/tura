@@ -8,7 +8,7 @@ use tura_router::manager::ServiceManager;
 use tura_router::models::WorkerSpec;
 
 #[tokio::test]
-async fn router_one_shot_flow_executes_contract_input_and_reuses_key() -> Result<()> {
+async fn router_one_shot_flow_executes_contract_input() -> Result<()> {
     let temp = tempfile::tempdir().context("temp one-shot worker dir")?;
     let script = write_one_shot_worker_script(temp.path())?;
     let manager = ServiceManager::new();
@@ -19,12 +19,7 @@ async fn router_one_shot_flow_executes_contract_input_and_reuses_key() -> Result
         "ok",
     );
 
-    let first = manager.ensure_worker(spec.clone()).await?;
-    let reused = manager.ensure_worker(spec.clone()).await?;
-    assert_eq!(
-        first.worker_id, reused.worker_id,
-        "explicit one-shot workers are reused by router key"
-    );
+    let first = manager.ensure_exclusive_worker(spec).await?;
     assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 1);
 
     let response = manager
@@ -62,7 +57,7 @@ async fn router_one_shot_flow_reports_child_failure_and_cleans_key() -> Result<(
         "fail",
     );
 
-    let handle = manager.ensure_worker(spec).await?;
+    let handle = manager.ensure_exclusive_worker(spec).await?;
     let error = manager
         .call_worker(
             &handle.worker_id,
@@ -101,13 +96,8 @@ async fn router_one_shot_flow_restarts_child_for_each_invocation() -> Result<()>
         )],
     );
 
-    let handle = manager.ensure_worker(spec.clone()).await?;
+    let handle = manager.ensure_exclusive_worker(spec).await?;
     for turn in 1..=3 {
-        let reused = manager.ensure_worker(spec.clone()).await?;
-        assert_eq!(
-            reused.worker_id, handle.worker_id,
-            "router key should continue reusing the one-shot worker handle"
-        );
         let response = manager
             .call_worker(
                 &handle.worker_id,
@@ -149,7 +139,7 @@ async fn router_one_shot_stop_kills_running_child_process() -> Result<()> {
         )],
     );
 
-    let handle = manager.ensure_worker(spec).await?;
+    let handle = manager.ensure_exclusive_worker(spec).await?;
     let worker_id = handle.worker_id.clone();
     let call = tokio::spawn({
         let manager = manager.clone();
@@ -199,7 +189,7 @@ async fn router_one_shot_flow_rejects_successful_child_with_invalid_json() -> Re
         "invalid-json",
     );
 
-    let handle = manager.ensure_worker(spec).await?;
+    let handle = manager.ensure_exclusive_worker(spec).await?;
     let error = manager
         .call_worker(
             &handle.worker_id,
@@ -244,14 +234,12 @@ async fn router_one_shot_flow_skips_persistent_health_handshake() -> Result<()> 
     ] {
         let key = format!("runtime_worker:oneshot-health-{key_suffix}");
         let spec = one_shot_spec(&key, &python, &script, mode);
-        let handle = manager.ensure_worker(spec.clone()).await.with_context(|| {
-            format!("explicit one-shot worker should skip {unreachable_health_behavior}")
-        })?;
-        let reused = manager.ensure_worker(spec).await?;
-        assert_eq!(
-            reused.worker_id, handle.worker_id,
-            "one-shot worker handle should remain reusable while skipping {unreachable_health_behavior}"
-        );
+        let handle = manager
+            .ensure_exclusive_worker(spec)
+            .await
+            .with_context(|| {
+                format!("explicit one-shot worker should skip {unreachable_health_behavior}")
+            })?;
         let response = manager
             .call_worker(
                 &handle.worker_id,

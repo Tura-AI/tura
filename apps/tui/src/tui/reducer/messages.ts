@@ -23,48 +23,6 @@ export function displayMessages(state: AppState): Message[] {
   return messages;
 }
 
-export function mergeStableMessages(current: Message[], incoming: Message[]): Message[] {
-  let changed = false;
-  const next = [...current];
-  const indexes = new Map(next.map((message, index) => [message.id, index]));
-  for (const message of incoming) {
-    const index = indexes.get(message.id);
-    if (index !== undefined) {
-      const merged = mergeMessageForDisplay(next[index], message);
-      if (merged !== next[index]) {
-        next[index] = merged;
-        changed = true;
-      }
-      continue;
-    }
-    indexes.set(message.id, next.length);
-    next.push(message);
-    changed = true;
-  }
-  return changed ? sortMessages(next) : current;
-}
-
-export function mergeStableMessagesIgnoringLive(
-  current: Message[],
-  incoming: Message[],
-  streams: Record<string, LiveStream>,
-  sessionID: string | undefined,
-): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
-  const { messages, liveStreams } = commitLiveStreamsForMessages(
-    current,
-    streams,
-    sessionID,
-    incoming,
-  );
-  const filtered = incoming.filter(
-    (message) => !messageMatchesLiveStream(message, streams, sessionID),
-  );
-  return {
-    messages: mergeStableMessages(messages, filtered),
-    liveStreams,
-  };
-}
-
 export function appendNewStableMessages(current: Message[], incoming: Message[]): Message[] {
   const existingIDs = new Set(current.map((message) => message.id));
   const additions = incoming.filter((message) => !existingIDs.has(message.id));

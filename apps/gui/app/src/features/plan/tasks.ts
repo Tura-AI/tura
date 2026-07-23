@@ -10,26 +10,7 @@ import { sessionHasRunningCommand } from "../../conversation/session-animation";
 import { t } from "../../i18n";
 import type { ComposerImage } from "../../state/global-store";
 import { sessionTitle, sessionUpdatedAt } from "../../state/global-store";
-import { nextPollingTime, normalizeTimeMs } from "../../utils/app-format";
-import { planSessionDate } from "./timeline";
-
-export function taskStateLabel(status: PlanStatus): string {
-  switch (status) {
-    case "doing":
-      return t("doing");
-    case "question":
-      return t("question");
-    case "done":
-      return t("done");
-    case "archived":
-      return t("archived");
-    case "waiting_user":
-      return t("waitingUser");
-    case "todo":
-    default:
-      return t("todo");
-  }
-}
+import { normalizeTimeMs } from "../../utils/app-format";
 
 export function sessionTaskState(session: Session) {
   return session.task_management ?? {};
@@ -45,10 +26,6 @@ export function sessionTasks(session: Session): TaskManagement[] {
 
 export function sortedSessionTasks(session: Session): TaskManagement[] {
   return sessionTasks(session).filter(taskIsVisibleInFrontend).sort(compareTaskStep);
-}
-
-export function hasVisibleSessionTasks(session: Session): boolean {
-  return sessionTasks(session).some(taskIsVisibleInFrontend);
 }
 
 export function taskIsVisibleInFrontend(task: TaskManagement): boolean {
@@ -131,35 +108,6 @@ export function taskSummaryText(task: TaskManagement): string {
   return (task.task_summary ?? task.deliverable ?? "").trim().split(/\r?\n/u)[0]?.trim() ?? "";
 }
 
-export function formatTaskRemaining(task: TaskManagement): string {
-  const condition = taskStartCondition(task);
-  if (!isTimedStartCondition(condition)) {
-    return "";
-  }
-  const startAt =
-    condition === "polling_task"
-      ? nextPollingTime(taskStartAt(task), taskPollInterval(task))
-      : taskStartAt(task);
-  if (!startAt) {
-    return "";
-  }
-  const target = new Date(startAt).getTime();
-  if (Number.isNaN(target)) {
-    return "";
-  }
-  const seconds = Math.max(0, Math.ceil((target - Date.now()) / 1000));
-  if (seconds >= 86_400) {
-    return `${Math.ceil(seconds / 86_400)}${t("intervalDay")}`;
-  }
-  if (seconds >= 3_600) {
-    return `${Math.ceil(seconds / 3_600)}${t("intervalHour")}`;
-  }
-  if (seconds >= 60) {
-    return `${Math.ceil(seconds / 60)}${t("intervalMinute")}`;
-  }
-  return `${seconds}${t("intervalSecond")}`;
-}
-
 export function formatPollIntervalCompact(interval: PollInterval): string {
   const normalized = normalizePollInterval(interval);
   const minutes =
@@ -174,20 +122,6 @@ export function formatPollIntervalCompact(interval: PollInterval): string {
     return `${Math.ceil(minutes / 60)}${t("intervalHour")}`;
   }
   return `${Math.max(1, minutes)}${t("intervalMinute")}`;
-}
-
-export function formatPollIntervalEveryCompact(interval: PollInterval): string {
-  return `(${t("intervalEvery", {
-    interval: formatPollIntervalCompact(interval),
-  })})`;
-}
-
-export function formatPollingTaskTiming(task: TaskManagement): string {
-  const remaining = formatTaskRemaining(task);
-  if (!remaining) {
-    return "";
-  }
-  return `${remaining}/${formatPollIntervalEveryCompact(taskPollInterval(task))}`;
 }
 
 export function timedTaskDisplayDate(task: TaskManagement, nowMs = Date.now()): Date | undefined {
@@ -349,27 +283,6 @@ export function planStoredPlanStatus(session: Session): PlanStatus | undefined {
   return undefined;
 }
 
-export type PlanCalendarMode = "month" | "week" | "day";
-
-export function planSessionStartCondition(session: Session): StartCondition | undefined {
-  const task = sessionTaskState(session);
-  return taskStartCondition(task);
-}
-
-export function planTimedSessions(sessions: Session[]): Session[] {
-  return sessions.filter((session) => {
-    if (planStoredPlanStatus(session) !== "todo" && timedSessionTasks(session).length === 0) {
-      return false;
-    }
-    const condition = planSessionStartCondition(session);
-    return (
-      (Boolean(planSessionDate(session)) &&
-        (condition === "scheduled_task" || condition === "polling_task")) ||
-      timedSessionTasks(session).length > 0
-    );
-  });
-}
-
 export function timedSessionTasks(session: Session): TaskManagement[] {
   return sortedSessionTasks(session).filter(
     (task) =>
@@ -387,50 +300,14 @@ export function planQueuedSessions(sessions: Session[]): Session[] {
   return sessions.filter((session) => queuedSessionTasks(session).length > 0);
 }
 
-export function planTriggerClass(session: Session): string {
-  const condition = planSessionStartCondition(session);
-  return condition ? `trigger-${condition}` : "";
-}
-
 export function planTaskTitle(session: Session): string {
   const task = sessionTaskState(session);
   const title = task.task_summary ?? sessionTitle(session);
   return title.replace(/^执行(?:状态|任务)：/u, "");
 }
 
-export function planInitialCalendarDate(sessions: Session[]): Date {
-  return sessions.map(planSessionDate).find(Boolean) ?? new Date();
-}
-
 export function shortSessionId(sessionId: string): string {
   return sessionId.slice(0, 8);
-}
-
-export function localDateTimeToUtcIso(value: string): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
-}
-
-export function utcIsoToLocalDateTime(value: string | number | undefined): string {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-}
-
-export function defaultLocalStartAt(): string {
-  const date = new Date(Date.now() + 60 * 60_000);
-  date.setSeconds(0, 0);
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
 export function defaultPollInterval(): PollInterval {
@@ -492,20 +369,6 @@ export function formatTicketTime(value: string | number | undefined): string {
     return t("notScheduled");
   }
   return date.toLocaleString();
-}
-
-export function formatCalendarEventTime(value: string | number | undefined): string {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  return date.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 export function formatStartCondition(value: StartCondition | undefined): string {

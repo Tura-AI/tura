@@ -620,18 +620,6 @@ function collectCommandEnums(value, out = []) {
   return out
 }
 
-function uniqueJsonArrays(items) {
-  const seen = new Set()
-  const unique = []
-  for (const item of items) {
-    const key = JSON.stringify(item)
-    if (seen.has(key)) continue
-    seen.add(key)
-    unique.push(item)
-  }
-  return unique
-}
-
 async function inspectTuraSourceContract() {
   const paths = {
     commandRunHandler: path.join(turaRoot, "crates", "tools", "src", "command_run", "handler.rs"),

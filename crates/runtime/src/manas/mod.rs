@@ -43,10 +43,7 @@ pub fn process_from_session_with_overrides(
         return agent_loader(session);
     }
 
-    crate::agent_router::activate_agents_by_session_type(session).and_then(|mut agents| {
-        crate::agent_router::initialize_agent_state_machine(&mut agents, session)?;
-        Ok(agents)
-    })
+    crate::agent_router::activate_agents_by_session_type(session)
 }
 
 pub fn run_session(

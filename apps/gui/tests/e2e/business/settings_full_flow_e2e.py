@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import shutil
 import socket
 import subprocess
 import threading
@@ -9,7 +8,7 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -190,7 +189,7 @@ class SettingsGatewayHandler(BaseHTTPRequestHandler):
             self.wfile.write(b'data: {"payload":{"type":"server.connected","properties":{}}}\n\n')
             self.wfile.flush()
             time.sleep(0.2)
-            return
+            return None
         if path == "/global/health":
             return self.send_json({"healthy": True, "version": "settings-full-e2e"})
         if path == "/service/status":

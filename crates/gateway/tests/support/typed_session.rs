@@ -33,6 +33,7 @@ pub fn create_request(
         disable_permission_restrictions: false,
         use_last_tool_call_response: false,
         auto_session_name: false,
+        initial_task_plan_patch: None,
     }
 }
 
@@ -43,33 +44,12 @@ pub fn create_via_service(
     created_at: i64,
     task_plan: TaskPlan,
 ) -> Result<()> {
-    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(
+    match session_log_contract::client::call_service(&SessionLogCommand::CreateSession(Box::new(
         create_request(session_id, workspace, name, created_at, task_plan),
-    ))? {
+    )))? {
         SessionLogResponse::SessionCommandApplied { .. } => Ok(()),
         SessionLogResponse::Error { error } => bail!("create session failed: {error}"),
         other => bail!("unexpected create session response: {other:?}"),
-    }
-}
-
-pub fn create_if_missing_via_service(
-    session_id: &str,
-    workspace: &str,
-    name: &str,
-    created_at: i64,
-    task_plan: TaskPlan,
-) -> Result<()> {
-    match session_log_contract::client::call_service(&SessionLogCommand::GetSession(
-        GetSessionRequest {
-            session_id: session_id.to_string(),
-        },
-    ))? {
-        SessionLogResponse::Session { session: Some(_) } => Ok(()),
-        SessionLogResponse::Session { session: None } => {
-            create_via_service(session_id, workspace, name, created_at, task_plan)
-        }
-        SessionLogResponse::Error { error } => bail!("get session failed: {error}"),
-        other => bail!("unexpected get session response: {other:?}"),
     }
 }
 
@@ -110,8 +90,7 @@ fn management_via_service(session_id: &str) -> Result<SessionManagement> {
     ))? {
         SessionLogResponse::Session {
             session: Some(session),
-        } => serde_json::from_value(session.management)
-            .with_context(|| format!("invalid management for session {session_id}")),
+        } => Ok(session.management),
         SessionLogResponse::Session { session: None } => bail!("session {session_id} not found"),
         SessionLogResponse::Error { error } => bail!("get session failed: {error}"),
         other => bail!("unexpected get session response: {other:?}"),

@@ -96,7 +96,7 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             self.close_connection = True
             time.sleep(0.2)
-            return
+            return None
         if path == "/global/health":
             return self.json({"healthy": True, "version": "frontend-gui-e2e"})
         if path == "/service/status":
@@ -194,7 +194,7 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
             self.server.requests.append(
                 {"method": "POST", "path": path, "stage": "responded", "session_id": session_id, "time": int(time.time() * 1000)}
             )
-            return
+            return None
         if path.endswith("/prompt_async"):
             payload = self.read_json()
             session_id = path.strip("/").split("/")[1]
@@ -209,7 +209,7 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.flush()
             self.close_connection = True
-            return
+            return None
         if path == "/command":
             return self.json({"output": ""})
         return self.json({})
@@ -516,6 +516,7 @@ def stop_process_tree(process: subprocess.Popen | None) -> None:
         else:
             process.terminate()
     except Exception:
+        # Process teardown is best-effort; the caller cannot recover from a cleanup failure.
         pass
 
 

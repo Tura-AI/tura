@@ -88,7 +88,12 @@ export function AgentComposerMenu(props: {
   }
 
   return (
-    <section class="plan-trigger-control agent-trigger-control" ref={root}>
+    <section
+      class="plan-trigger-control agent-trigger-control"
+      ref={(element) => {
+        root = element;
+      }}
+    >
       <button
         type="button"
         class="plan-trigger-button agent-trigger-button"

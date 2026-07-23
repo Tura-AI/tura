@@ -11,10 +11,6 @@ export class GatewayHttpError extends Error {
   }
 }
 
-export function errorMessage(error: unknown): string {
-  return userFacingError(error);
-}
-
 export function userFacingError(error: unknown): string {
   if (error instanceof GatewayHttpError) {
     if (error.status === 0) return networkErrorMessage(error);

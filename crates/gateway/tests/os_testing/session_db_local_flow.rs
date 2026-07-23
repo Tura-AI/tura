@@ -3,7 +3,7 @@ mod typed_session;
 
 use anyhow::{anyhow, Context, Result};
 use gateway::session_db_client::SessionDbClient;
-use lifecycle::TaskPlan;
+use lifecycle::{SessionState, TaskPlan};
 use serde_json::json;
 use session_log::SessionLogStore;
 use session_log_contract::{MarkSessionInterruptedRequest, SessionLogCommand};
@@ -55,13 +55,16 @@ fn gateway_session_db_business_flow_reads_written_session_and_records() -> Resul
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].session_id, session_id);
     assert_eq!(sessions[0].message_count, 2);
-    assert_eq!(sessions[0].state.as_deref(), Some("created"));
-    assert_eq!(sessions[0].status.as_deref(), Some("idle"));
+    assert_eq!(
+        sessions[0].lifecycle_projection.state,
+        SessionState::Created
+    );
+    assert_eq!(sessions[0].lifecycle_projection.state.ui_status(), "idle");
 
     let loaded = client
         .get_session(session_id.clone())?
         .ok_or_else(|| anyhow!("expected persisted session"))?;
-    assert_eq!(loaded.session["id"], session_id);
+    assert_eq!(loaded.session_id, session_id);
 
     let (records_page, records) = client.list_session_records(session_id, 0, 50)?;
     assert_eq!(records_page.total, 2);

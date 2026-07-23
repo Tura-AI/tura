@@ -81,9 +81,10 @@ fn context_business_flow_injects_initial_user_once_and_preserves_dialog_order() 
     accumulate_message(&mut session, "assistant", json!("I will inspect it"))
         .expect("assistant message should log");
 
+    let runtime = business_runtime(&session);
     let output = build_context(ContextInput {
-        runtime: business_runtime(&session),
-        session,
+        runtime: &runtime,
+        session: &session,
         additional_messages: vec![json!({"role": "system", "content": "late instruction"})],
     })
     .expect("context should build");
@@ -100,9 +101,8 @@ fn context_business_flow_injects_initial_user_once_and_preserves_dialog_order() 
     assert_eq!(texts[0], "system guardrail");
     assert!(texts.iter().any(|text| text == "I will inspect it"));
     assert_eq!(texts.last().map(String::as_str), Some("late instruction"));
-    assert_eq!(output.context_state.messages, output.messages);
     assert_eq!(
-        output.session.state,
+        session.state,
         SessionState::Created,
         "context building must not mutate the session FSM"
     );
@@ -195,7 +195,7 @@ fn context_business_flow_accumulates_tool_result_with_metadata_and_strips_report
     let stored = session
         .session_log
         .iter()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .map(|entry| entry.value())
         .find(|entry| entry.get("type").and_then(Value::as_str) == Some("tool_result"))
         .expect("tool result should be stored");
     assert_eq!(stored["sequence"], 1);
@@ -227,19 +227,19 @@ fn context_business_flow_tracks_tool_result_sequence_and_last_response() {
     )
     .expect("second tool result");
 
+    let runtime = business_runtime(&session);
     let output = build_context(ContextInput {
-        runtime: business_runtime(&session),
-        session,
+        runtime: &runtime,
+        session: &session,
         additional_messages: Vec::new(),
     })
     .expect("context should build");
 
     assert_eq!(output.context_state.tool_results.len(), 0);
-    let stored_tool_results = output
-        .session
+    let stored_tool_results = session
         .session_log
         .iter()
-        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .map(|entry| entry.value())
         .filter(|entry| entry.get("type").and_then(Value::as_str) == Some("tool_result"))
         .collect::<Vec<_>>();
     assert_eq!(stored_tool_results[0]["sequence"], 1);
@@ -270,8 +270,8 @@ fn context_business_flow_uses_runtime_text_and_reasoning_when_session_history_is
         .expect("fixture reasoning should apply");
 
     let output = build_context(ContextInput {
-        runtime,
-        session,
+        runtime: &runtime,
+        session: &session,
         additional_messages: Vec::new(),
     })
     .expect("context should build");
@@ -298,8 +298,8 @@ fn context_business_flow_keeps_runtime_reasoning_out_of_non_empty_messages_but_r
         .expect("fixture reasoning should apply");
 
     let output = build_context(ContextInput {
-        runtime,
-        session,
+        runtime: &runtime,
+        session: &session,
         additional_messages: Vec::new(),
     })
     .expect("context should build");

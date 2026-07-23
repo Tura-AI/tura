@@ -44,7 +44,7 @@ pub(crate) fn create_canonical_test_session(
         model_acceleration_enabled,
         disable_permission_restrictions,
     );
-    let task_plan = info.management.task_plan.clone();
+    let task_plan = info.projection.task_plan.clone();
     session_store()
         .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
         .expect("canonical router-flow session should be created")
@@ -130,7 +130,6 @@ impl Drop for ServiceThread {
 pub(crate) enum RouterReply {
     Completed,
     Payload(Value),
-    DelayedPayload(Value, Duration),
     GatedPayload(Value, Arc<StdMutex<mpsc::Receiver<()>>>),
     RawLine(String),
 }
@@ -301,14 +300,6 @@ pub(crate) fn handle_router_connection(
             "request_id": request.get("request_id").cloned().unwrap_or(Value::Null),
             "payload": payload
         }),
-        RouterReply::DelayedPayload(payload, delay) => {
-            std::thread::sleep(delay);
-            json!({
-                "ok": true,
-                "request_id": request.get("request_id").cloned().unwrap_or(Value::Null),
-                "payload": payload
-            })
-        }
         RouterReply::GatedPayload(payload, release) => {
             release
                 .lock()

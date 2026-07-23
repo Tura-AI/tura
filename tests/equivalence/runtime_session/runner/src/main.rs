@@ -255,7 +255,7 @@ fn gateway_busy_input_capture() -> Result<Value, Box<dyn std::error::Error>> {
         false,
         false,
     );
-    let task_plan = info.management.task_plan.clone();
+    let task_plan = info.projection.task_plan.clone();
     let session = store
         .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
         .map_err(io::Error::other)?;
@@ -298,7 +298,7 @@ fn gateway_busy_input_capture() -> Result<Value, Box<dyn std::error::Error>> {
     };
     let empty = consumed.projection.pending_user_inputs;
     Ok(json!({
-        "state_while_busy": store.get_session_info(&session.id).map(|info| info.management.state),
+        "state_while_busy": store.get_session_info(&session.id).map(|info| info.projection.state),
         "first": first,
         "second": second,
         "taken": taken,
@@ -349,6 +349,7 @@ fn store_capture() -> Result<Value, Box<dyn std::error::Error>> {
         disable_permission_restrictions: false,
         use_last_tool_call_response: false,
         auto_session_name: false,
+        initial_task_plan_patch: None,
     })?;
     store.execute_session_command(ExecuteSessionCommandRequest {
         command_id: format!("start:{session_id}"),
@@ -361,7 +362,9 @@ fn store_capture() -> Result<Value, Box<dyn std::error::Error>> {
             session_id: session_id.to_string(),
         })?
         .ok_or("fixed session missing before delta")?;
-    let mut management: SessionManagement = serde_json::from_value(snapshot.management)?;
+    let mut management = snapshot
+        .into_management()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     management.session_log.clear();
     management.session_log_retention.omitted_entries = 0;
     let management_delta = SessionManagement::persistence_delta(None, &management);
@@ -423,14 +426,20 @@ fn store_capture() -> Result<Value, Box<dyn std::error::Error>> {
         page: 0,
         page_size: 10,
     })?;
+    let snapshot_state = snapshot.lifecycle_projection.state;
+    let snapshot_status = snapshot_state.ui_status();
+    let task_management = snapshot.lifecycle_projection.task_management_json(
+        chrono::DateTime::<Utc>::from_timestamp_millis(snapshot.created_at)
+            .unwrap_or(chrono::DateTime::<Utc>::UNIX_EPOCH),
+    );
     Ok(json!({
         "snapshot": {
             "session_id": snapshot.session_id,
             "name": snapshot.name,
-            "state": snapshot.state,
-            "status": snapshot.status,
+            "state": snapshot_state,
+            "status": snapshot_status,
             "message_count": snapshot.message_count,
-            "task_management": snapshot.task_management,
+            "task_management": task_management,
             "todos": snapshot.todos,
         },
         "list": {

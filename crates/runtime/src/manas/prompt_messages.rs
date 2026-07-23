@@ -281,7 +281,8 @@ mod tests {
     fn planning_objective_block_with_task_includes_overall_and_current_task() {
         let mut session = test_session("ship the feature");
         session.current_objective = "ship the feature".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "task-1".to_string(),
             step: 1,
             task_summary: "Patch parser".to_string(),
@@ -290,6 +291,7 @@ mod tests {
             start_condition: StartCondition::UserAction,
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, Utc::now());
 
         let content = planning_objective_block(&session);
 
@@ -358,7 +360,8 @@ mod tests {
             now,
         );
         session.current_objective = "fix the task".to_string();
-        session.task_plan.detailed_tasks.push(TaskStep {
+        let mut task_plan = session.task_plan.clone();
+        task_plan.detailed_tasks.push(TaskStep {
             task_id: "task-1".to_string(),
             step: 1,
             task_summary: "Patch parser".to_string(),
@@ -366,6 +369,7 @@ mod tests {
             start_condition: StartCondition::UserAction,
             ..TaskStep::default()
         });
+        session.replace_task_plan(task_plan, now);
 
         let mut messages = Vec::new();
         push_no_tool_task_status_retry_message(&mut messages, &session);

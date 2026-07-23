@@ -328,13 +328,17 @@ pub async fn create_session_value(
         model_acceleration_enabled,
         disable_permission_restrictions,
     );
-    info.management.auto_session_name = auto_session_name;
-    if let Some(task_management) = payload.task_management {
-        session_store().apply_initial_task_management(&mut info, task_management)?;
-    }
-    let task_plan = info.management.task_plan.clone();
-    let session = session_store()
-        .create_canonical_session(info, SessionCommand::CreateSession { task_plan })?;
+    info.auto_session_name = auto_session_name;
+    let initial_task_plan_patch = payload
+        .task_management
+        .map(|task_management| session_store().parse_initial_task_management(task_management))
+        .transpose()?;
+    let task_plan = info.projection.task_plan.clone();
+    let session = session_store().create_canonical_session_with_patch(
+        info,
+        SessionCommand::CreateSession { task_plan },
+        initial_task_plan_patch,
+    )?;
     Ok(session)
 }
 

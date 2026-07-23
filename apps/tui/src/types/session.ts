@@ -132,10 +132,6 @@ export function isDraftSession(session: Session | undefined): boolean {
   return session?.draft === true;
 }
 
-export function sessionUpdatedAt(session: Session): number {
-  return session.last_user_message_at ?? 0;
-}
-
 export function sessionSortAt(session: Session): number {
   return session.last_user_message_at ?? 0;
 }
@@ -160,14 +156,6 @@ export function sessionHasQuestionStatus(session: Session): boolean {
   if (management.status === "question") return true;
   const tasks = management.tasks;
   return Array.isArray(tasks) && tasks.some((task) => objectValue(task).status === "question");
-}
-
-export function sessionDirectory(session: Session): string {
-  return session.directory ?? "";
-}
-
-export function messageSessionID(message: Message): string {
-  return message.sessionID ?? "";
 }
 
 export function partMessageID(part: MessagePart): string {

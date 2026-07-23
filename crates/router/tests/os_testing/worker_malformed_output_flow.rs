@@ -19,12 +19,7 @@ async fn router_persistent_worker_business_flow_rejects_malformed_json_and_clean
         env: Vec::new(),
     };
 
-    let handle = manager.ensure_worker(spec.clone()).await?;
-    let reused = manager.ensure_worker(spec.clone()).await?;
-    assert_eq!(
-        handle.worker_id, reused.worker_id,
-        "healthy malformed-output worker should still be reused before invocation failure"
-    );
+    let handle = manager.ensure_exclusive_worker(spec.clone()).await?;
     assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 1);
 
     let error = manager
@@ -48,7 +43,7 @@ async fn router_persistent_worker_business_flow_rejects_malformed_json_and_clean
     assert_eq!(
         manager.count_workers_with_prefix("runtime_worker:"),
         0,
-        "malformed response should stop and remove the worker before reuse"
+        "malformed response should stop and remove the worker before another start"
     );
     assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
     assert!(!manager.stop_worker(&handle.worker_id).await);
@@ -68,7 +63,7 @@ async fn router_persistent_worker_business_flow_rejects_malformed_json_and_clean
         "stale malformed worker id should fail cleanly: {stale_error:#}"
     );
 
-    let restarted = manager.ensure_worker(spec).await?;
+    let restarted = manager.ensure_exclusive_worker(spec).await?;
     assert_ne!(
         handle.worker_id, restarted.worker_id,
         "malformed worker should be replaced by a fresh process"

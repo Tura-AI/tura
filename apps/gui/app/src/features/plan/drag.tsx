@@ -3,7 +3,6 @@ import { Show } from "solid-js";
 import { classNames } from "../../state/format";
 import { sessionTitle } from "../../state/global-store";
 import { shortSessionId } from "./tasks";
-import { startOfDay } from "./timeline";
 
 let activePlanPointerDrag = false;
 export type PlanDragState = {
@@ -120,57 +119,4 @@ export function beginPlanPointerDrag(options: {
   window.addEventListener("pointerup", onUp, { once: true });
   window.addEventListener("mousemove", onMove);
   window.addEventListener("mouseup", onUp, { once: true });
-}
-
-export function pointerScheduleFromElement(
-  point: { x: number; y: number },
-  axis: "x" | "y",
-): string | undefined {
-  const element = document.elementFromPoint(point.x, point.y) as HTMLElement | undefined;
-  const hourCell = element?.closest<HTMLElement>("[data-plan-hour-start]");
-  if (hourCell?.dataset.planHourStart) {
-    const start = new Date(hourCell.dataset.planHourStart);
-    if (Number.isNaN(start.getTime())) {
-      return undefined;
-    }
-    start.setMinutes(Math.round(pointerRatio(hourCell, point.y, "y") * 59), 0, 0);
-    return start.toISOString();
-  }
-  const dayCell = element?.closest<HTMLElement>("[data-plan-day]");
-  if (dayCell?.dataset.planDay) {
-    return dateWithPointerMinutes(new Date(dayCell.dataset.planDay), dayCell, {
-      ...point,
-      axis,
-    }).toISOString();
-  }
-  const timelineCell = element?.closest<HTMLElement>("[data-plan-timeline-day]");
-  if (timelineCell?.dataset.planTimelineDay) {
-    return dateWithPointerMinutes(new Date(timelineCell.dataset.planTimelineDay), timelineCell, {
-      ...point,
-      axis,
-    }).toISOString();
-  }
-  return undefined;
-}
-
-export function dateWithPointerMinutes(
-  day: Date,
-  element: HTMLElement,
-  point: { x: number; y: number; axis: "x" | "y" },
-): Date {
-  const next = startOfDay(day);
-  const ratio = pointerRatio(element, point.axis === "x" ? point.x : point.y, point.axis);
-  const minutes = Math.max(0, Math.min(1439, Math.round(ratio * 1439)));
-  next.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
-  return next;
-}
-
-export function pointerRatio(element: HTMLElement, coordinate: number, axis: "x" | "y"): number {
-  const rect = element.getBoundingClientRect();
-  const size = axis === "x" ? rect.width : rect.height;
-  const start = axis === "x" ? rect.left : rect.top;
-  if (size <= 0) {
-    return 0;
-  }
-  return Math.max(0, Math.min(1, (coordinate - start) / size));
 }

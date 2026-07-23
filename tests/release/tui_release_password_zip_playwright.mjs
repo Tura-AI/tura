@@ -60,7 +60,7 @@ try {
   await submitPrompt(definition.prompt)
   const started = Date.now()
   const deadline = Date.now() + timeoutMs
-  let gatewayCompletion = { ok: false, error: "not checked" }
+  let gatewayCompletion
   while (Date.now() < deadline) {
     terminalSnapshot = await terminalText()
     gatewayCompletion = await inspectGatewayCompletion(gateway.url, ctx.workspace, definition.sentinel)

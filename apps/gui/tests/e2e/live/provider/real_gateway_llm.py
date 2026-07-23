@@ -424,6 +424,7 @@ async def wait_for_avatar_decode(page):
             timeout=5000,
         )
     except Exception:
+        # Avatar decoding is cosmetic and should not fail the behavioral matrix.
         pass
 
 
@@ -708,6 +709,7 @@ def approve_pending_permissions():
         try:
             urlopen(request, timeout=5).read()
         except Exception:
+            # Permission replies are best-effort; a later poll observes any unresolved item.
             pass
 
 

@@ -86,14 +86,6 @@ export function boundedSessionIndex(index: number, sessions: Session[]): number 
   return wrapIndex(index, sessions.length + SESSION_CREATE_ENTRY_COUNT);
 }
 
-export function readString(
-  properties: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const value = properties?.[key];
-  return typeof value === "string" ? value : undefined;
-}
-
 export function upsertById<T extends { id: string }>(items: T[], item: T): T[] {
   return [...items.filter((existing) => existing.id !== item.id), item];
 }

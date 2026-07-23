@@ -142,7 +142,9 @@ Important scripts:
 - `xtask/scripts/run-backend-os-tests.*`: run root and crate-owned Rust tests from
   `tests/os_testing` with the `os-tests` feature gate. Every target runs
   serially with `--test-threads=1` to avoid process-global env, local socket,
-  owner-lock, daemon, and child-process cleanup conflicts.
+  owner-lock, daemon, and child-process cleanup conflicts. The Windows runner
+  preserves assertion failures but bounds each target and terminates its Cargo
+  process tree plus repo-owned backend children before returning.
 - `xtask/scripts/run-backend-live-tests.*`: run opt-in root/backend Rust live tests and
   backend-owned root live scripts using one-level typed-directory scans and the
   `live-tests` feature gate when the package declares it. These backend
@@ -164,6 +166,9 @@ Script tests:
   `release-v0.0.0-ci`, runs `build-release.*`, checks expected artifacts, and
   verifies command protocol health. Pass `-BackendOnly` or `--backend-only` when
   a CI job only needs Rust release artifacts.
+- `scripts/tests/scripts/test-backend-os-runner.ps1`: injects a fake Cargo
+  process to verify that Windows assertion and timeout paths fail promptly,
+  preserve diagnostics, and leave no backend child process running.
 
 Source installation contract:
 

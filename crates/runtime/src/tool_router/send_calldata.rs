@@ -1,9 +1,7 @@
 use chrono::Utc;
-use lifecycle::{RuntimeId, SessionId};
+use lifecycle::{AgentId, RuntimeId, SessionId};
 use serde::{Deserialize, Serialize};
 use tracing::info;
-
-use crate::state_machine::agent_management::AgentId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallData {

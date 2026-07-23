@@ -80,7 +80,7 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
         "running",
         "busy",
         2,
-        Some("doing"),
+        Some(PlanStatus::Doing),
     )?;
     assert_session_snapshot(&delete_id, &workspace_key, "created", "idle", 1, None)?;
     assert_records(&keep_id, &["keep-m1", "keep-m2"])?;
@@ -145,7 +145,7 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
         "completed",
         "idle",
         3,
-        Some("done"),
+        Some(PlanStatus::Done),
     )?;
     assert_session_missing(&delete_id)?;
     assert_records(&keep_id, &["keep-m1", "keep-m2", "keep-m3"])?;
@@ -213,7 +213,7 @@ fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losi
         "interrupted",
         "error",
         2,
-        Some("waiting_user"),
+        Some(PlanStatus::WaitingUser),
     )?;
     assert_session_snapshot(
         &paused_id,
@@ -221,7 +221,7 @@ fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losi
         "interrupted",
         "error",
         1,
-        Some("waiting_user"),
+        Some(PlanStatus::WaitingUser),
     )?;
     assert_session_snapshot(
         &completed_id,
@@ -229,7 +229,7 @@ fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losi
         "completed",
         "idle",
         1,
-        Some("done"),
+        Some(PlanStatus::Done),
     )?;
     assert_records(&running_id, &["running-m1", "running-m2"])?;
     assert_records(&paused_id, &["paused-m1"])?;

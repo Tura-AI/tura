@@ -32,5 +32,3 @@ export const PRODUCT_ROUTE_PATHS = [
   "/contact-sales",
   "*404",
 ] as const;
-
-export type ProductRoutePath = (typeof PRODUCT_ROUTE_PATHS)[number];

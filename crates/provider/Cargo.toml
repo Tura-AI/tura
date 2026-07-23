@@ -77,6 +77,4 @@ regex.workspace = true
 tura_path.workspace = true
 
 [dev-dependencies]
-tokio-test.workspace = true
-futures.workspace = true
 tempfile.workspace = true

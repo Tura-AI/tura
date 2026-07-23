@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import shutil
 import socket
 import subprocess
 import time
@@ -195,6 +194,7 @@ async def goto_app(page, url: str, selector: str, failure_name: str = "debug-fai
             try:
                 body = await page.locator("body").inner_text(timeout=2_000)
             except Exception:
+                # Preserve the original navigation error when diagnostics cannot be read.
                 pass
             if "Failed to fetch dynamically imported module" in body and attempt < 2:
                 await page.wait_for_timeout(1_000)
@@ -434,7 +434,6 @@ async def main() -> None:
             page.on("request", capture_agent_patch)
 
             try:
-                query = urlencode({"gatewayUrl": GATEWAY_URL})
                 conversation_query = urlencode(
                     {
                         "gatewayUrl": GATEWAY_URL,

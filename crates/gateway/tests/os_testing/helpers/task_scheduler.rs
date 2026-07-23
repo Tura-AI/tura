@@ -46,7 +46,7 @@ pub(crate) fn create_scheduler_session(
         model_acceleration_enabled,
         disable_permission_restrictions,
     );
-    let task_plan = info.management.task_plan.clone();
+    let task_plan = info.projection.task_plan.clone();
     store
         .create_canonical_session(info, SessionCommand::CreateSession { task_plan })
         .expect("canonical scheduler session should be created")

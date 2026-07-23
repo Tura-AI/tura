@@ -110,7 +110,12 @@ export function AppearanceSelect(props: {
   });
 
   return (
-    <section class="appearance-select" ref={root}>
+    <section
+      class="appearance-select"
+      ref={(element) => {
+        root = element;
+      }}
+    >
       <button
         type="button"
         class="appearance-select-button"

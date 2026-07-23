@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::warn;
 
 use runtime_contract::CallContext;
 
@@ -17,13 +17,6 @@ pub struct ServiceManager {
     workers: Arc<RwLock<HashMap<String, Arc<WorkerProcess>>>>,
     service_to_worker: Arc<RwLock<HashMap<String, String>>>,
     ensure_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExistingWorkerPolicy {
-    Reuse,
-    Reject,
 }
 
 #[derive(Debug)]
@@ -53,25 +46,8 @@ impl ServiceManager {
         }
     }
 
-    /// Ensure a worker from a declarative spec, reusing by `spec.key` while the
-    /// process is healthy and replacing it after liveness checks fail.
-    #[allow(dead_code)]
-    pub async fn ensure_worker(&self, spec: WorkerSpec) -> Result<WorkerHandle> {
-        self.ensure_worker_inner(spec, ExistingWorkerPolicy::Reuse)
-            .await
-    }
-
     /// Start a worker only if no live worker is already registered for `spec.key`.
     pub async fn ensure_exclusive_worker(&self, spec: WorkerSpec) -> Result<WorkerHandle> {
-        self.ensure_worker_inner(spec, ExistingWorkerPolicy::Reject)
-            .await
-    }
-
-    async fn ensure_worker_inner(
-        &self,
-        spec: WorkerSpec,
-        existing_policy: ExistingWorkerPolicy,
-    ) -> Result<WorkerHandle> {
         let ensure_lock = self.ensure_lock_for_key(&spec.key);
         let _guard = ensure_lock.lock().await;
         let existing_worker_id = {
@@ -86,21 +62,11 @@ impl ServiceManager {
             };
             if let Some(worker) = worker {
                 if worker.is_alive().await {
-                    if existing_policy == ExistingWorkerPolicy::Reject {
-                        return Err(WorkerAlreadyRunning {
-                            key: spec.key,
-                            worker_id: existing_id,
-                        }
-                        .into());
+                    return Err(WorkerAlreadyRunning {
+                        key: spec.key,
+                        worker_id: existing_id,
                     }
-                    info!(
-                        worker_id = existing_id,
-                        key = spec.key,
-                        "reusing existing worker"
-                    );
-                    return Ok(WorkerHandle {
-                        worker_id: existing_id.clone(),
-                    });
+                    .into());
                 }
                 warn!(
                     worker_id = existing_id,
@@ -275,22 +241,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_worker_reuses_alive_worker_for_same_key() {
-        let manager = ServiceManager::new();
-        let first = manager
-            .ensure_worker(missing_worker_spec("runtime_worker:session-a"))
-            .await
-            .expect("explicit one-shot worker should create a reusable handle");
-        let second = manager
-            .ensure_worker(missing_worker_spec("runtime_worker:session-a"))
-            .await
-            .expect("same key should reuse existing one-shot worker");
-
-        assert_eq!(first.worker_id, second.worker_id);
-        assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 1);
-    }
-
-    #[tokio::test]
     async fn ensure_exclusive_worker_rejects_alive_worker_for_same_key() {
         let manager = ServiceManager::new();
         let first = manager
@@ -315,7 +265,7 @@ mod tests {
     async fn stop_worker_by_key_removes_worker_and_prefix_count() {
         let manager = ServiceManager::new();
         let handle = manager
-            .ensure_worker(missing_worker_spec("runtime_worker:session-b"))
+            .ensure_exclusive_worker(missing_worker_spec("runtime_worker:session-b"))
             .await
             .expect("worker should be registered");
 
@@ -328,7 +278,7 @@ mod tests {
     async fn worker_alive_by_key_reports_registered_one_shot_worker() {
         let manager = ServiceManager::new();
         manager
-            .ensure_worker(missing_worker_spec("runtime_worker:session-live"))
+            .ensure_exclusive_worker(missing_worker_spec("runtime_worker:session-live"))
             .await
             .expect("one-shot worker should be registered");
 
@@ -344,15 +294,15 @@ mod tests {
     async fn stop_workers_with_prefix_removes_only_matching_workers() {
         let manager = ServiceManager::new();
         manager
-            .ensure_worker(missing_worker_spec("runtime_worker:one"))
+            .ensure_exclusive_worker(missing_worker_spec("runtime_worker:one"))
             .await
             .expect("first worker should be registered");
         manager
-            .ensure_worker(missing_worker_spec("runtime_worker:two"))
+            .ensure_exclusive_worker(missing_worker_spec("runtime_worker:two"))
             .await
             .expect("second worker should be registered");
         manager
-            .ensure_worker(missing_worker_spec("other_worker:three"))
+            .ensure_exclusive_worker(missing_worker_spec("other_worker:three"))
             .await
             .expect("third worker should be registered");
 

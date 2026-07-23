@@ -9,8 +9,8 @@ be, and how much of the machine it is allowed to inconvenience.
 Root integration tests owned by the `tura_workspace` package are mandatory
 backend checks. Process, daemon, socket-owner, shutdown, and cross-OS policy
 tests live directly under `tests/os_testing/` and run serially through the OS
-test runner. `business`, `os_testing`, `performance`, `live`, `release`, and
-`benchmark` are peer directories, and typed directories are scanned one level
+test runner. `business`, `e2e`, `os_testing`, `performance`, `live`, `release`,
+and `benchmark` are peer directories, and typed directories are scanned one level
 deep. Keeping them as peers prevents a convenient local test from quietly
 becoming a process-owning integration suite.
 
@@ -86,12 +86,13 @@ part of the required crate checks rather than an optional performance or live
 suite.
 
 The workspace root also declares backend `default-members`, but CI does not use
-a single workspace cargo test as its main backend check. `business`,
+a single workspace cargo test as its main backend check. `business`, `e2e`,
 `os_testing`, `performance`, `live`, `release`, and `benchmark` are peer test
 types at the workspace root; crate-owned typed tests use the backend package
 directories. None of these types owns or nests the others. Backend quality
-checks enforce this layout through `tests/business`, `tests/os_testing`,
-`tests/performance`, `tests/live`, `tests/release`, and `benchmark`.
+checks enforce this layout through `tests/business`, `tests/e2e`,
+`tests/os_testing`, `tests/performance`, `tests/live`, `tests/release`, and
+`benchmark`.
 Do not run OS testing coverage with a single parallel workspace cargo command:
 process-owning tests share global env, local sockets, owner locks, and
 child-process cleanup, so the backend OS runner serializes every typed target
@@ -102,7 +103,9 @@ and docs should refer to the test type plus directory scan, not hardcoded
 individual script paths.
 Any Rust test under a crate-owned typed directory must be declared as a
 `[[test]]` target with the matching feature gate. Do not create `tests/e2e`
-directories.
+directories inside backend crates. The workspace root `tests/e2e/` is the
+exception: it owns required local, provider-mocked, real-process full-chain
+entrypoints discovered by the backend E2E runner.
 
 ## Crate-Owned Contract Scripts
 
@@ -201,6 +204,27 @@ The backend business runners deliberately ignore root `.mjs` files and never
 run app-owned TUI/GUI/browser scripts. TUI scripts live under
 `apps/tui/tests/e2e/` and GUI scripts live under `apps/gui/e2e/`; run those
 suites explicitly from their app package scripts.
+
+## Backend E2E
+
+`tests/e2e/` contains required local full-chain backend tests. These tests start
+the real gateway, router, runtime worker, and session_db processes, but must use
+deterministic local mock providers. They must not require provider tokens,
+OAuth state, paid services, third-party APIs, or public network access.
+
+Top-level `*.mjs` files are runnable cases. Shared modules end in
+`_fixture.mjs`, and the runner scans the directory rather than hardcoding test
+names.
+
+```powershell
+.\xtask\scripts\run-backend-e2e-tests.ps1 -List
+.\xtask\scripts\run-backend-e2e-tests.ps1
+```
+
+```bash
+sh xtask/scripts/run-backend-e2e-tests.sh --list
+sh xtask/scripts/run-backend-e2e-tests.sh
+```
 
 ## Live Tests
 
