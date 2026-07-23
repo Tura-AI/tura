@@ -27,8 +27,10 @@ path. It replays typed commands from `message_queue/pending`, recovers orphaned
 with an error sidecar. Command checkpoint replay is idempotent by the typed
 checkpoint identity; management and context replay use independent sequences.
 The socket and queue paths share one typed command dispatcher and one online
-Session feed hub. Only newly committed durable feed entries are published;
-idempotent command or sequence replay is silent.
+Session feed hub. Newly committed stable entries are durable and replayable.
+Incremental assistant text deltas use cursor zero and are broadcast live
+without a SQLite write; the completed assistant message is durable. Idempotent
+command or sequence replay is silent.
 
 Runtime and gateway fronts do not open SQLite directly. They probe
 `service.addr` with a short timeout; an unreachable endpoint file is removed so
@@ -93,6 +95,13 @@ are transactional read projections, not competing sources of lifecycle truth.
 `session_id + message_id`. Use `get_session` for the current read projection,
 `read_context_slice` for bounded runtime context and both cursors, and
 `list_session_records` for replay/history records.
+
+Runtime checkpoints retain the complete provider input needed for exact
+recovery: identity, prompt style, active Operation Manuals, messages, tools, and
+provider options. Raw system context remains available through
+`read_context_slice`, but it has no frontend message projection and never enters
+the durable Session feed. Only user and assistant messages appear in UI/history
+records.
 
 If a workspace `.tura/session_log.sqlite3` database disappears, the service
 treats that workspace database as authoritative and removes stale index

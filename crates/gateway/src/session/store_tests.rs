@@ -1266,7 +1266,7 @@ fn reopened_session_hydrates_frontend_user_message() {
 }
 
 #[test]
-fn frontend_messages_filter_system_role_from_session_db_projection() {
+fn system_context_does_not_enter_frontend_session_db_projection() {
     let _service = SessionDbTestService::start();
     let root = std::env::temp_dir().join(format!("tura-system-filter-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
@@ -1321,10 +1321,13 @@ fn frontend_messages_filter_system_role_from_session_db_projection() {
     assert!(frontend_messages
         .iter()
         .any(|message| message.id == "msg_visible_assistant"));
-    assert!(reopened
-        .get_messages(&session.id)
-        .iter()
-        .any(|message| message.role == MessageRole::System));
+    assert!(
+        reopened
+            .get_messages(&session.id)
+            .iter()
+            .all(|message| message.role != MessageRole::System),
+        "gateway message state must not hydrate internal system context"
+    );
 
     let _ = std::fs::remove_dir_all(root);
 }

@@ -325,6 +325,18 @@ impl SessionFeedReducer {
     }
 
     pub fn apply(&mut self, entry: SessionFeedEntry) -> Result<bool> {
+        if entry.cursor == 0 {
+            if !matches!(&entry.event, SessionFeedEvent::AssistantTextDelta { .. }) {
+                bail!("live Session feed entries may only carry assistant text deltas");
+            }
+            self.apply_event(
+                &entry.session_id,
+                entry.runtime_id.as_deref(),
+                entry.cursor,
+                entry.event,
+            )?;
+            return Ok(true);
+        }
         let session_id = entry.session_id.clone();
         let mut previous = self.cursors.get(&session_id).copied().unwrap_or(0);
         let generation_event_id = (entry.cursor == 1).then(|| entry.event_id.clone());
@@ -406,6 +418,9 @@ impl SessionFeedReducer {
                     || projected.updated_at != message.updated_at
                 {
                     bail!("Session message projection envelope does not match its payload");
+                }
+                if projected.role == MessageRole::System {
+                    return Ok(());
                 }
                 self.store.upsert_feed_message(session_id, projected);
             }
@@ -1086,6 +1101,53 @@ mod tests {
     }
 
     #[test]
+    fn live_text_delta_updates_frontend_without_advancing_the_durable_cursor() {
+        let (store, session_id) = test_store();
+        let mut reducer = SessionFeedReducer::new(store.clone());
+        let mut live_delta = entry(
+            0,
+            SessionFeedEvent::AssistantTextDelta {
+                message_id: "live-runtime.message".to_string(),
+                part_id: "live-runtime.message".to_string(),
+                delta: "hel".to_string(),
+                created_at: 10,
+                updated_at: 11,
+            },
+        );
+        live_delta.session_id = session_id.clone();
+
+        assert!(reducer.apply(live_delta).expect("reduce live text delta"));
+        assert_eq!(reducer.cursors.get(&session_id), None);
+
+        let mut completed = entry(
+            1,
+            SessionFeedEvent::AgentMessage {
+                message_id: "live-runtime.message".to_string(),
+                part_id: "live-runtime.message".to_string(),
+                reply_message: "hello".to_string(),
+                new_learning: String::new(),
+                runtime_status: None,
+                context_tokens: None,
+                usage: None,
+                created_at: 10,
+                updated_at: 12,
+            },
+        );
+        completed.session_id = session_id.clone();
+        assert!(reducer
+            .apply(completed)
+            .expect("reduce completed durable text"));
+        assert_eq!(reducer.cursors.get(&session_id), Some(&1));
+
+        let messages = store.get_messages(&session_id);
+        let message = messages
+            .iter()
+            .find(|message| message.id == "live-runtime.message")
+            .expect("live message projection");
+        assert_eq!(message.parts[0].text.as_deref(), Some("hello"));
+    }
+
+    #[test]
     fn repeated_message_projection_is_idempotent_across_distinct_feed_cursors() {
         let (store, session_id) = test_store();
         let mut reducer = SessionFeedReducer::new(store.clone());
@@ -1151,6 +1213,55 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn system_message_projection_advances_feed_without_entering_frontend_state() {
+        let (store, session_id) = test_store();
+        let mut reducer = SessionFeedReducer::new(store.clone());
+        let mut event_cursor = store.event_cursor();
+        let message = store.build_text_message_with_ids_and_times(
+            &session_id,
+            MessageRole::System,
+            "internal operation manual".to_string(),
+            Some("feed-system-message".to_string()),
+            Some("feed-system-part".to_string()),
+            None,
+            10,
+            11,
+        );
+        let projection = SessionRecordProjection {
+            session_id: session_id.clone(),
+            message_id: message.id.clone(),
+            role: "system".to_string(),
+            created_at: message.created_at,
+            updated_at: message.updated_at,
+            record: serde_json::to_value(&message).expect("system projection JSON"),
+        };
+        let mut system_entry = entry(
+            1,
+            SessionFeedEvent::MessageUpserted {
+                message: projection,
+            },
+        );
+        system_entry.session_id = session_id.clone();
+
+        assert!(reducer
+            .apply(system_entry)
+            .expect("ignore system message projection"));
+        assert_eq!(reducer.cursors.get(&session_id), Some(&1));
+        assert!(store
+            .get_messages(&session_id)
+            .iter()
+            .all(|candidate| candidate.id != message.id));
+
+        let events = std::iter::from_fn(|| store.next_event(&mut event_cursor)).collect::<Vec<_>>();
+        assert!(events.iter().all(|event| {
+            !matches!(
+                event,
+                GlobalEvent::MessageUpdated { .. } | GlobalEvent::MessagePartUpdated { .. }
+            )
+        }));
     }
 
     #[test]

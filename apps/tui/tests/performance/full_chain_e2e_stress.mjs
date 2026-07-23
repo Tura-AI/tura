@@ -17,7 +17,7 @@ import {
   nonNegativeIntEnv,
   round,
   startBackendStressEnvironment,
-} from "../../../../tests/performance/full_chain_backend_fixture.mjs";
+} from "../../../../tests/e2e/full_chain_backend_fixture.mjs";
 
 const appRoot = path.resolve(import.meta.dirname, "..", "..");
 

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::task::Poll;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use fs2::FileExt;
@@ -22,7 +22,7 @@ const FAILED_DIR: &str = "failed";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 const PROBE_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
-const PROBE_RESPONSE_ATTEMPTS: usize = 3;
+const PROBE_OWNED_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_RETRY_DELAY: Duration = Duration::from_millis(50);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBSCRIPTION_BLOCKING_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -62,21 +62,26 @@ pub fn service_is_running() -> bool {
         Ok(endpoint) => endpoint,
         Err(_) => return false,
     };
+    let owner_lock_held = endpoint_owner_lock_is_held(&endpoint);
     if ensure_version_compatible(&endpoint).is_err() {
-        let _ = fs::remove_file(service_addr_path());
+        if !owner_lock_held {
+            remove_endpoint_if_unchanged(&endpoint);
+        }
         return false;
     }
     let addr = match parse_addr(&endpoint) {
         Ok(addr) => addr,
         Err(_) => {
-            let _ = fs::remove_file(service_addr_path());
+            if !owner_lock_held {
+                remove_endpoint_if_unchanged(&endpoint);
+            }
             return false;
         }
     };
-    if probe_session_db(&addr) {
+    if probe_session_db(&addr, probe_response_timeout(owner_lock_held)) {
         true
     } else {
-        let _ = fs::remove_file(service_addr_path());
+        remove_endpoint_if_unchanged(&endpoint);
         false
     }
 }
@@ -113,9 +118,11 @@ pub struct SessionFeedSubscriptionCancellation {
 impl SessionFeedSubscriptionCancellation {
     pub fn cancel(&self) -> Result<()> {
         self.cancelled.store(true, Ordering::SeqCst);
-        self.stream
-            .shutdown(Shutdown::Both)
-            .context("failed to close session feed subscription")
+        match self.stream.shutdown(Shutdown::Both) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotConnected => Ok(()),
+            Err(error) => Err(error).context("failed to close session feed subscription"),
+        }
     }
 }
 
@@ -274,7 +281,7 @@ fn queue_item_name(now: i64, pid: u32, id: u64) -> String {
 }
 
 pub fn session_db_owner_lock_path() -> PathBuf {
-    tura_path::locks_dir().join(format!("session-db-{}.lock", tura_path::build_kind()))
+    session_db_owner_lock_path_for_build_kind(tura_path::build_kind())
 }
 
 pub fn unreachable_owner_lock_message() -> Option<String> {
@@ -339,36 +346,90 @@ fn ensure_version_compatible(endpoint: &ServiceEndpoint) -> Result<()> {
     Ok(())
 }
 
-fn probe_session_db(addr: &SocketAddr) -> bool {
-    for attempt in 0..PROBE_RESPONSE_ATTEMPTS {
+fn probe_session_db(addr: &SocketAddr, total_timeout: Duration) -> bool {
+    let started = Instant::now();
+    loop {
+        let remaining = total_timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return false;
+        }
         match call_service_addr(
             addr,
             &SessionLogCommand::Health,
-            probe_connect_timeout(),
-            probe_response_timeout(),
+            probe_connect_timeout().min(remaining),
+            remaining,
         ) {
             Ok(SessionLogResponse::Ok) => return true,
             Ok(_) => return false,
             Err(error) if is_retryable_probe_error(&error) => {
-                if attempt + 1 < PROBE_RESPONSE_ATTEMPTS {
-                    std::thread::sleep(PROBE_RETRY_DELAY);
+                let remaining = total_timeout.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    return false;
                 }
+                std::thread::sleep(PROBE_RETRY_DELAY.min(remaining));
             }
             Err(_) => return false,
         }
     }
-    false
 }
 
 fn probe_connect_timeout() -> Duration {
     timeout_from_env("TURA_SESSION_DB_PROBE_TIMEOUT_MS", PROBE_CONNECT_TIMEOUT)
 }
 
-fn probe_response_timeout() -> Duration {
+fn probe_response_timeout(owner_lock_held: bool) -> Duration {
     timeout_from_env(
         "TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS",
-        PROBE_RESPONSE_TIMEOUT,
+        if owner_lock_held {
+            PROBE_OWNED_RESPONSE_TIMEOUT
+        } else {
+            PROBE_RESPONSE_TIMEOUT
+        },
     )
+}
+
+fn endpoint_owner_lock_is_held(endpoint: &ServiceEndpoint) -> bool {
+    let endpoint_build_kind = endpoint
+        .version
+        .rsplit_once('+')
+        .map(|(_, build_kind)| build_kind)
+        .filter(|build_kind| {
+            !build_kind.is_empty()
+                && build_kind
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+        });
+    let path = endpoint_build_kind
+        .map(session_db_owner_lock_path_for_build_kind)
+        .unwrap_or_else(session_db_owner_lock_path);
+    owner_lock_is_held(&path)
+}
+
+fn session_db_owner_lock_path_for_build_kind(build_kind: &str) -> PathBuf {
+    tura_path::locks_dir().join(format!("session-db-{build_kind}.lock"))
+}
+
+fn owner_lock_is_held(path: &std::path::Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let file = match fs::OpenOptions::new().read(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(_) => return true,
+    };
+    match file.try_lock_exclusive() {
+        Ok(()) => {
+            let _ = file.unlock();
+            false
+        }
+        Err(_) => true,
+    }
+}
+
+fn remove_endpoint_if_unchanged(expected: &ServiceEndpoint) {
+    if read_endpoint().ok().as_ref() == Some(expected) {
+        let _ = fs::remove_file(service_addr_path());
+    }
 }
 
 fn timeout_from_env(name: &str, fallback: Duration) -> Duration {
@@ -427,7 +488,9 @@ fn has_io_error(error: &anyhow::Error, include_timeout: bool) -> bool {
                 matches!(
                     io_error.kind(),
                     ErrorKind::ConnectionAborted
+                        | ErrorKind::ConnectionRefused
                         | ErrorKind::ConnectionReset
+                        | ErrorKind::NotConnected
                         | ErrorKind::UnexpectedEof
                         | ErrorKind::BrokenPipe
                 ) || include_timeout
@@ -546,6 +609,13 @@ mod tests {
                 IoError::from(kind)
             )));
         }
+    }
+
+    #[test]
+    fn owned_session_db_health_window_defaults_to_five_seconds() {
+        assert_eq!(PROBE_OWNED_RESPONSE_TIMEOUT, Duration::from_secs(5));
+        assert_eq!(probe_response_timeout(true), Duration::from_secs(5));
+        assert_eq!(probe_response_timeout(false), Duration::from_millis(500));
     }
 
     #[test]

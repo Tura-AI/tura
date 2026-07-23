@@ -19,7 +19,7 @@ import {
   repoRoot,
   round,
   startBackendStressEnvironment,
-} from "../../../../tests/performance/full_chain_backend_fixture.mjs";
+} from "../../../../tests/e2e/full_chain_backend_fixture.mjs";
 
 const guiRoot = path.resolve(import.meta.dirname, "..", "..");
 const guiAppRoot = path.join(guiRoot, "app");

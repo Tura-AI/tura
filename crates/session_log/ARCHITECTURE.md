@@ -101,9 +101,12 @@ typed identity; management and context replay use independent sequences.
 Socket writes and file-queue writes execute through the same typed command
 dispatcher. A successful transaction returns its committed durable Session feed
 entries to that dispatcher; the socket path and the service-owned queue drain
-publish those entries through the same in-process subscription hub. Receipt or
-sequence replay returns no new committed entries, so recovering a queue file
-after commit cannot notify online subscribers twice.
+publish those entries through the same in-process subscription hub. Assistant
+text deltas bypass SQLite and are published through that hub with cursor zero;
+Gateway applies them without advancing its durable replay cursor, and the
+completed `AgentMessage` replaces the transient projection. Receipt or sequence
+replay returns no new committed entries, so recovering a queue file after
+commit cannot notify online subscribers twice.
 
 Mandatory crate tests cover the service owner rule directly:
 `tests/os_testing/process_lifecycle_e2e.rs` starts a real `tura_session_db`, verifies that a
@@ -227,6 +230,15 @@ that delta. `session_context_records` has stricter identity: replay of a
 `session_id + sequence` must match both `record_json` and `projection_json`.
 `retained_from_sequence` records the compaction boundary while omitted history
 remains available through the UI projection.
+
+Runtime recovery data and frontend visibility are separate contracts. Runtime
+checkpoints preserve the complete provider input, including identity, prompt
+style, active Operation Manuals, conversation messages, tools, and provider
+options. Session context likewise preserves every raw record, but only user and
+assistant message records receive a `projection_json`. Internal system records
+must not enter `session_records` or the Session feed; Gateway also discards a
+system-role feed projection defensively. This lets restart reconstruct the exact
+provider boundary without exposing internal prompt context as chat history.
 
 The derived `state` column serializes `lifecycle::SessionState` in snake_case:
 `created`, `running`, `paused`, `completed`, `failed`, `cancelled`, or
