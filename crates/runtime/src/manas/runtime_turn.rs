@@ -155,7 +155,7 @@ pub(crate) fn execute_turn(
                 provider_name: queue_item.provider_name,
                 stream: agent.provider.stream,
                 max_tokens: agent.provider.max_tokens,
-                tool_choice: tool_choice_for_turn(),
+                tool_choice: tool_choice_for_turn(agent.provider.tool_choice),
                 session_directory: session.session_directory.clone(),
                 allowed_command_run_commands: Some(agent_commands),
                 require_startup_task_state,
@@ -356,8 +356,15 @@ fn debug_runtime_timestamp() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-fn tool_choice_for_turn() -> Option<serde_json::Value> {
-    Some(serde_json::json!("auto"))
+fn tool_choice_for_turn(
+    tool_choice: crate::state_machine::agent_management::ToolChoice,
+) -> Option<serde_json::Value> {
+    use crate::state_machine::agent_management::ToolChoice;
+    Some(serde_json::json!(match tool_choice {
+        ToolChoice::Auto => "auto",
+        ToolChoice::Strict => "required",
+        ToolChoice::Disable => "none",
+    }))
 }
 
 fn turn_identity(
@@ -416,8 +423,19 @@ mod tests {
     use std::ffi::OsString;
 
     #[test]
-    fn turns_use_auto_tool_choice_for_prompt_cache_stability() {
-        assert_eq!(tool_choice_for_turn(), Some(serde_json::json!("auto")));
+    fn turns_honor_agent_tool_choice() {
+        assert_eq!(
+            tool_choice_for_turn(ToolChoice::Auto),
+            Some(serde_json::json!("auto"))
+        );
+        assert_eq!(
+            tool_choice_for_turn(ToolChoice::Strict),
+            Some(serde_json::json!("required"))
+        );
+        assert_eq!(
+            tool_choice_for_turn(ToolChoice::Disable),
+            Some(serde_json::json!("none"))
+        );
     }
 
     #[test]

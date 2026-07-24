@@ -90,15 +90,32 @@ pub(crate) fn planning_child_depth() -> usize {
 pub(crate) fn project_directory_with_tools() -> Result<PathBuf, String> {
     if let Ok(root) = std::env::var(PROJECT_ROOT_ENV) {
         let root = PathBuf::from(root);
-        if root
-            .join("crates")
-            .join("tools")
-            .join("src")
-            .join("command_run")
-            .join("schema.json")
-            .exists()
-        {
-            return Ok(root);
+        for candidate in [root.clone(), root.join("target").join("release")] {
+            if candidate
+                .join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json")
+                .exists()
+            {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    if let Ok(executable) = std::env::current_exe() {
+        for candidate in executable.ancestors() {
+            if candidate
+                .join("crates")
+                .join("tools")
+                .join("src")
+                .join("command_run")
+                .join("schema.json")
+                .exists()
+            {
+                return Ok(candidate.to_path_buf());
+            }
         }
     }
 
@@ -121,7 +138,13 @@ pub(crate) fn project_directory_with_tools() -> Result<PathBuf, String> {
 
 fn command_run_capability_directory(agent: &AgentManagement) -> Result<Option<PathBuf>, String> {
     if agent.agent_capabilities.is_empty() {
-        return Ok(None);
+        if agent.agent_name.eq_ignore_ascii_case("direct-text-only") {
+            return Ok(None);
+        }
+        let project_directory = project_directory_with_tools()?;
+        return Ok(Some(
+            project_directory.join("crates").join("tools").join("src"),
+        ));
     }
 
     if let Some(capability) = agent
@@ -129,11 +152,25 @@ fn command_run_capability_directory(agent: &AgentManagement) -> Result<Option<Pa
         .iter()
         .find(|capability| capability.capability_name == COMMAND_RUN_TOOL)
     {
-        return Ok(Some(capability.capability_directory.clone()));
+        if capability
+            .capability_directory
+            .join(COMMAND_RUN_TOOL)
+            .join("schema.json")
+            .exists()
+        {
+            return Ok(Some(capability.capability_directory.clone()));
+        }
     }
 
     if let Some(capability) = agent.agent_capabilities.first() {
-        return Ok(Some(capability.capability_directory.clone()));
+        if capability
+            .capability_directory
+            .join(COMMAND_RUN_TOOL)
+            .join("schema.json")
+            .exists()
+        {
+            return Ok(Some(capability.capability_directory.clone()));
+        }
     }
 
     let project_directory = project_directory_with_tools()?;
@@ -157,7 +194,7 @@ pub(crate) fn command_run_commands_for_agent(agent: &AgentManagement) -> BTreeSe
         })
         .collect::<BTreeSet<_>>();
 
-    if commands.is_empty() && !agent.agent_capabilities.is_empty() {
+    if commands.is_empty() && !agent.agent_name.eq_ignore_ascii_case("direct-text-only") {
         commands = default_command_run_commands();
     }
     commands
@@ -413,6 +450,11 @@ pub(crate) fn command_run_command_format_line(
             compact_prompt(&command_prompt("planning")),
             compact_schema(code_tools::commands::planning::SCHEMA),
         )),
+        _ if read_command_file(&command_id, "command.toml").is_some() => Some(format!(
+            "- {command_id}: {} Schema: {}",
+            compact_prompt(&command_prompt(&command_id)),
+            compact_schema(&command_schema(&command_id)),
+        )),
         _ => None,
     }
 }
@@ -455,7 +497,7 @@ fn read_command_file(command_id: &str, file_name: &str) -> Option<String> {
 }
 
 fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str) -> Vec<String> {
-    let order = [
+    let preferred_order = [
         "apply_patch",
         active_shell,
         "generate_media",
@@ -464,11 +506,18 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
         "task_status",
         "planning",
     ];
-    order
+    let mut ordered = preferred_order
         .into_iter()
         .filter(|name| commands.contains(*name))
         .map(str::to_string)
-        .collect()
+        .collect::<Vec<_>>();
+    ordered.extend(
+        commands
+            .iter()
+            .filter(|name| !preferred_order.contains(&name.as_str()))
+            .cloned(),
+    );
+    ordered
 }
 
 fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
@@ -889,7 +938,8 @@ mod tests {
     fn empty_agent_capabilities_do_not_enable_default_command_run_commands() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
-        let agent = command_run_agent_with_capabilities(&[]);
+        let mut agent = command_run_agent_with_capabilities(&[]);
+        agent.agent_name = "direct-text-only".to_string();
 
         let commands = command_run_commands_for_agent(&agent);
 
@@ -904,7 +954,8 @@ mod tests {
     fn empty_agent_capabilities_do_not_load_command_run_provider_tool() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
-        let agent = command_run_agent_with_capabilities(&[]);
+        let mut agent = command_run_agent_with_capabilities(&[]);
+        agent.agent_name = "direct-text-only".to_string();
         let session = session_with_task_type(vec!["debug".to_string()]);
         let commands = command_run_commands_for_agent(&agent);
 

@@ -23,7 +23,7 @@
     "stream": true,
     "temperature": 0.2,
     "time_out_ms": 120000,
-    "tool_choice": "Auto",
+    "tool_choice": "Strict",
     "tura_llm_name": "thinking"
   },
   "agent_prompt": [
