@@ -32,6 +32,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "resources/tura-runtime/": "tura-runtime/"
+    },
     "icon": [
       "../../../assets/tura/32x32.png",
       "../../../assets/tura/128x128.png",
