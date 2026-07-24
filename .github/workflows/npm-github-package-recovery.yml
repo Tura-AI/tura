@@ -102,7 +102,7 @@ jobs:
           if npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
             echo "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION already exists in GitHub Packages; skipping publish."
           else
-            npm publish "$package_file" --registry https://npm.pkg.github.com --access public --provenance=false
+            npm publish "./$package_file" --registry https://npm.pkg.github.com --access public --provenance=false
           fi
           npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" version --registry https://npm.pkg.github.com >/dev/null
           local_integrity="$(node -e "const fs=require('fs'),crypto=require('crypto'); const data=fs.readFileSync(process.argv[1]); console.log('sha512-'+crypto.createHash('sha512').update(data).digest('base64'))" "$package_file")"

@@ -262,7 +262,7 @@ jobs:
               Write-Host "$packageName@$version already exists on npm; skipping publish."
               continue
             }
-            npm publish $tarball --access public --provenance=false
+            npm publish (Resolve-Path -LiteralPath $tarball).Path --access public --provenance=false
             if ($LASTEXITCODE -ne 0) {
               throw "Publishing $packageName@$version failed with exit $LASTEXITCODE."
             }
@@ -357,7 +357,7 @@ jobs:
           mkdir -p release/npm-main
           pack_json="$(npm pack --json --pack-destination release/npm-main)"
           package_file="$(PACK_JSON="$pack_json" node -e "const info = JSON.parse(process.env.PACK_JSON); console.log('release/npm-main/' + info[0].filename)")"
-          npm publish "$package_file" --access public --provenance=false
+          npm publish "./$package_file" --access public --provenance=false
 
   publish-github-package:
     name: Publish GitHub npm package
@@ -400,7 +400,7 @@ jobs:
           fi
           package_file="$(find release/npm-github -maxdepth 1 -name '*.tgz' -print -quit)"
           test -n "$package_file"
-          npm publish "$package_file" --registry https://npm.pkg.github.com --access public --provenance=false
+          npm publish "./$package_file" --registry https://npm.pkg.github.com --access public --provenance=false
 
   validate-recovery:
     name: Validate publish-only recovery
@@ -589,7 +589,7 @@ jobs:
             status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/$package/$RELEASE_VERSION")"
             case "$status" in
               200) echo "$package@$RELEASE_VERSION already exists on npm; skipping publish." ;;
-              404) npm publish "$tarball" --access public --provenance=false ;;
+              404) npm publish "./$tarball" --access public --provenance=false ;;
               *) echo "Unexpected npm registry status $status for $package@$RELEASE_VERSION."; exit 1 ;;
             esac
             test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/$package/$RELEASE_VERSION")" = 200
@@ -616,7 +616,7 @@ jobs:
           status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/tura-ai/$RELEASE_VERSION")"
           case "$status" in
             200) echo "tura-ai@$RELEASE_VERSION already exists on npm; skipping publish." ;;
-            404) npm publish "$package_file" --access public --provenance=false ;;
+            404) npm publish "./$package_file" --access public --provenance=false ;;
             *) echo "Unexpected npm registry status $status for tura-ai@$RELEASE_VERSION."; exit 1 ;;
           esac
           test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/tura-ai/$RELEASE_VERSION")" = 200
@@ -668,7 +668,7 @@ jobs:
           if npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
             echo "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION already exists in GitHub Packages; skipping publish."
           else
-            npm publish "$package_file" --registry https://npm.pkg.github.com --access public --provenance=false
+            npm publish "./$package_file" --registry https://npm.pkg.github.com --access public --provenance=false
           fi
           npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" version --registry https://npm.pkg.github.com >/dev/null
           local_integrity="$(node -e "const fs=require('fs'),crypto=require('crypto'); const data=fs.readFileSync(process.argv[1]); console.log('sha512-'+crypto.createHash('sha512').update(data).digest('base64'))" "$package_file")"
