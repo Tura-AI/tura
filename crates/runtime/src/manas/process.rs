@@ -47,7 +47,7 @@ use lifecycle::SessionManagement;
 use lifecycle::{PlanStatus, RuntimeId, RuntimeState, SessionState};
 
 const DEFAULT_MANAS_MAX_TURNS: u64 = 2_560;
-const DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF: usize = 1_000;
+const DONE_TASK_STATUS_REPLY_BACKFILL_CUTOFF_BYTES: usize = 200;
 
 pub(crate) struct ManasInput<'a> {
     pub(crate) agents: &'a mut [AgentManagement],
@@ -392,7 +392,8 @@ pub(crate) fn process_manas_internal(
                     session_id = %session.session_id,
                     turn = turn,
                     runtime_id = %runtime.runtime_id,
-                    "single done task_status followed a long visible assistant reply; ending turn without tool-result backfill"
+                    cutoff_bytes = DONE_TASK_STATUS_REPLY_BACKFILL_CUTOFF_BYTES,
+                    "single terminal task_status followed a sufficient visible assistant reply; ending turn without tool-result backfill"
                 );
                 break;
             }
@@ -859,7 +860,7 @@ fn should_end_turn_without_task_status_backfill(
         return false;
     };
 
-    visible_reply.is_some_and(|reply| reply.len() > DONE_TASK_STATUS_LONG_REPLY_BACKFILL_CUTOFF)
+    visible_reply.is_some_and(|reply| reply.len() > DONE_TASK_STATUS_REPLY_BACKFILL_CUTOFF_BYTES)
         && command_run_has_only_terminal_task_status_result(tool_results, status)
 }
 
@@ -1315,7 +1316,7 @@ mod tests {
     }
 
     #[test]
-    fn long_visible_terminal_task_status_can_end_without_backfill_only_when_single_status_call() {
+    fn visible_terminal_status_skips_backfill_only_above_200_bytes() {
         let status_result = ToolExecutionResult {
             tool_name: "command_run".to_string(),
             arguments: json!({"commands":[{"command_type":"task_status"}]}),
@@ -1328,48 +1329,42 @@ mod tests {
             error: None,
         };
         let question_status_result = ToolExecutionResult {
-            tool_name: "command_run".to_string(),
-            arguments: json!({"commands":[{"command_type":"task_status"}]}),
             result: json!({"results":[{
                 "command_type":"task_status",
                 "success":true,
                 "output":{"task_status":{"status":"question"}}
             }]}),
-            success: true,
-            error: None,
+            ..status_result.clone()
         };
         let doing_status_result = ToolExecutionResult {
-            tool_name: "command_run".to_string(),
-            arguments: json!({"commands":[{"command_type":"task_status"}]}),
             result: json!({"results":[{
                 "command_type":"task_status",
                 "success":true,
                 "output":{"task_status":{"status":"doing"}}
             }]}),
-            success: true,
-            error: None,
+            ..status_result.clone()
         };
-        let long_reply = "x".repeat(1_001);
+        let sufficient_reply = "x".repeat(201);
 
         assert!(should_end_turn_without_task_status_backfill(
             std::slice::from_ref(&status_result),
             Some("done"),
-            Some(&long_reply),
+            Some(&sufficient_reply),
         ));
         assert!(!should_end_turn_without_task_status_backfill(
             std::slice::from_ref(&status_result),
             Some("done"),
-            Some(&"x".repeat(1_000)),
+            Some(&"x".repeat(200)),
         ));
         assert!(should_end_turn_without_task_status_backfill(
             std::slice::from_ref(&question_status_result),
             Some("question"),
-            Some(&long_reply),
+            Some(&sufficient_reply),
         ));
         assert!(!should_end_turn_without_task_status_backfill(
             std::slice::from_ref(&doing_status_result),
             Some("doing"),
-            Some(&long_reply),
+            Some(&sufficient_reply),
         ));
 
         let mut with_command = status_result.clone();
@@ -1380,10 +1375,10 @@ mod tests {
         assert!(!should_end_turn_without_task_status_backfill(
             &[with_command],
             Some("done"),
-            Some(&long_reply),
+            Some(&sufficient_reply),
         ));
 
-        let multibyte_reply_over_byte_cutoff = "完".repeat(400);
+        let multibyte_reply_over_byte_cutoff = "完".repeat(67);
         assert!(should_end_turn_without_task_status_backfill(
             &[status_result],
             Some("done"),
@@ -1392,7 +1387,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_done_skips_final_response_turn_when_reply_is_already_visible() {
+    fn terminal_done_requests_final_response_when_short_reply_needs_backfill() {
         assert!(terminal_status_needs_final_response_turn(
             Some("done"),
             true,

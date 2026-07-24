@@ -129,13 +129,32 @@ jobs:
             libxdo-dev \
             pkg-config
       - name: Run crate clippy and tests
-        run: sh xtask/scripts/run-ci-crate-tests.sh --crate "${{ matrix.crate }}" --jobs 1 --timeout-seconds 600
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          mkdir -p .ci-results
+          sh xtask/scripts/run-ci-crate-tests.sh \
+            --crate "${{ matrix.crate }}" \
+            --jobs 1 \
+            --timeout-seconds 600 2>&1 | tee ".ci-results/crate-${{ matrix.crate }}.log"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            failure_summary="$(tail -n 220 ".ci-results/crate-${{ matrix.crate }}.log")"
+            failure_summary="${failure_summary//'%'/'%25'}"
+            failure_summary="${failure_summary//$'\r'/'%0D'}"
+            failure_summary="${failure_summary//$'\n'/'%0A'}"
+            echo "::error title=Crate ${{ matrix.crate }} failure::$failure_summary"
+          fi
+          exit "$status"
       - name: Upload crate failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: crate-${{ matrix.crate }}-failure-logs
-          path: target/test-logs/ci-crates/${{ matrix.crate }}.*.txt
+          path: |
+            .ci-results/crate-${{ matrix.crate }}.log
+            target/test-logs/ci-crates/${{ matrix.crate }}.*.txt
           if-no-files-found: error
 
   backend-business:
@@ -290,7 +309,27 @@ jobs:
         working-directory: apps/tui
         run: npx playwright install --with-deps chromium
       - name: Run TUI unit tests
-        run: npm --prefix apps/tui run test:unit
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          npm --prefix apps/tui run test:unit 2>&1 | tee tui-unit.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            failure_summary="$(awk '
+              /^not ok [0-9]+ - / { capture = 1 }
+              capture { print }
+              capture && /^  \.\.\.$/ { exit }
+            ' tui-unit.log)"
+            if [ -z "$failure_summary" ]; then
+              failure_summary="$(tail -n 120 tui-unit.log)"
+            fi
+            failure_summary="${failure_summary//'%'/'%25'}"
+            failure_summary="${failure_summary//$'\r'/'%0D'}"
+            failure_summary="${failure_summary//$'\n'/'%0A'}"
+            echo "::error title=TUI unit test failure::$failure_summary"
+          fi
+          exit "$status"
       - name: Run TUI e2e tests
         shell: bash
         run: |
@@ -305,13 +344,15 @@ jobs:
             echo "::error title=TUI E2E failure::$tail_output"
           fi
           exit "$status"
-      - name: Upload TUI e2e failure log
+      - name: Upload TUI failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: tui-e2e-failure-log
-          path: tui-e2e.log
-          if-no-files-found: error
+          name: tui-failure-logs
+          path: |
+            tui-unit.log
+            tui-e2e.log
+          if-no-files-found: warn
 
   gui-tests:
     name: GUI Check Unit And E2E

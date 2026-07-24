@@ -33,6 +33,7 @@ pub(crate) struct StreamedCommandRunState {
     pub(crate) events: Arc<Mutex<Vec<Value>>>,
     pub(crate) seen: Arc<AtomicBool>,
     pub(crate) cancelled: Arc<AtomicBool>,
+    pub(crate) apply_patch_failed: Arc<AtomicBool>,
     pub(crate) startup_apply_patch_discarded: Arc<AtomicBool>,
     pub(crate) startup_apply_patch_discard_complete: Arc<AtomicBool>,
 }
@@ -45,6 +46,7 @@ impl StreamedCommandRunState {
             events: Arc::new(Mutex::new(Vec::new())),
             seen: Arc::new(AtomicBool::new(false)),
             cancelled: Arc::new(AtomicBool::new(false)),
+            apply_patch_failed: Arc::new(AtomicBool::new(false)),
             startup_apply_patch_discarded: Arc::new(AtomicBool::new(false)),
             startup_apply_patch_discard_complete: Arc::new(AtomicBool::new(false)),
         }
@@ -56,6 +58,18 @@ impl StreamedCommandRunState {
 
     pub(crate) fn should_cancel_after_results(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst) && !self.snapshot_results().is_empty()
+    }
+
+    pub(crate) fn was_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn should_finish_after_apply_patch_failure(&self) -> bool {
+        self.apply_patch_failed.load(Ordering::SeqCst) && !self.snapshot_results().is_empty()
+    }
+
+    pub(crate) fn apply_patch_failed(&self) -> bool {
+        self.apply_patch_failed.load(Ordering::SeqCst)
     }
 
     pub(crate) fn startup_apply_patch_discarded(&self) -> bool {
@@ -78,7 +92,9 @@ impl StreamedCommandRunState {
     }
 
     fn should_stop_accepting_commands(&self) -> bool {
-        self.cancelled.load(Ordering::SeqCst) || self.startup_apply_patch_discarded()
+        self.cancelled.load(Ordering::SeqCst)
+            || self.apply_patch_failed.load(Ordering::SeqCst)
+            || self.startup_apply_patch_discarded()
     }
 
     pub(crate) fn snapshot(&self) -> StreamedCommandRunSnapshot {
@@ -193,7 +209,7 @@ pub(crate) fn spawn_streamed_command_run_task(
                 );
                 if completion.halted {
                     halted_before_finish = true;
-                    input.state.cancelled.store(true, Ordering::SeqCst);
+                    input.state.apply_patch_failed.store(true, Ordering::SeqCst);
                 }
                 if let Err(error) = publish_streamed_command_run_update(StreamedCommandRunUpdate {
                     session_id: &input.session_id,
@@ -280,7 +296,7 @@ pub(crate) fn spawn_streamed_command_run_task(
             }
         }
         let final_results = ordered_stream_results(ordered_results);
-        let checkpoint_ack_failed = input.state.cancelled.load(Ordering::SeqCst);
+        let checkpoint_ack_failed = input.state.was_cancelled();
         if !streamed_commands.is_empty() {
             let finished_at = Utc::now();
             if let Err(error) = publish_streamed_command_run_update(StreamedCommandRunUpdate {
@@ -331,7 +347,7 @@ pub(crate) fn spawn_streamed_command_run_task(
             }
         }
         if halted_before_finish {
-            input.state.cancelled.store(true, Ordering::SeqCst);
+            input.state.apply_patch_failed.store(true, Ordering::SeqCst);
         }
         if input.state.startup_apply_patch_discarded() && !checkpoint_ack_failed {
             input.state.mark_startup_apply_patch_discard_complete();
@@ -844,9 +860,23 @@ pub(crate) fn apply_cancelled_streamed_command_run_result(
     results: &[Value],
     finished_at: DateTime<Utc>,
 ) -> Result<(), String> {
-    runtime.set_output(cancelled_streamed_command_run_output(
-        commands, events, results,
-    ))?;
+    let mut output = streamed_command_run_output(commands, events, results);
+    output["streamed_command_run_result"]["cancelled"] = Value::Bool(true);
+    runtime.set_output(output)?;
+    runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at))
+}
+
+pub(crate) fn apply_patch_failed_streamed_command_run_result(
+    runtime: &mut RuntimeAggregate,
+    commands: &[Value],
+    events: &[Value],
+    results: &[Value],
+    finished_at: DateTime<Utc>,
+) -> Result<(), String> {
+    let mut output = streamed_command_run_output(commands, events, results);
+    output["streamed_command_run_result"]["early_finish_reason"] =
+        Value::String("apply_patch_failed".to_string());
+    runtime.set_output(output)?;
     runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at))
 }
 
@@ -857,9 +887,7 @@ pub(crate) fn apply_startup_apply_patch_discarded_streamed_command_run_result(
     results: &[Value],
     finished_at: DateTime<Utc>,
 ) -> Result<(), String> {
-    runtime.set_output(streamed_command_run_output(
-        commands, events, results, false,
-    ))?;
+    runtime.set_output(streamed_command_run_output(commands, events, results))?;
     runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at))
 }
 
@@ -881,20 +909,7 @@ pub(crate) fn ensure_streamed_command_run_tool_record(
     runtime.push_tool_call(record)
 }
 
-fn cancelled_streamed_command_run_output(
-    commands: &[Value],
-    events: &[Value],
-    results: &[Value],
-) -> Value {
-    streamed_command_run_output(commands, events, results, true)
-}
-
-fn streamed_command_run_output(
-    commands: &[Value],
-    events: &[Value],
-    results: &[Value],
-    cancelled: bool,
-) -> Value {
+fn streamed_command_run_output(commands: &[Value], events: &[Value], results: &[Value]) -> Value {
     let events = events
         .iter()
         .map(sanitize_tool_callback_result)
@@ -908,7 +923,6 @@ fn streamed_command_run_output(
             "commands": commands,
             "command_events": events,
             "results": results,
-            "cancelled": cancelled,
         }
     })
 }
@@ -952,7 +966,7 @@ fn streamed_command_run_provider_metadata(commands: &[Value]) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_cancelled_streamed_command_run_result, ensure_streamed_command_run_tool_record,
+        apply_patch_failed_streamed_command_run_result, ensure_streamed_command_run_tool_record,
         spawn_streamed_command_run_task, streamed_command_already_seen,
         SpawnStreamedCommandRunTask, StreamedCommandRunState,
     };
@@ -1022,30 +1036,30 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_streamed_command_run_result_marks_output_and_tool_record() {
+    fn apply_patch_failure_result_marks_early_finish_without_runtime_cancellation() {
         let mut runtime = runtime();
         let commands = vec![json!({ "command": "apply_patch failed" })];
         let events = vec![json!({ "status": "completed" })];
         let results = vec![json!({ "success": false, "error": "patch failed" })];
         let finished_at = runtime.created_at;
 
-        apply_cancelled_streamed_command_run_result(
+        apply_patch_failed_streamed_command_run_result(
             &mut runtime,
             &commands,
             &events,
             &results,
             finished_at,
         )
-        .expect("cancelled streamed result should apply");
+        .expect("apply_patch failure result should apply");
 
         let output = runtime.output.as_ref().expect("output should be set");
         assert_eq!(
             output.pointer("/streamed_command_run_result/early_finish_reason"),
-            None
+            Some(&json!("apply_patch_failed"))
         );
         assert_eq!(
             output.pointer("/streamed_command_run_result/cancelled"),
-            Some(&json!(true))
+            None
         );
         assert_eq!(runtime.tool_call.len(), 1);
         assert_eq!(runtime.tool_call[0].tool_called_name, "command_run");
@@ -1054,7 +1068,19 @@ mod tests {
             json!({ "commands": commands })
         );
         assert_eq!(runtime.tool_call[0].tool_received_at, finished_at);
-        assert_eq!(runtime.state, RuntimeState::Created);
+        runtime
+            .mark_called(finished_at)
+            .expect("runtime should enter dispatching");
+        runtime
+            .mark_waiting_first_token()
+            .expect("runtime should wait for provider output");
+        runtime
+            .mark_first_token(finished_at)
+            .expect("tool result should count as provider output");
+        runtime
+            .finish_success(finished_at, None)
+            .expect("tool failure should still finish the provider runtime successfully");
+        assert_eq!(runtime.state, RuntimeState::Finished);
     }
 
     #[test]

@@ -262,6 +262,9 @@ script uses the user's shell, macOS `/bin/zsh`, then bash/sh fallbacks.
 The browser wrapper treats TUI absolute repaint sequences (`ESC[?25l` or
 `ESC[1;1H ESC[2K`) as frame boundaries so bursty streaming refreshes are
 coalesced instead of appended into xterm scrollback.
+Terminal fit and repaint operations do not force a user-selected scrollback
+viewport to the bottom. Live output follows the tail only while the viewport
+was already at the bottom.
 
 ## Development Commands
 

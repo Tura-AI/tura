@@ -22,8 +22,8 @@ use crate::SessionLogStore;
 use anyhow::{Context, Result};
 use session_log_contract::client::service_addr_path;
 use session_log_contract::{
-    ServiceEndpoint, SessionFeedAppendOutcome, SessionFeedEntry, SessionLogCommand,
-    SessionLogResponse,
+    ServiceEndpoint, SessionFeedAppendOutcome, SessionFeedEntry, SessionFeedEvent,
+    SessionLogCommand, SessionLogResponse,
 };
 
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
@@ -55,6 +55,7 @@ impl SessionFeedHub {
 pub(crate) struct CommandDispatchOutcome {
     pub(crate) response: SessionLogResponse,
     pub(crate) committed_feed_entries: Vec<SessionFeedEntry>,
+    pub(crate) live_feed_entries: Vec<SessionFeedEntry>,
 }
 
 /// Execute a command against an owned store. Shared by the socket server and the
@@ -81,6 +82,7 @@ pub(crate) fn execute_command_with_feed(
     command: SessionLogCommand,
 ) -> Result<CommandDispatchOutcome> {
     let mut committed_feed_entries = Vec::new();
+    let mut live_feed_entries = Vec::new();
     let response = match command {
         SessionLogCommand::Health => SessionLogResponse::Ok,
         SessionLogCommand::CreateSession(payload) => {
@@ -153,6 +155,7 @@ pub(crate) fn execute_command_with_feed(
             SessionLogResponse::RuntimeEventCommitted { result }
         }
         SessionLogCommand::AppendSessionFeedEvent(payload) => {
+            validate_feed_request_identifiers(&payload)?;
             let entry = SessionFeedEntry {
                 session_id: payload.target_session_id.clone(),
                 cursor: 0,
@@ -160,13 +163,19 @@ pub(crate) fn execute_command_with_feed(
                 event_id: payload.event_id.clone(),
                 event: payload.event.clone(),
             };
-            let result = store.append_session_feed_event(payload)?;
-            if let SessionFeedAppendOutcome::Applied { cursor } = &result {
-                committed_feed_entries.push(SessionFeedEntry {
-                    cursor: *cursor,
-                    ..entry
-                });
-            }
+            let result = if matches!(&payload.event, SessionFeedEvent::AssistantTextDelta { .. }) {
+                live_feed_entries.push(entry);
+                SessionFeedAppendOutcome::PublishedLive
+            } else {
+                let result = store.append_session_feed_event(payload)?;
+                if let SessionFeedAppendOutcome::Applied { cursor } = &result {
+                    committed_feed_entries.push(SessionFeedEntry {
+                        cursor: *cursor,
+                        ..entry
+                    });
+                }
+                result
+            };
             SessionLogResponse::SessionFeedEventAppended { result }
         }
         SessionLogCommand::ReadSessionFeed(payload) => {
@@ -235,7 +244,21 @@ pub(crate) fn execute_command_with_feed(
     Ok(CommandDispatchOutcome {
         response,
         committed_feed_entries,
+        live_feed_entries,
     })
+}
+
+fn validate_feed_request_identifiers(
+    request: &session_log_contract::AppendSessionFeedEventRequest,
+) -> Result<()> {
+    if request.runtime_id.trim().is_empty()
+        || request.target_session_id.trim().is_empty()
+        || request.lease_id.trim().is_empty()
+        || request.event_id.trim().is_empty()
+    {
+        anyhow::bail!("runtime_id, target_session_id, lease_id, and event_id must be non-empty");
+    }
+    Ok(())
 }
 
 impl From<SessionLogResponse> for CommandDispatchOutcome {
@@ -243,6 +266,7 @@ impl From<SessionLogResponse> for CommandDispatchOutcome {
         Self {
             response,
             committed_feed_entries: Vec::new(),
+            live_feed_entries: Vec::new(),
         }
     }
 }
@@ -354,6 +378,11 @@ fn handle_connection(
             }
             .into(),
         };
+        // Live-only events must be queued for subscribers before the producer
+        // receives its acknowledgement and can publish the completed message.
+        for entry in outcome.live_feed_entries {
+            feed_hub.publish(entry);
+        }
         let response_result = write_response(&mut writer, &outcome.response);
         for entry in outcome.committed_feed_entries {
             feed_hub.publish(entry);
@@ -392,12 +421,13 @@ fn request_shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs2::FileExt;
     use lifecycle::{SessionCommand, TaskPlan};
     use session_log_contract::client::{call_service, service_is_running};
     use session_log_contract::{
-        CreateSessionRequest, DeleteSessionRequest, ExecuteSessionCommandRequest,
-        GetSessionRequest, MarkSessionInterruptedRequest, SessionFeedEvent,
-        UpdateSessionTodosRequest,
+        AppendSessionFeedEventRequest, CreateSessionRequest, DeleteSessionRequest,
+        ExecuteSessionCommandRequest, GetSessionRequest, MarkSessionInterruptedRequest,
+        SessionFeedEvent, UpdateSessionTodosRequest,
     };
     use std::net::TcpListener;
     use std::time::Instant;
@@ -440,6 +470,7 @@ mod tests {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let root = tempfile::tempdir().expect("temp db root");
         let _env = EnvGuard::set(&[
+            ("TURA_HOME", Some(root.path())),
             ("SESSION_LOG_DB_ROOT", Some(root.path())),
             ("TURA_DB_ROOT", None),
         ]);
@@ -477,6 +508,7 @@ mod tests {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let root = tempfile::tempdir().expect("temp db root");
         let _env = EnvGuard::set(&[
+            ("TURA_HOME", Some(root.path())),
             ("SESSION_LOG_DB_ROOT", Some(root.path())),
             ("TURA_DB_ROOT", None),
         ]);
@@ -516,6 +548,7 @@ mod tests {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let root = tempfile::tempdir().expect("temp db root");
         let _env = EnvGuard::set(&[
+            ("TURA_HOME", Some(root.path())),
             ("SESSION_LOG_DB_ROOT", Some(root.path())),
             ("TURA_DB_ROOT", None),
         ]);
@@ -571,6 +604,7 @@ mod tests {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let root = tempfile::tempdir().expect("temp db root");
         let _env = EnvGuard::set(&[
+            ("TURA_HOME", Some(root.path())),
             ("SESSION_LOG_DB_ROOT", Some(root.path())),
             ("TURA_DB_ROOT", None),
         ]);
@@ -618,10 +652,195 @@ mod tests {
     }
 
     #[test]
+    fn service_probe_allows_five_seconds_for_a_live_owner_to_respond() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let root = tempfile::tempdir().expect("temp db root");
+        let _env = EnvGuard::set(&[
+            ("TURA_HOME", Some(root.path())),
+            ("SESSION_LOG_DB_ROOT", Some(root.path())),
+            ("TURA_DB_ROOT", None),
+        ]);
+        let _probe_env = ProbeEnvGuard::set("20", None);
+        let owner_lock_path = session_log_contract::client::session_db_owner_lock_path();
+        std::fs::create_dir_all(owner_lock_path.parent().expect("owner lock parent"))
+            .expect("owner lock dir");
+        let owner_lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&owner_lock_path)
+            .expect("owner lock file");
+        owner_lock
+            .lock_exclusive()
+            .expect("hold session_db owner lock");
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind slow owned endpoint");
+        let addr = listener.local_addr().expect("slow owned endpoint addr");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept owned health probe");
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().expect("clone owned stream"))
+                .read_line(&mut request)
+                .expect("read owned health probe");
+            assert!(request.contains("\"health\""));
+            std::thread::sleep(Duration::from_millis(750));
+            stream
+                .write_all(
+                    serde_json::to_string(&SessionLogResponse::Ok)
+                        .expect("owned health response json")
+                        .as_bytes(),
+                )
+                .expect("write owned health response");
+            stream.write_all(b"\n").expect("write owned health newline");
+            stream.flush().expect("flush owned health response");
+        });
+
+        let path = service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&ServiceEndpoint {
+                addr: addr.to_string(),
+                version: tura_path::instance_version(),
+            })
+            .expect("endpoint json"),
+        )
+        .expect("write owned endpoint");
+
+        let started = Instant::now();
+        assert!(
+            service_is_running(),
+            "a live owner must get the full five-second health window"
+        );
+        assert!(started.elapsed() >= Duration::from_millis(700));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(path.exists(), "healthy owned endpoint must be preserved");
+        server.join().expect("slow owned endpoint thread");
+        owner_lock.unlock().expect("release owner lock");
+    }
+
+    #[test]
+    fn service_probe_waits_for_owned_health_deadline_before_replacing_endpoint() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let root = tempfile::tempdir().expect("temp db root");
+        let _env = EnvGuard::set(&[
+            ("TURA_HOME", Some(root.path())),
+            ("SESSION_LOG_DB_ROOT", Some(root.path())),
+            ("TURA_DB_ROOT", None),
+        ]);
+        let _probe_env = ProbeEnvGuard::set("20", Some("300"));
+        let owner_lock_path = session_log_contract::client::session_db_owner_lock_path();
+        std::fs::create_dir_all(owner_lock_path.parent().expect("owner lock parent"))
+            .expect("owner lock dir");
+        let owner_lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&owner_lock_path)
+            .expect("owner lock file");
+        owner_lock
+            .lock_exclusive()
+            .expect("hold session_db owner lock");
+
+        let listener =
+            TcpListener::bind(("127.0.0.1", 0)).expect("bind unresponsive owned endpoint");
+        let addr = listener
+            .local_addr()
+            .expect("unresponsive owned endpoint addr");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept owned health probe");
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().expect("clone owned stream"))
+                .read_line(&mut request)
+                .expect("read owned health probe");
+            assert!(request.contains("\"health\""));
+            std::thread::sleep(Duration::from_millis(600));
+        });
+
+        let path = service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&ServiceEndpoint {
+                addr: addr.to_string(),
+                version: tura_path::instance_version(),
+            })
+            .expect("endpoint json"),
+        )
+        .expect("write unresponsive owned endpoint");
+
+        let started = Instant::now();
+        assert!(
+            !service_is_running(),
+            "an owner that misses the complete health deadline must be replaced"
+        );
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(
+            !path.exists(),
+            "the unchanged endpoint may be removed only after its owner misses the deadline"
+        );
+        server.join().expect("unresponsive owned endpoint thread");
+        owner_lock.unlock().expect("release owner lock");
+    }
+
+    #[test]
+    fn foreign_version_endpoint_is_preserved_while_its_owner_lock_is_held() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let root = tempfile::tempdir().expect("temp db root");
+        let _env = EnvGuard::set(&[
+            ("TURA_HOME", Some(root.path())),
+            ("SESSION_LOG_DB_ROOT", Some(root.path())),
+            ("TURA_DB_ROOT", None),
+        ]);
+        let foreign_build = if tura_path::build_kind() == "release" {
+            "dev"
+        } else {
+            "release"
+        };
+        let owner_lock_path =
+            tura_path::locks_dir().join(format!("session-db-{foreign_build}.lock"));
+        std::fs::create_dir_all(owner_lock_path.parent().expect("owner lock parent"))
+            .expect("owner lock dir");
+        let owner_lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&owner_lock_path)
+            .expect("foreign owner lock file");
+        owner_lock
+            .lock_exclusive()
+            .expect("hold foreign owner lock");
+
+        let path = service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&ServiceEndpoint {
+                addr: "127.0.0.1:1".to_string(),
+                version: format!("0.0.0-foreign+{foreign_build}"),
+            })
+            .expect("endpoint json"),
+        )
+        .expect("write foreign owned addr");
+
+        assert!(!service_is_running());
+        assert!(
+            path.exists(),
+            "a client must not delete an endpoint published by a live foreign-build owner"
+        );
+        owner_lock.unlock().expect("release foreign owner lock");
+    }
+
+    #[test]
     fn service_probe_removes_foreign_version_addr_file() {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let root = tempfile::tempdir().expect("temp db root");
         let _env = EnvGuard::set(&[
+            ("TURA_HOME", Some(root.path())),
             ("SESSION_LOG_DB_ROOT", Some(root.path())),
             ("TURA_DB_ROOT", None),
         ]);
@@ -650,6 +869,7 @@ mod tests {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let root = tempfile::tempdir().expect("temp db root");
         let _env = EnvGuard::set(&[
+            ("TURA_HOME", Some(root.path())),
             ("SESSION_LOG_DB_ROOT", Some(root.path())),
             ("TURA_DB_ROOT", None),
         ]);
@@ -857,6 +1077,94 @@ mod tests {
     }
 
     #[test]
+    fn live_text_delta_reaches_a_socket_subscriber_without_sqlite() {
+        let root = tempfile::tempdir().expect("temp db root");
+        let store = SessionLogStore::open(root.path()).expect("open session store");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback listener");
+        let addr = listener.local_addr().expect("listener address");
+        let hub = SessionFeedHub::default();
+        let server_hub = hub.clone();
+        let server = std::thread::spawn(move || {
+            let mut connections = Vec::new();
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().expect("accept live feed connection");
+                let connection_store = store.clone();
+                let connection_hub = server_hub.clone();
+                connections.push(std::thread::spawn(move || {
+                    handle_connection(connection_store, stream, connection_hub)
+                }));
+            }
+            for connection in connections {
+                connection.join().expect("live feed connection thread")?;
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+
+        let mut subscriber = TcpStream::connect(addr).expect("connect live feed subscriber");
+        subscriber
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set subscriber timeout");
+        write_response_command(&mut subscriber, &SessionLogCommand::SubscribeSessionFeed);
+        let mut subscriber_reader =
+            BufReader::new(subscriber.try_clone().expect("clone subscriber"));
+        assert!(matches!(
+            read_response(&mut subscriber_reader),
+            SessionLogResponse::SessionFeedSubscribed
+        ));
+
+        let mut publisher = TcpStream::connect(addr).expect("connect live feed publisher");
+        publisher
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set publisher timeout");
+        write_response_command(
+            &mut publisher,
+            &SessionLogCommand::AppendSessionFeedEvent(AppendSessionFeedEventRequest {
+                runtime_id: "socket-live-runtime".to_string(),
+                target_session_id: "socket-live-session".to_string(),
+                lease_id: "socket-live-lease".to_string(),
+                event_id: "socket-live-runtime:feed:1".to_string(),
+                event: SessionFeedEvent::AssistantTextDelta {
+                    message_id: "socket-live-runtime.message".to_string(),
+                    part_id: "socket-live-runtime.message".to_string(),
+                    delta: "token".to_string(),
+                    created_at: 1,
+                    updated_at: 2,
+                },
+            }),
+        );
+        let mut publisher_reader = BufReader::new(publisher.try_clone().expect("clone publisher"));
+        assert!(matches!(
+            read_response(&mut publisher_reader),
+            SessionLogResponse::SessionFeedEventAppended {
+                result: SessionFeedAppendOutcome::PublishedLive
+            }
+        ));
+        assert!(matches!(
+            read_response(&mut subscriber_reader),
+            SessionLogResponse::SessionFeedEvent { entry }
+                if entry.cursor == 0
+                    && matches!(
+                        entry.event,
+                        SessionFeedEvent::AssistantTextDelta { ref delta, .. }
+                            if delta == "token"
+                    )
+        ));
+
+        drop(publisher_reader);
+        drop(publisher);
+        drop(subscriber_reader);
+        drop(subscriber);
+        hub.subscribers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
+        server
+            .join()
+            .expect("live feed server thread")
+            .expect("live feed server");
+    }
+
+    #[test]
     fn command_dispatch_replay_returns_no_committed_feed_entries() {
         let root = tempfile::tempdir().expect("temp db root");
         let workspace = tempfile::tempdir().expect("temp workspace");
@@ -878,6 +1186,43 @@ mod tests {
             replay.committed_feed_entries.is_empty(),
             "a queued command replay after commit must not publish its durable feed again"
         );
+    }
+
+    #[test]
+    fn text_delta_dispatch_publishes_live_without_a_durable_write() {
+        let root = tempfile::tempdir().expect("temp db root");
+        let store = SessionLogStore::open(root.path()).expect("open session store");
+        let outcome = execute_command_with_feed(
+            &store,
+            SessionLogCommand::AppendSessionFeedEvent(AppendSessionFeedEventRequest {
+                runtime_id: "live-runtime".to_string(),
+                target_session_id: "live-session".to_string(),
+                lease_id: "live-lease".to_string(),
+                event_id: "live-runtime:feed:1".to_string(),
+                event: SessionFeedEvent::AssistantTextDelta {
+                    message_id: "live-runtime.message".to_string(),
+                    part_id: "live-runtime.message".to_string(),
+                    delta: "stream".to_string(),
+                    created_at: 1,
+                    updated_at: 2,
+                },
+            }),
+        )
+        .expect("dispatch live text delta");
+
+        assert!(matches!(
+            outcome.response,
+            SessionLogResponse::SessionFeedEventAppended {
+                result: SessionFeedAppendOutcome::PublishedLive
+            }
+        ));
+        assert!(outcome.committed_feed_entries.is_empty());
+        assert_eq!(outcome.live_feed_entries.len(), 1);
+        assert_eq!(outcome.live_feed_entries[0].cursor, 0);
+        assert!(matches!(
+            outcome.live_feed_entries[0].event,
+            SessionFeedEvent::AssistantTextDelta { ref delta, .. } if delta == "stream"
+        ));
     }
 
     #[test]

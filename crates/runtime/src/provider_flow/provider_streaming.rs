@@ -10,7 +10,7 @@ use tracing::error;
 use crate::gateway_events::{frontend_session_id, publish_streamed_agent_text};
 use crate::provider_flow::call::flush_runtime_events;
 use crate::provider_flow::command_run_streaming::{
-    apply_cancelled_streamed_command_run_result,
+    apply_cancelled_streamed_command_run_result, apply_patch_failed_streamed_command_run_result,
     apply_startup_apply_patch_discarded_streamed_command_run_result,
     ensure_streamed_command_run_tool_record, spawn_streamed_command_run_task,
     SpawnStreamedCommandRunTask, StreamedCommandRunState,
@@ -208,10 +208,34 @@ pub(crate) async fn call_runtime_streaming(
                         runtime,
                         finished_at,
                         "COMMAND_RUN_CANCELLED",
-                        "apply_patch failed; runtime stream cancelled after command_run result"
-                            .to_string(),
+                        "streamed command_run cancelled after an infrastructure failure".to_string(),
                         RuntimeState::Cancelled,
                     )?;
+                    flush_runtime_events(&mut runtime_event_writer, runtime)?;
+                    provider_task.abort();
+                    let _ = (&mut provider_task).await;
+                    drop(final_response_stream_tx);
+                    let _ = command_task.join();
+                    return Ok(());
+                }
+                if command_state.should_finish_after_apply_patch_failure() {
+                    let finished_at = Utc::now();
+                    let snapshot = command_state.snapshot();
+                    apply_patch_failed_streamed_command_run_result(
+                        runtime,
+                        &snapshot.commands,
+                        &snapshot.events,
+                        &snapshot.results,
+                        finished_at,
+                    )?;
+                    let first_token_at = first_stream_output_or(&first_stream_output_at, finished_at);
+                    runtime
+                        .mark_first_token(first_token_at)
+                        .map_err(|e| format!("failed to mark first token: {e}"))?;
+                    flush_runtime_events(&mut runtime_event_writer, runtime)?;
+                    runtime
+                        .finish_success(finished_at, None)
+                        .map_err(|e| format!("failed to finish runtime success: {e}"))?;
                     flush_runtime_events(&mut runtime_event_writer, runtime)?;
                     provider_task.abort();
                     let _ = (&mut provider_task).await;
@@ -262,6 +286,31 @@ pub(crate) async fn call_runtime_streaming(
         joined_command_results
     };
 
+    if command_state.was_cancelled() {
+        apply_cancelled_streamed_command_run_result(
+            runtime,
+            &snapshot.commands,
+            &snapshot.events,
+            &streamed_command_results,
+            finished_at,
+        )?;
+        let first_token_at = first_stream_output_or(&first_stream_output_at, finished_at);
+        runtime
+            .mark_first_token(first_token_at)
+            .map_err(|e| format!("failed to mark first token: {e}"))?;
+        flush_runtime_events(&mut runtime_event_writer, runtime)?;
+        finish_runtime_failure(
+            runtime,
+            finished_at,
+            "COMMAND_RUN_CANCELLED",
+            "streamed command_run cancelled after an infrastructure failure".to_string(),
+            RuntimeState::Cancelled,
+        )?;
+        flush_runtime_events(&mut runtime_event_writer, runtime)?;
+        return Ok(());
+    }
+
+    let apply_patch_failed = command_state.apply_patch_failed();
     let startup_apply_patch_discarded = command_state.startup_apply_patch_discarded();
     let has_streamed_command_run_result =
         startup_apply_patch_discarded || !streamed_command_results.is_empty();
@@ -274,6 +323,10 @@ pub(crate) async fn call_runtime_streaming(
                 "results": streamed_command_results,
             }
         });
+        if apply_patch_failed {
+            runtime_output["streamed_command_run_result"]["early_finish_reason"] =
+                Value::String("apply_patch_failed".to_string());
+        }
         if !startup_apply_patch_discarded {
             runtime_output["provider_content"] = tool_dispatch_content.clone();
         }

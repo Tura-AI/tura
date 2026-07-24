@@ -348,9 +348,9 @@ pub struct SessionFeedCommandUpdate {
     pub updated_at: i64,
 }
 
-/// Durable frontend projection facts. Runtime and Session commands author them
-/// through the Session service, which owns ordering and replay; Gateway only
-/// reduces them into its cache and existing public event API.
+/// Frontend projection facts. Stable Runtime and Session facts are durable and
+/// replayable; `AssistantTextDelta` is broadcast live with cursor zero and is
+/// replaced by the completed durable `AgentMessage`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionFeedEvent {
@@ -437,6 +437,8 @@ pub struct ReadSessionFeedRequest {
 #[serde(deny_unknown_fields)]
 pub struct SessionFeedEntry {
     pub session_id: String,
+    /// Durable entries use monotonically increasing cursors starting at one.
+    /// Cursor zero marks a live-only event that must not advance replay state.
     pub cursor: u64,
     #[serde(deserialize_with = "Option::deserialize")]
     pub runtime_id: Option<String>,
@@ -449,6 +451,7 @@ pub struct SessionFeedEntry {
 pub enum SessionFeedAppendOutcome {
     Applied { cursor: u64 },
     Duplicate { cursor: u64 },
+    PublishedLive,
     RuntimeNotFound,
     TargetSessionNotFound,
     TargetWorkspaceMismatch,

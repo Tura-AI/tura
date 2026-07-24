@@ -120,13 +120,13 @@ fn runtime_session_log_business_flow_drains_concurrent_offline_writes_without_lo
                 &session_id,
                 &workspace_text,
                 "Runtime Queue Recovery",
-                index as i64,
+                index,
             ))?;
             typed_session::enqueue_delta(
                 &session_id,
                 &workspace_text,
                 "Runtime Queue Recovery",
-                index as i64,
+                index,
                 typed_session::entries_from_messages(
                     0,
                     vec![message_payload(

@@ -160,6 +160,11 @@ export async function scrollTerminalTo(page, target, marker = undefined) {
       else term.scrollToTop();
       return;
     }
+    if (nextTarget === "middle") {
+      const baseY = Number(term.buffer?.active?.baseY) || 0;
+      if (typeof term.scrollToLine === "function") term.scrollToLine(Math.floor(baseY / 2));
+      return;
+    }
     if (typeof term.scrollToBottom === "function") term.scrollToBottom();
   }, target);
   if (!marker) {
@@ -176,6 +181,16 @@ export async function scrollTerminalTo(page, target, marker = undefined) {
     marker,
     { timeout: 5_000 },
   );
+}
+
+export async function terminalViewportPosition(page) {
+  return page.evaluate(() => {
+    const buffer = window.__turaTerminal?.buffer?.active;
+    return {
+      baseY: Number(buffer?.baseY) || 0,
+      viewportY: Number(buffer?.viewportY) || 0,
+    };
+  });
 }
 
 export function markerCount(text, marker) {

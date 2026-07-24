@@ -27,7 +27,7 @@
   "collapseCommands": "收起命令",
   "commandRunRequiresCommand": "command run 需要 COMMAND",
   "commands": "命令",
-  "composerHint": "Enter：发送 · Tab：补全/会话 · /stop：取消 · /：命令",
+  "composerHint": "Enter: 发送 · Tab: 会话 · /stop: 取消 · /help · /settings",
   "completionHint": "上/下：选择 · Tab：补全 · Esc：关闭",
   "configGet": "/config get [键]",
   "configSet": "/config set KEY=VALUE",

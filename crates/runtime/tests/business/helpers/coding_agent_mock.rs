@@ -892,7 +892,7 @@ pub(crate) fn task_status_done_with_long_visible_reply_response(index: usize) ->
                     }
                 ]
             }),
-            &format!("Done. {}", "x".repeat(1_050)),
+            &format!("Done. {}", "x".repeat(195)),
         ),
         _ => assistant_response("Unexpected follow-up turn."),
     }

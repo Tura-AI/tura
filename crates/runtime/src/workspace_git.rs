@@ -5,6 +5,7 @@ use lifecycle::PlanStatus;
 use lifecycle::SessionManagement;
 const TURA_GIT_USER_NAME: &str = "Tura";
 const TURA_GIT_USER_EMAIL: &str = "tura@local.invalid";
+const TURA_GIT_CO_AUTHOR: &str = "Co-authored-by: Tura AI <info@turaai.net>";
 pub use tura_path::workspace_git::ensure_workspace_git_repo;
 
 pub fn commit_session_checkpoint(
@@ -43,6 +44,8 @@ pub fn commit_session_checkpoint(
             &subject,
             "-m",
             &body,
+            "-m",
+            TURA_GIT_CO_AUTHOR,
         ],
     )?;
 

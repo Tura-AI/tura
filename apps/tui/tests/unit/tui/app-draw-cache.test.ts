@@ -86,6 +86,11 @@ test("draw coalesces frames while stdout is backpressured", () => {
     process.stdout.emit("drain");
     draw(state, richCapabilities(), previous);
     assert.equal(writes.length, 2, "the latest frame must render after stdout drains");
+    assert.equal(
+      writes[1]?.includes(terminalClear),
+      false,
+      "drawing the coalesced frame after drain must preserve terminal scrollback",
+    );
   } finally {
     blocked = false;
     process.stdout.emit("drain");
@@ -614,6 +619,132 @@ test("draw spills overflowing live rows into scrollback and keeps the tail mutab
   } finally {
     restoreProperty(process.stdout, "rows", rows);
   }
+});
+
+test("draw keeps committed live scrollback when later markdown only changes styling", () => {
+  const busySession = { ...activeSession, status: "busy" as const };
+  const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+  Object.defineProperty(process.stdout, "rows", { configurable: true, value: 12 });
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: busySession,
+    messages: [],
+    permissions: [],
+    sessions: [busySession],
+  });
+  const streamDelta = (delta: string) => {
+    state = reducer(state, {
+      type: "event",
+      event: {
+        directory: "C:/repo",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "sess-1",
+            messageID: "msg-live-markdown-scrollback",
+            partID: "part-live-markdown-scrollback",
+            createdAt: 1,
+            updatedAt: 2,
+            field: "text",
+            delta,
+          },
+        },
+      },
+    });
+  };
+  streamDelta(`<strong>${"LIVE_MARKDOWN_SCROLLBACK ".repeat(80)}`);
+
+  try {
+    const writes = captureDrawWrites((writes) => {
+      const previous = draw(state, richCapabilities(), "");
+      writes.length = 0;
+      streamDelta("</strong>");
+      draw(state, richCapabilities(), previous);
+    });
+    const output = writes.join("");
+
+    assert.equal(
+      output.includes(terminalClear),
+      false,
+      "completing inline markdown must not destroy already committed live scrollback",
+    );
+    assert.match(output, /LIVE_MARKDOWN_SCROLLBACK/);
+    assert.match(output, /Active[\s\S]*Enter: send/);
+  } finally {
+    restoreProperty(process.stdout, "rows", rows);
+  }
+});
+
+test("draw appends a large live delta after long cached history without clearing scrollback", () => {
+  const busySession = { ...activeSession, status: "busy" as const };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: busySession,
+    messages: [
+      ...Array.from({ length: 30 }, (_, index) => ({
+        id: `msg-large-live-cache-${index}`,
+        sessionID: "sess-1",
+        role: "assistant" as const,
+        created_at: index,
+        parts: [
+          {
+            id: `part-large-live-cache-${index}`,
+            type: "text" as const,
+            text: `LARGE_LIVE_CACHE_${index}`,
+          },
+        ],
+      })),
+      {
+        id: "msg-large-live-user",
+        sessionID: "sess-1",
+        role: "user" as const,
+        created_at: 100,
+        parts: [{ id: "part-large-live-user", type: "text" as const, text: "continue" }],
+      },
+    ],
+    permissions: [],
+    sessions: [busySession],
+  });
+  const streamDelta = (delta: string) => {
+    state = reducer(state, {
+      type: "event",
+      event: {
+        directory: "C:/repo",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "sess-1",
+            messageID: "msg-large-live-assistant",
+            partID: "part-large-live-assistant",
+            createdAt: 101,
+            updatedAt: 102,
+            field: "text",
+            delta,
+          },
+        },
+      },
+    });
+  };
+  streamDelta("<strong>LARGE_LIVE_OPENING\n");
+
+  const writes = captureDrawWrites((writes) => {
+    const previous = draw(state, richCapabilities(), "");
+    writes.length = 0;
+    streamDelta(
+      Array.from({ length: 100 }, (_, index) => `LARGE_LIVE_DELTA_${index}\n`).join("") +
+        "</strong>",
+    );
+    draw(state, richCapabilities(), previous);
+  });
+  const output = writes.join("");
+
+  assert.equal(
+    output.includes(terminalClear),
+    false,
+    "growing a live tail must append scrollback instead of rebuilding cached history",
+  );
+  assert.doesNotMatch(output, /LARGE_LIVE_CACHE_0/);
+  assert.match(output, /LARGE_LIVE_DELTA_99/);
 });
 
 test("draw promotes spilled live through cache handoff without rewriting visible live rows", () => {

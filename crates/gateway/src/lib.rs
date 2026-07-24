@@ -105,6 +105,12 @@ pub(crate) mod test_support {
                 session_log_contract::client::service_addr_path().display()
             );
         }
+
+        pub(crate) fn workspace_directory(&self) -> String {
+            let workspace = self._root.path().join("workspace");
+            std::fs::create_dir_all(&workspace).expect("session db test workspace");
+            workspace.to_string_lossy().into_owned()
+        }
     }
 
     impl Drop for SessionDbTestService {

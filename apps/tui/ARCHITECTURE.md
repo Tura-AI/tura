@@ -498,6 +498,12 @@ The Codex-inspired repair plan for streaming smoothness, scroll stability, and
 delta-only live rendering is documented in
 [`docs/tui-streaming-render-plan.md`](../../docs/tui-streaming-render-plan.md).
 
+TUI text deltas remain in `liveStreams` until the durable message handoff. If a
+full `message.part.updated` snapshot arrives for the same message and part, the
+reducer must merge its metadata without storing the already-streamed text a
+second time; the live overlay remains the single owner of those bytes until it
+is committed. GUI state does not use this TUI-only overlay.
+
 Existing scroll system — preserve exactly, do not regress:
 
 - `tui/render.ts:transcriptLines()` builds lines only from a tail of the message

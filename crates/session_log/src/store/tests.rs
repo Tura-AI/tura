@@ -10,7 +10,11 @@ use lifecycle::{
 };
 use rusqlite::params;
 use serde_json::{json, Value};
-use session_log_contract::SessionMetadata;
+use session_log_contract::{
+    CreateSessionRequest, GetSessionRequest, ListSessionRecordsRequest, PersistSessionDeltaRequest,
+    ReadContextSliceRequest, ReadSessionFeedRequest, SessionContextRecord, SessionDeltaEntry,
+    SessionFeedEvent, SessionMetadata, SessionRecordProjection,
+};
 use std::path::Path;
 
 fn insert_workspace_session(
@@ -256,6 +260,222 @@ fn pagination_bounds_match_session_and_record_listing_contracts() {
     assert_eq!(bounded_page(0, 10, 95, false), 0);
     assert_eq!(bounded_page(0, 10, 95, true), 9);
     assert_eq!(bounded_page(2, 10, 95, true), 2);
+}
+
+#[test]
+fn internal_prompt_context_is_stored_fully_but_never_projected_to_the_frontend_feed() {
+    let root = tempfile::tempdir().expect("session store root");
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let store = super::SessionLogStore::open(root.path().join("db")).expect("session store");
+    let session_id = "context-visibility-contract";
+    let workspace_text = workspace.to_string_lossy().to_string();
+    store
+        .create_session(CreateSessionRequest {
+            command_id: format!("create:{session_id}"),
+            session_id: session_id.to_string(),
+            creation_command: lifecycle::SessionCommand::CreateSession {
+                task_plan: TaskPlan::default(),
+            },
+            copy_context: false,
+            workspace: workspace_text.clone(),
+            session_directory: workspace_text,
+            name: "context visibility".to_string(),
+            created_at: 1_000,
+            model: None,
+            agent: None,
+            session_type: "coding".to_string(),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_planning: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: false,
+            use_last_tool_call_response: false,
+            auto_session_name: false,
+            initial_task_plan_patch: None,
+        })
+        .expect("create session");
+    let snapshot = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.to_string(),
+        })
+        .expect("read session")
+        .expect("created session");
+    let management = snapshot
+        .into_management()
+        .expect("canonical management snapshot");
+
+    let prompt_style = json!({
+        "type": "prompt_style",
+        "role": "system",
+        "content": "FULL_PROMPT_STYLE_SENTINEL",
+        "created_at": 1_001,
+        "updated_at": 1_001
+    });
+    let manual = json!({
+        "type": "runtime_prompt_manual",
+        "task_type": "debug",
+        "manual_name": "Debug",
+        "role": "system",
+        "content": "FULL_OPERATION_MANUAL_SENTINEL",
+        "created_at": 1_002,
+        "updated_at": 1_002
+    });
+    let user_record =
+        frontend_message_record(session_id, "context-user", "user", "visible user", 1_003);
+    let assistant_record = frontend_message_record(
+        session_id,
+        "context-assistant",
+        "assistant",
+        "visible assistant",
+        1_004,
+    );
+    let raw_records = [
+        prompt_style.to_string(),
+        manual.to_string(),
+        user_record.to_string(),
+        assistant_record.to_string(),
+    ];
+    let entries = vec![
+        context_only_entry(0, &raw_records[0]),
+        context_only_entry(1, &raw_records[1]),
+        projected_context_entry(2, &raw_records[2], user_record),
+        projected_context_entry(3, &raw_records[3], assistant_record),
+    ];
+    let management_delta = SessionManagement::persistence_delta(Some(&management), &management);
+
+    assert_eq!(
+        store
+            .persist_session_delta(PersistSessionDeltaRequest {
+                session_id: session_id.to_string(),
+                management_sequence: 0,
+                management_delta,
+                retained_from_sequence: 0,
+                entries,
+            })
+            .expect("persist context delta"),
+        (4, 1)
+    );
+
+    let context = store
+        .read_context_slice(ReadContextSliceRequest {
+            session_id: session_id.to_string(),
+            max_estimated_tokens: u64::MAX,
+        })
+        .expect("read full context");
+    assert_eq!(
+        context
+            .records
+            .iter()
+            .map(|record| record.raw_record.as_str())
+            .collect::<Vec<_>>(),
+        raw_records.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+
+    let (_, records) = store
+        .list_session_records(ListSessionRecordsRequest {
+            session_id: session_id.to_string(),
+            page: 0,
+            page_size: 100,
+        })
+        .expect("list frontend records");
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.role.as_str())
+            .collect::<Vec<_>>(),
+        vec!["user", "assistant"]
+    );
+    let serialized_records = serde_json::to_string(&records).expect("serialize frontend records");
+    assert!(!serialized_records.contains("FULL_PROMPT_STYLE_SENTINEL"));
+    assert!(!serialized_records.contains("FULL_OPERATION_MANUAL_SENTINEL"));
+
+    let (feed, _) = store
+        .read_session_feed(ReadSessionFeedRequest {
+            session_id: session_id.to_string(),
+            after_cursor: 0,
+            limit: 100,
+        })
+        .expect("read frontend feed");
+    let projected_roles = feed
+        .iter()
+        .filter_map(|entry| match &entry.event {
+            SessionFeedEvent::MessageUpserted { message } => Some(message.role.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(projected_roles, vec!["user", "assistant"]);
+    let serialized_feed = serde_json::to_string(&feed).expect("serialize feed");
+    assert!(!serialized_feed.contains("FULL_PROMPT_STYLE_SENTINEL"));
+    assert!(!serialized_feed.contains("FULL_OPERATION_MANUAL_SENTINEL"));
+}
+
+fn frontend_message_record(
+    session_id: &str,
+    message_id: &str,
+    role: &str,
+    text: &str,
+    timestamp: i64,
+) -> Value {
+    json!({
+        "id": message_id,
+        "session_id": session_id,
+        "role": role,
+        "parent_id": null,
+        "parts": [{
+            "id": format!("{message_id}:part"),
+            "type": "text",
+            "content": text,
+            "text": text,
+            "metadata": null,
+            "call_id": null,
+            "tool": null,
+            "state": null
+        }],
+        "created_at": timestamp,
+        "updated_at": timestamp
+    })
+}
+
+fn context_only_entry(sequence: u64, raw_record: &str) -> SessionDeltaEntry {
+    SessionDeltaEntry {
+        context: SessionContextRecord {
+            sequence,
+            raw_record: raw_record.to_string(),
+        },
+        projection: None,
+    }
+}
+
+fn projected_context_entry(sequence: u64, raw_record: &str, record: Value) -> SessionDeltaEntry {
+    SessionDeltaEntry {
+        context: SessionContextRecord {
+            sequence,
+            raw_record: raw_record.to_string(),
+        },
+        projection: Some(SessionRecordProjection {
+            session_id: record["session_id"]
+                .as_str()
+                .expect("projection session id")
+                .to_string(),
+            message_id: record["id"]
+                .as_str()
+                .expect("projection message id")
+                .to_string(),
+            role: record["role"]
+                .as_str()
+                .expect("projection role")
+                .to_string(),
+            created_at: record["created_at"]
+                .as_i64()
+                .expect("projection created_at"),
+            updated_at: record["updated_at"]
+                .as_i64()
+                .expect("projection updated_at"),
+            record,
+        }),
+    }
 }
 
 #[test]

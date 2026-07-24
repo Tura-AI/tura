@@ -366,12 +366,15 @@ fn run_feed_worker(client: SessionLogClient, receiver: mpsc::Receiver<FeedComman
                     continue;
                 }
                 let runtime_id = request.runtime_id.clone();
+                let live_only =
+                    matches!(&request.event, SessionFeedEvent::AssistantTextDelta { .. });
                 let result = client.call_typed(SessionLogCommand::AppendSessionFeedEvent(*request));
                 let error = match result {
                     Ok(SessionLogResponse::SessionFeedEventAppended {
                         result:
                             SessionFeedAppendOutcome::Applied { .. }
-                            | SessionFeedAppendOutcome::Duplicate { .. },
+                            | SessionFeedAppendOutcome::Duplicate { .. }
+                            | SessionFeedAppendOutcome::PublishedLive,
                     }) => None,
                     Ok(SessionLogResponse::SessionFeedEventAppended { result }) => Some(format!(
                         "session service rejected runtime {runtime_id} feed event: {result:?}"
@@ -385,7 +388,15 @@ fn run_feed_worker(client: SessionLogClient, receiver: mpsc::Receiver<FeedComman
                     Err(error) => Some(error),
                 };
                 if let Some(error) = error {
-                    errors.insert(runtime_id, error);
+                    if live_only {
+                        tracing::warn!(
+                            runtime_id = %runtime_id,
+                            error = %error,
+                            "dropping transient assistant text delta"
+                        );
+                    } else {
+                        errors.insert(runtime_id, error);
+                    }
                 }
             }
             FeedCommand::Barrier {
@@ -412,7 +423,7 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn feed_barrier_precedes_terminal_runtime_commit() {
+    fn feed_barrier_persists_completed_text_not_deltas_before_terminal_runtime_commit() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let root = tempfile::tempdir().expect("session db root");
         let home = root.path().join("home");
@@ -494,6 +505,26 @@ mod tests {
         )
         .expect("writer");
         writer.flush(&mut runtime).expect("flush creation");
+        let full_provider_input = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": "FULL_IDENTITY_SENTINEL"},
+                {"role": "system", "content": "FULL_PROMPT_STYLE_SENTINEL"},
+                {"role": "system", "content": "FULL_OPERATION_MANUAL_SENTINEL"},
+                {"role": "user", "content": "visible user"},
+                {"role": "assistant", "content": "visible assistant"}
+            ],
+            "tools": [{"type": "function", "name": "command_run"}],
+            "options": {
+                "stream": true,
+                "tool_choice": "auto"
+            }
+        });
+        runtime
+            .set_input(full_provider_input.clone())
+            .expect("capture full provider input");
+        writer
+            .flush(&mut runtime)
+            .expect("persist full provider input");
         let publisher = writer
             .feed_publisher(&runtime_id, &session_id)
             .expect("publisher");
@@ -505,7 +536,20 @@ mod tests {
                 created_at: now.timestamp_millis(),
                 updated_at: now.timestamp_millis(),
             })
-            .expect("queue feed event");
+            .expect("queue live text delta");
+        publisher
+            .publish(SessionFeedEvent::AgentMessage {
+                message_id: format!("{runtime_id}.message"),
+                part_id: format!("{runtime_id}.message"),
+                reply_message: "first complete".to_string(),
+                new_learning: String::new(),
+                runtime_status: None,
+                context_tokens: None,
+                usage: None,
+                created_at: now.timestamp_millis(),
+                updated_at: now.timestamp_millis(),
+            })
+            .expect("queue completed text event");
         runtime
             .mark_called(now + chrono::Duration::milliseconds(1))
             .expect("mark called");
@@ -531,6 +575,11 @@ mod tests {
             panic!("runtime replay missing before seal");
         };
         assert!(!replay.aggregate.state.is_terminal());
+        assert_eq!(
+            replay.aggregate.input.as_ref(),
+            Some(&full_provider_input),
+            "identity, prompt style, operation manual, messages, tools and options must replay exactly from SQLite"
+        );
 
         writer.seal_runtime(&runtime_id).expect("seal runtime");
         let response = session_log_contract::client::call_service(
@@ -564,8 +613,19 @@ mod tests {
         ));
         assert!(matches!(
             &entries[2].event,
-            SessionFeedEvent::AssistantTextDelta { delta, .. } if delta == "first"
+            SessionFeedEvent::AgentMessage { reply_message, .. }
+                if reply_message == "first complete"
         ));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !matches!(entry.event, SessionFeedEvent::AssistantTextDelta { .. })),
+            "assistant text deltas must not be persisted in the Session feed"
+        );
+        let serialized_feed = serde_json::to_string(&entries).expect("serialize Session feed");
+        assert!(!serialized_feed.contains("FULL_IDENTITY_SENTINEL"));
+        assert!(!serialized_feed.contains("FULL_PROMPT_STYLE_SENTINEL"));
+        assert!(!serialized_feed.contains("FULL_OPERATION_MANUAL_SENTINEL"));
         assert!(matches!(
             &entries[3].event,
             SessionFeedEvent::SessionProjectionUpdated { projection, .. }

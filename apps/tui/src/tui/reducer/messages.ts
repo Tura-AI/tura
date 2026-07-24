@@ -246,10 +246,38 @@ export function upsertPartIgnoringLive(
   createdAt?: number,
   updatedAt?: number,
 ): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
+  const stream = liveStreamMatchingPart(streams, sessionID, part);
+  const stablePart = stream ? preserveDurableStreamField(messages, part, stream) : part;
   return {
-    messages: upsertPart(messages, part, sessionID, createdAt, updatedAt),
+    messages: upsertPart(messages, stablePart, sessionID, createdAt, updatedAt),
     liveStreams: streams,
   };
+}
+
+function liveStreamMatchingPart(
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  part: MessagePart,
+): LiveStream | undefined {
+  if (!partIsText(part)) return undefined;
+  const messageID = partMessageID(part);
+  return Object.values(streams).find(
+    (stream) =>
+      streamMatchesSession(stream, sessionID) &&
+      stream.partID === part.id &&
+      (!messageID || stream.messageID === messageID),
+  );
+}
+
+function preserveDurableStreamField(
+  messages: Message[],
+  part: MessagePart,
+  stream: LiveStream,
+): MessagePart {
+  const existingPart = messages
+    .find((message) => message.id === stream.messageID)
+    ?.parts.find((candidate) => candidate.id === stream.partID);
+  return { ...part, [stream.field]: existingPart?.[stream.field] };
 }
 
 export function applyCommandUpdate(

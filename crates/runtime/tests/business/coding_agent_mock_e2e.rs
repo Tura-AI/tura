@@ -519,7 +519,7 @@ fn single_done_task_status_with_long_visible_reply_completes_without_backfill_tu
                 && entry
                     .get("content")
                     .and_then(Value::as_str)
-                    .is_some_and(|content| content.len() > 1_000)
+                    .is_some_and(|content| content.len() > 200)
         ));
     assert_eq!(
         provider
@@ -528,7 +528,7 @@ fn single_done_task_status_with_long_visible_reply_completes_without_backfill_tu
             .expect("mock provider requests lock")
             .len(),
         1,
-        "runtime must not send the single done task_status tool result back to the provider when the assistant message already exceeds 1000 characters"
+        "a completion summary above 200 bytes must not trigger another provider runtime"
     );
 }
 
@@ -581,7 +581,7 @@ fn single_done_task_status_with_short_visible_reply_is_backfilled() {
         .expect("mock provider requests lock");
     assert!(
         requests.len() >= 2,
-        "runtime must send a short single done task_status result back to the provider before ending; requests={requests:#?}"
+        "runtime must send a sub-200-byte done task_status result back to the provider before ending; requests={requests:#?}"
     );
     let second_request = requests
         .get(1)

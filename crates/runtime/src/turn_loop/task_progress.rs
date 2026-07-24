@@ -280,6 +280,7 @@ mod tests {
                 }]
             }]
         });
+        assert!(!super::command_run_result_has_command(&batched_status_only));
         assert!(super::command_run_result_is_single_task_status(
             &batched_status_only,
             "done"

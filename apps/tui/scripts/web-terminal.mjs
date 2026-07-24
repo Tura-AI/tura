@@ -467,14 +467,29 @@ function html(profileId, profile, instance) {
       await nextFrame();
     };
     const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const terminalViewport = () => {
+      const buffer = term.buffer?.active;
+      const baseY = Number(buffer?.baseY) || 0;
+      const viewportY = Number(buffer?.viewportY) || 0;
+      return { followBottom: viewportY >= baseY, viewportY };
+    };
+    const restoreTerminalViewport = (viewport) => {
+      if (viewport.followBottom) {
+        term.scrollToBottom?.();
+        return;
+      }
+      const baseY = Number(term.buffer?.active?.baseY) || 0;
+      term.scrollToLine?.(Math.min(viewport.viewportY, baseY));
+    };
     window.__turaFit = async () => {
+      const viewport = terminalViewport();
       term.options.fontSize = innerWidth <= 640 ? 13 : 15;
       await nextFrame();
       fit.fit();
       await nextFrame();
       fit.fit();
       await send({ resize: { cols: term.cols, rows: term.rows } });
-      term.scrollToBottom?.();
+      restoreTerminalViewport(viewport);
       return { cols: term.cols, rows: term.rows };
     };
     window.__turaHandleDroppedData = handleDroppedData;
@@ -514,23 +529,13 @@ function html(profileId, profile, instance) {
     });
     const events = new EventSource("/" + profile + "/events" + instanceQuery);
     let writeQueue = Promise.resolve();
-    const repaintSequences = [
-      String.fromCharCode(27) + "c",
-      String.fromCharCode(27) + "[3J",
-      String.fromCharCode(27) + "[2J",
-      String.fromCharCode(27) + "[H",
-    ];
-    const isRepaintFrame = (data) =>
-      repaintSequences.some((sequence) => data.includes(sequence)) ||
-      data.includes("[3J") ||
-      data.includes("[2J");
     const writeTerminal = (data) => {
-      const repaintFrame = isRepaintFrame(data);
+      const viewport = terminalViewport();
       writeQueue = writeQueue
         .then(() =>
           new Promise((resolve) => {
             term.write(data, () => {
-              if (repaintFrame) term.scrollToBottom?.();
+              restoreTerminalViewport(viewport);
               resolve();
             });
           }),
@@ -618,37 +623,40 @@ function broadcast(runtime, data) {
 }
 function queueOutput(runtime, data) {
   runtime.outputBuffer += data;
-  const lastFrameStart = lastRepaintFrameStart(runtime.outputBuffer);
+  const lastFrameStart = lastSurfaceFrameStart(runtime.outputBuffer);
   if (lastFrameStart > 0) runtime.outputBuffer = runtime.outputBuffer.slice(lastFrameStart);
   if (runtime.outputFlush) return;
   runtime.outputFlush = setTimeout(() => {
     runtime.outputFlush = undefined;
     const raw = runtime.outputBuffer;
     runtime.outputBuffer = "";
-    const output = isClearFrame(raw)
+    const output = isSurfaceClearFrame(raw)
       ? normalizePanelRailStarts(`\x1b[3J\x1b[2J\x1b[H${raw}`)
       : normalizePanelRailStarts(raw);
     if (output) broadcast(runtime, output);
   }, 16);
 }
-function lastRepaintFrameStart(data) {
-  const resetTerminal = data.lastIndexOf("\x1bc");
-  if (resetTerminal >= 0) return resetTerminal;
-  const clearScrollback = data.lastIndexOf("\x1b[3J");
-  if (clearScrollback >= 0) return clearScrollback;
-  const clearScreen = data.lastIndexOf("\x1b[2J");
-  if (clearScreen >= 0) return clearScreen;
-  const home = data.lastIndexOf("\x1b[H");
-  if (home >= 0) return home;
-  return -1;
+function lastSurfaceFrameStart(data) {
+  return Math.max(
+    data.lastIndexOf("\x1bc"),
+    data.lastIndexOf("\x1b[3J"),
+    data.lastIndexOf("\x1b[2J"),
+    lastConptySurfaceRepaintStart(data),
+  );
 }
-function isClearFrame(data) {
+function isSurfaceClearFrame(data) {
   return (
     data.includes("\x1bc") ||
-    data.includes("\x1b[H") ||
     data.includes("\x1b[2J") ||
-    data.includes("\x1b[3J")
+    data.includes("\x1b[3J") ||
+    lastConptySurfaceRepaintStart(data) >= 0
   );
+}
+function lastConptySurfaceRepaintStart(data) {
+  const pattern = /\x1b\[(?:0)?m\x1b\[\??25l\x1b\[H\x1b\[K/gu;
+  let lastIndex = -1;
+  for (const match of data.matchAll(pattern)) lastIndex = match.index;
+  return lastIndex;
 }
 const panelBackground = "\x1b[48;2;32;32;34m";
 const panelAssistantRail = "\x1b[38;2;107;107;107m";

@@ -185,7 +185,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     clearPendingDraw,
   });
   setTerminalDrainHandler(() => {
-    if (!resizeDrawGate.isFrozen()) performDraw(true);
+    if (!resizeDrawGate.isFrozen()) performDraw();
   });
   const flushDraw = () => {
     if (resizeDrawGate.isFrozen()) return;

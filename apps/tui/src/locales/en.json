@@ -27,7 +27,7 @@
   "collapseCommands": "hide commands",
   "commandRunRequiresCommand": "command run requires COMMAND",
   "commands": "Commands",
-  "composerHint": "Enter: send · Tab: complete/sessions · /stop: cancel · /: commands",
+  "composerHint": "Enter: send · Tab: sessions · /stop: cancel · /help · /settings",
   "completionHint": "Up/Down: select · Tab: complete · Esc: dismiss",
   "configGet": "/config get [key]",
   "configSet": "/config set KEY=VALUE",

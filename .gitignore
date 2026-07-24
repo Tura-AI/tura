@@ -10,6 +10,7 @@
 /workspace/
 /outreach/
 /docs/plan/
+/work/prepared-*/
 
 # Rust build output
 target/

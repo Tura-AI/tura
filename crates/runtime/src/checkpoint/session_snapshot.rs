@@ -216,7 +216,7 @@ fn session_delta_entry(
 
 fn session_message_projection(session_id: &str, record: Value) -> Option<SessionRecordProjection> {
     let role = record.get("role").and_then(Value::as_str)?;
-    if !matches!(role, "user" | "assistant" | "system")
+    if !matches!(role, "user" | "assistant")
         || record.get("parts").and_then(Value::as_array).is_none()
     {
         return None;
@@ -596,7 +596,7 @@ fn record_role(object: &serde_json::Map<String, Value>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{persisted_management_baseline, persisted_message};
+    use super::{persisted_management_baseline, persisted_message, session_message_projection};
     use chrono::Utc;
     use lifecycle::{SessionInput, SessionManagement};
     use std::path::PathBuf;
@@ -833,6 +833,39 @@ mod tests {
         assert_eq!(usage["role"], "runtime");
         assert_eq!(usage["type"], "runtime_usage");
         assert!(usage.get("parts").is_none());
+    }
+
+    #[test]
+    fn system_context_records_do_not_create_frontend_message_projections() {
+        let system = serde_json::json!({
+            "id": "snapshot-session:log:2",
+            "session_id": "snapshot-session",
+            "role": "system",
+            "parts": [{
+                "id": "snapshot-session:log:2:part",
+                "type": "text",
+                "content": "internal operation manual",
+                "text": "internal operation manual"
+            }],
+            "created_at": 1_000,
+            "updated_at": 1_000
+        });
+        let assistant = serde_json::json!({
+            "id": "snapshot-session:assistant",
+            "session_id": "snapshot-session",
+            "role": "assistant",
+            "parts": [{
+                "id": "snapshot-session:assistant:part",
+                "type": "text",
+                "content": "visible reply",
+                "text": "visible reply"
+            }],
+            "created_at": 1_001,
+            "updated_at": 1_001
+        });
+
+        assert!(session_message_projection("snapshot-session", system).is_none());
+        assert!(session_message_projection("snapshot-session", assistant).is_some());
     }
 
     #[test]

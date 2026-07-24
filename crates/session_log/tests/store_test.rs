@@ -2070,7 +2070,9 @@ fn runtime_event_store_replays_and_reduces_terminal_session_state() {
     assert_eq!(replay.next_event_seq, 6);
 
     let session = store
-        .get_session(GetSessionRequest { session_id })
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
         .expect("get terminal session")
         .expect("session exists");
     let projection = session.lifecycle_projection;
@@ -2100,6 +2102,34 @@ fn runtime_event_store_replays_and_reduces_terminal_session_state() {
             })
             .expect("terminal event attempt"),
         RuntimeEventCommitOutcome::RuntimeTerminal
+    );
+
+    let next_runtime_id = format!("runtime-next-{}", uuid::Uuid::new_v4());
+    assert!(matches!(
+        store
+            .register_runtime(RegisterRuntimeRequest {
+                runtime_id: next_runtime_id.clone(),
+                session_id: session_id.clone(),
+                fallback_from_id: None,
+            })
+            .expect("register next runtime after successful terminal event"),
+        RuntimeRegistrationOutcome::Registered { .. }
+    ));
+    let continued_session = store
+        .get_session(GetSessionRequest { session_id })
+        .expect("read continued session")
+        .expect("continued session exists");
+    assert_eq!(
+        continued_session.lifecycle_projection.state,
+        SessionState::Running
+    );
+    assert_eq!(
+        continued_session.lifecycle_projection.active_runtime_id,
+        Some(next_runtime_id.clone())
+    );
+    assert_eq!(
+        continued_session.lifecycle_projection.runtime_ids,
+        vec![runtime_id, next_runtime_id]
     );
 }
 
