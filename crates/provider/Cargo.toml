@@ -73,6 +73,8 @@ chrono.workspace = true
 uuid.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true
+async-trait.workspace = true
+github-copilot-sdk = "1.0.6"
 regex.workspace = true
 tura_path.workspace = true
 

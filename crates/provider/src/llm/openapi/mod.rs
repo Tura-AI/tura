@@ -13,15 +13,51 @@
 //! This module re-exports the small public surface the rest of the crate uses,
 //! so external callers keep importing `crate::llm::openapi::{…}` unchanged.
 
+use serde_json::Value;
+
+use crate::tura_llm::{CallOptions, ProviderResponse, ProviderStreamEventSink, TuraError};
+
 mod chat;
 mod common;
 mod response;
 
 pub(crate) use chat::force_search;
-pub use chat::{call, call_with_stream_events, embed, embed_for_provider};
+pub use chat::{call, embed, embed_for_provider};
 pub(crate) use response::{
     codex_oauth_call, normalize_codex_response_event_content, responses_api_key_call,
 };
+
+pub async fn call_with_stream_events(
+    base_url: &str,
+    model: &str,
+    provider: &str,
+    api_key: &str,
+    messages: &[Value],
+    options: &CallOptions,
+    stream_events: Option<ProviderStreamEventSink>,
+) -> Result<ProviderResponse, TuraError> {
+    if provider.eq_ignore_ascii_case("github-copilot") {
+        return crate::llm::providers::github_copilot::call_with_stream_events(
+            model,
+            api_key,
+            messages,
+            options,
+            stream_events,
+        )
+        .await;
+    }
+
+    chat::call_with_stream_events(
+        base_url,
+        model,
+        provider,
+        api_key,
+        messages,
+        options,
+        stream_events,
+    )
+    .await
+}
 
 #[cfg(test)]
 pub(crate) use chat::process_chat_stream_line_for_test;

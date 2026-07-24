@@ -2,6 +2,7 @@ pub mod bedrock;
 pub mod chatgpt;
 pub mod claude_code;
 pub mod codex;
+pub mod github_copilot;
 pub mod google;
 pub mod minimax;
 pub mod openai;
@@ -54,6 +55,45 @@ pub(crate) fn parameter_policy(provider: &str) -> ProviderParameterPolicy {
                 "service_tier",
                 "prompt_cache_key",
                 "parallel_tool_calls",
+            ],
+        },
+        "github-copilot" => ProviderParameterPolicy {
+            // The SDK returns Copilot session events rather than an HTTP wire
+            // format. CodexResponses is the closest canonical Tura content
+            // shape because both expose structured tool calls and token usage.
+            api_style: ProviderApiStyle::CodexResponses,
+            metrics_style: ProviderApiStyle::OpenApi,
+            supports_forced_tool_choice: true,
+            supports_stream_usage: true,
+            supports_reasoning_effort: true,
+            supports_service_tier: false,
+            supports_prompt_cache_key: false,
+            ignored_parameters: &[
+                "temperature",
+                "top_p",
+                "n",
+                "stop",
+                "max_completion_tokens",
+                "max_tokens",
+                "presence_penalty",
+                "frequency_penalty",
+                "logprobs",
+                "top_logprobs",
+                "seed",
+                "user",
+                "safety_identifier",
+                "prompt_cache_key",
+                "prediction",
+                "modalities",
+                "audio",
+                "stream_options",
+                "store",
+                "metadata",
+                "service_tier",
+                "verbosity",
+                "web_search_options",
+                "parallel_tool_calls",
+                "extra_body",
             ],
         },
         // The non-codex Responses tier: standard OpenAI (chatgpt), xAI (grok),
@@ -153,6 +193,7 @@ mod tests {
             "openrouter",
             "qwen",
             "anthropic",
+            "github-copilot",
         ];
 
         for provider in providers {
@@ -190,6 +231,19 @@ mod tests {
         assert!(policy.supports_reasoning_effort);
         assert!(policy.supports_prompt_cache_key);
         assert!(policy.supports_service_tier);
+    }
+
+    #[test]
+    fn github_copilot_uses_sdk_tool_and_usage_capabilities() {
+        let policy = parameter_policy("github-copilot");
+        assert_eq!(policy.api_style, ProviderApiStyle::CodexResponses);
+        assert_eq!(policy.metrics_style, ProviderApiStyle::OpenApi);
+        assert!(policy.supports_stream_usage);
+        assert!(policy.supports_forced_tool_choice);
+        assert!(policy.supports_reasoning_effort);
+        assert!(!policy.supports_service_tier);
+        assert!(!policy.supports_prompt_cache_key);
+        assert!(policy.ignored_parameters.contains(&"temperature"));
     }
 
     #[test]
