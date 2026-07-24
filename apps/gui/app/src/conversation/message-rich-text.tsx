@@ -167,7 +167,7 @@ function isPlainStreamingText(text: string): boolean {
     return false;
   }
   RICH_TOKEN_PATTERN.lastIndex = 0;
-  return !/<\/?[A-Za-z][\s\S]*?>/u.test(text);
+  return !/<\/?[A-Za-z][\s\S]*?>/u.test(text) && markdownHeadingLines(text).size === 0;
 }
 
 function RichNodeView(props: { node: RichNode; workspaceDirectory?: string; gatewayUrl?: string }) {
@@ -646,11 +646,96 @@ export function parseRichText(source: string): RichNode[] {
 }
 
 function parseHtmlFragment(source: string): RichNode[] {
+  const markdownHeadingNodes = parseMarkdownHeadings(source);
+  if (markdownHeadingNodes) {
+    return markdownHeadingNodes;
+  }
   const markdownTableNodes = parseMarkdownTables(source);
   if (markdownTableNodes) {
     return markdownTableNodes;
   }
   return parseInlineRichText(source);
+}
+
+function parseMarkdownHeadings(source: string): RichNode[] | undefined {
+  const headings = markdownHeadingLines(source);
+  if (headings.size === 0) {
+    return undefined;
+  }
+  const lines = source.split("\n");
+  const nodes: RichNode[] = [];
+  let text = "";
+
+  function flushText() {
+    if (!text) {
+      return;
+    }
+    nodes.push(...parseMarkdownHeadingText(text));
+    text = "";
+  }
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const heading = headings.get(index);
+    if (!heading) {
+      text += lines[index];
+    } else {
+      flushText();
+      nodes.push({
+        kind: "element",
+        tag: "bold",
+        children: parseInlineRichText(heading),
+      });
+    }
+    if (index < lines.length - 1) {
+      text += "\n";
+    }
+  }
+  flushText();
+  return compactTextNodes(nodes);
+}
+
+function parseMarkdownHeadingText(source: string): RichNode[] {
+  const leading = source.match(/^\s+/u)?.[0] ?? "";
+  const withoutLeading = source.slice(leading.length);
+  const trailing = withoutLeading.match(/\s+$/u)?.[0] ?? "";
+  const body = withoutLeading.slice(0, withoutLeading.length - trailing.length);
+  return compactTextNodes([
+    ...(leading ? [{ kind: "text" as const, text: leading }] : []),
+    ...(body ? (parseMarkdownTables(body) ?? parseInlineRichText(body)) : []),
+    ...(trailing ? [{ kind: "text" as const, text: trailing }] : []),
+  ]);
+}
+
+function markdownHeadingLines(source: string): Map<number, string> {
+  const headings = new Map<number, string>();
+  if (!/(?:^|\n)\s{0,3}#{1,6}\s+/u.test(source)) {
+    return headings;
+  }
+  const lines = source.split("\n");
+  let fenceMarker: string | undefined;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].replace(/\r$/u, "");
+    if (fenceMarker) {
+      const closing = line.trim();
+      if (
+        closing.length >= fenceMarker.length &&
+        Array.from(closing).every((character) => character === fenceMarker?.[0])
+      ) {
+        fenceMarker = undefined;
+      }
+      continue;
+    }
+    const fence = line.match(/^\s*(`{3,}|~{3,})[^`~]*$/u);
+    if (fence) {
+      fenceMarker = fence[1];
+      continue;
+    }
+    const heading = line.match(/^\s{0,3}#{1,6}\s+(.+)$/u);
+    if (heading) {
+      headings.set(index, heading[1] ?? "");
+    }
+  }
+  return headings;
 }
 
 function parseInlineRichText(source: string): RichNode[] {

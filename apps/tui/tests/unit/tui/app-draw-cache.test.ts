@@ -675,6 +675,64 @@ test("draw keeps committed live scrollback when later markdown only changes styl
   }
 });
 
+test("draw keeps committed live scrollback when a later delta completes a tall code block", () => {
+  const busySession = { ...activeSession, status: "busy" as const };
+  const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+  Object.defineProperty(process.stdout, "rows", { configurable: true, value: 12 });
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: busySession,
+    messages: [],
+    permissions: [],
+    sessions: [busySession],
+  });
+  const streamDelta = (delta: string) => {
+    state = reducer(state, {
+      type: "event",
+      event: {
+        directory: "C:/repo",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "sess-1",
+            messageID: "msg-live-code-scrollback",
+            partID: "part-live-code-scrollback",
+            createdAt: 1,
+            updatedAt: 2,
+            field: "text",
+            delta,
+          },
+        },
+      },
+    });
+  };
+  streamDelta(
+    `<pre><code>${Array.from({ length: 30 }, (_, index) => `LIVE_CODE_SCROLLBACK_${index}`).join(
+      "\n",
+    )}`,
+  );
+
+  try {
+    const writes = captureDrawWrites((writes) => {
+      const previous = draw(state, richCapabilities(), "");
+      writes.length = 0;
+      streamDelta("</code></pre>");
+      draw(state, richCapabilities(), previous);
+    });
+    const output = writes.join("");
+
+    assert.equal(
+      output.includes(terminalClear),
+      false,
+      "completing a tall code block must not rebuild terminal-owned live scrollback",
+    );
+    assert.match(output, /LIVE_CODE_SCROLLBACK_29/);
+    assert.match(output, /Active[\s\S]*Enter: send/);
+  } finally {
+    restoreProperty(process.stdout, "rows", rows);
+  }
+});
+
 test("draw appends a large live delta after long cached history without clearing scrollback", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   let state = reducer(initialState("C:/repo"), {

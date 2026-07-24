@@ -448,6 +448,12 @@ canonical OpenAI Responses-API content shape (`input_image`, `input_audio`,
 `input_file`, `tool_calls`); the provider crate translates that shape into and
 out of each provider's wire format.
 
+For a streamed assistant turn, Runtime feed publication owns the canonical
+visible text. `AssistantTextDelta` payloads are accumulated in publication
+order, and the durable `AgentMessage` for the same runtime uses that exact text.
+This keeps live rendering, completion handoff, and replayed session history
+byte-consistent, including paragraph breaks and indentation.
+
 Provider call orchestration lives in `provider_flow/call.rs`; provider request
 options and message normalization live in `provider_flow/request_options.rs`.
 `runtime/call_runtime.rs` re-exports the provider call entrypoint.

@@ -95,24 +95,26 @@ export function renderRichText(source: string, options: RenderRichTextOptions = 
 }
 
 function plainRichText(source: string, options: RenderRichTextOptions): string {
-  return renderMarkdownTables(
-    decodeHtml(
-      stripUnsupportedHtml(
-        source
-          .replace(/<a\s+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu, (_match, _href, body) =>
-            stripHtml(String(body)),
-          )
-          .replace(markdownLinkPattern, "$1")
-          .replace(/\[MEDIA:([\s\S]*?):MEDIA\]/gu, (_match, mediaPath) =>
-            mediaDisplayPath(String(mediaPath).trim(), options.workspaceDirectory),
-          )
-          .replace(/\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu, (_match, _mode, emoji) =>
-            String(emoji).trim(),
-          ),
+  return renderMarkdownRegions(
+    renderMarkdownTables(
+      decodeHtml(
+        stripUnsupportedHtml(
+          source
+            .replace(/<a\s+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu, (_match, _href, body) =>
+              stripHtml(String(body)),
+            )
+            .replace(markdownLinkPattern, "$1")
+            .replace(/\[MEDIA:([\s\S]*?):MEDIA\]/gu, (_match, mediaPath) =>
+              mediaDisplayPath(String(mediaPath).trim(), options.workspaceDirectory),
+            )
+            .replace(/\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu, (_match, _mode, emoji) =>
+              String(emoji).trim(),
+            ),
+        ),
       ),
+      options.tableWidth,
+      options,
     ),
-    options.tableWidth,
-    options,
   );
 }
 
@@ -125,7 +127,9 @@ function basicRichText(source: string, options: RenderRichTextOptions): string {
     },
   );
   return renderInlineMarkdown(
-    renderMarkdownTables(renderHtmlSubset(tokenized, options), options.tableWidth, options),
+    renderMarkdownRegions(
+      renderMarkdownTables(renderHtmlSubset(tokenized, options), options.tableWidth, options),
+    ),
     options,
   );
 }
@@ -200,7 +204,6 @@ function codeBlockRegionLines(lines: string[]): string[] {
 }
 
 function renderMarkdownRegions(source: string): string {
-  if (activeCapabilities.level !== "rich") return source;
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const output: string[] = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -212,26 +215,32 @@ function renderMarkdownRegions(source: string): string {
         `^\\s*${escapeRegExp(fenceChar).repeat(fenceMarker.length)}${escapeRegExp(fenceChar)}*\\s*$`,
         "u",
       );
-      pushBlankBeforeBlock(output);
       index += 1;
       const codeLines: string[] = [];
       while (index < lines.length && !closingFence.test(lines[index])) {
         codeLines.push(lines[index]);
         index += 1;
       }
-      output.push(...codeBlockRegionLines(codeLines));
-      pushBlankAfterBlock(output, lines, index + 1);
+      if (activeCapabilities.level === "rich") {
+        pushBlankBeforeBlock(output);
+        output.push(...codeBlockRegionLines(codeLines));
+        pushBlankAfterBlock(output, lines, index + 1);
+      } else {
+        output.push(lines[index - codeLines.length - 1], ...codeLines);
+        if (index < lines.length) output.push(lines[index]);
+      }
       continue;
     }
     const heading = lines[index].match(/^\s{0,3}(#{1,6})\s+(.+)$/u);
     if (heading) {
+      const body = stripAnsi(renderInlineMarkdown(heading[2] ?? ""));
       output.push(
-        `${textAgentRich}${bold}${heading[1]} ${stripAnsi(renderInlineMarkdown(heading[2] ?? ""))}${reset}`,
+        activeCapabilities.level === "plain" ? body : `${textAgentRich}${bold}${body}${reset}`,
       );
       continue;
     }
     const quote = lines[index].match(/^\s{0,3}>\s?(.*)$/u);
-    if (quote) {
+    if (quote && activeCapabilities.level === "rich") {
       output.push(quoteRegion(quote[1] ?? ""));
       continue;
     }

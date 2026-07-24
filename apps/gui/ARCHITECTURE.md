@@ -12,6 +12,11 @@ Tura architecture:
   persistence, and credential persistence stay behind gateway-owned APIs
 - frontend state is a projection of gateway state plus short-lived UI drafts
 
+Conversation rich text treats line-start ATX headings (`# ` through `###### `)
+as marker-free bold text. The same parser is used while a message is streaming
+and after completion; prose hashes, hash tags, and fenced-code contents remain
+literal.
+
 This document also defines the Multica-compatible product surface that must be
 recreated in this GUI without bypassing Tura's gateway/session/runtime system.
 The goal is functional parity with Multica's collaboration platform: workspaces,

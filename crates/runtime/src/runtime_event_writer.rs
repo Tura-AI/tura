@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 
 use lifecycle::{RuntimeAggregate, RuntimeEvent};
 use session_log_contract::{
@@ -33,14 +32,37 @@ pub(crate) struct RuntimeFeedPublisher {
     runtime_id: String,
     target_session_id: String,
     lease_id: String,
-    next_event_seq: Arc<AtomicU64>,
+    state: Arc<Mutex<RuntimeFeedState>>,
     sender: mpsc::Sender<FeedCommand>,
 }
 
+#[derive(Debug)]
+struct RuntimeFeedState {
+    next_event_seq: u64,
+    assistant_text: String,
+}
+
 impl RuntimeFeedPublisher {
-    pub(crate) fn publish(&self, event: SessionFeedEvent) -> Result<(), String> {
-        let event_seq = self.next_event_seq.fetch_add(1, Ordering::Relaxed);
-        self.sender
+    pub(crate) fn publish(&self, mut event: SessionFeedEvent) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_text_len = state.assistant_text.len();
+        match &mut event {
+            SessionFeedEvent::AssistantTextDelta { delta, .. } => {
+                state.assistant_text.push_str(delta);
+            }
+            SessionFeedEvent::AgentMessage { reply_message, .. }
+                if !state.assistant_text.is_empty() =>
+            {
+                reply_message.clone_from(&state.assistant_text);
+            }
+            _ => {}
+        }
+        let event_seq = state.next_event_seq;
+        if self
+            .sender
             .send(FeedCommand::Append(Box::new(
                 AppendSessionFeedEventRequest {
                     runtime_id: self.runtime_id.clone(),
@@ -50,7 +72,13 @@ impl RuntimeFeedPublisher {
                     event,
                 },
             )))
-            .map_err(|_| format!("runtime {} feed writer stopped", self.runtime_id))
+            .is_err()
+        {
+            state.assistant_text.truncate(previous_text_len);
+            return Err(format!("runtime {} feed writer stopped", self.runtime_id));
+        }
+        state.next_event_seq += 1;
+        Ok(())
     }
 }
 
@@ -65,7 +93,7 @@ pub(crate) struct RuntimeEventWriter {
     initial_runtime_id: String,
     initial_lease_id: String,
     cursors: HashMap<String, RuntimeCursor>,
-    feed_sequences: HashMap<String, Arc<AtomicU64>>,
+    feed_states: HashMap<String, Arc<Mutex<RuntimeFeedState>>>,
     feed_sender: Option<mpsc::Sender<FeedCommand>>,
     feed_worker: Option<std::thread::JoinHandle<()>>,
     client: SessionLogClient,
@@ -93,7 +121,7 @@ impl RuntimeEventWriter {
             initial_runtime_id,
             initial_lease_id,
             cursors: HashMap::new(),
-            feed_sequences: HashMap::new(),
+            feed_states: HashMap::new(),
             feed_sender: Some(feed_sender),
             feed_worker: Some(feed_worker),
             client,
@@ -152,16 +180,21 @@ impl RuntimeEventWriter {
             .cursors
             .get(runtime_id)
             .ok_or_else(|| format!("runtime {runtime_id} has no event cursor"))?;
-        let next_event_seq = Arc::clone(
-            self.feed_sequences
+        let state = Arc::clone(
+            self.feed_states
                 .entry(runtime_id.to_string())
-                .or_insert_with(|| Arc::new(AtomicU64::new(1))),
+                .or_insert_with(|| {
+                    Arc::new(Mutex::new(RuntimeFeedState {
+                        next_event_seq: 1,
+                        assistant_text: String::new(),
+                    }))
+                }),
         );
         Ok(RuntimeFeedPublisher {
             runtime_id: runtime_id.to_string(),
             target_session_id: target_session_id.to_string(),
             lease_id: cursor.lease_id.clone(),
-            next_event_seq,
+            state,
             sender: self
                 .feed_sender
                 .as_ref()
@@ -423,7 +456,78 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn feed_barrier_persists_completed_text_not_deltas_before_terminal_runtime_commit() {
+    fn feed_publisher_keeps_completed_text_when_no_live_delta_was_sent() {
+        let (sender, receiver) = mpsc::channel();
+        let publisher = RuntimeFeedPublisher {
+            runtime_id: "runtime-final-only".to_string(),
+            target_session_id: "session-final-only".to_string(),
+            lease_id: "lease-final-only".to_string(),
+            state: Arc::new(Mutex::new(RuntimeFeedState {
+                next_event_seq: 1,
+                assistant_text: String::new(),
+            })),
+            sender,
+        };
+
+        publisher
+            .publish(SessionFeedEvent::AgentMessage {
+                message_id: "runtime-final-only.message".to_string(),
+                part_id: "runtime-final-only.message".to_string(),
+                reply_message: "fallback final text".to_string(),
+                new_learning: String::new(),
+                runtime_status: None,
+                context_tokens: None,
+                usage: None,
+                created_at: 1,
+                updated_at: 2,
+            })
+            .expect("queue final-only message");
+
+        let FeedCommand::Append(request) = receiver.recv().expect("queued final-only event") else {
+            panic!("expected an appended feed event");
+        };
+        assert!(matches!(
+            request.event,
+            SessionFeedEvent::AgentMessage { reply_message, .. }
+                if reply_message == "fallback final text"
+        ));
+    }
+
+    #[test]
+    fn feed_publisher_rolls_back_live_text_and_sequence_when_queue_is_closed() {
+        let (sender, receiver) = mpsc::channel();
+        drop(receiver);
+        let state = Arc::new(Mutex::new(RuntimeFeedState {
+            next_event_seq: 7,
+            assistant_text: "kept".to_string(),
+        }));
+        let publisher = RuntimeFeedPublisher {
+            runtime_id: "runtime-closed-feed".to_string(),
+            target_session_id: "session-closed-feed".to_string(),
+            lease_id: "lease-closed-feed".to_string(),
+            state: Arc::clone(&state),
+            sender,
+        };
+
+        assert!(publisher
+            .publish(SessionFeedEvent::AssistantTextDelta {
+                message_id: "runtime-closed-feed.message".to_string(),
+                part_id: "runtime-closed-feed.message".to_string(),
+                delta: " discarded".to_string(),
+                created_at: 1,
+                updated_at: 2,
+            })
+            .is_err());
+
+        let state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(state.next_event_seq, 7);
+        assert_eq!(state.assistant_text, "kept");
+    }
+
+    #[test]
+    fn feed_barrier_persists_exact_live_text_before_terminal_runtime_commit() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let root = tempfile::tempdir().expect("session db root");
         let home = root.path().join("home");
@@ -525,23 +629,36 @@ mod tests {
         writer
             .flush(&mut runtime)
             .expect("persist full provider input");
-        let publisher = writer
+        let stream_publisher = writer
             .feed_publisher(&runtime_id, &session_id)
-            .expect("publisher");
-        publisher
+            .expect("stream publisher");
+        stream_publisher
             .publish(SessionFeedEvent::AssistantTextDelta {
                 message_id: format!("{runtime_id}.message"),
                 part_id: format!("{runtime_id}.message"),
-                delta: "first".to_string(),
+                delta: "first paragraph\n\n".to_string(),
                 created_at: now.timestamp_millis(),
                 updated_at: now.timestamp_millis(),
             })
             .expect("queue live text delta");
-        publisher
+        stream_publisher
+            .publish(SessionFeedEvent::AssistantTextDelta {
+                message_id: format!("{runtime_id}.message"),
+                part_id: format!("{runtime_id}.message"),
+                delta: "second paragraph".to_string(),
+                created_at: now.timestamp_millis(),
+                updated_at: now.timestamp_millis(),
+            })
+            .expect("queue second live text delta");
+        drop(stream_publisher);
+        let final_publisher = writer
+            .feed_publisher(&runtime_id, &session_id)
+            .expect("final publisher");
+        final_publisher
             .publish(SessionFeedEvent::AgentMessage {
                 message_id: format!("{runtime_id}.message"),
                 part_id: format!("{runtime_id}.message"),
-                reply_message: "first complete".to_string(),
+                reply_message: "first paragraph\nsecond paragraph".to_string(),
                 new_learning: String::new(),
                 runtime_status: None,
                 context_tokens: None,
@@ -614,7 +731,7 @@ mod tests {
         assert!(matches!(
             &entries[2].event,
             SessionFeedEvent::AgentMessage { reply_message, .. }
-                if reply_message == "first complete"
+                if reply_message == "first paragraph\n\nsecond paragraph"
         ));
         assert!(
             entries

@@ -9,6 +9,7 @@ const gatewayUrl = params.get("gatewayUrl") ?? undefined;
 const paths = params.getAll("path").filter(Boolean);
 const text = params.get("text") ?? paths.map((path) => `[MEDIA:${path}:MEDIA]`).join("\n");
 const normalizePunctuation = params.get("normalize-punctuation") === "true";
+const active = params.get("active") === "true";
 const root = document.getElementById("root");
 
 if (!root) {
@@ -19,6 +20,7 @@ render(
   () => (
     <RichText
       text={text}
+      active={active}
       workspaceDirectory={workspaceDirectory}
       gatewayUrl={gatewayUrl}
       normalizePunctuation={normalizePunctuation}

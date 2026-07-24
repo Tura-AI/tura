@@ -198,6 +198,48 @@ test("render gracefully downgrades rich text across display levels", () => {
   assert.doesNotMatch(rich, /<b>|<\/code>/);
 });
 
+test("render treats ATX headings as marker-free bold text outside code fences", () => {
+  const session = sessionFixture("sess-markdown-headings", "Markdown Headings");
+  const source = [
+    "# Primary heading",
+    "## Secondary heading",
+    "Version #1 stays prose.",
+    "#tag stays prose.",
+    "### Third heading",
+    "```md",
+    "# Code heading stays literal.",
+    "```",
+  ].join("\n");
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [textMessage("msg-markdown-headings", session.id, source)],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  for (const capabilities of [plainCapabilities(), ansiCapabilities(), richCapabilities()]) {
+    const output = withTerminalSize(96, 28, () => render(state, capabilities));
+    const visible = stripAnsi(output);
+    assert.match(visible, /Primary heading/u);
+    assert.match(visible, /Secondary heading/u);
+    assert.match(visible, /Third heading/u);
+    assert.doesNotMatch(visible, /# Primary heading|## Secondary heading|### Third heading/u);
+    assert.match(visible, /Version #1 stays prose\./u);
+    assert.match(visible, /#tag stays prose\./u);
+    assert.match(visible, /# Code heading stays literal\./u);
+    if (capabilities.level !== "rich") {
+      assert.match(visible, /```md[\s\S]*# Code heading stays literal\.[\s\S]*```/u);
+    }
+    if (capabilities.level !== "plain") {
+      assert.match(output, /\x1b\[1mPrimary heading\x1b\[0m/u);
+      assert.match(output, /\x1b\[1mSecondary heading\x1b\[0m/u);
+      assert.match(output, /\x1b\[1mThird heading\x1b\[0m/u);
+    }
+  }
+});
+
 test("load session rich text degradation preserves html block newlines", () => {
   const session = sessionFixture("sess-load-rich-html", "Loaded Rich HTML");
   const loadedHtml =

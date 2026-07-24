@@ -35,6 +35,10 @@ model/session selectors, permission prompts, useful exit messages, and
 deterministic automation output. All durable state and backend work still goes
 through gateway HTTP and SSE calls.
 
+Transcript rendering treats line-start ATX headings (`# ` through `###### `)
+as marker-free bold text in ANSI/rich terminals and marker-free text in plain
+terminals. Prose hashes, hash tags, and fenced-code contents remain literal.
+
 ## Session Log And Provider Diagnostics
 
 The CLI/TUI queries past sessions through gateway APIs or the gateway
@@ -653,6 +657,14 @@ Interactive and browser tests:
   xterm rendering, and raw ANSI/control leak prevention
 - mock-gateway business tests for streaming, multi-session, refresh/replay, and
   local task workflows
+
+Chat rendering owns only the mutable live tail. Once a live row has overflowed
+into terminal scrollback, later stream deltas must preserve that terminal-owned
+prefix and may only append new rows or repaint the reserved tail. Rebuilding the
+scrollback for a live-content reflow destroys a user's middle viewport position.
+The Runtime feed must finalize a live text part with the exact accumulated live
+text, so completion and later session hydration preserve the same paragraphs,
+indentation, and rendered transcript.
 
 Current app-owned commands:
 

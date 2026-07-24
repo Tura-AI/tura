@@ -191,7 +191,7 @@ def prepare_media() -> tuple[Path, list[str]]:
 
 async def main() -> None:
     workspace, paths = prepare_media()
-    start_media_fixture_server()
+    gateway = start_media_fixture_server()
     gui = start_gui()
     try:
         await wait_for(lambda: ready(GUI_URL), gui, "GUI dev server")
@@ -322,11 +322,61 @@ async def main() -> None:
                 raise AssertionError(f"browser errors: {errors}")
             screenshot = OUT / "media-render-paths.png"
             await page.screenshot(path=screenshot, full_page=True)
+
+            heading_text = "\n".join(
+                [
+                    "# Primary heading",
+                    "## Secondary heading",
+                    "Version #1 stays prose.",
+                    "#tag stays prose.",
+                    "```md",
+                    "# Code heading stays literal.",
+                    "```",
+                ]
+            )
+            heading_url = (
+                f"{GUI_URL}/media-rich-text-playwright.html?"
+                + urlencode({"text": heading_text, "active": "true"})
+            )
+            await page.goto(heading_url, wait_until="load")
+            heading_metrics = await page.evaluate(
+                """
+                () => ({
+                  text: document.querySelector('.rich-text')?.textContent ?? '',
+                  bold: [...document.querySelectorAll('.rich-text b')].map((node) => ({
+                    text: node.textContent,
+                    weight: getComputedStyle(node).fontWeight,
+                  })),
+                })
+                """
+            )
+            if heading_metrics["text"] != heading_text.replace("# Primary heading", "Primary heading").replace(
+                "## Secondary heading", "Secondary heading"
+            ):
+                raise AssertionError(f"GUI heading text changed unexpectedly: {heading_metrics}")
+            if [item["text"] for item in heading_metrics["bold"]] != [
+                "Primary heading",
+                "Secondary heading",
+            ]:
+                raise AssertionError(f"GUI headings were not rendered as bold: {heading_metrics}")
+            if any(int(item["weight"]) < 600 for item in heading_metrics["bold"]):
+                raise AssertionError(f"GUI heading weight is too low: {heading_metrics}")
+            heading_screenshot = OUT / "markdown-headings-active.png"
+            await page.screenshot(path=heading_screenshot, full_page=True)
             await browser.close()
-        print(f"media render path playwright passed: {metrics}")
+        print(f"media render path playwright passed: {metrics}; headings: {heading_metrics}")
         print(f"screenshot: {screenshot}")
+        print(f"heading screenshot: {heading_screenshot}")
     finally:
-        pass
+        gateway.shutdown()
+        gateway.server_close()
+        if gui and gui.poll() is None:
+            gui.terminate()
+            try:
+                gui.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                gui.kill()
+                gui.wait(timeout=5)
 
 
 if __name__ == "__main__":

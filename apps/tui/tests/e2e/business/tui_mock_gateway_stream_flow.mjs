@@ -362,6 +362,20 @@ async function capture(page, name) {
   };
 }
 
+async function terminalMarkerIsBold(page, marker) {
+  return page.evaluate((value) => {
+    const buffer = window.__turaTerminal?.buffer?.active;
+    if (!buffer) return false;
+    for (let row = 0; row < buffer.length; row += 1) {
+      const line = buffer.getLine(row);
+      const text = line?.translateToString(true) ?? "";
+      const column = text.indexOf(value);
+      if (column >= 0) return Boolean(line?.getCell(column)?.isBold());
+    }
+    return false;
+  }, marker);
+}
+
 async function main() {
   await fs.mkdir(screenshotsDir, { recursive: true });
   const gateway = createGatewayServer();
@@ -674,13 +688,13 @@ async function main() {
 
     const round2MessageID = "msg-stream-round-2";
     const round2PartID = "part-stream-round-2";
-    const round2Opening = "<strong>ROUND2_STREAM_MARKER_A second round starts.\n";
-    const round2Middle =
-      Array.from(
-        { length: 100 },
-        (_item, index) =>
-          `ROUND2_STREAM_MARKER_B_${String(index + 1).padStart(3, "0")} keeps streaming while scrolled to the middle.\n`,
-      ).join("") + "</strong>\n";
+    const round2Opening = "<pre><code>ROUND2_STREAM_MARKER_A second round starts.\n";
+    const round2MiddleLines = Array.from(
+      { length: 100 },
+      (_item, index) =>
+        `ROUND2_STREAM_MARKER_B_${String(index + 1).padStart(3, "0")} keeps streaming while scrolled to the middle.\n`,
+    );
+    const round2Middle = round2MiddleLines.join("") + "</code></pre>\n";
     const round2Text =
       round2Opening + round2Middle + "ROUND2_STREAM_MARKER_C finishes after returning to bottom.\n";
     await streamShortChunks(round2Opening, round2MessageID, round2PartID, "envelope");
@@ -691,8 +705,22 @@ async function main() {
         middleViewportBeforeStream.viewportY < middleViewportBeforeStream.baseY,
       `test setup should place the viewport in the middle: ${JSON.stringify(middleViewportBeforeStream)}`,
     );
-    streamDeltaFor(round2MessageID, round2PartID, round2Middle, "envelope");
-    await delay(500);
+    for (const batch of [
+      round2MiddleLines.slice(0, 60).join(""),
+      round2MiddleLines.slice(60).join("") + "</code></pre>\n",
+    ]) {
+      streamDeltaFor(round2MessageID, round2PartID, batch, "envelope");
+      await delay(250);
+      const viewport = await terminalViewportPosition(page);
+      assert.equal(
+        viewport.viewportY,
+        middleViewportBeforeStream.viewportY,
+        `every live batch must preserve the user's middle viewport: ${JSON.stringify({
+          before: middleViewportBeforeStream,
+          after: viewport,
+        })}`,
+      );
+    }
     const middleViewportAfterStream = await terminalViewportPosition(page);
     assert.equal(
       middleViewportAfterStream.viewportY,
@@ -751,6 +779,14 @@ async function main() {
       1,
       "second round should finalize into one text part",
     );
+    for (let index = 1; index <= round2MiddleLines.length; index += 1) {
+      const marker = `ROUND2_STREAM_MARKER_B_${String(index).padStart(3, "0")}`;
+      assert.equal(
+        markerCount(round2Buffer, marker),
+        1,
+        `${marker} streamed while scrolled in the middle must remain unique`,
+      );
+    }
 
     // Phase 6: a focused frame-by-frame handoff check. Keep a live text message
     // and a running command visible, then finalize both into cache while a
@@ -819,6 +855,54 @@ async function main() {
       1,
       "handoff command should finalize into cache",
     );
+
+    // Phase 7: Markdown headings must have identical marker-free bold
+    // presentation while live and after the durable message replaces the feed.
+    gatewayEvent("session.status", { sessionID, status: "busy" });
+    const headingMessageID = "msg-heading-handoff";
+    const headingPartID = "part-heading-handoff";
+    const headingText = [
+      "# TUI_PRIMARY_HEADING",
+      "## TUI_SECONDARY_HEADING",
+      "Version #1 stays prose.",
+      "#tag stays prose.",
+    ].join("\n");
+    await streamShortChunks(headingText, headingMessageID, headingPartID, "properties");
+    await page.waitForFunction(
+      () => document.body.innerText.includes("TUI_SECONDARY_HEADING"),
+      null,
+      { timeout: 5_000 },
+    );
+    assert.equal(
+      await terminalMarkerIsBold(page, "TUI_PRIMARY_HEADING"),
+      true,
+      "live primary heading must use the terminal bold attribute",
+    );
+    assert.equal(
+      await terminalMarkerIsBold(page, "TUI_SECONDARY_HEADING"),
+      true,
+      "live secondary heading must use the terminal bold attribute",
+    );
+    upsertMessage({
+      id: headingMessageID,
+      sessionID,
+      role: "assistant",
+      parts: [{ id: headingPartID, type: "text", text: headingText }],
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    session = { ...session, status: "idle", updated_at: Date.now() };
+    gatewayEvent("session.status", { sessionID, status: "idle" });
+    await waitForComposer(page);
+    captures.push(await capture(page, "14-heading-handoff-final"));
+    const headingBuffer = await terminalBufferText(page);
+    assert.equal(await terminalMarkerIsBold(page, "TUI_PRIMARY_HEADING"), true);
+    assert.equal(await terminalMarkerIsBold(page, "TUI_SECONDARY_HEADING"), true);
+    assert.equal(markerCount(headingBuffer, "TUI_PRIMARY_HEADING"), 1);
+    assert.equal(markerCount(headingBuffer, "TUI_SECONDARY_HEADING"), 1);
+    assert.doesNotMatch(headingBuffer, /# TUI_PRIMARY_HEADING|## TUI_SECONDARY_HEADING/u);
+    assert.match(headingBuffer, /Version #1 stays prose\./u);
+    assert.match(headingBuffer, /#tag stays prose\./u);
 
     for (const phase of captures.filter(({ name }) => name !== "00-session-loading")) {
       assert.equal(

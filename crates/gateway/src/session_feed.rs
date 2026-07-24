@@ -1109,7 +1109,7 @@ mod tests {
             SessionFeedEvent::AssistantTextDelta {
                 message_id: "live-runtime.message".to_string(),
                 part_id: "live-runtime.message".to_string(),
-                delta: "hel".to_string(),
+                delta: "first paragraph\n\nsecond paragraph".to_string(),
                 created_at: 10,
                 updated_at: 11,
             },
@@ -1124,7 +1124,7 @@ mod tests {
             SessionFeedEvent::AgentMessage {
                 message_id: "live-runtime.message".to_string(),
                 part_id: "live-runtime.message".to_string(),
-                reply_message: "hello".to_string(),
+                reply_message: "first paragraph\n\nsecond paragraph".to_string(),
                 new_learning: String::new(),
                 runtime_status: None,
                 context_tokens: None,
@@ -1144,7 +1144,10 @@ mod tests {
             .iter()
             .find(|message| message.id == "live-runtime.message")
             .expect("live message projection");
-        assert_eq!(message.parts[0].text.as_deref(), Some("hello"));
+        assert_eq!(
+            message.parts[0].text.as_deref(),
+            Some("first paragraph\n\nsecond paragraph")
+        );
     }
 
     #[test]

@@ -183,10 +183,10 @@ pub(super) fn json_looks_like_tool_payload(value: &serde_json::Value) -> bool {
 }
 
 pub(super) fn strip_runtime_markup(text: &str) -> String {
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .filter(|line| !is_runtime_markup_line(line))
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .filter(|line| !is_runtime_markup_line(line.trim()))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -280,6 +280,26 @@ mod tests {
             .to_string();
 
         assert_eq!(user_visible_runtime_text(&text), None);
+    }
+
+    #[test]
+    fn user_visible_runtime_text_preserves_internal_blank_lines_and_indentation() {
+        let text = "First paragraph.\r\n\r\n    indented detail\r\n\r\nLast paragraph.";
+
+        assert_eq!(
+            user_visible_runtime_text(text).as_deref(),
+            Some("First paragraph.\n\n    indented detail\n\nLast paragraph.")
+        );
+    }
+
+    #[test]
+    fn user_visible_runtime_text_removes_markup_without_compacting_surrounding_lines() {
+        let text = "First paragraph.\n\n<tool_call>\n\nSecond paragraph.";
+
+        assert_eq!(
+            user_visible_runtime_text(text).as_deref(),
+            Some("First paragraph.\n\n\nSecond paragraph.")
+        );
     }
 
     #[test]

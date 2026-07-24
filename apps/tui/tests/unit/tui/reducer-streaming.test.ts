@@ -340,6 +340,94 @@ test("reducer does not duplicate summary text when its full part snapshot arrive
   );
 });
 
+test("reducer renders identical paragraph text live, finalized, and after hydrate", () => {
+  const exactText = "First paragraph.\n\nSecond paragraph.\n\n    indented detail";
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [],
+    permissions: [],
+  });
+
+  for (const [index, delta] of [
+    "First paragraph.\n",
+    "\nSecond paragraph.\n\n",
+    "    indented detail",
+  ].entries()) {
+    state = reducer(state, {
+      type: "event",
+      event: {
+        directory: "C:/repo",
+        payload: {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "sess-1",
+            messageID: "runtime-paragraphs.message",
+            partID: "runtime-paragraphs.message",
+            createdAt: 70,
+            updatedAt: 71 + index,
+            field: "text",
+            delta,
+          },
+        },
+      },
+    });
+  }
+
+  assert.equal(
+    displayMessages(state).find((message) => message.id === "runtime-paragraphs.message")?.parts[0]
+      .text,
+    exactText,
+  );
+
+  const durableMessage = {
+    id: "runtime-paragraphs.message",
+    sessionID: "sess-1",
+    role: "assistant" as const,
+    created_at: 70,
+    updated_at: 75,
+    parts: [
+      {
+        id: "runtime-paragraphs.message",
+        sessionID: "sess-1",
+        messageID: "runtime-paragraphs.message",
+        type: "text",
+        text: exactText,
+      },
+    ],
+  };
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: { sessionID: "sess-1", info: durableMessage },
+      },
+    },
+  });
+
+  assert.equal(
+    displayMessages(state).find((message) => message.id === "runtime-paragraphs.message")?.parts[0]
+      .text,
+    exactText,
+  );
+
+  state = reducer(state, {
+    type: "hydrate",
+    session: { ...session, status: "idle" },
+    messages: [durableMessage],
+    permissions: [],
+  });
+
+  assert.equal(Object.values(state.liveStreams).length, 0);
+  assert.equal(
+    displayMessages(state).find((message) => message.id === "runtime-paragraphs.message")?.parts[0]
+      .text,
+    exactText,
+  );
+});
+
 test("reducer preserves a durable content prefix when a live part snapshot arrives", () => {
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",

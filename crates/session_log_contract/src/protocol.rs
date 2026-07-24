@@ -350,7 +350,8 @@ pub struct SessionFeedCommandUpdate {
 
 /// Frontend projection facts. Stable Runtime and Session facts are durable and
 /// replayable; `AssistantTextDelta` is broadcast live with cursor zero and is
-/// replaced by the completed durable `AgentMessage`.
+/// replaced by a durable `AgentMessage` containing the exact accumulated live
+/// text for that runtime.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionFeedEvent {

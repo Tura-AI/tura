@@ -1,6 +1,6 @@
 import type { AppState } from "./reducer.js";
 import { renderChatFrameParts, renderFrame, type RenderedChatCache } from "./render.js";
-import { clear as terminalClear, padVisible, stripAnsi } from "./render-terminal.js";
+import { clear as terminalClear, padVisible } from "./render-terminal.js";
 import type { TerminalCapabilities } from "./capabilities.js";
 
 let lastDrawSurface = "";
@@ -152,13 +152,7 @@ function drawChatFrame(
   const bodyShrank = previousBodyLineCount !== 0 && target.bodyLines.length < previousBodyLineCount;
   const firstChatDraw = lastChatRenderCols === 0;
   const spilledLiveFrame = target.spilledLiveLines.join("\n");
-  const spilledLiveChanged =
-    lastChatSpilledLiveLineCount > 0 &&
-    target.spilledLiveLines.length >= lastChatSpilledLiveLineCount &&
-    target.spilledLiveLines.slice(0, lastChatSpilledLiveLineCount).join("\n") !==
-      lastChatSpilledLiveFrame;
-  const rewriteAllRegions =
-    forceReset || renderWidthChanged || bodyShrank || firstChatDraw || spilledLiveChanged;
+  const rewriteAllRegions = forceReset || renderWidthChanged || bodyShrank || firstChatDraw;
   const liveChanged = lastChatLiveFrame !== rendered.liveFrame;
   const tailCacheChanged = lastChatTailCacheMessageCount !== rendered.tailCacheMessageCount;
   const chromeChanged = lastChatChromeFrame !== rendered.chromeFrame;
@@ -412,15 +406,7 @@ function preserveCommittedSpilledPresentation(target: ChatScrollbackTarget): Cha
   if (target.spilledLiveLines.length < lastChatSpilledLiveLineCount) return target;
 
   const previousSpilledLines = lastChatSpilledLiveFrame.split("\n");
-  const nextCommittedLines = target.spilledLiveLines.slice(0, lastChatSpilledLiveLineCount);
-  if (
-    previousSpilledLines.length !== lastChatSpilledLiveLineCount ||
-    previousSpilledLines.some(
-      (line, index) => stripAnsi(line) !== stripAnsi(nextCommittedLines[index] ?? ""),
-    )
-  ) {
-    return target;
-  }
+  if (previousSpilledLines.length !== lastChatSpilledLiveLineCount) return target;
 
   const spilledLiveLines = [
     ...previousSpilledLines,
