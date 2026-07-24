@@ -24,8 +24,8 @@ pub fn normalize_workspace(directory: &str) -> String {
 
 /// Directory that stores the durable session log for a workspace.
 ///
-/// The session log follows the workspace, so dev and release builds use the
-/// same `<workspace>/.tura` location for a given project.
+/// Source checkouts keep the historical `<workspace>/.tura` location. An
+/// explicit `TURA_HOME` relocates workspace state under that instance home.
 pub fn workspace_session_log_dir(directory: &str) -> PathBuf {
     let workspace = normalize_workspace(directory);
     if workspace.is_empty() {
@@ -34,7 +34,7 @@ pub fn workspace_session_log_dir(directory: &str) -> PathBuf {
             .join("_unknown")
             .join(".tura");
     }
-    PathBuf::from(workspace).join(".tura")
+    tura_path::workspace_runtime_dir(workspace)
 }
 
 /// SQLite database that stores the full session log for a workspace.

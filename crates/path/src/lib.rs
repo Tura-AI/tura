@@ -8,6 +8,10 @@
 //! root so debug, release, and development instances do not share process state.
 
 use std::path::{Path, PathBuf};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
 
 pub mod process_hardening;
 pub mod shell_fallback;
@@ -88,6 +92,29 @@ pub fn instance_home() -> PathBuf {
 /// Per-instance runtime directory (`<home>/.tura`) holding sockets/locks/etc.
 pub fn home_runtime_dir() -> PathBuf {
     instance_home().join(RUNTIME_DIR_NAME)
+}
+
+/// Per-workspace runtime directory. Installed profiles with an explicit
+/// `TURA_HOME` keep workspace state out of source repositories.
+pub fn workspace_runtime_dir(directory: impl AsRef<Path>) -> PathBuf {
+    if std::env::var_os("TURA_HOME")
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return directory.as_ref().join(RUNTIME_DIR_NAME);
+    }
+    let workspace = normalize_path(directory.as_ref());
+    let mut hasher = DefaultHasher::new();
+    workspace.hash(&mut hasher);
+    let name = workspace
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("workspace");
+    instance_home()
+        .join("workspaces")
+        .join(format!("{name}-{:016x}", hasher.finish()))
+        .join(RUNTIME_DIR_NAME)
 }
 
 /// Path of a named control endpoint for this instance (e.g. `session_db`,
