@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   desktopBundleAssets,
+  desktopReleaseAssetName,
   executableName,
   executableNames,
   guiDistCandidates,
@@ -38,6 +39,21 @@ test("desktop bundle discovery accepts installable assets for every release plat
       rmSync(root, { recursive: true, force: true });
     }
   }
+});
+
+test("desktop release assets use the gui-only package prefix", () => {
+  assert.equal(
+    desktopReleaseAssetName("v1.2.3", "tura_gui.AppImage", "linux", "x64"),
+    "tura-gui-only-v1.2.3-linux-x64.AppImage"
+  );
+  assert.equal(
+    desktopReleaseAssetName("v1.2.3", "tura_gui.dmg", "darwin", "arm64"),
+    "tura-gui-only-v1.2.3-macos-arm64.dmg"
+  );
+  assert.equal(
+    desktopReleaseAssetName("v1.2.3", "tura_gui-setup.exe", "win32", "x64"),
+    "tura-gui-only-v1.2.3-windows-x64-setup.exe"
+  );
 });
 
 test("npm platform validation does not require Tauri desktop artifacts", () => {

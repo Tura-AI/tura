@@ -3,7 +3,12 @@
 //! Default TTL is zero, so workers are expected to exit when a session turn
 //! returns to waiting/idle.
 
-pub const MAX_ACTIVE_RUNTIME_WORKERS: usize = 24;
+pub const MAX_ACTIVE_RUNTIME_WORKERS: usize =
+    runtime_contract::DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS;
 pub const MAX_QUEUED_RUNTIME_TURNS: usize = 512;
 pub const RUNTIME_WORKER_IDLE_TTL_SECS: u64 = 0;
 pub const MAX_IDLE_RUNTIME_WORKERS: usize = 0;
+
+pub fn runtime_worker_limit(configured: Option<usize>) -> usize {
+    runtime_contract::maximum_parallel_runtime_workers(configured)
+}

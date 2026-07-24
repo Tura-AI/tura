@@ -163,7 +163,7 @@ jobs:
             throw "Downloaded release assets are missing: $($missing -join ', ')."
           }
           foreach ($platform in @("linux-x64", "macos-x64", "macos-arm64", "windows-x64")) {
-            $prefix = "tura-gui-$env:RELEASE_TAG-$platform"
+            $prefix = "tura-gui-only-$env:RELEASE_TAG-$platform"
             if (-not ($files.Name | Where-Object { $_.StartsWith($prefix, [System.StringComparison]::Ordinal) })) {
               throw "Downloaded release assets do not contain a Tauri installer for $platform."
             }

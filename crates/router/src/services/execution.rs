@@ -8,9 +8,9 @@ use lifecycle::RuntimeId;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Notify;
 
-use crate::services::runtime_workers::{MAX_ACTIVE_RUNTIME_WORKERS, MAX_QUEUED_RUNTIME_TURNS};
+use crate::services::runtime_workers::{runtime_worker_limit, MAX_QUEUED_RUNTIME_TURNS};
 use crate::{dispatch_run_agent_with_runtime_slot, AppState};
 use router_contract::{CancelRuntimeRequest, EnqueueTurnRequest, ProbeSessionsRequest};
 use runtime_contract::RunAgentRequest;
@@ -22,7 +22,7 @@ use session_log_contract::{
 #[derive(Clone)]
 pub struct ExecutionService {
     sessions: Arc<Mutex<HashMap<String, RuntimeLease>>>,
-    runtime_slots: Arc<Semaphore>,
+    runtime_slots: RuntimeSlotGate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +36,7 @@ impl ExecutionService {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            runtime_slots: Arc::new(Semaphore::new(MAX_ACTIVE_RUNTIME_WORKERS)),
+            runtime_slots: RuntimeSlotGate::default(),
         }
     }
 
@@ -49,6 +49,8 @@ impl ExecutionService {
         let request: EnqueueTurnRequest = serde_json::from_value(input)?;
         let lease_id = format!("lease-{}", uuid::Uuid::new_v4());
         let run_request = payload_to_run_agent_request(&request, &lease_id)?;
+        let maximum_parallel_runtime_workers =
+            runtime_worker_limit(run_request.maximum_parallel_runtime_workers);
         if debug_runtime_enabled() {
             eprintln!(
                 "router debug: enqueue_turn start session_id={} runtime_id={}",
@@ -89,7 +91,9 @@ impl ExecutionService {
             &request.session_id,
             &request.runtime_id,
         );
-        let _permit = self.acquire_runtime_slot(&request.session_id).await?;
+        let _permit = self
+            .acquire_runtime_slot(&request.session_id, maximum_parallel_runtime_workers)
+            .await?;
         if !self.mark_slot_acquired(&request.session_id, &request.runtime_id) {
             return Err(anyhow!(
                 "session {} was cancelled before runtime dispatch",
@@ -271,16 +275,20 @@ impl ExecutionService {
         );
     }
 
-    async fn acquire_runtime_slot(&self, session_id: &str) -> Result<OwnedSemaphorePermit> {
+    async fn acquire_runtime_slot(
+        &self,
+        session_id: &str,
+        maximum_parallel_runtime_workers: usize,
+    ) -> Result<RuntimeSlotPermit> {
         if debug_runtime_enabled() {
             eprintln!(
-                "router debug: enqueue_turn waiting for runtime slot session_id={session_id}"
+                "router debug: enqueue_turn waiting for runtime slot session_id={session_id} limit={maximum_parallel_runtime_workers}"
             );
         }
-        let permit = Arc::clone(&self.runtime_slots)
-            .acquire_owned()
-            .await
-            .map_err(|_| anyhow!("runtime worker queue is closed"))?;
+        let permit = self
+            .runtime_slots
+            .acquire(maximum_parallel_runtime_workers)
+            .await;
         if debug_runtime_enabled() {
             eprintln!("router debug: enqueue_turn acquired runtime slot session_id={session_id}");
         }
@@ -297,6 +305,41 @@ impl ExecutionService {
         }
         lease.slot_acquired = true;
         true
+    }
+}
+
+#[derive(Clone, Default)]
+struct RuntimeSlotGate {
+    active: Arc<Mutex<usize>>,
+    notify: Arc<Notify>,
+}
+
+impl RuntimeSlotGate {
+    async fn acquire(&self, limit: usize) -> RuntimeSlotPermit {
+        loop {
+            let notified = self.notify.notified();
+            {
+                let mut active = self.active.lock();
+                if *active < limit {
+                    *active += 1;
+                    return RuntimeSlotPermit { gate: self.clone() };
+                }
+            }
+            notified.await;
+        }
+    }
+}
+
+struct RuntimeSlotPermit {
+    gate: RuntimeSlotGate,
+}
+
+impl Drop for RuntimeSlotPermit {
+    fn drop(&mut self) {
+        let mut active = self.gate.active.lock();
+        *active = active.saturating_sub(1);
+        drop(active);
+        self.gate.notify.notify_waiters();
     }
 }
 
@@ -438,10 +481,7 @@ fn debug_runtime_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{payload_to_run_agent_request, EnqueueTurnRequest, ExecutionService};
-    use crate::{
-        build_state,
-        services::{manager::ServiceManager, runtime_workers::MAX_ACTIVE_RUNTIME_WORKERS},
-    };
+    use crate::{build_state, services::manager::ServiceManager};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -644,10 +684,11 @@ mod tests {
     async fn acquire_runtime_slot_queues_above_runtime_worker_limit_instead_of_rejecting() {
         let service = Arc::new(ExecutionService::new());
         let mut permits = Vec::new();
-        for index in 0..MAX_ACTIVE_RUNTIME_WORKERS {
+        let configured_limit = 6;
+        for index in 0..configured_limit {
             permits.push(
                 service
-                    .acquire_runtime_slot(&format!("running-{index}"))
+                    .acquire_runtime_slot(&format!("running-{index}"), configured_limit)
                     .await
                     .expect("initial runtime slots should be available"),
             );
@@ -657,7 +698,7 @@ mod tests {
         let queued_service = Arc::clone(&service);
         let queued = tokio::spawn(async move {
             queued_service
-                .acquire_runtime_slot("queued-session")
+                .acquire_runtime_slot("queued-session", configured_limit)
                 .await
                 .expect("queued turn should acquire the released runtime slot")
         });

@@ -217,6 +217,7 @@ export function TranscriptTextLoadingLines() {
 function settingsSectionTitle(section: AppState["settingsSection"]): string {
   const labels: Record<AppState["settingsSection"], string> = {
     application: t("applicationSettings"),
+    runtime: t("runtimeSettings"),
     appearance: t("appearance"),
     providers: t("providers"),
     models: t("models"),

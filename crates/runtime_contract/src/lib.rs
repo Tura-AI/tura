@@ -8,6 +8,22 @@ use lifecycle::SessionState;
 
 pub const WORKER_KIND_CALL: &str = "call";
 pub const WORKER_KIND_HEALTH_CHECK: &str = "health_check";
+pub const DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS: u64 = 256;
+pub const MAXIMUM_RUNTIME_LLM_TURN_OPTIONS: [u64; 5] = [64, 128, 256, 1_080, 2_560];
+pub const DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS: usize = 24;
+pub const MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS: [usize; 5] = [6, 12, 24, 48, 128];
+
+pub fn maximum_runtime_llm_turns(value: Option<u64>) -> u64 {
+    value
+        .filter(|value| MAXIMUM_RUNTIME_LLM_TURN_OPTIONS.contains(value))
+        .unwrap_or(DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS)
+}
+
+pub fn maximum_parallel_runtime_workers(value: Option<usize>) -> usize {
+    value
+        .filter(|value| MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS.contains(value))
+        .unwrap_or(DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CallContext {
@@ -84,6 +100,8 @@ pub struct RunAgentRequest {
     pub no_op_manual: bool,
     #[serde(default)]
     pub return_log: bool,
+    #[serde(default)]
+    pub maximum_parallel_runtime_workers: Option<usize>,
     #[serde(default)]
     pub worker_env: HashMap<String, String>,
 }

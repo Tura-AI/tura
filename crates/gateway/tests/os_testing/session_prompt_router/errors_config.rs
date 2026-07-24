@@ -428,6 +428,18 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
         request["payload"]["payload"]["worker_env"]["TURA_COMMAND_RUN_STALL_CHECK_SECS"],
         "5"
     );
+    assert_eq!(
+        request["payload"]["payload"]["worker_env"]["TURA_RUNTIME_AUTO_GIT_COMMIT"],
+        "0"
+    );
+    assert_eq!(
+        request["payload"]["payload"]["worker_env"]["TURA_MANAS_MAX_TURNS"],
+        "256"
+    );
+    assert_eq!(
+        request["payload"]["payload"]["maximum_parallel_runtime_workers"],
+        24
+    );
     let worker_env = request["payload"]["payload"]["worker_env"]
         .as_object()
         .expect("worker_env should be an object");
@@ -467,6 +479,9 @@ async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router
         model_acceleration_enabled: Some(false),
         command_run_stall_guard_check_secs: Some(17),
         command_run_stall_guard_identical_checks: Some(3),
+        auto_git_commit: Some(true),
+        maximum_runtime_llm_turns: Some(1_080),
+        maximum_parallel_runtime_workers: Some(48),
         ..TuraSessionConfig::default()
     };
     save_config(&workspace, &config).map_err(anyhow::Error::msg)?;
@@ -535,6 +550,18 @@ async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router
     assert_eq!(
         request["payload"]["payload"]["worker_env"]["TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS"],
         "3"
+    );
+    assert_eq!(
+        request["payload"]["payload"]["worker_env"]["TURA_RUNTIME_AUTO_GIT_COMMIT"],
+        "1"
+    );
+    assert_eq!(
+        request["payload"]["payload"]["worker_env"]["TURA_MANAS_MAX_TURNS"],
+        "1080"
+    );
+    assert_eq!(
+        request["payload"]["payload"]["maximum_parallel_runtime_workers"],
+        48
     );
 
     wait_until(Duration::from_secs(10), || {

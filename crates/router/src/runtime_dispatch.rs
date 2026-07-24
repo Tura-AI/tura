@@ -5,7 +5,7 @@ use crate::process_info::current_process_start_time;
 use crate::services::managed_process::repo_root;
 use crate::services::manager::{ServiceManager, WorkerAlreadyRunning};
 use crate::services::models::WorkerSpec;
-use crate::services::runtime_workers::MAX_ACTIVE_RUNTIME_WORKERS;
+use crate::services::runtime_workers::runtime_worker_limit;
 use runtime_contract::{CallContext, RunAgentRequest};
 use tura_router::registry::{binary_target_diagnostics, resolve_binary_target};
 
@@ -92,14 +92,16 @@ async fn dispatch_run_agent_inner(
         );
     }
     let active_workers = state.manager.count_workers_with_prefix("runtime_worker:");
-    if !runtime_slot_acquired && active_workers >= MAX_ACTIVE_RUNTIME_WORKERS {
+    let maximum_parallel_runtime_workers =
+        runtime_worker_limit(req.maximum_parallel_runtime_workers);
+    if !runtime_slot_acquired && active_workers >= maximum_parallel_runtime_workers {
         return (
             429,
             json!({
                 "ok": false,
                 "session_id": session_id,
                 "error": format!(
-                    "runtime worker concurrency limit reached ({active_workers}/{MAX_ACTIVE_RUNTIME_WORKERS})"
+                    "runtime worker concurrency limit reached ({active_workers}/{maximum_parallel_runtime_workers})"
                 )
             }),
         );
@@ -405,7 +407,8 @@ mod tests {
         let runtime = tokio_runtime()?;
 
         runtime.block_on(async {
-            for index in 0..MAX_ACTIVE_RUNTIME_WORKERS {
+            let configured_limit = 6;
+            for index in 0..configured_limit {
                 state
                     .manager
                     .ensure_exclusive_worker(WorkerSpec {
@@ -425,13 +428,14 @@ mod tests {
 
             assert_eq!(
                 state.manager.count_workers_with_prefix("runtime_worker:"),
-                MAX_ACTIVE_RUNTIME_WORKERS
+                configured_limit
             );
 
             let request = serde_json::from_value(json!({
                 "runtime_id": "runtime-over-limit",
                 "lease_id": "lease-over-limit",
                 "session_id": "over-limit-session",
+                "maximum_parallel_runtime_workers": configured_limit,
                 "prompt": "this request should be rejected before another runtime worker starts"
             }))?;
             let (status, body) =
@@ -442,13 +446,13 @@ mod tests {
             assert_eq!(body["session_id"], "over-limit-session");
             assert!(
                 body["error"].as_str().is_some_and(
-                    |error| error.contains("runtime worker concurrency limit reached (24/24)")
+                    |error| error.contains("runtime worker concurrency limit reached (6/6)")
                 ),
                 "unexpected limit error body: {body}"
             );
             assert_eq!(
                 state.manager.count_workers_with_prefix("runtime_worker:"),
-                MAX_ACTIVE_RUNTIME_WORKERS,
+                configured_limit,
                 "rejected dispatch must not create another worker"
             );
 
@@ -456,7 +460,7 @@ mod tests {
                 .manager
                 .stop_workers_with_prefix("runtime_worker:")
                 .await;
-            assert_eq!(stopped, MAX_ACTIVE_RUNTIME_WORKERS);
+            assert_eq!(stopped, configured_limit);
             Ok::<_, anyhow::Error>(())
         })?;
         Ok(())

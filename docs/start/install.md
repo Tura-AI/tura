@@ -6,6 +6,9 @@ local installation, and clean local runtime state when you genuinely need a
 fresh environment. Installation is already enough of an adventure; the map
 should not add one.
 
+For prebuilt GUI-only installers, complete release archives, and npm package
+differences, see [Release packages](release-packages.md).
+
 Tura is built from the repository. The dependency installers in `scripts/` are
 not standalone package managers: they expect to run from a Tura checkout so they
 can find `commands/`, `apps/`, `crates/`, and release scripts.

@@ -1,6 +1,8 @@
 use runtime_contract::{
-    CallContext, RunAgentRequest, RuntimeWorkerResponse, WorkerEnvelope, WORKER_KIND_CALL,
-    WORKER_KIND_HEALTH_CHECK,
+    maximum_parallel_runtime_workers, maximum_runtime_llm_turns, CallContext, RunAgentRequest,
+    RuntimeWorkerResponse, WorkerEnvelope, DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS,
+    DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS, MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS,
+    MAXIMUM_RUNTIME_LLM_TURN_OPTIONS, WORKER_KIND_CALL, WORKER_KIND_HEALTH_CHECK,
 };
 use serde_json::json;
 
@@ -36,12 +38,43 @@ fn run_agent_request_is_strict_and_defaults_optional_worker_inputs() {
     assert_eq!(request.prompt.as_deref(), Some("hello"));
     assert!(!request.no_op_manual);
     assert!(!request.return_log);
+    assert_eq!(request.maximum_parallel_runtime_workers, None);
     assert!(request.worker_env.is_empty());
     assert!(serde_json::from_value::<RunAgentRequest>(json!({
         "runtime_id": "runtime-1",
         "turn_id": "legacy"
     }))
     .is_err());
+}
+
+#[test]
+fn runtime_setting_catalogs_keep_supported_defaults_and_reject_other_values() {
+    assert_eq!(
+        MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS,
+        [6, 12, 24, 48, 128]
+    );
+    assert_eq!(
+        MAXIMUM_RUNTIME_LLM_TURN_OPTIONS,
+        [64, 128, 256, 1_080, 2_560]
+    );
+    assert_eq!(
+        maximum_parallel_runtime_workers(None),
+        DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS
+    );
+    assert_eq!(maximum_parallel_runtime_workers(Some(48)), 48);
+    assert_eq!(
+        maximum_parallel_runtime_workers(Some(7)),
+        DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS
+    );
+    assert_eq!(
+        maximum_runtime_llm_turns(None),
+        DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS
+    );
+    assert_eq!(maximum_runtime_llm_turns(Some(1_080)), 1_080);
+    assert_eq!(
+        maximum_runtime_llm_turns(Some(1)),
+        DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS
+    );
 }
 #[test]
 fn runtime_worker_response_rejects_unknown_fields_and_uses_typed_state() {

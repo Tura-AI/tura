@@ -7,6 +7,13 @@ import { mainTabEntries } from "../../../../app/src/pages/settings/main-tabs";
 import { providerDomains } from "../../../../app/src/pages/settings/provider-domain";
 import { settingsRoutes } from "../../../../app/src/pages/settings/settings-router";
 import {
+  DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS,
+  DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS,
+  MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS,
+  MAXIMUM_RUNTIME_LLM_TURN_OPTIONS,
+  runtimeNumberOptions,
+} from "../../../../app/src/pages/settings/settings-options";
+import {
   configDraftToPatch,
   providerAuthDisplayState,
   providerConfigured,
@@ -126,6 +133,20 @@ describe("MainTabs", () => {
 
   test("keeps About as the final settings destination", () => {
     expect(settingsRoutes().at(-1)?.id).toBe("about");
+  });
+
+  test("adds runtime settings with the canonical defaults and option catalogs", () => {
+    expect(settingsRoutes().map((entry) => entry.id)).toContain("runtime");
+    expect(DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS).toBe(24);
+    expect(MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS).toEqual([6, 12, 24, 48, 128]);
+    expect(DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS).toBe(256);
+    expect(MAXIMUM_RUNTIME_LLM_TURN_OPTIONS).toEqual([64, 128, 256, 1080, 2560]);
+    const defaultWorkerOption = runtimeNumberOptions(
+      MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS,
+      DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS,
+    ).find((option) => option.value === "24");
+    expect(defaultWorkerOption?.label).toContain("24");
+    expect(defaultWorkerOption?.label).not.toBe("24");
   });
 });
 

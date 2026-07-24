@@ -111,8 +111,8 @@ Important scripts:
   under `release/`, for example `tura-v0.1.0-windows-x64.zip` or
   `tura-v0.1.0-macos-arm64.tar.gz`; each archive contains the same Tauri output.
 - `scripts/npm/stage-desktop-release-assets.mjs`: copies native Tauri installers
-  to `release/desktop` with platform-qualified names for direct GitHub Release
-  upload, avoiding asset collisions between macOS architectures.
+  to `release/desktop` as platform-qualified GitHub Release assets named with
+  the `tura-gui-only-` prefix, avoiding collisions between macOS architectures.
 
 ## Xtask test collection scripts
 

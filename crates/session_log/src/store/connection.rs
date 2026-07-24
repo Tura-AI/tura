@@ -6,7 +6,10 @@ use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const SQLITE_INIT_LOCK_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
+const SQLITE_INIT_LOCK_OPEN_RETRY_DELAY: Duration = Duration::from_millis(10);
 
 impl SessionLogStore {
     pub(super) fn with_index_connection<T>(
@@ -68,16 +71,47 @@ impl Drop for SqliteInitFileLock {
 
 fn sqlite_init_file_lock(path: &Path) -> Result<SqliteInitFileLock> {
     let lock_path = PathBuf::from(format!("{}.init.lock", path.display()));
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .with_context(|| format!("failed to open SQLite init lock {}", lock_path.display()))?;
+    let started = Instant::now();
+    let file = loop {
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(file) => break file,
+            Err(error)
+                if sqlite_init_lock_open_error_is_transient(&error)
+                    && started.elapsed() < SQLITE_INIT_LOCK_OPEN_TIMEOUT =>
+            {
+                std::thread::sleep(SQLITE_INIT_LOCK_OPEN_RETRY_DELAY);
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to open SQLite init lock {}", lock_path.display())
+                });
+            }
+        }
+    };
     file.lock_exclusive()
         .with_context(|| format!("failed to lock SQLite init lock {}", lock_path.display()))?;
     Ok(SqliteInitFileLock { file })
+}
+
+fn sqlite_init_lock_open_error_is_transient(error: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        // ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION. Antivirus, file
+        // indexers, and concurrent workspace maintenance can briefly hold the
+        // persistent lock file with incompatible Windows sharing flags.
+        matches!(error.raw_os_error(), Some(32 | 33))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = error;
+        false
+    }
 }
 
 pub(super) fn init_index_db(conn: &Connection) -> Result<()> {
@@ -415,3 +449,36 @@ const WORKSPACE_SCHEMA: &[(&str, &[&str])] = &[
         ],
     ),
 ];
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::sqlite_init_file_lock;
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::path::PathBuf;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn sqlite_init_lock_waits_for_transient_windows_share_violation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let database_path = temp.path().join("session_log.sqlite3");
+        let lock_path = PathBuf::from(format!("{}.init.lock", database_path.display()));
+        std::fs::write(&lock_path, []).expect("create lock file");
+
+        let blocker = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&lock_path)
+            .expect("open lock file without sharing");
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            drop(blocker);
+        });
+
+        let result = sqlite_init_file_lock(&database_path);
+        release.join().expect("release blocker");
+        let _guard = result.expect("transient sharing violation should be retried");
+    }
+}

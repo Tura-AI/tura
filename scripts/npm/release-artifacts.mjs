@@ -131,6 +131,17 @@ export function releaseTag(version) {
   return process.env.TURA_NPM_RELEASE_TAG || `v${version}`;
 }
 
+export function desktopReleaseAssetName(
+  tag,
+  source,
+  platform = process.platform,
+  arch = process.arch
+) {
+  const extension = path.extname(source);
+  const qualifier = extension.toLowerCase() === ".exe" ? "-setup" : "";
+  return `tura-gui-only-${tag}-${platformTriple(platform, arch)}${qualifier}${extension}`;
+}
+
 export function releaseArchiveName(version, platform = process.platform, arch = process.arch) {
   return `tura-${releaseTag(version)}-${platformTriple(platform, arch)}.${archiveExtension(platform)}`;
 }

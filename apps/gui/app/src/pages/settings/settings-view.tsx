@@ -43,8 +43,12 @@ import { mainTabEntries } from "./main-tabs";
 import { settingsRoutes, settingsRouteTitle } from "./settings-router";
 import {
   CORNER_RADIUS_OPTIONS,
+  DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS,
+  DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS,
   DEFAULT_PROVIDER_DOMAIN,
   LANGUAGE_OPTIONS,
+  MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS,
+  MAXIMUM_RUNTIME_LLM_TURN_OPTIONS,
   DEFAULT_MODEL_TIER_CONFIG_TIERS,
   THEME_OPTIONS,
   codeFontOptions,
@@ -55,6 +59,7 @@ import {
   modelTierLabel,
   modelTierOptions,
   providerDomainLabel,
+  runtimeNumberOptions,
   sizeOptions,
 } from "./settings-options";
 export function MainTabs(props: {
@@ -137,6 +142,9 @@ export function SettingsView(props: {
   onDeleteAgent: (agentId: string) => Promise<void>;
   onSavePersonalization: (avatar: AvatarRenderSettings, personaId: string) => void;
   onLanguage: (language: string) => void;
+  onAutoGitCommit: (enabled: boolean) => void;
+  onMaximumRuntimeLlmTurns: (turns: number) => void;
+  onMaximumParallelRuntimeWorkers: (workers: number) => void;
 }) {
   const providers = createMemo(() => props.state.providers?.all ?? []);
   const [providerDomainFilter, setProviderDomainFilter] = createSignal(DEFAULT_PROVIDER_DOMAIN);
@@ -209,6 +217,63 @@ export function SettingsView(props: {
                         preview: "inherit",
                       }))}
                       onSelect={(option) => props.onLanguage(option.value)}
+                    />
+                  </div>
+                </div>
+              </section>
+            </Match>
+
+            <Match when={props.section === "runtime"}>
+              <section class="settings-panel runtime-settings-panel">
+                <header>
+                  <span>{t("runtimeSettings")}</span>
+                  <small>{t("workspaceConfig")}</small>
+                </header>
+                <div class="settings-fields">
+                  <div class="field-row">
+                    <span class="runtime-setting-label">
+                      <span>{t("autoGitCommit")}</span>
+                      <small>{t("autoGitCommitHint")}</small>
+                    </span>
+                    <div class="segmented two">
+                      <button
+                        class={classNames(runtimeAutoGitCommit(props.state) && "selected")}
+                        type="button"
+                        onClick={() => props.onAutoGitCommit(true)}
+                      >
+                        {t("enabled")}
+                      </button>
+                      <button
+                        class={classNames(!runtimeAutoGitCommit(props.state) && "selected")}
+                        type="button"
+                        onClick={() => props.onAutoGitCommit(false)}
+                      >
+                        {t("disabled")}
+                      </button>
+                    </div>
+                  </div>
+                  <div class="field-row">
+                    <span>{t("maximumParallelRuntimeWorkers")}</span>
+                    <AppearanceSelect
+                      value={String(maximumParallelRuntimeWorkers(props.state))}
+                      options={runtimeNumberOptions(
+                        MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS,
+                        DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS,
+                      )}
+                      onSelect={(option) =>
+                        props.onMaximumParallelRuntimeWorkers(Number(option.value))
+                      }
+                    />
+                  </div>
+                  <div class="field-row">
+                    <span>{t("maximumRuntimeLlmTurns")}</span>
+                    <AppearanceSelect
+                      value={String(maximumRuntimeLlmTurns(props.state))}
+                      options={runtimeNumberOptions(
+                        MAXIMUM_RUNTIME_LLM_TURN_OPTIONS,
+                        DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS,
+                      )}
+                      onSelect={(option) => props.onMaximumRuntimeLlmTurns(Number(option.value))}
                     />
                   </div>
                 </div>
@@ -446,6 +511,45 @@ function workspaceLanguage(state: AppState): string {
 
 function stringConfigValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function runtimeAutoGitCommit(state: AppState): boolean {
+  return (
+    booleanConfigValue(state.workspaceConfigDraft.auto_git_commit) ??
+    booleanConfigValue(state.workspaceConfig.auto_git_commit) ??
+    false
+  );
+}
+
+function maximumRuntimeLlmTurns(state: AppState): number {
+  return (
+    numericConfigValue(state.workspaceConfigDraft.maximum_runtime_llm_turns) ??
+    numericConfigValue(state.workspaceConfig.maximum_runtime_llm_turns) ??
+    DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS
+  );
+}
+
+function maximumParallelRuntimeWorkers(state: AppState): number {
+  return (
+    numericConfigValue(state.workspaceConfigDraft.maximum_parallel_runtime_workers) ??
+    numericConfigValue(state.workspaceConfig.maximum_parallel_runtime_workers) ??
+    DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS
+  );
+}
+
+function booleanConfigValue(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return undefined;
+  if (value.trim().toLowerCase() === "true") return true;
+  if (value.trim().toLowerCase() === "false") return false;
+  return undefined;
+}
+
+function numericConfigValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function PersonalizationSettingsPanel(props: {

@@ -4,8 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   desktopBundleAssets,
+  desktopReleaseAssetName,
   mismatchedDesktopBundleAssets,
-  platformTriple,
   releaseOutputRoot,
   releaseTag
 } from "./release-artifacts.mjs";
@@ -36,9 +36,7 @@ rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 const usedNames = new Set();
 for (const source of sources) {
-  const extension = path.extname(source);
-  const qualifier = extension.toLowerCase() === ".exe" ? "-setup" : "";
-  const assetName = `tura-gui-${releaseTag(packageJson.version)}-${platformTriple()}${qualifier}${extension}`;
+  const assetName = desktopReleaseAssetName(releaseTag(packageJson.version), source);
   if (usedNames.has(assetName)) {
     fail(`multiple Tauri bundles map to the GitHub Release asset ${assetName}`);
   }

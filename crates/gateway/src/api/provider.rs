@@ -331,6 +331,27 @@ fn provider_auth_method_value(provider_id: &str, env: &str) -> Option<String> {
     configured_provider_value(provider_id, env)
         .or_else(|| config_value(env).map(|value| value.trim().to_string()))
         .filter(|value| !value.is_empty())
+        .map(|value| mask_provider_key(&value))
+}
+
+pub(super) fn mask_provider_key(value: &str) -> String {
+    let char_count = value.chars().count();
+    if char_count <= 8 {
+        return "*".repeat(char_count);
+    }
+
+    let suffix_start = char_count - 4;
+    value
+        .chars()
+        .enumerate()
+        .map(|(index, character)| {
+            if index < 4 || index >= suffix_start {
+                character
+            } else {
+                '*'
+            }
+        })
+        .collect()
 }
 
 fn auth_method_unavailable_reason(

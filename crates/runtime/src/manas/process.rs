@@ -46,7 +46,7 @@ use lifecycle::RuntimeAggregate;
 use lifecycle::SessionManagement;
 use lifecycle::{PlanStatus, RuntimeId, RuntimeState, SessionState};
 
-const DEFAULT_MANAS_MAX_TURNS: u64 = 2_560;
+const DEFAULT_MANAS_MAX_TURNS: u64 = runtime_contract::DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS;
 const DONE_TASK_STATUS_REPLY_BACKFILL_CUTOFF_BYTES: usize = 200;
 
 pub(crate) struct ManasInput<'a> {
@@ -110,6 +110,7 @@ pub(crate) fn process_manas_internal(
     let mut no_tool_retries = 0_u64;
     let mut final_session_state = SessionState::Completed;
     let mut final_error: Option<String> = None;
+    let mut agent_marked_task_done = false;
     let supports_task_status = agent_commands
         .as_ref()
         .is_some_and(|commands| commands.contains(TASK_STATUS_COMMAND));
@@ -358,6 +359,9 @@ pub(crate) fn process_manas_internal(
             let terminal_task_status = tool_results
                 .iter()
                 .find_map(|result| command_run_result_terminal_task_status(&result.result));
+            if let Some(status) = terminal_task_status.as_deref() {
+                agent_marked_task_done = status == "done";
+            }
             let terminal_status_followed_command = tool_results
                 .iter()
                 .any(|result| command_run_result_has_command(&result.result));
@@ -736,12 +740,7 @@ pub(crate) fn process_manas_internal(
             "completed"
         },
     )?;
-    let git_event = if final_session_state == SessionState::Failed {
-        "failed"
-    } else {
-        "completed"
-    };
-    commit_terminal_session_checkpoint(session, git_event);
+    commit_terminal_session_checkpoint(session, final_session_state, agent_marked_task_done);
 
     Ok(ManasResult {
         agents: agents.to_vec(),
@@ -750,36 +749,60 @@ pub(crate) fn process_manas_internal(
     })
 }
 
-fn commit_terminal_session_checkpoint(session: &SessionManagement, git_event: &str) -> bool {
+fn commit_terminal_session_checkpoint(
+    session: &SessionManagement,
+    final_session_state: SessionState,
+    agent_marked_task_done: bool,
+) -> bool {
+    if final_session_state != SessionState::Completed || !agent_marked_task_done {
+        info!(
+            session_id = %session.session_id,
+            state = ?final_session_state,
+            agent_marked_task_done = agent_marked_task_done,
+            "skipping workspace commit because the runtime did not complete with task_status done"
+        );
+        return false;
+    }
+    if !env_flag("TURA_RUNTIME_AUTO_GIT_COMMIT") {
+        info!(
+            session_id = %session.session_id,
+            "skipping workspace commit because auto git commit is disabled"
+        );
+        return false;
+    }
     if crate::router_command_run::command_run_sandbox_enabled() {
         info!(
             session_id = %session.session_id,
-            event = git_event,
             "skipping workspace session checkpoint commit because command_run sandbox is enabled"
         );
         return false;
     }
 
-    match crate::workspace_git::commit_session_checkpoint(session, git_event) {
-        Ok(Some(commit)) => info!(
-            session_id = %session.session_id,
-            commit = %commit,
-            event = git_event,
-            "committed workspace session checkpoint"
-        ),
-        Ok(None) => info!(
-            session_id = %session.session_id,
-            event = git_event,
-            "workspace session checkpoint commit completed without a resolved hash"
-        ),
-        Err(error) => warn!(
-            session_id = %session.session_id,
-            event = git_event,
-            error = %error,
-            "failed to commit workspace session checkpoint"
-        ),
+    match crate::workspace_git::commit_session_checkpoint(session, "completed") {
+        Ok(Some(commit)) => {
+            info!(
+                session_id = %session.session_id,
+                commit = %commit,
+                "committed workspace session checkpoint"
+            );
+            true
+        }
+        Ok(None) => {
+            warn!(
+                session_id = %session.session_id,
+                "workspace session checkpoint completed without a resolved commit hash"
+            );
+            false
+        }
+        Err(error) => {
+            warn!(
+                session_id = %session.session_id,
+                error = %error,
+                "failed to commit workspace session checkpoint"
+            );
+            false
+        }
     }
-    true
 }
 
 fn manas_max_turns() -> u64 {
@@ -1069,7 +1092,7 @@ mod tests {
     use crate::tool_router::execute_tool::ToolExecutionResult;
     use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
     use chrono::{Duration, Utc};
-    use lifecycle::{PlanStatus, SessionInput, SessionManagement, TaskStep};
+    use lifecycle::{PlanStatus, SessionInput, SessionManagement, SessionState, TaskStep};
     use lifecycle::{ProviderConfig, ToolChoice};
     use lifecycle::{RuntimeAggregate, RuntimeProviderConfig, UsageReport};
     use serde_json::json;
@@ -1435,11 +1458,66 @@ mod tests {
         let mut session = test_session("session-sandbox-checkpoint");
         session.session_directory = temp.path().to_path_buf();
 
-        assert!(!commit_terminal_session_checkpoint(&session, "completed"));
+        assert!(!commit_terminal_session_checkpoint(
+            &session,
+            SessionState::Completed,
+            true
+        ));
         assert!(
             !temp.path().join(".git").exists(),
             "sandboxed runtime completion must not initialize git or create checkpoint commits"
         );
+    }
+
+    #[test]
+    fn terminal_checkpoint_commit_requires_enabled_setting_success_and_task_status_done() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let _sandbox = EnvGuard::set("TURA_COMMAND_RUN_SANDBOX", "disabled");
+
+        {
+            let _auto_commit = EnvGuard::set("TURA_RUNTIME_AUTO_GIT_COMMIT", "0");
+            let temp = tempfile::tempdir().expect("disabled auto-commit workspace");
+            let mut session = test_session("session-auto-commit-disabled");
+            session.session_directory = temp.path().to_path_buf();
+            assert!(!commit_terminal_session_checkpoint(
+                &session,
+                SessionState::Completed,
+                true
+            ));
+            assert!(!temp.path().join(".git").exists());
+        }
+
+        let _auto_commit = EnvGuard::set("TURA_RUNTIME_AUTO_GIT_COMMIT", "1");
+        let failed = tempfile::tempdir().expect("failed runtime workspace");
+        let mut failed_session = test_session("session-auto-commit-failed");
+        failed_session.session_directory = failed.path().to_path_buf();
+        assert!(!commit_terminal_session_checkpoint(
+            &failed_session,
+            SessionState::Failed,
+            true
+        ));
+        assert!(!failed.path().join(".git").exists());
+
+        let no_done = tempfile::tempdir().expect("missing done marker workspace");
+        let mut no_done_session = test_session("session-auto-commit-no-done");
+        no_done_session.session_directory = no_done.path().to_path_buf();
+        assert!(!commit_terminal_session_checkpoint(
+            &no_done_session,
+            SessionState::Completed,
+            false
+        ));
+        assert!(!no_done.path().join(".git").exists());
+
+        let completed = tempfile::tempdir().expect("completed auto-commit workspace");
+        std::fs::write(completed.path().join("change.txt"), "done").expect("workspace change");
+        let mut completed_session = test_session("session-auto-commit-done");
+        completed_session.session_directory = completed.path().to_path_buf();
+        assert!(commit_terminal_session_checkpoint(
+            &completed_session,
+            SessionState::Completed,
+            true
+        ));
+        assert!(completed.path().join(".git").exists());
     }
 
     fn test_session(id: &str) -> SessionManagement {

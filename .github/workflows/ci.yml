@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - "fix/**"
+      - "release/**"
       - "staging/runtime_session_refactor"
     tags:
       - "release*"

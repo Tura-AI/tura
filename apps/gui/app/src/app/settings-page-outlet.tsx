@@ -56,6 +56,33 @@ export function SettingsPageOutlet(props: {
           },
         }));
       }}
+      onAutoGitCommit={(autoGitCommit) =>
+        props.onRuntimeSetting((previous) => ({
+          ...previous,
+          workspaceConfigDraft: {
+            ...previous.workspaceConfigDraft,
+            auto_git_commit: String(autoGitCommit),
+          },
+        }))
+      }
+      onMaximumRuntimeLlmTurns={(maximumRuntimeLlmTurns) =>
+        props.onRuntimeSetting((previous) => ({
+          ...previous,
+          workspaceConfigDraft: {
+            ...previous.workspaceConfigDraft,
+            maximum_runtime_llm_turns: String(maximumRuntimeLlmTurns),
+          },
+        }))
+      }
+      onMaximumParallelRuntimeWorkers={(maximumParallelRuntimeWorkers) =>
+        props.onRuntimeSetting((previous) => ({
+          ...previous,
+          workspaceConfigDraft: {
+            ...previous.workspaceConfigDraft,
+            maximum_parallel_runtime_workers: String(maximumParallelRuntimeWorkers),
+          },
+        }))
+      }
       onConfigureProviders={() =>
         props.setState((previous) => ({
           ...previous,

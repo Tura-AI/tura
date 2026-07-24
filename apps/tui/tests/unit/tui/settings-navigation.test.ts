@@ -9,6 +9,11 @@ import { personaCommunicationStyle } from "../../../src/persona-display.js";
 import { setActiveCapabilities, stripAnsi } from "../../../src/tui/render-terminal.js";
 import { initialState, reducer, type AppState } from "../../../src/tui/reducer.js";
 import { hydrate } from "../../../src/tui/runtime.js";
+import { settingPatch } from "../../../src/tui/logic/selection.js";
+import {
+  MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS,
+  MAXIMUM_RUNTIME_LLM_TURN_OPTIONS,
+} from "../../../src/tui/settings-catalog.js";
 import type { TuiGatewayClient } from "../../../src/tui/runtime.js";
 import type { Session } from "../../../src/types/session.js";
 
@@ -195,6 +200,34 @@ test("settings root hides removed command validator stall guard and session type
   assert.doesNotMatch(rendered, /Session type/u);
   assert.doesNotMatch(rendered, /Validator/u);
   assert.doesNotMatch(rendered, /Command stall guard/u);
+});
+
+test("runtime settings expose canonical defaults options and patches", () => {
+  setActiveCapabilities(richCapabilities());
+  const root = stripAnsi(settingsLines(baseState(), 96, 24).join("\n"));
+  assert.match(root, /Auto git commit\s+false/u);
+  assert.match(root, /Maximum runtime LLM turns\s+256/u);
+  assert.match(root, /Maximum parallel runtime workers\s+24/u);
+
+  assert.deepEqual(
+    settingOptions({ ...baseState(), settingDetail: "maximumRuntimeLlmTurns" }).map(
+      (option) => option[2],
+    ),
+    [...MAXIMUM_RUNTIME_LLM_TURN_OPTIONS],
+  );
+  assert.deepEqual(
+    settingOptions({ ...baseState(), settingDetail: "maximumParallelRuntimeWorkers" }).map(
+      (option) => option[2],
+    ),
+    [...MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS],
+  );
+  assert.deepEqual(settingPatch("autoGitCommit", true), { auto_git_commit: true });
+  assert.deepEqual(settingPatch("maximumRuntimeLlmTurns", 1080), {
+    maximum_runtime_llm_turns: 1080,
+  });
+  assert.deepEqual(settingPatch("maximumParallelRuntimeWorkers", 48), {
+    maximum_parallel_runtime_workers: 48,
+  });
 });
 
 test("settings and session panels render page count in bottom meta", () => {

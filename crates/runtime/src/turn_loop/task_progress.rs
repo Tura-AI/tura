@@ -20,7 +20,7 @@ fn command_run_item_terminal_task_status(item: &serde_json::Value) -> Option<Str
     if command_result_type(item).as_deref() != Some(TASK_STATUS_COMMAND) {
         return None;
     }
-    if item.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+    if item.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
         return None;
     }
     item.get("output")
@@ -194,6 +194,7 @@ mod tests {
             "streamed_command_run_result": {
                 "results": [{
                     "command_type": "task_status",
+                    "success": true,
                     "output": {
                         "task_status": {
                             "status": "done",
@@ -212,6 +213,7 @@ mod tests {
         let question = json!({
             "results": [{
                 "command_type": "task_status",
+                "success": true,
                 "output": {
                     "task_status": {
                         "status": "question",
@@ -228,6 +230,7 @@ mod tests {
         let doing = json!({
             "results": [{
                 "command_type": "task_status",
+                "success": true,
                 "output": {
                     "task_status": {
                         "status": "doing"
@@ -238,6 +241,29 @@ mod tests {
         assert_eq!(
             super::command_run_result_terminal_task_status(&doing).as_deref(),
             Some("doing")
+        );
+
+        let unsuccessful = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": false,
+                "output": { "task_status": { "status": "done" } }
+            }]
+        });
+        assert_eq!(
+            super::command_run_result_terminal_task_status(&unsuccessful),
+            None
+        );
+
+        let missing_success = json!({
+            "results": [{
+                "command_type": "task_status",
+                "output": { "task_status": { "status": "done" } }
+            }]
+        });
+        assert_eq!(
+            super::command_run_result_terminal_task_status(&missing_success),
+            None
         );
     }
 

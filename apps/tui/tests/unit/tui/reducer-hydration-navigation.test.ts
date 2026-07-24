@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { initialState, reducer } from "../../../src/tui/reducer.js";
+import { SETTING_DETAILS } from "../../../src/tui/settings-catalog.js";
 
 const session = {
   id: "sess-1",
@@ -23,6 +24,7 @@ test("reducer hydrates durable gateway state", () => {
 });
 
 test("reducer wraps settings selection at panel edges", () => {
+  const finalSettingsIndex = SETTING_DETAILS.length - 1;
   let state = reducer(initialState("C:/repo"), {
     type: "session-config",
     value: {
@@ -36,13 +38,13 @@ test("reducer wraps settings selection at panel edges", () => {
   });
 
   state = reducer(state, { type: "select-settings", delta: -1 });
-  assert.equal(state.selectedSettingsIndex, 7);
+  assert.equal(state.selectedSettingsIndex, finalSettingsIndex);
 
   state = reducer(state, { type: "select-settings", delta: 1 });
   assert.equal(state.selectedSettingsIndex, 0);
 
-  state = reducer(state, { type: "select-settings", delta: 7 });
-  assert.equal(state.selectedSettingsIndex, 7);
+  state = reducer(state, { type: "select-settings", delta: finalSettingsIndex });
+  assert.equal(state.selectedSettingsIndex, finalSettingsIndex);
 
   state = reducer(state, { type: "select-settings", delta: 1 });
   assert.equal(state.selectedSettingsIndex, 0);

@@ -15,5 +15,8 @@ export interface SessionConfig {
   command_run_stall_guard_profile?: string | null;
   command_run_stall_guard_check_secs?: number;
   command_run_stall_guard_identical_checks?: number;
+  auto_git_commit?: boolean;
+  maximum_runtime_llm_turns?: number;
+  maximum_parallel_runtime_workers?: number;
   [key: string]: unknown;
 }

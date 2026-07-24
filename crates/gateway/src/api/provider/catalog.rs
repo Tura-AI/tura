@@ -6,7 +6,7 @@ use tokio::time::{timeout, Duration};
 use crate::contracts::*;
 use crate::mock::global_store;
 
-use super::{provider_env_key, provider_key_exists, provider_key_value_for_env};
+use super::{mask_provider_key, provider_env_key, provider_key_exists, provider_key_value_for_env};
 
 // ============================================================================
 // Provider List
@@ -663,7 +663,7 @@ pub(super) fn enrich_provider_list(
             .iter()
             .find_map(|env_key| provider_key_value_for_env(&provider.id, env_key));
         let has_key = key.is_some();
-        provider.key = key;
+        provider.key = key.as_deref().map(mask_provider_key);
         provider.source = if has_key {
             "env".to_string()
         } else if store_connected.contains(&provider.id) {

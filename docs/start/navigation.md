@@ -8,11 +8,12 @@ rather than sending readers through a corridor of thin placeholder pages.
 
 1. [Overview](overview.md) - what Tura is and why it exists.
 2. [Install](install.md) - source, release, npm, uninstall, and cleanup paths.
-3. [Providers](providers.md) - first-run CLI/TUI/GUI authentication, model selection, routes, and credentials.
-4. [How to start](how-to-start.md) - CLI, TUI, GUI, gateway, source starts, and OS PATH requirements.
-5. [CLI parameters](cli-parameters.md) - command-line options, binaries, and environment flags.
-6. [Settings](settings.md) - settings map with links to TUI, GUI, providers, sessions, and CLI options.
-7. [Sessions](sessions.md) - durable workspace-scoped session history.
+3. [Release packages](release-packages.md) - GUI-only installers, full archives, npm packages, and when to use each.
+4. [Providers](providers.md) - first-run CLI/TUI/GUI authentication, model selection, routes, and credentials.
+5. [How to start](how-to-start.md) - CLI, TUI, GUI, gateway, source starts, and OS PATH requirements.
+6. [CLI parameters](cli-parameters.md) - command-line options, binaries, and environment flags.
+7. [Settings](settings.md) - settings map with links to TUI, GUI, providers, sessions, and CLI options.
+8. [Sessions](sessions.md) - durable workspace-scoped session history.
 
 ## Core
 

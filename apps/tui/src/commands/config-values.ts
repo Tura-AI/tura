@@ -77,6 +77,12 @@ function assignSessionConfigValue(
     patch.validator_enabled = booleanValue(value, key);
   } else if (canonical === "show_command_instructions") {
     patch.show_command_instructions = booleanValue(value, key);
+  } else if (canonical === "auto_git_commit") {
+    patch.auto_git_commit = booleanValue(value, key);
+  } else if (canonical === "maximum_runtime_llm_turns") {
+    patch.maximum_runtime_llm_turns = numberValue(value, key);
+  } else if (canonical === "maximum_parallel_runtime_workers") {
+    patch.maximum_parallel_runtime_workers = numberValue(value, key);
   } else if (canonical === "model") {
     assignModelConfigValue(patch, stringValue(value));
   } else if (canonical === "active_model") {

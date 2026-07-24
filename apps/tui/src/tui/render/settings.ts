@@ -5,7 +5,13 @@ import type { SettingDetail, AppState } from "../reducer.js";
 import { runtimeModelFromConfig } from "../model-config.js";
 import { activeCapabilities, truncate, wrap } from "../render-terminal.js";
 import { secondaryText } from "../styles/text.js";
-import { SETTING_DETAILS } from "../settings-catalog.js";
+import {
+  DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS,
+  DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS,
+  MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS,
+  MAXIMUM_RUNTIME_LLM_TURN_OPTIONS,
+  SETTING_DETAILS,
+} from "../settings-catalog.js";
 import {
   menuEntryLines,
   menuLabelWidth,
@@ -40,6 +46,21 @@ export function settingsEntries(state: AppState): SettingEntry[] {
       detail: "priority",
       label: t("settingPriority"),
       value: config.model_acceleration_enabled ?? false,
+    },
+    {
+      detail: "autoGitCommit",
+      label: t("settingAutoGitCommit"),
+      value: config.auto_git_commit ?? false,
+    },
+    {
+      detail: "maximumRuntimeLlmTurns",
+      label: t("settingMaximumRuntimeLlmTurns"),
+      value: config.maximum_runtime_llm_turns ?? DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS,
+    },
+    {
+      detail: "maximumParallelRuntimeWorkers",
+      label: t("settingMaximumParallelRuntimeWorkers"),
+      value: config.maximum_parallel_runtime_workers ?? DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS,
     },
     {
       detail: "about",
@@ -165,6 +186,10 @@ function settingHint(state: AppState): string {
   if (detail === "providerAuth") return providerAuthHint(state);
   if (detail === "variant") return t("settingReasoningHint");
   if (detail === "priority") return t("settingPriorityHint");
+  if (detail === "autoGitCommit") return t("settingAutoGitCommitHint");
+  if (detail === "maximumRuntimeLlmTurns") return t("settingMaximumRuntimeLlmTurnsHint");
+  if (detail === "maximumParallelRuntimeWorkers")
+    return t("settingMaximumParallelRuntimeWorkersHint");
   if (detail === "agent") return t("settingAgentHint");
   if (detail === "persona") return t("settingPersonaHint");
   if (detail === "language") return t("settingLanguageHint");
@@ -199,6 +224,9 @@ function settingLabel(detail: Exclude<SettingDetail, "providerAuth">): string {
     session: t("settingSession"),
     variant: t("settingReasoning"),
     priority: t("settingPriority"),
+    autoGitCommit: t("settingAutoGitCommit"),
+    maximumRuntimeLlmTurns: t("settingMaximumRuntimeLlmTurns"),
+    maximumParallelRuntimeWorkers: t("settingMaximumParallelRuntimeWorkers"),
     validator: t("settingValidator"),
     stallGuard: t("settingStallGuard"),
     about: t("settingAbout"),
@@ -303,6 +331,23 @@ export function settingOptions(state: AppState): Array<[string, string, unknown]
       [t("on"), t("priority"), true],
       [t("off"), t("priority"), false],
     ];
+  if (state.settingDetail === "autoGitCommit")
+    return [
+      [t("on"), t("settingAutoGitCommit"), true],
+      [t("off"), t("settingAutoGitCommit"), false],
+    ];
+  if (state.settingDetail === "maximumRuntimeLlmTurns")
+    return MAXIMUM_RUNTIME_LLM_TURN_OPTIONS.map((value) => [
+      String(value),
+      value === DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS ? t("defaultModel") : "",
+      value,
+    ]);
+  if (state.settingDetail === "maximumParallelRuntimeWorkers")
+    return MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS.map((value) => [
+      String(value),
+      value === DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS ? t("defaultModel") : "",
+      value,
+    ]);
   if (state.settingDetail === "validator")
     return [
       [t("on"), t("settingValidator"), true],
@@ -402,6 +447,11 @@ function activeSettingValue(state: AppState): unknown {
   if (state.settingDetail === "session") return config?.session_type ?? "coding";
   if (state.settingDetail === "variant") return config?.model_variant ?? "high";
   if (state.settingDetail === "priority") return config?.model_acceleration_enabled ?? false;
+  if (state.settingDetail === "autoGitCommit") return config?.auto_git_commit ?? false;
+  if (state.settingDetail === "maximumRuntimeLlmTurns")
+    return config?.maximum_runtime_llm_turns ?? DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS;
+  if (state.settingDetail === "maximumParallelRuntimeWorkers")
+    return config?.maximum_parallel_runtime_workers ?? DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS;
   if (state.settingDetail === "validator") return Boolean(config?.validator_enabled);
   if (state.settingDetail === "stallGuard")
     return config?.command_run_stall_guard_profile ?? "balanced_20s";

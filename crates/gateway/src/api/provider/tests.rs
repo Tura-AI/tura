@@ -420,7 +420,7 @@ async fn catalog_enrich_provider_list_prefers_env_then_api_then_config() {
     enrich_provider_list(&mut providers, &mut connected, &store_connected);
 
     assert_eq!(providers[0].source, "env");
-    assert_eq!(providers[0].key.as_deref(), Some("test-secret"));
+    assert_eq!(providers[0].key.as_deref(), Some("test***cret"));
     assert_eq!(providers[1].source, "api");
     assert_eq!(providers[2].source, "config");
     assert!(connected.iter().any(|id| id == "test-provider"));
@@ -508,8 +508,19 @@ fn provider_env_keys_use_registry_compatibility_aliases() {
     assert_eq!(provider_env_key("gemini-api"), "GEMINI_API_KEY");
 }
 
+#[test]
+fn provider_key_mask_preserves_only_four_character_edges() {
+    assert_eq!(mask_provider_key("123456789"), "1234*6789");
+    assert_eq!(mask_provider_key("12345678"), "********");
+    assert_eq!(mask_provider_key("short"), "*****");
+    assert_eq!(
+        mask_provider_key("前缀甲乙敏感内容末尾丙丁"),
+        "前缀甲乙****末尾丙丁"
+    );
+}
+
 #[tokio::test]
-async fn provider_auth_method_value_is_available_for_hover_reveal() {
+async fn provider_auth_method_value_is_masked_for_gui_and_tui() {
     let _guard = ENV_LOCK.lock().await;
     clear_openai_refresh_test_env();
     let temp_dir = std::env::temp_dir().join(format!(
@@ -534,13 +545,13 @@ async fn provider_auth_method_value_is_available_for_hover_reveal() {
     let openai = provider_auth_methods("openai");
     assert_eq!(
         openai[0].configured_value.as_deref(),
-        Some("sk-test-hover-reveal")
+        Some("sk-t************veal")
     );
 
     let openai_api = provider_auth_methods("openai-api");
     assert_eq!(
         openai_api[0].configured_value.as_deref(),
-        Some("sk-test-hover-reveal")
+        Some("sk-t************veal")
     );
 
     clear_openai_refresh_test_env();
@@ -698,7 +709,7 @@ async fn provider_list_hides_claude_models_from_picker_catalog() {
 }
 
 #[tokio::test]
-async fn provider_list_returns_configured_key_value() {
+async fn provider_list_masks_configured_key_value() {
     let _guard = ENV_LOCK.lock().await;
     std::env::set_var("LINE_CHANNEL_ACCESS_TOKEN", "line-test-token");
 
@@ -714,7 +725,7 @@ async fn provider_list_returns_configured_key_value() {
         .iter()
         .find(|provider| provider.id == "line")
         .expect("LINE service provider should be listed");
-    assert_eq!(line.key.as_deref(), Some("line-test-token"));
+    assert_eq!(line.key.as_deref(), Some("line*******oken"));
 
     std::env::remove_var("LINE_CHANNEL_ACCESS_TOKEN");
 }

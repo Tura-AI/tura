@@ -58,7 +58,23 @@ const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {
 };
 export const DEFAULT_MODEL_TIERS = ["thinking", "fast"] as const;
 export const DEFAULT_MODEL_TIER_CONFIG_TIERS = ["thinking", "fast"];
+export const DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS = 24;
+export const MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS = [6, 12, 24, 48, 128] as const;
+export const DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS = 256;
+export const MAXIMUM_RUNTIME_LLM_TURN_OPTIONS = [64, 128, 256, 1080, 2560] as const;
 export { LANGUAGE_OPTIONS };
+
+export function runtimeNumberOptions(
+  values: readonly number[],
+  defaultValue: number,
+): AppearanceOption[] {
+  return values.map((value) => ({
+    id: String(value),
+    label: value === defaultValue ? `${value} (${t("default")})` : String(value),
+    value: String(value),
+    preview: "inherit",
+  }));
+}
 
 type FontLocale = "en" | "zhHans" | "zhHant" | "es" | "hi" | "ar" | "pt" | "bn" | "ru" | "ja";
 const FONT_LOCALE_ORDER: FontLocale[] = [

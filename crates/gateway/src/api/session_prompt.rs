@@ -464,6 +464,11 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         .as_ref()
         .map(|config| config.config.command_run_stall_guard())
         .unwrap_or_else(|| TuraSessionConfig::default().command_run_stall_guard());
+    let runtime_settings = session_config
+        .as_ref()
+        .map(|config| &config.config)
+        .cloned()
+        .unwrap_or_default();
     let command_run_shell = prompt_command_run_shell(&payload);
     let language = session_config
         .as_ref()
@@ -526,6 +531,19 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         "TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS".to_string(),
         command_run_stall_guard.identical_checks.to_string(),
     );
+    worker_env.insert(
+        "TURA_RUNTIME_AUTO_GIT_COMMIT".to_string(),
+        if runtime_settings.auto_git_commit_enabled() {
+            "1"
+        } else {
+            "0"
+        }
+        .to_string(),
+    );
+    worker_env.insert(
+        "TURA_MANAS_MAX_TURNS".to_string(),
+        runtime_settings.maximum_runtime_llm_turns().to_string(),
+    );
     let runtime_id =
         first_prompt_part_id(&payload).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let runtime_metadata = agent_runtime_message_metadata(
@@ -541,6 +559,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         "prompt": content,
         "runtime_context": runtime_context,
         "planning_mode_override": force_planning.then_some(true),
+        "maximum_parallel_runtime_workers": runtime_settings.maximum_parallel_runtime_workers(),
         "worker_env": worker_env,
     });
 

@@ -308,7 +308,7 @@ jobs:
             throw "Verified release assets are missing: $($missing -join ', ')."
           }
           foreach ($platform in @("linux-x64", "macos-x64", "macos-arm64", "windows-x64")) {
-            $prefix = "tura-gui-$tag-$platform"
+            $prefix = "tura-gui-only-$tag-$platform"
             if (-not ($files.Name | Where-Object { $_.StartsWith($prefix, [System.StringComparison]::Ordinal) })) {
               throw "Verified release assets do not contain a Tauri installer for $platform."
             }
@@ -565,7 +565,7 @@ jobs:
             throw "Downloaded release assets are missing: $($missing -join ', ')."
           }
           foreach ($platform in @("linux-x64", "macos-x64", "macos-arm64", "windows-x64")) {
-            $prefix = "tura-gui-$env:RELEASE_TAG-$platform"
+            $prefix = "tura-gui-only-$env:RELEASE_TAG-$platform"
             if (-not ($files.Name | Where-Object { $_.StartsWith($prefix, [System.StringComparison]::Ordinal) })) {
               throw "Downloaded release assets do not contain a Tauri installer for $platform."
             }
@@ -705,7 +705,7 @@ jobs:
             grep -Fxq "$required" <<<"$asset_names"
           done
           for platform in linux-x64 macos-x64 macos-arm64 windows-x64; do
-            grep -Eq "^tura-gui-$RELEASE_TAG-$platform" <<<"$asset_names"
+            grep -Eq "^tura-gui-only-$RELEASE_TAG-$platform" <<<"$asset_names"
           done
           echo "Recovered release $RELEASE_TAG is complete."
       - name: Upload recovery failure logs

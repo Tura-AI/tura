@@ -1,3 +1,8 @@
+use runtime_contract::{
+    maximum_parallel_runtime_workers, maximum_runtime_llm_turns,
+    DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS, DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS,
+    MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS, MAXIMUM_RUNTIME_LLM_TURN_OPTIONS,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,6 +38,9 @@ pub struct TuraSessionConfig {
     pub command_run_stall_guard_profile: Option<String>,
     pub command_run_stall_guard_check_secs: Option<u64>,
     pub command_run_stall_guard_identical_checks: Option<u8>,
+    pub auto_git_commit: Option<bool>,
+    pub maximum_runtime_llm_turns: Option<u64>,
+    pub maximum_parallel_runtime_workers: Option<usize>,
     pub agent_avatar: Option<serde_json::Value>,
 }
 
@@ -56,6 +64,9 @@ impl Default for TuraSessionConfig {
             command_run_stall_guard_profile: None,
             command_run_stall_guard_check_secs: None,
             command_run_stall_guard_identical_checks: None,
+            auto_git_commit: Some(false),
+            maximum_runtime_llm_turns: Some(DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS),
+            maximum_parallel_runtime_workers: Some(DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS),
             agent_avatar: None,
         }
     }
@@ -117,6 +128,21 @@ impl TuraSessionConfig {
             self.command_run_stall_guard_identical_checks =
                 next.command_run_stall_guard_identical_checks;
         }
+        if next.auto_git_commit.is_some() {
+            self.auto_git_commit = next.auto_git_commit;
+        }
+        if next
+            .maximum_runtime_llm_turns
+            .is_some_and(|value| MAXIMUM_RUNTIME_LLM_TURN_OPTIONS.contains(&value))
+        {
+            self.maximum_runtime_llm_turns = next.maximum_runtime_llm_turns;
+        }
+        if next
+            .maximum_parallel_runtime_workers
+            .is_some_and(|value| MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS.contains(&value))
+        {
+            self.maximum_parallel_runtime_workers = next.maximum_parallel_runtime_workers;
+        }
         if next.agent_avatar.is_some() {
             self.agent_avatar = next.agent_avatar;
         }
@@ -168,6 +194,18 @@ impl TuraSessionConfig {
             config.identical_checks = identical_checks.clamp(1, 60);
         }
         config
+    }
+
+    pub fn auto_git_commit_enabled(&self) -> bool {
+        self.auto_git_commit.unwrap_or(false)
+    }
+
+    pub fn maximum_runtime_llm_turns(&self) -> u64 {
+        maximum_runtime_llm_turns(self.maximum_runtime_llm_turns)
+    }
+
+    pub fn maximum_parallel_runtime_workers(&self) -> usize {
+        maximum_parallel_runtime_workers(self.maximum_parallel_runtime_workers)
     }
 }
 
@@ -325,6 +363,20 @@ fn parse_config(content: &str) -> TuraSessionConfig {
             .get("command_run_stall_guard_identical_checks")
             .and_then(|value| value.parse::<u8>().ok())
             .filter(|value| *value > 0),
+        auto_git_commit: values
+            .get("auto_git_commit")
+            .and_then(|value| parse_bool(value))
+            .or(Some(false)),
+        maximum_runtime_llm_turns: Some(maximum_runtime_llm_turns(
+            values
+                .get("maximum_runtime_llm_turns")
+                .and_then(|value| value.parse::<u64>().ok()),
+        )),
+        maximum_parallel_runtime_workers: Some(maximum_parallel_runtime_workers(
+            values
+                .get("maximum_parallel_runtime_workers")
+                .and_then(|value| value.parse::<usize>().ok()),
+        )),
         agent_avatar: values
             .get("agent_avatar")
             .map(|value| parse_json_value(value)),
@@ -393,6 +445,21 @@ fn serialize_config(config: &TuraSessionConfig) -> String {
     }
     if let Some(value) = config.command_run_stall_guard_identical_checks {
         lines.push(format!("command_run_stall_guard_identical_checks={value}"));
+    }
+    if let Some(value) = config.auto_git_commit {
+        lines.push(format!("auto_git_commit={value}"));
+    }
+    if let Some(value) = config.maximum_runtime_llm_turns {
+        lines.push(format!(
+            "maximum_runtime_llm_turns={}",
+            maximum_runtime_llm_turns(Some(value))
+        ));
+    }
+    if let Some(value) = config.maximum_parallel_runtime_workers {
+        lines.push(format!(
+            "maximum_parallel_runtime_workers={}",
+            maximum_parallel_runtime_workers(Some(value))
+        ));
     }
     if let Some(value) = config.agent_avatar.as_ref() {
         let encoded = serialize_json_value(value);
@@ -536,6 +603,38 @@ active_persona=reviewer
         assert!(serialized.contains("command_run_stall_guard_check_secs=15"));
         assert!(serialized.contains("command_run_stall_guard_identical_checks=4"));
         assert!(serialized.contains("show_react_kaomoji=false"));
+    }
+
+    #[test]
+    fn runtime_settings_default_validate_and_round_trip() {
+        let defaults = TuraSessionConfig::default();
+        assert!(!defaults.auto_git_commit_enabled());
+        assert_eq!(defaults.maximum_runtime_llm_turns(), 256);
+        assert_eq!(defaults.maximum_parallel_runtime_workers(), 24);
+
+        let config = parse_config(
+            r#"
+auto_git_commit=true
+maximum_runtime_llm_turns=1080
+maximum_parallel_runtime_workers=48
+"#,
+        );
+        assert!(config.auto_git_commit_enabled());
+        assert_eq!(config.maximum_runtime_llm_turns(), 1_080);
+        assert_eq!(config.maximum_parallel_runtime_workers(), 48);
+        let serialized = serialize_config(&config);
+        assert!(serialized.contains("auto_git_commit=true"));
+        assert!(serialized.contains("maximum_runtime_llm_turns=1080"));
+        assert!(serialized.contains("maximum_parallel_runtime_workers=48"));
+
+        let invalid = parse_config(
+            r#"
+maximum_runtime_llm_turns=999
+maximum_parallel_runtime_workers=7
+"#,
+        );
+        assert_eq!(invalid.maximum_runtime_llm_turns(), 256);
+        assert_eq!(invalid.maximum_parallel_runtime_workers(), 24);
     }
 
     #[test]

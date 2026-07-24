@@ -334,6 +334,17 @@
   font-size: var(--font-small);
 }
 
+.runtime-setting-label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.runtime-setting-label small {
+  color: var(--faint);
+  font-size: var(--font-caption);
+  line-height: 1.35;
+}
+
 .field-row input,
 .field-row select,
 .appearance-select-button,

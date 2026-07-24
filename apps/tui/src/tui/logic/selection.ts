@@ -62,6 +62,15 @@ export function settingPatch(
   if (detail === "priority") {
     return { model_acceleration_enabled: Boolean(value) };
   }
+  if (detail === "autoGitCommit") {
+    return { auto_git_commit: Boolean(value) };
+  }
+  if (detail === "maximumRuntimeLlmTurns" && typeof value === "number") {
+    return { maximum_runtime_llm_turns: value };
+  }
+  if (detail === "maximumParallelRuntimeWorkers" && typeof value === "number") {
+    return { maximum_parallel_runtime_workers: value };
+  }
   if (detail === "validator") {
     return { validator_enabled: Boolean(value) };
   }

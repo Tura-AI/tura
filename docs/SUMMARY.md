@@ -9,6 +9,7 @@
 
 - [Overview](start/overview.md)
 - [Install](start/install.md)
+- [Release packages](start/release-packages.md)
 - [Providers](start/providers.md)
 - [How to start](start/how-to-start.md)
 - [CLI parameters](start/cli-parameters.md)

@@ -9,6 +9,7 @@ export type SettingsRoute = {
 export function settingsRoutes(): SettingsRoute[] {
   return [
     { id: "application", label: t("applicationSettings") },
+    { id: "runtime", label: t("runtimeSettings") },
     { id: "appearance", label: t("appearance") },
     { id: "providers", label: t("providers") },
     { id: "models", label: t("models") },
