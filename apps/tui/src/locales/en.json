@@ -251,6 +251,7 @@
   "aboutStarOpened": "GitHub opened; add the star there",
   "aboutLinkOpened": "opened {target}",
   "settingAgentHint": "Up/Down select, Enter apply; Esc returns to settings top. The agent controls the default task style, tool policy, and working behavior.",
+  "settingApplied": "{setting} set to {value}",
   "settingDetailHint": "Up/Down select, Enter apply; Esc returns to settings top.",
   "settingDetailPage": "{name} setting page",
   "settingInputComposerHint": "Enter save, Esc cancel",

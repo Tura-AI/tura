@@ -37,11 +37,28 @@ test("Tab completes the selected slash command and arrows navigate suggestions",
   assert.equal(harness.getState().composerCursor, "/models ".length);
 });
 
-test("Enter accepts a partial command before executing it", async () => {
+test("Enter executes the selected partial command without an extra keypress", async () => {
   const harness = stateHarness();
   await press(harness, "/set", { sequence: "/set" });
-  await press(harness, "", { name: "return" });
-  assert.equal(harness.getState().composer, "/settings ");
+  await handleTuiKeypress(
+    {
+      getSessionConfig: async () => ({
+        active_provider: "mock",
+        active_agent: "balanced",
+        active_model: "mock-fast",
+        model: "mock/mock-fast",
+        model_variant: "high",
+        model_acceleration_enabled: false,
+      }),
+    } as never,
+    harness.getState,
+    harness.dispatch,
+    "",
+    { name: "return" },
+  );
+
+  assert.equal(harness.getState().composer, "");
+  assert.equal(harness.getState().settingsOpen, true);
 });
 
 test("slash commands remain available while a non-settings panel is open", async () => {

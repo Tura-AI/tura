@@ -251,6 +251,7 @@
   "aboutStarOpened": "已打开 GitHub，请在页面中添加 Star",
   "aboutLinkOpened": "已打开{target}",
   "settingAgentHint": "上下选择，Enter 应用；Esc 返回设置顶部。智能体决定默认任务风格、工具策略和工作方式。",
+  "settingApplied": "{setting}已设置为{value}",
   "settingDetailHint": "上下选择，Enter 应用；Esc 返回设置顶部。",
   "settingDetailPage": "{name}设置页面",
   "settingInputComposerHint": "Enter 保存，Esc 取消",
