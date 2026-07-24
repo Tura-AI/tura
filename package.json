@@ -36,6 +36,7 @@
   "files": [
     "LICENSE",
     "README.md",
+    "README.zh-CN.md",
     "ARCHITECTURE.md",
     "Cargo.toml",
     "Cargo.lock",

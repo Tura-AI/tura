@@ -111,6 +111,7 @@ function verifyPackedMainPackage(tarball, packInfo) {
   const expectedFiles = new Set([
     "LICENSE",
     "README.md",
+    "README.zh-CN.md",
     "npm/tura.mjs",
     "package.json",
     "scripts/npm/cli-path.mjs",

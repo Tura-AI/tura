@@ -9,6 +9,7 @@ const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"),
 const requiredFiles = [
   "LICENSE",
   "README.md",
+  "README.zh-CN.md",
   "scripts/install.ps1",
   "scripts/install.sh",
   "scripts/register-cli.ps1",

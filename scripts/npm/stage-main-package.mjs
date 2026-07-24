@@ -41,6 +41,7 @@ const runtimePackage = {
   files: [
     "LICENSE",
     "README.md",
+    "README.zh-CN.md",
     "npm/tura.mjs",
     "scripts/npm/cli-path.mjs",
     "scripts/npm/install-release.mjs",
