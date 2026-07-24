@@ -580,7 +580,41 @@ jobs:
           mkdir -p .release-logs
           log=.release-logs/recovery-platform-npm.log
           exec > >(tee "$log") 2>&1
-          trap 'status=$?; if [ "$status" -ne 0 ]; then tail_output="$(tail -n 40 "$log")"; tail_output="${tail_output//'%'/'%25'}"; tail_output="${tail_output//$'\r'/'%0D'}"; tail_output="${tail_output//$'\n'/'%0A'}"; echo "::error title=Platform npm recovery failed::$tail_output"; fi; exit "$status"' EXIT
+          trap 'status=$?; if [ "$status" -ne 0 ]; then echo "::error title=Platform npm recovery failed::See the recovery step log for details."; fi; exit "$status"' EXIT
+
+          wait_for_public_package() {
+            local package="$1"
+            local status
+            for attempt in $(seq 1 18); do
+              status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/$package/$RELEASE_VERSION")"
+              if [ "$status" = 200 ]; then
+                return 0
+              fi
+              if [ "$status" != 404 ]; then
+                echo "Unexpected npm registry status $status for $package@$RELEASE_VERSION."
+                return 1
+              fi
+              echo "$package@$RELEASE_VERSION is not visible on npm yet (attempt $attempt/18)."
+              sleep 10
+            done
+            echo "$package@$RELEASE_VERSION did not become visible on npm."
+            return 1
+          }
+
+          wait_for_public_integrity() {
+            local package="$1"
+            registry_integrity=""
+            for attempt in $(seq 1 18); do
+              registry_integrity="$(npm view "$package@$RELEASE_VERSION" dist.integrity --registry https://registry.npmjs.org/ 2>/dev/null || true)"
+              if [ -n "$registry_integrity" ]; then
+                return 0
+              fi
+              echo "$package@$RELEASE_VERSION integrity is not visible on npm yet (attempt $attempt/18)."
+              sleep 10
+            done
+            echo "$package@$RELEASE_VERSION integrity did not become visible on npm."
+            return 1
+          }
 
           npm whoami --registry=https://registry.npmjs.org/
           packages=(tura-linux-x64 tura-darwin-x64 tura-darwin-arm64 tura-win32-x64)
@@ -592,9 +626,9 @@ jobs:
               404) npm publish "./$tarball" --access public --provenance=false ;;
               *) echo "Unexpected npm registry status $status for $package@$RELEASE_VERSION."; exit 1 ;;
             esac
-            test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/$package/$RELEASE_VERSION")" = 200
+            wait_for_public_package "$package"
             local_integrity="$(node -e "const fs=require('fs'),crypto=require('crypto'); const data=fs.readFileSync(process.argv[1]); console.log('sha512-'+crypto.createHash('sha512').update(data).digest('base64'))" "$tarball")"
-            registry_integrity="$(npm view "$package@$RELEASE_VERSION" dist.integrity --registry https://registry.npmjs.org/)"
+            wait_for_public_integrity "$package"
             test "$local_integrity" = "$registry_integrity"
           done
       - name: Pack and publish main npm package
@@ -606,7 +640,39 @@ jobs:
           set -euo pipefail
           log=.release-logs/recovery-main-npm.log
           exec > >(tee "$log") 2>&1
-          trap 'status=$?; if [ "$status" -ne 0 ]; then node scripts/npm/restore-main-package.mjs || true; tail_output="$(tail -n 40 "$log")"; tail_output="${tail_output//'%'/'%25'}"; tail_output="${tail_output//$'\r'/'%0D'}"; tail_output="${tail_output//$'\n'/'%0A'}"; echo "::error title=Main npm recovery failed::$tail_output"; fi; exit "$status"' EXIT
+          trap 'status=$?; if [ "$status" -ne 0 ]; then node scripts/npm/restore-main-package.mjs || true; echo "::error title=Main npm recovery failed::See the recovery step log for details."; fi; exit "$status"' EXIT
+
+          wait_for_public_package() {
+            local status
+            for attempt in $(seq 1 18); do
+              status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/tura-ai/$RELEASE_VERSION")"
+              if [ "$status" = 200 ]; then
+                return 0
+              fi
+              if [ "$status" != 404 ]; then
+                echo "Unexpected npm registry status $status for tura-ai@$RELEASE_VERSION."
+                return 1
+              fi
+              echo "tura-ai@$RELEASE_VERSION is not visible on npm yet (attempt $attempt/18)."
+              sleep 10
+            done
+            echo "tura-ai@$RELEASE_VERSION did not become visible on npm."
+            return 1
+          }
+
+          wait_for_public_integrity() {
+            registry_integrity=""
+            for attempt in $(seq 1 18); do
+              registry_integrity="$(npm view "tura-ai@$RELEASE_VERSION" dist.integrity --registry https://registry.npmjs.org/ 2>/dev/null || true)"
+              if [ -n "$registry_integrity" ]; then
+                return 0
+              fi
+              echo "tura-ai@$RELEASE_VERSION integrity is not visible on npm yet (attempt $attempt/18)."
+              sleep 10
+            done
+            echo "tura-ai@$RELEASE_VERSION integrity did not become visible on npm."
+            return 1
+          }
 
           npm whoami --registry=https://registry.npmjs.org/
           node scripts/npm/prepack.mjs
@@ -619,9 +685,9 @@ jobs:
             404) npm publish "./$package_file" --access public --provenance=false ;;
             *) echo "Unexpected npm registry status $status for tura-ai@$RELEASE_VERSION."; exit 1 ;;
           esac
-          test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/tura-ai/$RELEASE_VERSION")" = 200
+          wait_for_public_package
           local_integrity="$(node -e "const fs=require('fs'),crypto=require('crypto'); const data=fs.readFileSync(process.argv[1]); console.log('sha512-'+crypto.createHash('sha512').update(data).digest('base64'))" "$package_file")"
-          registry_integrity="$(npm view "tura-ai@$RELEASE_VERSION" dist.integrity --registry https://registry.npmjs.org/)"
+          wait_for_public_integrity
           test "$local_integrity" = "$registry_integrity"
       - name: Upload GitHub Release assets
         env:
@@ -632,7 +698,7 @@ jobs:
           set -euo pipefail
           log=.release-logs/recovery-github-release.log
           exec > >(tee "$log") 2>&1
-          trap 'status=$?; if [ "$status" -ne 0 ]; then tail_output="$(tail -n 40 "$log")"; tail_output="${tail_output//'%'/'%25'}"; tail_output="${tail_output//$'\r'/'%0D'}"; tail_output="${tail_output//$'\n'/'%0A'}"; echo "::error title=GitHub Release recovery failed::$tail_output"; fi; exit "$status"' EXIT
+          trap 'status=$?; if [ "$status" -ne 0 ]; then echo "::error title=GitHub Release recovery failed::See the recovery step log for details."; fi; exit "$status"' EXIT
 
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --generate-notes
@@ -656,7 +722,21 @@ jobs:
           set -euo pipefail
           log=.release-logs/recovery-github-package.log
           exec > >(tee "$log") 2>&1
-          trap 'status=$?; node scripts/npm/restore-main-package.mjs || true; if [ "$status" -ne 0 ]; then tail_output="$(tail -n 40 "$log")"; tail_output="${tail_output//'%'/'%25'}"; tail_output="${tail_output//$'\r'/'%0D'}"; tail_output="${tail_output//$'\n'/'%0A'}"; echo "::error title=GitHub Package recovery failed::$tail_output"; fi; exit "$status"' EXIT
+          trap 'status=$?; node scripts/npm/restore-main-package.mjs || true; if [ "$status" -ne 0 ]; then echo "::error title=GitHub Package recovery failed::See the recovery step log for details."; fi; exit "$status"' EXIT
+
+          wait_for_github_package() {
+            registry_integrity=""
+            for attempt in $(seq 1 18); do
+              registry_integrity="$(npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" dist.integrity --registry https://npm.pkg.github.com/ 2>/dev/null || true)"
+              if [ -n "$registry_integrity" ]; then
+                return 0
+              fi
+              echo "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION is not visible in GitHub Packages yet (attempt $attempt/18)."
+              sleep 10
+            done
+            echo "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION did not become visible in GitHub Packages."
+            return 1
+          }
 
           npm view "tura-ai@$RELEASE_VERSION" version --registry https://registry.npmjs.org >/dev/null
           node scripts/npm/prepack.mjs
@@ -670,9 +750,8 @@ jobs:
           else
             npm publish "./$package_file" --registry https://npm.pkg.github.com --access public --provenance=false
           fi
-          npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" version --registry https://npm.pkg.github.com >/dev/null
           local_integrity="$(node -e "const fs=require('fs'),crypto=require('crypto'); const data=fs.readFileSync(process.argv[1]); console.log('sha512-'+crypto.createHash('sha512').update(data).digest('base64'))" "$package_file")"
-          registry_integrity="$(npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" dist.integrity --registry https://npm.pkg.github.com/)"
+          wait_for_github_package
           test "$local_integrity" = "$registry_integrity"
       - name: Verify recovered release
         env:
