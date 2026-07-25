@@ -48,36 +48,36 @@ pub(super) fn run_web_discover_inner(
         normalized_query.clone()
     };
     let output_dir = Some(resolve_download_dir(&args, session_dir)?);
-    if args.kind == "website" {
-        if let Some(url) = direct_webpage_url(&args.query) {
-            let result = SearchResult {
-                title: title_from_url(&url),
-                url,
-                snippet: "Direct webpage fetch from query URL.".to_string(),
-                source: "direct_url".to_string(),
-                page_url: None,
-            };
-            let (records, downloaded_files) = website_records(
-                &client,
-                &[result],
-                should_download,
-                output_dir.as_deref(),
-                session_dir,
-            )?;
-            let output = json!({
-                "query": args.query,
-                "type": args.kind,
-                "normalized_query": normalized_query,
-                "direct_fetch": true,
-                "saved": should_download,
-                "download_dir": output_dir.as_deref().map(|path| relative_or_display(path, session_dir)),
-                "result_count": records.len(),
-                "results": records,
-                "downloaded_files": downloaded_files,
-                "summary_markdown": summarize_records(&records, &downloaded_files),
-            });
-            return Ok(output);
-        }
+    if args.kind == "website"
+        && let Some(url) = direct_webpage_url(&args.query)
+    {
+        let result = SearchResult {
+            title: title_from_url(&url),
+            url,
+            snippet: "Direct webpage fetch from query URL.".to_string(),
+            source: "direct_url".to_string(),
+            page_url: None,
+        };
+        let (records, downloaded_files) = website_records(
+            &client,
+            &[result],
+            should_download,
+            output_dir.as_deref(),
+            session_dir,
+        )?;
+        let output = json!({
+            "query": args.query,
+            "type": args.kind,
+            "normalized_query": normalized_query,
+            "direct_fetch": true,
+            "saved": should_download,
+            "download_dir": output_dir.as_deref().map(|path| relative_or_display(path, session_dir)),
+            "result_count": records.len(),
+            "results": records,
+            "downloaded_files": downloaded_files,
+            "summary_markdown": summarize_records(&records, &downloaded_files),
+        });
+        return Ok(output);
     }
     if args.kind == "asset" {
         let (records, downloaded_files, searched_sources) = asset_records(

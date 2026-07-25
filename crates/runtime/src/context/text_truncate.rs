@@ -236,10 +236,10 @@ fn extract_read_targets(command_line: &str) -> Vec<String> {
                     next += 1;
                     continue;
                 }
-                if let Some(path) = normalize_read_target(&tokens[next]) {
-                    if !targets.iter().any(|existing| existing == &path) {
-                        targets.push(path);
-                    }
+                if let Some(path) = normalize_read_target(&tokens[next])
+                    && !targets.iter().any(|existing| existing == &path)
+                {
+                    targets.push(path);
                 }
                 next += 1;
             }

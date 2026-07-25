@@ -147,9 +147,7 @@ fn collect_test_items(items: &[syn::Item], relative: &str, rows: &mut Vec<TestRo
             && visitor.string_literals.iter().any(|text| {
                 let literal = text
                     .trim_matches(|character: char| character == '"' || character.is_whitespace());
-                literal.ends_with(".rs")
-                    || literal.ends_with(".ts")
-                    || literal.ends_with(".tsx")
+                literal.ends_with(".rs") || literal.ends_with(".ts") || literal.ends_with(".tsx")
             });
         let replacement = source_text_dependency.then(|| "required_before_deletion".to_string());
         rows.push(TestRow {

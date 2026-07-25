@@ -230,10 +230,11 @@ pub(super) fn ytdlp_download_candidate_rank(
 
 pub(super) fn resolve_ytdlp_command() -> (String, Vec<String>) {
     for env_name in ["TURA_WEB_DISCOVER_YTDLP", "TURA_YTDLP", "YTDLP_PATH"] {
-        if let Ok(path) = std::env::var(env_name) {
-            if !path.trim().is_empty() && Path::new(&path).exists() {
-                return (path, Vec::new());
-            }
+        if let Ok(path) = std::env::var(env_name)
+            && !path.trim().is_empty()
+            && Path::new(&path).exists()
+        {
+            return (path, Vec::new());
         }
     }
     if let Some(path) = command_local_executable("yt-dlp") {

@@ -54,15 +54,15 @@ pub fn build_context(input: ContextInput<'_>) -> Result<ContextOutput, String> {
     };
 
     if messages.is_empty() {
-        if let Some(reasoning) = &input.runtime.reasoning {
-            if !reasoning.is_empty() {
-                context_state.reasoning_history.push(reasoning.clone());
-                messages.push(serde_json::json!({
-                    "role": "system",
-                    "type": "reasoning",
-                    "content": reasoning,
-                }));
-            }
+        if let Some(reasoning) = &input.runtime.reasoning
+            && !reasoning.is_empty()
+        {
+            context_state.reasoning_history.push(reasoning.clone());
+            messages.push(serde_json::json!({
+                "role": "system",
+                "type": "reasoning",
+                "content": reasoning,
+            }));
         }
 
         if !input.runtime.text.is_empty() {
@@ -71,10 +71,10 @@ pub fn build_context(input: ContextInput<'_>) -> Result<ContextOutput, String> {
                 "content": input.runtime.text,
             }));
         }
-    } else if let Some(reasoning) = &input.runtime.reasoning {
-        if !reasoning.is_empty() {
-            context_state.reasoning_history.push(reasoning.clone());
-        }
+    } else if let Some(reasoning) = &input.runtime.reasoning
+        && !reasoning.is_empty()
+    {
+        context_state.reasoning_history.push(reasoning.clone());
     }
 
     for tool_call in &input.runtime.tool_call {
@@ -86,10 +86,10 @@ pub fn build_context(input: ContextInput<'_>) -> Result<ContextOutput, String> {
         }));
     }
 
-    if input.session.use_last_tool_call_response {
-        if let Some(last_tool_call_response) = last_tool_call_response_from_session(input.session) {
-            context_state.last_tool_call_response = Some(last_tool_call_response);
-        }
+    if input.session.use_last_tool_call_response
+        && let Some(last_tool_call_response) = last_tool_call_response_from_session(input.session)
+    {
+        context_state.last_tool_call_response = Some(last_tool_call_response);
     }
 
     for msg in &input.additional_messages {
@@ -441,33 +441,32 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
     let Some(obj) = value.as_object() else {
         return Vec::new();
     };
-    if let Some(role) = obj.get("role").and_then(|role| role.as_str()) {
-        if role == USER_AGENT_CONTEXT_ROLE
+    if let Some(role) = obj.get("role").and_then(|role| role.as_str())
+        && (role == USER_AGENT_CONTEXT_ROLE
             || role == "user"
             || role == "system"
             || role == "developer"
-            || role == "assistant"
-        {
-            let content = obj.get("content");
-            let provider_role = if role == USER_AGENT_CONTEXT_ROLE {
-                if content.is_some_and(is_developer_context_injection) {
-                    "developer"
-                } else {
-                    "user"
-                }
+            || role == "assistant")
+    {
+        let content = obj.get("content");
+        let provider_role = if role == USER_AGENT_CONTEXT_ROLE {
+            if content.is_some_and(is_developer_context_injection) {
+                "developer"
             } else {
-                role
-            };
-            return obj
-                .get("content")
-                .map(|content| {
-                    vec![serde_json::json!({
-                    "role": provider_role,
-                    "content": content,
-                    })]
-                })
-                .unwrap_or_default();
-        }
+                "user"
+            }
+        } else {
+            role
+        };
+        return obj
+            .get("content")
+            .map(|content| {
+                vec![serde_json::json!({
+                "role": provider_role,
+                "content": content,
+                })]
+            })
+            .unwrap_or_default();
     }
 
     if obj.get("type").and_then(|kind| kind.as_str()) != Some("tool_result") {
@@ -477,16 +476,14 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
     if let Some(messages) = obj
         .get("context_messages")
         .and_then(|messages| messages.as_array())
+        && (value.get("tool_name").and_then(|name| name.as_str()) != Some("command_run")
+            || command_run_cached_context_messages_are_valid(messages))
     {
-        if value.get("tool_name").and_then(|name| name.as_str()) != Some("command_run")
-            || command_run_cached_context_messages_are_valid(messages)
-        {
-            return messages
-                .iter()
-                .cloned()
-                .map(strip_context_reporting_fields)
-                .collect();
-        }
+        return messages
+            .iter()
+            .cloned()
+            .map(strip_context_reporting_fields)
+            .collect();
     }
 
     immutable_tool_result_context_messages(&value)
@@ -886,7 +883,11 @@ mod tests {
             .find("Goal-mode last user command from session state")
             .expect("goal heading");
         assert!(
-            old_user < summary && summary < user && user < agent && agent < agent_handoff && agent_handoff < goal,
+            old_user < summary
+                && summary < user
+                && user < agent
+                && agent < agent_handoff
+                && agent_handoff < goal,
             "compact rebuild must order previous compact summaries, user/agent history, agent handoff, then goal: {joined}"
         );
     }

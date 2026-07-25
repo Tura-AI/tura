@@ -586,7 +586,7 @@ fn read_router_endpoint_record() -> Result<Option<RouterEndpoint>> {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(error).with_context(|| format!("failed to read {}", path.display()))
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
         }
     };
     let endpoint = match parse_router_endpoint(raw.trim()) {
@@ -878,15 +878,14 @@ fn router_executable_candidates(root: &Path) -> Vec<PathBuf> {
         "tura_router"
     };
     let mut candidates = Vec::new();
-    if let Ok(current_exe) = std::env::current_exe() {
-        if current_exe
+    if let Ok(current_exe) = std::env::current_exe()
+        && current_exe
             .parent()
             .and_then(Path::file_name)
             .and_then(|name| name.to_str())
             != Some("deps")
-        {
-            candidates.push(current_exe.with_file_name(executable));
-        }
+    {
+        candidates.push(current_exe.with_file_name(executable));
     }
     let profile = if tura_path::build_kind() == "release" {
         "release"
@@ -920,17 +919,56 @@ mod tests {
                 .iter()
                 .map(|key| (*key, std::env::var_os(key)))
                 .collect::<Vec<_>>();
-            std::env::set_var("TURA_HOME", home);
-            std::env::remove_var("SESSION_LOG_DB_ROOT");
-            std::env::remove_var("TURA_DB_ROOT");
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_HOME", home)
+            };
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("SESSION_LOG_DB_ROOT")
+            };
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("TURA_DB_ROOT")
+            };
             Self { previous }
         }
 
         fn set(key: &'static str, value: Option<&str>) -> Self {
             let previous = vec![(key, std::env::var_os(key))];
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                Some(value) => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    }
+                }
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                None => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    }
+                }
             }
             Self { previous }
         }
@@ -940,8 +978,26 @@ mod tests {
         fn drop(&mut self) {
             for (key, value) in self.previous.drain(..) {
                 match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    Some(value) => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::set_var(key, value)
+                        }
+                    }
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    None => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::remove_var(key)
+                        }
+                    }
                 }
             }
         }

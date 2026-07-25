@@ -179,12 +179,12 @@ pub(crate) fn publish_feed_event(
 }
 
 pub(crate) fn frontend_session_id(session_id: &str) -> String {
-    if planning_child_depth_from_env() > 0 {
-        if let Ok(parent_session_id) = std::env::var("TURA_PARENT_SESSION_ID") {
-            let parent_session_id = parent_session_id.trim();
-            if !parent_session_id.is_empty() {
-                return parent_session_id.to_string();
-            }
+    if planning_child_depth_from_env() > 0
+        && let Ok(parent_session_id) = std::env::var("TURA_PARENT_SESSION_ID")
+    {
+        let parent_session_id = parent_session_id.trim();
+        if !parent_session_id.is_empty() {
+            return parent_session_id.to_string();
         }
     }
 
@@ -220,20 +220,62 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_gateway_env();
 
-        std::env::set_var("TURA_PARENT_SESSION_ID", " parent-session ");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PARENT_SESSION_ID", " parent-session ")
+        };
         assert_eq!(frontend_session_id("child-session"), "child-session");
 
-        std::env::set_var("TURA_PLANNING_DEPTH", "1");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PLANNING_DEPTH", "1")
+        };
         assert_eq!(frontend_session_id("child-session"), "parent-session");
 
-        std::env::set_var("TURA_PARENT_SESSION_ID", "   ");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PARENT_SESSION_ID", "   ")
+        };
         assert_eq!(frontend_session_id("child-session"), "child-session");
 
-        std::env::set_var("TURA_PLANNING_DEPTH", "2");
-        std::env::set_var("TURA_PARENT_SESSION_ID", "execute-parent");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PLANNING_DEPTH", "2")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PARENT_SESSION_ID", "execute-parent")
+        };
         assert_eq!(frontend_session_id("child-session"), "execute-parent");
 
-        std::env::set_var("TURA_PLANNING_DEPTH", "not-a-number");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PLANNING_DEPTH", "not-a-number")
+        };
         assert_eq!(frontend_session_id("child-session"), "child-session");
     }
 
@@ -274,7 +316,14 @@ mod tests {
             "TURA_PLANNING_DEPTH",
             "TURA_CLI_LIVE_JSONL",
         ] {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 }

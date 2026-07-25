@@ -44,8 +44,26 @@ impl Drop for EnvRestore {
     fn drop(&mut self) {
         for (key, value) in &self.keys {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                Some(value) => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    }
+                }
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                None => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    }
+                }
             }
         }
     }
@@ -82,8 +100,22 @@ fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
 /// same db root so `session_log::ipc` resolves the same endpoint file.
 fn start_service(db_root: &Path) -> ServiceGuard {
     let env = EnvRestore::capture(&["SESSION_LOG_DB_ROOT", "TURA_DB_ROOT"]);
-    std::env::set_var("SESSION_LOG_DB_ROOT", db_root);
-    std::env::remove_var("TURA_DB_ROOT");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("SESSION_LOG_DB_ROOT", db_root)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_DB_ROOT")
+    };
 
     let child = Command::new(SESSION_DB_BIN)
         .env("SESSION_LOG_DB_ROOT", db_root)

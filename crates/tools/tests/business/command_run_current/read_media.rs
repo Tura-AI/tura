@@ -3,7 +3,14 @@ use super::helpers::*;
 #[test]
 fn pass_current_style_command_run_output_shape() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("shape");
 
     let output = command_run::execute(
@@ -29,7 +36,14 @@ fn pass_current_style_command_run_output_shape() {
 #[tokio::test]
 async fn pass_internal_command_rebuilds_tool_call_and_dispatches_router_handler() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("router");
     let router = ToolRouter::new();
     let call = ToolCall {

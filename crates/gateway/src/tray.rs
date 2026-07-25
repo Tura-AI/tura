@@ -318,10 +318,10 @@ fn update_menu_items(handle: &mut TrayMenuHandle, model: Vec<TrayMenuEntry>) {
         let Some(item) = item else {
             continue;
         };
-        if old.label != new.label {
-            if let Some(label) = new.label.as_deref() {
-                item.set_text(label);
-            }
+        if old.label != new.label
+            && let Some(label) = new.label.as_deref()
+        {
+            item.set_text(label);
         }
         if old.enabled != new.enabled {
             item.set_enabled(new.enabled);
@@ -822,7 +822,9 @@ mod tests {
             "tray menu should always expose the background process count: {labels:?}"
         );
         assert!(
-            labels.iter().any(|label| label == "Kill all background processes"),
+            labels
+                .iter()
+                .any(|label| label == "Kill all background processes"),
             "tray menu should expose a kill-all action even when there are no active sessions: {labels:?}"
         );
         assert!(
@@ -989,7 +991,14 @@ mod tests {
     fn tray_enabled_respects_explicit_disable() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let previous = std::env::var_os("TURA_GATEWAY_TRAY");
-        std::env::set_var("TURA_GATEWAY_TRAY", "0");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_GATEWAY_TRAY", "0")
+        };
 
         assert!(!tray_enabled());
 
@@ -1003,9 +1012,30 @@ mod tests {
         let previous_tray = std::env::var_os("TURA_GATEWAY_TRAY");
         let previous_display = std::env::var_os("DISPLAY");
         let previous_wayland = std::env::var_os("WAYLAND_DISPLAY");
-        std::env::remove_var("TURA_GATEWAY_TRAY");
-        std::env::remove_var("DISPLAY");
-        std::env::remove_var("WAYLAND_DISPLAY");
+        // SAFETY: the test environment guard serializes and restores these variables.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_GATEWAY_TRAY")
+        };
+        // SAFETY: the test environment guard serializes and restores these variables.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("DISPLAY")
+        };
+        // SAFETY: the test environment guard serializes and restores these variables.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("WAYLAND_DISPLAY")
+        };
 
         assert!(!tray_enabled());
 
@@ -1021,9 +1051,30 @@ mod tests {
         let previous_tray = std::env::var_os("TURA_GATEWAY_TRAY");
         let previous_display = std::env::var_os("DISPLAY");
         let previous_wayland = std::env::var_os("WAYLAND_DISPLAY");
-        std::env::remove_var("TURA_GATEWAY_TRAY");
-        std::env::set_var("DISPLAY", ":99");
-        std::env::remove_var("WAYLAND_DISPLAY");
+        // SAFETY: the test environment guard serializes and restores these variables.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_GATEWAY_TRAY")
+        };
+        // SAFETY: the test environment guard serializes and restores these variables.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("DISPLAY", ":99")
+        };
+        // SAFETY: the test environment guard serializes and restores these variables.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("WAYLAND_DISPLAY")
+        };
 
         assert!(tray_enabled());
 
@@ -1074,9 +1125,23 @@ mod tests {
 
     fn restore_env_var(name: &str, value: Option<OsString>) {
         if let Some(value) = value {
-            std::env::set_var(name, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(name, value)
+            };
         } else {
-            std::env::remove_var(name);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(name)
+            };
         }
     }
 

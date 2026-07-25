@@ -261,10 +261,10 @@ pub(super) async fn run_tokio_command_with_timeout(
             }
         }
     };
-    if status.is_some() {
-        if let Some(scope) = scope.take() {
-            retain_shell_process_scope(scope);
-        }
+    if status.is_some()
+        && let Some(scope) = scope.take()
+    {
+        retain_shell_process_scope(scope);
     }
     if status.is_none() {
         wait_task.abort();

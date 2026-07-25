@@ -88,12 +88,54 @@ async fn tura_config_reads_configured_provider_model_options_and_updates_one_tie
 }"#,
     )
     .expect("config");
-    std::env::set_var("TURA_PROVIDER_CONFIG", &config_path);
-    std::env::set_var("OPENAI_API_KEY", "configured-codex");
-    std::env::set_var("GOOGLE_API_KEY", "");
-    std::env::set_var("GOOGLE_REFRESH_TOKEN", "");
-    std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "");
-    std::env::set_var("CLAUDE_CODE_REFRESH_TOKEN", "configured-refresh");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_PROVIDER_CONFIG", &config_path)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_API_KEY", "configured-codex")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("GOOGLE_API_KEY", "")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("GOOGLE_REFRESH_TOKEN", "")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("CLAUDE_CODE_REFRESH_TOKEN", "configured-refresh")
+    };
 
     let (status, body) = request(
         Method::GET,
@@ -177,8 +219,22 @@ fn temp_dir(name: &str) -> PathBuf {
 
 fn restore_env(key: &str, value: Option<String>) {
     if let Some(value) = value {
-        std::env::set_var(key, value);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(key, value)
+        };
     } else {
-        std::env::remove_var(key);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(key)
+        };
     }
 }

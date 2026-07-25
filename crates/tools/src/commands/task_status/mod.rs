@@ -37,10 +37,10 @@ pub fn normalize_output(
     };
     let status = string_field(object, &["status", "task_status"])
         .map(|status| status.trim().to_ascii_lowercase().replace('-', "_"));
-    if let Some(status) = status.as_deref() {
-        if !matches!(status, "doing" | "question" | "done") {
-            return Err("task_status status must be doing, question, or done".to_string());
-        }
+    if let Some(status) = status.as_deref()
+        && !matches!(status, "doing" | "question" | "done")
+    {
+        return Err("task_status status must be doing, question, or done".to_string());
     }
     let task_group = string_field(object, &["task_group"]);
     let task_type = task_type_field(object, "task_type")?;
@@ -205,15 +205,15 @@ fn runtime_prompt_root_candidates() -> Vec<PathBuf> {
     if let Some(project_root) = std::env::var_os("TURA_PROJECT_ROOT") {
         roots.push(runtime_prompt_root_from_repo(PathBuf::from(project_root)));
     }
-    if let Ok(current_dir) = std::env::current_dir() {
-        if let Some(repo_root) = repo_root_from(&current_dir) {
-            roots.push(runtime_prompt_root_from_repo(repo_root));
-        }
+    if let Ok(current_dir) = std::env::current_dir()
+        && let Some(repo_root) = repo_root_from(&current_dir)
+    {
+        roots.push(runtime_prompt_root_from_repo(repo_root));
     }
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(repo_root) = repo_root_from(&current_exe) {
-            roots.push(runtime_prompt_root_from_repo(repo_root));
-        }
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(repo_root) = repo_root_from(&current_exe)
+    {
+        roots.push(runtime_prompt_root_from_repo(repo_root));
     }
     let tools_crate = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     if let Some(crates_dir) = tools_crate.parent() {

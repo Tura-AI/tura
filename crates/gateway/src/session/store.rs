@@ -300,14 +300,12 @@ impl SessionStore {
         let session_id = projection.session_id.clone();
         let parent_id = projection.parent_id.clone();
         let mut sessions = self.sessions.write();
-        if only_if_absent {
-            if let Some(current) = sessions.get(&session_id) {
-                return ProjectionCacheWrite {
-                    session: api_session_from_info(current, current.projection.parent_id.clone()),
-                    changed: false,
-                    inserted: false,
-                };
-            }
+        if only_if_absent && let Some(current) = sessions.get(&session_id) {
+            return ProjectionCacheWrite {
+                session: api_session_from_info(current, current.projection.parent_id.clone()),
+                changed: false,
+                inserted: false,
+            };
         }
         let previous = sessions
             .get(&session_id)

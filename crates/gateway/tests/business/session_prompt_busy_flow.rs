@@ -439,7 +439,14 @@ impl TestSessionDb {
             .unwrap_or_else(|error| error.into_inner());
         let previous_home = std::env::var_os("TURA_HOME");
         let root = tempfile::tempdir().expect("busy-flow session DB root");
-        std::env::set_var("TURA_HOME", root.path());
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_HOME", root.path())
+        };
         let store = SessionLogStore::open_default().expect("open busy-flow session DB");
         let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
         let started = Instant::now();
@@ -471,8 +478,26 @@ impl Drop for TestSessionDb {
                 .expect("busy-flow session DB result");
         }
         match self.previous_home.take() {
-            Some(value) => std::env::set_var("TURA_HOME", value),
-            None => std::env::remove_var("TURA_HOME"),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("TURA_HOME", value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var("TURA_HOME")
+                }
+            }
         }
         let _ = self.root.path();
     }

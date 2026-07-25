@@ -412,7 +412,14 @@ fn web_discover_business_flow_downloads_direct_audio_with_local_downloader() {
     let dir = tempfile::tempdir().expect("tempdir");
     let fake_ytdlp = write_fake_ytdlp(dir.path());
     let previous_ytdlp = std::env::var_os("TURA_WEB_DISCOVER_YTDLP");
-    std::env::set_var("TURA_WEB_DISCOVER_YTDLP", &fake_ytdlp);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_DISCOVER_YTDLP", &fake_ytdlp)
+    };
 
     let command_line = r#"{"type":"audio","query":"\"https://www.bilibili.com/video/BV1xx411c7mD\"","download_dir":"audio-out","min_size":1,"max_size":100000}"#;
     let access = access(command_line, dir.path());
@@ -458,7 +465,14 @@ fn web_discover_business_flow_downloads_direct_video_and_uses_unique_names_on_re
     let dir = tempfile::tempdir().expect("tempdir");
     let fake_ytdlp = write_fake_ytdlp(dir.path());
     let previous_ytdlp = std::env::var_os("TURA_WEB_DISCOVER_YTDLP");
-    std::env::set_var("TURA_WEB_DISCOVER_YTDLP", &fake_ytdlp);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_DISCOVER_YTDLP", &fake_ytdlp)
+    };
 
     let command_line = r#"{"type":"video","query":"\"https://www.youtube.com/watch?v=localBusinessVideo\"","download_dir":"video out","min_size":1,"max_size":100000}"#;
     let access = access(command_line, dir.path());
@@ -523,7 +537,14 @@ fn web_discover_business_flow_fetches_plain_text_and_records_failed_fetch_withou
 {
     let _guard = env_lock().lock().unwrap_or_else(|error| error.into_inner());
     let previous = std::env::var_os("TURA_WEB_READER_DISABLED");
-    std::env::set_var("TURA_WEB_READER_DISABLED", "true");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_READER_DISABLED", "true")
+    };
 
     let dir = tempfile::tempdir().expect("tempdir");
     let plain = spawn_response_server(
@@ -591,12 +612,33 @@ fn web_discover_business_flow_uses_local_reader_fallback_when_primary_content_is
 
     let dir = tempfile::tempdir().expect("tempdir");
     let server = spawn_reader_fallback_server();
-    std::env::remove_var("TURA_WEB_READER_DISABLED");
-    std::env::set_var(
-        "TURA_WEB_READER_ENDPOINT",
-        format!("http://{}/reader?source=", server.addr),
-    );
-    std::env::set_var("TURA_WEB_READER_MIN_TEXT_CHARS", "200");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_WEB_READER_DISABLED")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var(
+            "TURA_WEB_READER_ENDPOINT",
+            format!("http://{}/reader?source=", server.addr),
+        )
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_READER_MIN_TEXT_CHARS", "200")
+    };
 
     let command_line = format!(
         "web_discover website {} --download-dir reader-pages --max-results 1",
@@ -645,7 +687,14 @@ fn web_discover_business_flow_uses_local_reader_fallback_when_primary_content_is
 fn web_discover_business_flow_records_truncated_response_body_without_hanging_or_public_fallback() {
     let _guard = env_lock().lock().unwrap_or_else(|error| error.into_inner());
     let previous_disabled = std::env::var_os("TURA_WEB_READER_DISABLED");
-    std::env::set_var("TURA_WEB_READER_DISABLED", "true");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_READER_DISABLED", "true")
+    };
 
     let dir = tempfile::tempdir().expect("tempdir");
     let server = spawn_truncated_response_server();
@@ -684,7 +733,14 @@ fn web_discover_business_flow_records_truncated_response_body_without_hanging_or
 fn web_discover_business_flow_retries_local_cf_challenge_without_public_reader() {
     let _guard = env_lock().lock().unwrap_or_else(|error| error.into_inner());
     let previous_disabled = std::env::var_os("TURA_WEB_READER_DISABLED");
-    std::env::set_var("TURA_WEB_READER_DISABLED", "true");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_READER_DISABLED", "true")
+    };
 
     let dir = tempfile::tempdir().expect("tempdir");
     let server = spawn_cf_retry_page_server();
@@ -733,14 +789,48 @@ fn web_discover_business_flow_falls_back_from_failed_brave_route_to_local_duckdu
     let previous_exa_disabled = std::env::var_os("TURA_EXA_SEARCH_DISABLED");
     let previous_duck_endpoint = std::env::var_os("TURA_DUCKDUCKGO_SEARCH_ENDPOINT");
     let previous_reader_disabled = std::env::var_os("TURA_WEB_READER_DISABLED");
-    std::env::set_var("TURA_BRAVE_SEARCH_API_KEY", "local-business-key");
-    std::env::set_var("TURA_BRAVE_WEB_SEARCH_ENDPOINT", &search.brave_url);
-    std::env::set_var("TURA_EXA_SEARCH_DISABLED", "true");
-    std::env::set_var("TURA_DUCKDUCKGO_SEARCH_ENDPOINT", &search.duckduckgo_url);
-    std::env::set_var("TURA_WEB_READER_DISABLED", "true");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_BRAVE_SEARCH_API_KEY", "local-business-key")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_BRAVE_WEB_SEARCH_ENDPOINT", &search.brave_url)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_EXA_SEARCH_DISABLED", "true")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_DUCKDUCKGO_SEARCH_ENDPOINT", &search.duckduckgo_url)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_READER_DISABLED", "true")
+    };
 
-    let command_line =
-        "web_discover website tura local search fallback --download-dir search-pages --max-results 1";
+    let command_line = "web_discover website tura local search fallback --download-dir search-pages --max-results 1";
     let response = execute(command_line, dir.path(), 10);
 
     restore_env("TURA_BRAVE_SEARCH_API_KEY", previous_brave_key);
@@ -797,8 +887,22 @@ fn web_discover_business_flow_uses_custom_search_endpoint_and_fetches_only_usabl
     let server = spawn_custom_search_with_pages_server();
     let previous_custom = std::env::var_os("TURA_WEB_DISCOVER_ENDPOINT");
     let previous_reader_disabled = std::env::var_os("TURA_WEB_READER_DISABLED");
-    std::env::set_var("TURA_WEB_DISCOVER_ENDPOINT", &server.search_url);
-    std::env::set_var("TURA_WEB_READER_DISABLED", "true");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_DISCOVER_ENDPOINT", &server.search_url)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_READER_DISABLED", "true")
+    };
 
     let command_line =
         "web_discover website custom local endpoint --download-dir custom-pages --max-results 3";

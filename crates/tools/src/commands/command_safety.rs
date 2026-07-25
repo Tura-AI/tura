@@ -209,15 +209,15 @@ fn check_segment(segment: &str, depth: usize, context: Option<&SafetyContext>) -
     let args = &tokens[1..];
 
     // `bash`/`zsh`/`sh -c "<script>"` indirection.
-    if NESTED_SHELLS.contains(&base.as_str()) {
-        if let Some(script) = nested_shell_script(args) {
-            return scan(&script, depth + 1, context);
-        }
+    if NESTED_SHELLS.contains(&base.as_str())
+        && let Some(script) = nested_shell_script(args)
+    {
+        return scan(&script, depth + 1, context);
     }
-    if base == "cmd" {
-        if let Some(script) = nested_cmd_script(args) {
-            return scan(&script, depth + 1, context);
-        }
+    if base == "cmd"
+        && let Some(script) = nested_cmd_script(args)
+    {
+        return scan(&script, depth + 1, context);
     }
     if POWERSHELL_SHELLS.contains(&base.as_str()) {
         if has_encoded_powershell_command(args) {
@@ -619,15 +619,14 @@ fn collect_shell_variable_assignments(segments: &[String]) -> HashMap<String, St
             continue;
         }
         for token in assignment_tokens {
-            if let Some((name, value)) = token.split_once('=') {
-                if !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-                    && !value.trim().is_empty()
-                {
-                    variables.insert(name.to_string(), value.trim().to_string());
-                }
+            if let Some((name, value)) = token.split_once('=')
+                && !name.is_empty()
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                && !value.trim().is_empty()
+            {
+                variables.insert(name.to_string(), value.trim().to_string());
             }
         }
     }
@@ -824,10 +823,11 @@ fn powershell_removal_targets(args: &[String]) -> Vec<String> {
             continue;
         }
         if arg.starts_with('-') {
-            if let Some((name, value)) = lower.split_once(':') {
-                if matches!(name, "path" | "literalpath") && !value.is_empty() {
-                    targets.extend(split_powershell_target_list(value));
-                }
+            if let Some((name, value)) = lower.split_once(':')
+                && matches!(name, "path" | "literalpath")
+                && !value.is_empty()
+            {
+                targets.extend(split_powershell_target_list(value));
             }
             index += 1;
             continue;

@@ -180,10 +180,10 @@ fn inline_command_arguments(object: &serde_json::Map<String, Value>) -> Option<V
 
 fn parse_jsonish_value(text: &str) -> Result<Value, serde_json::Error> {
     let trimmed = text.trim();
-    if let Some(unfenced) = strip_json_code_fence(trimmed) {
-        if let Ok(value) = serde_json::from_str(unfenced.trim()) {
-            return Ok(value);
-        }
+    if let Some(unfenced) = strip_json_code_fence(trimmed)
+        && let Ok(value) = serde_json::from_str(unfenced.trim())
+    {
+        return Ok(value);
     }
     serde_json::from_str(trimmed)
 }

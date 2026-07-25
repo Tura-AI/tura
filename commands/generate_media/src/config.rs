@@ -261,14 +261,14 @@ fn current_dir_dotenv_value(name: &str) -> Option<String> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
         let env_path = dir.join(".env");
-        if env_path.exists() {
-            if let Ok(entries) = from_path_iter(&env_path) {
-                for (key, value) in entries.flatten() {
-                    if key.to_ascii_uppercase() == upper {
-                        let value = value.trim().to_string();
-                        if !value.is_empty() {
-                            return Some(value);
-                        }
+        if env_path.exists()
+            && let Ok(entries) = from_path_iter(&env_path)
+        {
+            for (key, value) in entries.flatten() {
+                if key.to_ascii_uppercase() == upper {
+                    let value = value.trim().to_string();
+                    if !value.is_empty() {
+                        return Some(value);
                     }
                 }
             }
@@ -300,17 +300,17 @@ pub(super) fn openai_auth_candidates() -> Result<Vec<OpenAiAuth>, String> {
         });
     }
 
-    if let Some((token, codex_account_id)) = load_codex_auth_json() {
-        if !seen.contains(&token) {
-            seen.push(token.clone());
-            candidates.push(OpenAiAuth::CodexOAuth {
-                account_id: account_id
-                    .clone()
-                    .or(codex_account_id)
-                    .or_else(|| account_id_from_oauth_token(&token)),
-                token,
-            });
-        }
+    if let Some((token, codex_account_id)) = load_codex_auth_json()
+        && !seen.contains(&token)
+    {
+        seen.push(token.clone());
+        candidates.push(OpenAiAuth::CodexOAuth {
+            account_id: account_id
+                .clone()
+                .or(codex_account_id)
+                .or_else(|| account_id_from_oauth_token(&token)),
+            token,
+        });
     }
 
     for key in [

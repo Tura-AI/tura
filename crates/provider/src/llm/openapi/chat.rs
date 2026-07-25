@@ -596,27 +596,26 @@ fn process_openai_compatible_stream_line(
         .and_then(|c| c.as_array())
         .and_then(|a| a.first())
     {
-        if let Some(delta_content) = choice.get("delta").and_then(|d| d.get("content")) {
-            if let Some(text) = delta_content
+        if let Some(delta_content) = choice.get("delta").and_then(|d| d.get("content"))
+            && let Some(text) = delta_content
                 .as_str()
                 .filter(|_| !state.completed_tool_call)
-            {
-                if !text.is_empty() {
-                    output_event = true;
-                    if let Some(sink) = stream_events {
-                        sink(ProviderStreamEvent::TextDelta {
-                            text: text.to_string(),
-                        });
-                    }
+        {
+            if !text.is_empty() {
+                output_event = true;
+                if let Some(sink) = stream_events {
+                    sink(ProviderStreamEvent::TextDelta {
+                        text: text.to_string(),
+                    });
                 }
-                full_content.push_str(text);
-                if emit_minimax_streaming_tool_call(
-                    full_content,
-                    &mut state.tool_call_buffers,
-                    tool_calls,
-                ) {
-                    state.completed_tool_call = true;
-                }
+            }
+            full_content.push_str(text);
+            if emit_minimax_streaming_tool_call(
+                full_content,
+                &mut state.tool_call_buffers,
+                tool_calls,
+            ) {
+                state.completed_tool_call = true;
             }
         }
         if let Some(reasoning) = choice
@@ -634,48 +633,48 @@ fn process_openai_compatible_stream_line(
                 state.reasoning_buffer.push_str(reasoning);
             }
         }
-        if let Some(tool_calls_delta) = choice.get("delta").and_then(|d| d.get("tool_calls")) {
-            if let Some(calls) = tool_calls_delta.as_array() {
-                if !calls.is_empty() {
-                    output_event = true;
+        if let Some(tool_calls_delta) = choice.get("delta").and_then(|d| d.get("tool_calls"))
+            && let Some(calls) = tool_calls_delta.as_array()
+        {
+            if !calls.is_empty() {
+                output_event = true;
+            }
+            for call in calls {
+                let key = call
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .map(|index| index.to_string())
+                    .or_else(|| {
+                        call.get("id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    })
+                    .unwrap_or_else(|| "0".to_string());
+                let buffer = state.tool_call_buffers.entry(key).or_default();
+                if let Some(id) = call
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.trim().is_empty())
+                {
+                    buffer.id = Some(id.to_string());
                 }
-                for call in calls {
-                    let key = call
-                        .get("index")
-                        .and_then(Value::as_u64)
-                        .map(|index| index.to_string())
-                        .or_else(|| {
-                            call.get("id")
-                                .and_then(Value::as_str)
-                                .map(ToString::to_string)
-                        })
-                        .unwrap_or_else(|| "0".to_string());
-                    let buffer = state.tool_call_buffers.entry(key).or_default();
-                    if let Some(id) = call
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .filter(|id| !id.trim().is_empty())
-                    {
-                        buffer.id = Some(id.to_string());
-                    }
-                    if let Some(name) = call
-                        .get("function")
-                        .and_then(|f| f.get("name"))
-                        .and_then(Value::as_str)
-                        .filter(|name| !name.trim().is_empty())
-                    {
-                        buffer.name = Some(name.to_string());
-                    }
-                    if let Some(args) = call
-                        .get("function")
-                        .and_then(|f| f.get("arguments"))
-                        .and_then(Value::as_str)
-                    {
-                        buffer.arguments.push_str(args);
-                    }
-                    if emit_completed_tool_call(buffer, tool_calls) {
-                        state.completed_tool_call = true;
-                    }
+                if let Some(name) = call
+                    .get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.trim().is_empty())
+                {
+                    buffer.name = Some(name.to_string());
+                }
+                if let Some(args) = call
+                    .get("function")
+                    .and_then(|f| f.get("arguments"))
+                    .and_then(Value::as_str)
+                {
+                    buffer.arguments.push_str(args);
+                }
+                if emit_completed_tool_call(buffer, tool_calls) {
+                    state.completed_tool_call = true;
                 }
             }
         }

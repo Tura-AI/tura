@@ -299,7 +299,7 @@ pub fn unreachable_owner_lock_message() -> Option<String> {
                 &path,
                 read_owner_lock_record(&path).as_ref(),
                 &error.to_string(),
-            ))
+            ));
         }
     };
     match file.try_lock_exclusive() {

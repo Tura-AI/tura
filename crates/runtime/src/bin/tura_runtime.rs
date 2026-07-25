@@ -8,7 +8,21 @@
 
 fn main() -> std::io::Result<()> {
     tura_path::process_hardening::harden_current_process("runtime_worker");
-    std::env::set_var("TURA_ROLE", "runtime_worker");
-    std::env::set_var("TURA_RUNTIME_WORKER", "1");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ROLE", "runtime_worker")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_RUNTIME_WORKER", "1")
+    };
     runtime::worker::run()
 }

@@ -158,10 +158,10 @@ pub(super) fn extract_media_links(html: &str, base_url: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut push = |candidate: &str| {
-        if let Some(url) = normalize_media_url(candidate, base_url) {
-            if seen.insert(url.clone()) {
-                out.push(url);
-            }
+        if let Some(url) = normalize_media_url(candidate, base_url)
+            && seen.insert(url.clone())
+        {
+            out.push(url);
         }
     };
 

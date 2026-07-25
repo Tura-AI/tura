@@ -30,13 +30,12 @@ fn normalize_command_run_input(input: Value) -> Value {
                         .map(normalize_command_value)
                         .collect()
                 } else if contains_command_shape(&object) {
-                    if !object.contains_key("command_line") {
-                        if let Some(command_line) =
+                    if !object.contains_key("command_line")
+                        && let Some(command_line) =
                             partial_xml_parameter_value(&text, "command_line")
                                 .or_else(|| partial_xml_parameter_value(&text, "cmd"))
-                        {
-                            object.insert("command_line".to_string(), Value::String(command_line));
-                        }
+                    {
+                        object.insert("command_line".to_string(), Value::String(command_line));
                     }
                     return json!({ "commands": [normalize_command_value(Value::Object(object))] });
                 } else {

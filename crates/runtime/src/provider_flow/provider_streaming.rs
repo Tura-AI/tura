@@ -79,12 +79,11 @@ pub(crate) async fn call_runtime_streaming(
         ) {
             command_state_for_sink.mark_seen();
         }
-        if let tura_llm_rust::ProviderStreamEvent::TextDelta { text } = &event {
-            if let Err(error) =
+        if let tura_llm_rust::ProviderStreamEvent::TextDelta { text } = &event
+            && let Err(error) =
                 publish_streamed_agent_text(&text_delta_runtime, text, text_feed_publisher.as_ref())
-            {
-                tracing::warn!(error = %error, "failed to queue assistant text feed event");
-            }
+        {
+            tracing::warn!(error = %error, "failed to queue assistant text feed event");
         }
         let _ = stream_tx.send(event);
     });

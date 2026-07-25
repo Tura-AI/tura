@@ -18,10 +18,10 @@ pub async fn list_providers() -> Json<ProviderListResponse> {
 
 pub async fn list_providers_value() -> ProviderListResponse {
     let settings = tura_llm_rust::Settings::default().await.ok();
-    if let Some(settings) = settings.as_deref() {
-        if let Some(route) = active_agent_route(settings) {
-            return provider_list_for_route(settings, route);
-        }
+    if let Some(settings) = settings.as_deref()
+        && let Some(route) = active_agent_route(settings)
+    {
+        return provider_list_for_route(settings, route);
     }
 
     let providers = global_store().list_providers();
@@ -379,10 +379,9 @@ pub(super) fn provider_env_from_settings(
         .token_env
         .as_deref()
         .filter(|value| !value.trim().is_empty())
+        && !env.iter().any(|item| item == token_env)
     {
-        if !env.iter().any(|item| item == token_env) {
-            env.insert(0, token_env.to_string());
-        }
+        env.insert(0, token_env.to_string());
     }
     env
 }

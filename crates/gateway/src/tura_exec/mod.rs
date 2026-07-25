@@ -52,16 +52,16 @@ fn run() -> Result<i32, String> {
     // from the persisted session. The CLI links no runtime/DB executor.
     if !config.embedded {
         let result = run_via_router(&config, &session_id, &prompt);
-        if let Err(error) = result.as_ref() {
-            if config.json {
-                emit_jsonl(&turn_completed_event(
-                    &config,
-                    &session_id,
-                    aggregate_runtime_usage(&[]),
-                    "failed",
-                    Some(error),
-                ))?;
-            }
+        if let Err(error) = result.as_ref()
+            && config.json
+        {
+            emit_jsonl(&turn_completed_event(
+                &config,
+                &session_id,
+                aggregate_runtime_usage(&[]),
+                "failed",
+                Some(error),
+            ))?;
         }
         return result;
     }
@@ -69,8 +69,22 @@ fn run() -> Result<i32, String> {
     // `--embedded` keeps its direct-worker behavior without linking the runtime
     // service into the gateway process.
     ensure_session_db_owner();
-    std::env::set_var("TURA_GATEWAY_CALLBACKS", "0");
-    std::env::set_var("TURA_RUNTIME_ERRORS_FATAL", "1");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "0")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_RUNTIME_ERRORS_FATAL", "1")
+    };
     if config.session_id.is_some() {
         reject_busy_session(&session_id, config.json)?;
     }

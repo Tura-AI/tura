@@ -610,15 +610,15 @@ async fn run_command_run_item(
             );
         }
     };
-    if sandbox {
-        if let Err(message) = validate_command_sandbox(&command_name, &call, &ctx.session_dir) {
-            return CommandRunItemResult::blocked(
-                command.index,
-                command.effective_step(),
-                command_name,
-                message,
-            );
-        }
+    if sandbox
+        && let Err(message) = validate_command_sandbox(&command_name, &call, &ctx.session_dir)
+    {
+        return CommandRunItemResult::blocked(
+            command.index,
+            command.effective_step(),
+            command_name,
+            message,
+        );
     }
     match router.dispatch(call, ctx, force_exclusive).await {
         Ok(result) => CommandRunItemResult {

@@ -50,8 +50,22 @@ fn uses_configured_provider_order_and_output_dir_when_unspecified() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let previous_order = std::env::var("TURA_GENERATE_MEDIA_PROVIDER_ORDER").ok();
     let previous_dir = std::env::var("TURA_GENERATE_MEDIA_OUTPUT_DIRECTORY").ok();
-    std::env::set_var("TURA_GENERATE_MEDIA_PROVIDER_ORDER", "gemini,grok3");
-    std::env::set_var("TURA_GENERATE_MEDIA_OUTPUT_DIRECTORY", "configured/images");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_GENERATE_MEDIA_PROVIDER_ORDER", "gemini,grok3")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_GENERATE_MEDIA_OUTPUT_DIRECTORY", "configured/images")
+    };
 
     let args = parse_args_text("--prompt poster").expect("parse configured defaults");
 
@@ -112,7 +126,25 @@ fn parses_azure_speech_and_legacy_free_alias_separately() {
 
 fn restore_env(key: &str, value: Option<String>) {
     match value {
-        Some(value) => std::env::set_var(key, value),
-        None => std::env::remove_var(key),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            }
+        }
     }
 }

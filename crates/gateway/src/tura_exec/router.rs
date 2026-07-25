@@ -91,10 +91,10 @@ pub(crate) fn run_via_router(
         write_last_message(path, &text)?;
     }
     let session_log = router_session_log(&response);
-    if config.log {
-        if let Some(session_log) = session_log.as_ref() {
-            write_turn_log_stderr(session_log, router_turn_started_at_ms(&response))?;
-        }
+    if config.log
+        && let Some(session_log) = session_log.as_ref()
+    {
+        write_turn_log_stderr(session_log, router_turn_started_at_ms(&response))?;
     }
     if config.json {
         emit_jsonl(
@@ -294,10 +294,10 @@ fn command_update_cli_event(
         if let Some(exit_code) = update.pointer("/result/exit_code") {
             item.insert("exit_code".to_string(), exit_code.clone());
         }
-        if item_type == "file_change" {
-            if let Some(changes) = command_update_changes(update) {
-                item.insert("changes".to_string(), changes);
-            }
+        if item_type == "file_change"
+            && let Some(changes) = command_update_changes(update)
+        {
+            item.insert("changes".to_string(), changes);
         }
     }
     prune_model_visible_cli_item(&mut item);
@@ -538,11 +538,11 @@ fn configure_router_stderr(command: &mut std::process::Command) {
         command.stderr(Stdio::null());
         return;
     };
-    if let Some(parent) = path.parent() {
-        if fs::create_dir_all(parent).is_err() {
-            command.stderr(Stdio::null());
-            return;
-        }
+    if let Some(parent) = path.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        command.stderr(Stdio::null());
+        return;
     }
     match fs::OpenOptions::new().create(true).append(true).open(path) {
         Ok(file) => {
@@ -626,15 +626,14 @@ fn resolve_router_binary() -> Option<PathBuf> {
     };
     let mut candidates = Vec::new();
     let root = tura_path::canonical_root();
-    if let Ok(current_exe) = std::env::current_exe() {
-        if current_exe
+    if let Ok(current_exe) = std::env::current_exe()
+        && current_exe
             .parent()
             .and_then(std::path::Path::file_name)
             .and_then(|name| name.to_str())
             != Some("deps")
-        {
-            candidates.push(current_exe.with_file_name(executable));
-        }
+    {
+        candidates.push(current_exe.with_file_name(executable));
     }
     let profile = if tura_path::build_kind() == "release" {
         "release"
@@ -664,9 +663,23 @@ mod tests {
 
     fn restore_env(key: &str, value: Option<OsString>) {
         if let Some(value) = value {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 
@@ -737,12 +750,54 @@ mod tests {
         let legacy_timeout_key = ["TURA_WORKER", "INVOKE_TIMEOUT_SECS"].join("_");
         let previous_timeout = std::env::var_os(&legacy_timeout_key);
 
-        std::env::set_var("TURA_SESSION_MAX_TOKENS", "4096");
-        std::env::set_var("TURA_GOAL_MODE", "1");
-        std::env::set_var("TURA_NO_OP_MANUAL", "1");
-        std::env::set_var("TURA_SESSION_LANGUAGE", "");
-        std::env::set_var("TURA_UNRELATED_ENV_FOR_TEST", "must-not-forward");
-        std::env::set_var(&legacy_timeout_key, "1");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_SESSION_MAX_TOKENS", "4096")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_GOAL_MODE", "1")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_NO_OP_MANUAL", "1")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_SESSION_LANGUAGE", "")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_UNRELATED_ENV_FOR_TEST", "must-not-forward")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(&legacy_timeout_key, "1")
+        };
 
         let env = worker_env_from_current_process();
 
@@ -771,16 +826,44 @@ mod tests {
         let previous_log = std::env::var_os("TURA_ROUTER_STDERR_LOG");
         let previous_debug = std::env::var_os("TURA_DEBUG_RUNTIME");
 
-        std::env::remove_var("TURA_ROUTER_STDERR_LOG");
-        std::env::remove_var("TURA_DEBUG_RUNTIME");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_ROUTER_STDERR_LOG")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_DEBUG_RUNTIME")
+        };
         assert_eq!(router_stderr_log_path(), None);
 
-        std::env::set_var("TURA_DEBUG_RUNTIME", "1");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_DEBUG_RUNTIME", "1")
+        };
         let debug_path = router_stderr_log_path().expect("debug path");
         assert!(debug_path.ends_with("router-daemon.stderr.log"));
 
         let explicit = std::env::temp_dir().join("explicit-router.stderr.log");
-        std::env::set_var("TURA_ROUTER_STDERR_LOG", &explicit);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_ROUTER_STDERR_LOG", &explicit)
+        };
         assert_eq!(router_stderr_log_path(), Some(explicit));
 
         restore_env("TURA_ROUTER_STDERR_LOG", previous_log);

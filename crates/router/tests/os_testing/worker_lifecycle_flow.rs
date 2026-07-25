@@ -657,9 +657,30 @@ async fn router_worker_business_flow_startup_cleanup_kills_orphan_runtime_proces
     let previous_home = std::env::var_os("TURA_HOME");
     let previous_session_root = std::env::var_os("SESSION_LOG_DB_ROOT");
     let previous_tura_root = std::env::var_os("TURA_DB_ROOT");
-    std::env::set_var("TURA_HOME", &home);
-    std::env::remove_var("SESSION_LOG_DB_ROOT");
-    std::env::remove_var("TURA_DB_ROOT");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_HOME", &home)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("SESSION_LOG_DB_ROOT")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_DB_ROOT")
+    };
 
     let mut child = ChildCleanup::new(
         Command::new(python_executable()?)
@@ -849,8 +870,22 @@ fn process_alive(pid: u32) -> bool {
 
 fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
     if let Some(value) = previous {
-        std::env::set_var(key, value);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(key, value)
+        };
     } else {
-        std::env::remove_var(key);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(key)
+        };
     }
 }

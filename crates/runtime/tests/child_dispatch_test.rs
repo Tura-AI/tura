@@ -30,18 +30,60 @@ fn env_lock() -> MutexGuard<'static, ()> {
 }
 
 fn reset_mock_env() {
-    std::env::set_var("TURA_ROUTER_BIN", mock_router_bin());
-    std::env::set_var("TURA_ALLOW_CHILD_ROUTER_CLI_FOR_TEST", "1");
-    std::env::remove_var("MOCK_RECURSE_TO_DEPTH");
-    std::env::remove_var("MOCK_AGENT_SUMMARY");
-    std::env::remove_var("MOCK_FAIL");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ROUTER_BIN", mock_router_bin())
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ALLOW_CHILD_ROUTER_CLI_FOR_TEST", "1")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("MOCK_RECURSE_TO_DEPTH")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("MOCK_AGENT_SUMMARY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("MOCK_FAIL")
+    };
 }
 
 #[test]
 fn single_child_dispatch_returns_summary() {
     let _guard = env_lock();
     reset_mock_env();
-    std::env::set_var("MOCK_AGENT_SUMMARY", "solo-summary");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("MOCK_AGENT_SUMMARY", "solo-summary")
+    };
 
     let result = dispatch_child_agent(&ChildAgentRequest {
         agent: "solo".to_string(),
@@ -88,10 +130,7 @@ fn concurrent_dispatch_returns_both_summaries() {
 
     let agents: Vec<String> = results
         .iter()
-        .map(|r| {
-            let summary = r.as_ref().expect("ok").clone_summary();
-            summary
-        })
+        .map(|r| r.as_ref().expect("ok").clone_summary())
         .collect();
     assert!(agents.iter().any(|s| s.contains("agentA")));
     assert!(agents.iter().any(|s| s.contains("agentB")));
@@ -102,8 +141,22 @@ fn recursive_dispatch_2_levels_returns_one_summary() {
     let _guard = env_lock();
     reset_mock_env();
     // Top-level agent at depth=1 recurses to depth=2 and folds the grandchild summary back in.
-    std::env::set_var("MOCK_RECURSE_TO_DEPTH", "2");
-    std::env::set_var("MOCK_AGENT_SUMMARY", "lead-summary");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("MOCK_RECURSE_TO_DEPTH", "2")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("MOCK_AGENT_SUMMARY", "lead-summary")
+    };
 
     let result = dispatch_child_agent(&ChildAgentRequest {
         agent: "lead".to_string(),

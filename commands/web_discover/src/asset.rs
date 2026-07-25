@@ -248,21 +248,19 @@ fn enrich_asset_candidate(
         license: None,
     };
 
-    if candidate.download_url.is_none() {
-        if let Some(page_url) = candidate.page_url.clone() {
-            if let Some(enriched) =
-                extract_downloadable_asset_from_page(client, &page_url, &source_query.asset_type)
-            {
-                candidate.download_url = Some(enriched.url);
-                candidate.license = enriched.license;
-                candidate.asset_type = classify_asset_type(
-                    candidate.download_url.as_deref().unwrap_or_default(),
-                    &candidate.title,
-                    Some(source_query.source),
-                    &source_query.asset_type,
-                );
-            }
-        }
+    if candidate.download_url.is_none()
+        && let Some(page_url) = candidate.page_url.clone()
+        && let Some(enriched) =
+            extract_downloadable_asset_from_page(client, &page_url, &source_query.asset_type)
+    {
+        candidate.download_url = Some(enriched.url);
+        candidate.license = enriched.license;
+        candidate.asset_type = classify_asset_type(
+            candidate.download_url.as_deref().unwrap_or_default(),
+            &candidate.title,
+            Some(source_query.source),
+            &source_query.asset_type,
+        );
     }
 
     candidate
@@ -363,10 +361,11 @@ fn extract_asset_links(html: &str, base_url: &str, fallback_type: &str) -> Vec<S
         let decoded = html_unescape(&json_unescape(candidate))
             .replace("\\u002F", "/")
             .replace("\\/", "/");
-        if let Some(url) = resolve_page_url(base_url, &decoded) {
-            if asset_url_matches_type(&url, fallback_type) && seen.insert(url.clone()) {
-                out.push(url);
-            }
+        if let Some(url) = resolve_page_url(base_url, &decoded)
+            && asset_url_matches_type(&url, fallback_type)
+            && seen.insert(url.clone())
+        {
+            out.push(url);
         }
     };
 

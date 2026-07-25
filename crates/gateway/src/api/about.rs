@@ -185,21 +185,23 @@ async fn star_repository_with<R: AboutRuntime>(
 ) -> Result<AboutStarResponse, AboutError> {
     let mut attempted = HashSet::new();
     for key in ["GITHUB_TOKEN", "GH_TOKEN", "TURA_GITHUB_TOKEN"] {
-        if let Some(token) = runtime.environment_token(key) {
-            if attempted.insert(token.clone()) && runtime.add_star(&token).await {
-                return Ok(AboutStarResponse {
-                    outcome: AboutStarOutcome::Starred,
-                });
-            }
+        if let Some(token) = runtime.environment_token(key)
+            && attempted.insert(token.clone())
+            && runtime.add_star(&token).await
+        {
+            return Ok(AboutStarResponse {
+                outcome: AboutStarOutcome::Starred,
+            });
         }
     }
     for key in ["github.token", "github.oauth-token", "github.oauthToken"] {
-        if let Some(token) = runtime.git_token(key).await {
-            if attempted.insert(token.clone()) && runtime.add_star(&token).await {
-                return Ok(AboutStarResponse {
-                    outcome: AboutStarOutcome::Starred,
-                });
-            }
+        if let Some(token) = runtime.git_token(key).await
+            && attempted.insert(token.clone())
+            && runtime.add_star(&token).await
+        {
+            return Ok(AboutStarResponse {
+                outcome: AboutStarOutcome::Starred,
+            });
         }
     }
     runtime
@@ -320,12 +322,12 @@ fn package_json_candidates() -> Vec<PathBuf> {
     if let Ok(current) = std::env::current_dir() {
         candidates.push(current.join("package.json"));
     }
-    if let Ok(executable) = std::env::current_exe() {
-        if let Some(parent) = executable.parent() {
-            candidates.push(parent.join("package.json"));
-            if let Some(grandparent) = parent.parent() {
-                candidates.push(grandparent.join("package.json"));
-            }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(parent) = executable.parent()
+    {
+        candidates.push(parent.join("package.json"));
+        if let Some(grandparent) = parent.parent() {
+            candidates.push(grandparent.join("package.json"));
         }
     }
     candidates

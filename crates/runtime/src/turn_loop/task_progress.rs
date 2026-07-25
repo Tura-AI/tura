@@ -59,11 +59,11 @@ fn command_run_result_items(result: &serde_json::Value) -> Vec<&serde_json::Valu
     };
     let mut items = Vec::new();
     for item in results {
-        if item.get("mode").and_then(serde_json::Value::as_str) == Some("batch") {
-            if let Some(batch_results) = item.get("results").and_then(serde_json::Value::as_array) {
-                items.extend(batch_results);
-                continue;
-            }
+        if item.get("mode").and_then(serde_json::Value::as_str) == Some("batch")
+            && let Some(batch_results) = item.get("results").and_then(serde_json::Value::as_array)
+        {
+            items.extend(batch_results);
+            continue;
         }
         items.push(item);
     }

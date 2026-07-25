@@ -530,15 +530,15 @@ fn append_one_shot_worker_stderr_log(
     let Some(path) = worker_stderr_log_path(worker_id, service_name, env) else {
         return;
     };
-    if let Some(parent) = path.parent() {
-        if let Err(error) = std::fs::create_dir_all(parent) {
-            warn!(
-                path = %path.display(),
-                error = %error,
-                "failed to create one-shot worker stderr log directory"
-            );
-            return;
-        }
+    if let Some(parent) = path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        warn!(
+            path = %path.display(),
+            error = %error,
+            "failed to create one-shot worker stderr log directory"
+        );
+        return;
     }
     match OpenOptions::new().create(true).append(true).open(&path) {
         Ok(mut file) => {
@@ -705,14 +705,14 @@ fn configure_worker_stderr(
         command.stderr(Stdio::null());
         return;
     };
-    if let Some(parent) = path.parent() {
-        if let Err(error) = std::fs::create_dir_all(parent) {
-            warn!(
-                path = %path.display(),
-                error = %error,
-                "failed to create worker stderr log directory"
-            );
-        }
+    if let Some(parent) = path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        warn!(
+            path = %path.display(),
+            error = %error,
+            "failed to create worker stderr log directory"
+        );
     }
     match OpenOptions::new().create(true).append(true).open(&path) {
         Ok(file) => {

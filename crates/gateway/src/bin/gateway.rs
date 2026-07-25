@@ -29,7 +29,14 @@ fn main() {
         .filter(|value| !value.trim().is_empty())
         .is_none()
     {
-        std::env::set_var("OPENAI_LOGIN", "oauth");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("OPENAI_LOGIN", "oauth")
+        };
     }
 
     let desired_port = desired_port_for_exe();
@@ -42,7 +49,9 @@ fn main() {
             return;
         }
         PortDecision::Unavailable(port) => {
-            eprintln!("gateway port {port} is occupied by a foreign process; set PORT to an explicit free port or stop the foreign process");
+            eprintln!(
+                "gateway port {port} is occupied by a foreign process; set PORT to an explicit free port or stop the foreign process"
+            );
             std::process::exit(1);
         }
     };
@@ -65,8 +74,22 @@ fn main() {
         }
     };
     // Keep the resolved port visible to children (runtime workers, callbacks).
-    std::env::set_var("PORT", port.to_string());
-    std::env::set_var(tura_path::TURA_GATEWAY_PORT_ENV, port.to_string());
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("PORT", port.to_string())
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var(tura_path::TURA_GATEWAY_PORT_ENV, port.to_string())
+    };
 
     if let Err(error) = gateway::router_process::start_global_router_process() {
         eprintln!("gateway failed to start persistent router: {error:#}");
@@ -319,20 +342,41 @@ fn gateway_identity_on_port(port: u16) -> Option<GatewayIdentity> {
 fn configure_release_runtime_env() {
     let root = project_root_from_exe();
     if std::env::var_os("TURA_PROJECT_ROOT").is_none() {
-        std::env::set_var("TURA_PROJECT_ROOT", &root);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", &root)
+        };
     }
     if std::env::var_os("TURA_PROVIDER_CONFIG").is_none() {
         let provider_config = PathBuf::from(&root)
             .join("config")
             .join("provider_config.json");
         if provider_config.exists() {
-            std::env::set_var("TURA_PROVIDER_CONFIG", provider_config);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_PROVIDER_CONFIG", provider_config)
+            };
         }
     }
     if std::env::var_os("TURA_ENV_PATH").is_none() {
         let env_path = PathBuf::from(&root).join(".env");
         if env_path.exists() {
-            std::env::set_var("TURA_ENV_PATH", env_path);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_ENV_PATH", env_path)
+            };
         }
     }
 }
@@ -677,9 +721,23 @@ mod tests {
                 .collect::<Vec<_>>();
             for (key, value) in values {
                 if value.is_empty() {
-                    std::env::remove_var(key);
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    };
                 } else {
-                    std::env::set_var(key, value);
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    };
                 }
             }
             Self { previous }
@@ -690,9 +748,23 @@ mod tests {
         fn drop(&mut self) {
             for (key, value) in self.previous.drain(..).rev() {
                 if let Some(value) = value {
-                    std::env::set_var(key, value);
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    };
                 } else {
-                    std::env::remove_var(key);
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    };
                 }
             }
         }

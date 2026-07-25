@@ -49,7 +49,14 @@ mod tests {
     fn config_path_prefers_explicit_provider_config() {
         let _guard = crate::test_support::env_lock();
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
-        std::env::set_var("TURA_PROVIDER_CONFIG", "C:/tmp/tura-test-config.json");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROVIDER_CONFIG", "C:/tmp/tura-test-config.json")
+        };
 
         assert_eq!(
             config_path(),
@@ -57,8 +64,26 @@ mod tests {
         );
 
         match previous_provider {
-            Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
-            None => std::env::remove_var("TURA_PROVIDER_CONFIG"),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("TURA_PROVIDER_CONFIG", value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var("TURA_PROVIDER_CONFIG")
+                }
+            }
         }
     }
 
@@ -66,7 +91,14 @@ mod tests {
     async fn bundled_config_exposes_four_model_tiers() {
         let _guard = crate::test_support::env_lock_async().await;
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
-        std::env::remove_var("TURA_PROVIDER_CONFIG");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_PROVIDER_CONFIG")
+        };
 
         let settings = super::load_settings().await.expect("load bundled config");
         for route in ["thinking", "fast", "embedding_high", "embedding_low"] {
@@ -89,8 +121,26 @@ mod tests {
         );
 
         match previous_provider {
-            Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
-            None => std::env::remove_var("TURA_PROVIDER_CONFIG"),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("TURA_PROVIDER_CONFIG", value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var("TURA_PROVIDER_CONFIG")
+                }
+            }
         }
     }
 }

@@ -1075,9 +1075,23 @@ mod tests {
 
     fn restore_env(key: &str, value: Option<OsString>) {
         if let Some(value) = value {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 
@@ -1219,7 +1233,14 @@ mod tests {
     fn goal_mode_records_last_goal_user_input_from_env() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let previous = std::env::var_os("TURA_GOAL_MODE");
-        std::env::set_var("TURA_GOAL_MODE", "1");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_GOAL_MODE", "1")
+        };
 
         let mut session = session_in_state(SessionState::Completed);
 
@@ -1246,11 +1267,25 @@ mod tests {
     fn non_goal_turn_does_not_overwrite_recorded_goal_input() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let previous = std::env::var_os("TURA_GOAL_MODE");
-        std::env::set_var("TURA_GOAL_MODE", "1");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_GOAL_MODE", "1")
+        };
         let mut session = session_in_state(SessionState::Completed);
         assert_eq!(session.last_goal_user_input, "first");
 
-        std::env::remove_var("TURA_GOAL_MODE");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_GOAL_MODE")
+        };
         session.prepare_for_new_user_turn(
             SessionInput {
                 user_input: "ordinary follow-up".to_string(),

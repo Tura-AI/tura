@@ -59,12 +59,11 @@ fn command_run_commands_from_arguments(arguments: &Value) -> Option<Vec<Value>> 
     if let Some(commands) = arguments.get("commands").and_then(Value::as_array) {
         return Some(commands.clone());
     }
-    if let Some(text) = arguments.as_str() {
-        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-            if let Some(commands) = parsed.get("commands").and_then(Value::as_array) {
-                return Some(commands.clone());
-            }
-        }
+    if let Some(text) = arguments.as_str()
+        && let Ok(parsed) = serde_json::from_str::<Value>(text)
+        && let Some(commands) = parsed.get("commands").and_then(Value::as_array)
+    {
+        return Some(commands.clone());
     }
     None
 }

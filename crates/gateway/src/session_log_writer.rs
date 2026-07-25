@@ -16,7 +16,7 @@ pub fn write_session_log(command: SessionLogCommand) -> Result<()> {
             Ok(response) => {
                 return Err(anyhow!(
                     "unexpected session_log write response: {response:?}"
-                ))
+                ));
             }
             Err(error) => {
                 tracing::warn!(error = %error, "session_log IPC write failed; enqueueing write");

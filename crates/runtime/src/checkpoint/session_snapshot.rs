@@ -476,10 +476,8 @@ fn conversation_message_record(
         "tool": null,
         "state": null,
     });
-    if !has_metadata {
-        if let Some(part_object) = part.as_object_mut() {
-            part_object.remove("metadata");
-        }
+    if !has_metadata && let Some(part_object) = part.as_object_mut() {
+        part_object.remove("metadata");
     }
 
     Some(serde_json::json!({

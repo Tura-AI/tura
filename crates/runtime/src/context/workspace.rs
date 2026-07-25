@@ -291,11 +291,9 @@ fn recent_file_lines(
     recent_files: &[WorkspaceSnapshotEntry],
     omitted_recent_files: usize,
 ) -> Vec<String> {
-    let mut lines = vec![
-        format!(
-            "recent_files: relative paths modified in the last {RECENT_FILE_DAYS} days, newest first, max {MAX_RECENT_FILES}"
-        ),
-    ];
+    let mut lines = vec![format!(
+        "recent_files: relative paths modified in the last {RECENT_FILE_DAYS} days, newest first, max {MAX_RECENT_FILES}"
+    )];
     lines.extend(recent_files.iter().map(format_entry_line));
     if omitted_recent_files > 0 {
         lines.push(format!(

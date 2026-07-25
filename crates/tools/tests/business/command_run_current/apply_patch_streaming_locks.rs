@@ -80,7 +80,14 @@ fn pass_apply_patch_add_delete_and_move_are_tracked_in_output() {
 fn pass_apply_patch_allows_path_outside_workspace_without_cli_sandbox() {
     let _guard = env_lock_blocking();
     let previous_sandbox = std::env::var_os("TURA_COMMAND_RUN_SANDBOX");
-    std::env::remove_var("TURA_COMMAND_RUN_SANDBOX");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_COMMAND_RUN_SANDBOX")
+    };
     let root = temp_workspace("patch-outside-default");
     let outside = root
         .parent()
@@ -113,7 +120,14 @@ fn pass_apply_patch_allows_path_outside_workspace_without_cli_sandbox() {
 fn fail_apply_patch_rejects_path_outside_workspace_when_cli_sandboxed() {
     let _guard = env_lock_blocking();
     let previous_sandbox = std::env::var_os("TURA_COMMAND_RUN_SANDBOX");
-    std::env::set_var("TURA_COMMAND_RUN_SANDBOX", "1");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SANDBOX", "1")
+    };
     let root = temp_workspace("patch-outside");
     let outside = root
         .parent()
@@ -145,7 +159,14 @@ fn fail_apply_patch_rejects_path_outside_workspace_when_cli_sandboxed() {
 #[test]
 fn pass_shell_embedded_apply_patch_is_intercepted_before_shell_execution() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("embedded-patch");
     fs::write(root.join("app.txt"), "old\n").expect("fixture should be written");
     let command_line = "@'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n'@ | apply_patch";
@@ -195,7 +216,14 @@ fn pass_command_line_wrapped_apply_patch_routes_to_apply_patch() {
 #[test]
 fn pass_aliases_cmd_and_command_line_are_accepted() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("aliases");
     let output = command_run::execute(
         &json!({
@@ -213,7 +241,14 @@ fn pass_aliases_cmd_and_command_line_are_accepted() {
 #[test]
 fn pass_single_shell_object_without_commands_is_wrapped() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("single-shell-object");
     let output = command_run::execute(
         &json!({
@@ -465,7 +500,14 @@ fn pass_streaming_executor_repairs_scrambled_steps_without_accidental_grouping()
 #[test]
 fn pass_mutating_commands_are_barriers_between_read_batches() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("barrier");
     fs::write(root.join("state.txt"), "before\n").expect("state fixture should be written");
 
@@ -500,7 +542,14 @@ fn pass_mutating_commands_are_barriers_between_read_batches() {
 #[test]
 fn pass_same_step_commands_keep_dependency_group() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("shared-read-step");
     fs::write(root.join("state.txt"), "ready\n").expect("state fixture should be written");
     let command_a = if cfg!(windows) {
@@ -533,7 +582,14 @@ fn pass_same_step_commands_keep_dependency_group() {
 #[tokio::test]
 async fn pass_later_steps_wait_while_step_two_is_running() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("step-two-running-barrier");
     let gate = root.join("release-step-two.flag");
     let step_two = if cfg!(windows) {
@@ -638,7 +694,14 @@ async fn pass_later_steps_wait_while_step_two_is_running() {
 #[test]
 fn pass_scrambled_steps_are_repaired_without_accidental_parallel_grouping() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("scrambled-steps");
 
     let output = command_run::execute(
@@ -787,7 +850,14 @@ fn pass_file_lock_releases_after_panic_and_allows_retry() {
 #[test]
 fn pass_same_step_mutating_shell_commands_are_serialized_by_workspace_lock() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("same-step-mutating-serialized");
     let command = |label: &str| {
         if cfg!(windows) {
@@ -837,7 +907,14 @@ fn pass_same_step_mutating_shell_commands_are_serialized_by_workspace_lock() {
 #[tokio::test]
 async fn pass_failed_mutating_command_releases_workspace_lock_for_retry() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("failed-mutating-retry");
     let failing_command = if cfg!(windows) {
         "Set-Content -Path failed-before-retry.txt -Value before; exit 9"
