@@ -856,7 +856,70 @@ async function main() {
       "handoff command should finalize into cache",
     );
 
-    // Phase 7: Markdown headings must have identical marker-free bold
+    // Phase 7: reproduce a recent command completing while a long final
+    // response has already spilled into scrollback. The whole response must
+    // remain in xterm after the live-to-cache handoff, not only its tail.
+    gatewayEvent("session.status", { sessionID, status: "busy" });
+    const completeResponseMessageID = "msg-complete-final-response";
+    const completeResponsePartID = "part-complete-final-response";
+    const completeResponseLines = Array.from(
+      { length: 36 },
+      (_item, index) => `COMPLETE_FINAL_RESPONSE_LINE_${String(index + 1).padStart(2, "0")}`,
+    );
+    const completeResponseText = completeResponseLines.join("\n");
+    const completeResponseCreatedAt = Date.now();
+    const recentCommand = {
+      id: "msg-command-before-final-response",
+      cmd: "RECENT_COMMAND_BEFORE_FINAL_RESPONSE",
+      at: completeResponseCreatedAt - 1,
+    };
+    upsertCommand(recentCommand, "running");
+    await page.waitForFunction(
+      (marker) => document.body.innerText.includes(marker),
+      recentCommand.cmd,
+      { timeout: 5_000 },
+    );
+    await streamShortChunks(
+      completeResponseText,
+      completeResponseMessageID,
+      completeResponsePartID,
+      "properties",
+    );
+    await page.waitForFunction(
+      (marker) => document.body.innerText.includes(marker),
+      completeResponseLines.at(-1),
+      { timeout: 5_000 },
+    );
+    upsertCommand(recentCommand, "completed");
+    upsertMessage({
+      id: completeResponseMessageID,
+      sessionID,
+      role: "assistant",
+      parts: [
+        {
+          id: completeResponsePartID,
+          type: "text",
+          text: completeResponseText,
+        },
+      ],
+      created_at: completeResponseCreatedAt,
+      updated_at: Date.now(),
+    });
+    session = { ...session, status: "idle", updated_at: Date.now() };
+    gatewayEvent("session.status", { sessionID, status: "idle" });
+    await waitForComposer(page);
+    await delay(250);
+    captures.push(await capture(page, "14-complete-final-response"));
+    const completeResponseBuffer = await terminalBufferText(page);
+    for (const line of completeResponseLines) {
+      assert.equal(
+        markerCount(completeResponseBuffer, line),
+        1,
+        `${line} must remain recoverable exactly once after finalization`,
+      );
+    }
+
+    // Phase 8: Markdown headings must have identical marker-free bold
     // presentation while live and after the durable message replaces the feed.
     gatewayEvent("session.status", { sessionID, status: "busy" });
     const headingMessageID = "msg-heading-handoff";
@@ -894,7 +957,7 @@ async function main() {
     session = { ...session, status: "idle", updated_at: Date.now() };
     gatewayEvent("session.status", { sessionID, status: "idle" });
     await waitForComposer(page);
-    captures.push(await capture(page, "14-heading-handoff-final"));
+    captures.push(await capture(page, "15-heading-handoff-final"));
     const headingBuffer = await terminalBufferText(page);
     assert.equal(await terminalMarkerIsBold(page, "TUI_PRIMARY_HEADING"), true);
     assert.equal(await terminalMarkerIsBold(page, "TUI_SECONDARY_HEADING"), true);

@@ -662,6 +662,11 @@ Chat rendering owns only the mutable live tail. Once a live row has overflowed
 into terminal scrollback, later stream deltas must preserve that terminal-owned
 prefix and may only append new rows or repaint the reserved tail. Rebuilding the
 scrollback for a live-content reflow destroys a user's middle viewport position.
+While that live tail exists, newly stable messages remain in the same mutable
+tail even if their timestamps place them before the active text stream. This
+keeps delayed or completed command snapshots from being inserted into the
+terminal-owned prefix; the complete tail moves to the cache only after live
+streaming ends.
 The Runtime feed must finalize a live text part with the exact accumulated live
 text, so completion and later session hydration preserve the same paragraphs,
 indentation, and rendered transcript.
