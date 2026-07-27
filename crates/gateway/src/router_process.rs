@@ -300,11 +300,15 @@ impl RouterProcess {
         self.ensure_started()?;
         let response = match self.call_once(method, payload.clone()) {
             Ok(response) => response,
-            Err(first_error) => {
+            Err(first_error) if router_call_is_replay_safe(method) => {
                 *self.last_error.lock() = Some(first_error.to_string());
                 *self.addr.lock() = None;
                 self.ensure_started()?;
                 self.call_once(method, payload)?
+            }
+            Err(error) => {
+                *self.last_error.lock() = Some(error.to_string());
+                return Err(error);
             }
         };
 
@@ -360,7 +364,7 @@ impl RouterProcess {
     }
 
     fn call_once(&self, method: &str, payload: serde_json::Value) -> Result<serde_json::Value> {
-        self.call_once_with_timeout(method, payload, read_timeout_for(method))
+        self.call_once_with_read_timeout(method, payload, read_timeout_for(method))
     }
 
     fn call_once_with_timeout(
@@ -368,6 +372,15 @@ impl RouterProcess {
         method: &str,
         payload: serde_json::Value,
         timeout: Duration,
+    ) -> Result<serde_json::Value> {
+        self.call_once_with_read_timeout(method, payload, Some(timeout))
+    }
+
+    fn call_once_with_read_timeout(
+        &self,
+        method: &str,
+        payload: serde_json::Value,
+        timeout: Option<Duration>,
     ) -> Result<serde_json::Value> {
         let addr = self
             .addr
@@ -496,14 +509,14 @@ impl RouterProcess {
 fn call_router_addr(
     addr: &str,
     request: &IpcRequest,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> Result<serde_json::Value> {
     let socket: SocketAddr = addr
         .parse()
         .with_context(|| format!("invalid router daemon address {addr:?}"))?;
     let stream = TcpStream::connect_timeout(&socket, Duration::from_secs(2))
         .with_context(|| format!("failed to connect to router daemon at {addr}"))?;
-    stream.set_read_timeout(Some(timeout))?;
+    stream.set_read_timeout(timeout)?;
     stream.set_write_timeout(Some(Duration::from_secs(10)))?;
     let mut writer = stream.try_clone()?;
     writer.write_all(format!("{}\n", serde_json::to_string(request)?).as_bytes())?;
@@ -526,25 +539,36 @@ fn call_router_addr(
     }
 }
 
-fn read_timeout_for(method: &str) -> Duration {
+fn read_timeout_for(method: &str) -> Option<Duration> {
     if method == "health_check" {
-        ROUTER_HEALTH_TIMEOUT
+        Some(ROUTER_HEALTH_TIMEOUT)
     } else if method == "execution.probe_sessions" {
-        Duration::from_secs(5)
+        Some(Duration::from_secs(5))
     } else if method == "execution.shutdown" {
-        Duration::from_secs(10)
+        Some(Duration::from_secs(10))
+    } else if method == router_contract::METHOD_ENQUEUE_TURN {
+        // A turn may legitimately outlive the ordinary router request budget.
+        // Keep the socket attached to that one execution unless an operator
+        // explicitly configures a deadline.
+        router_execution_timeout_override()
     } else {
-        router_execution_timeout()
+        Some(router_execution_timeout_override().unwrap_or(DEFAULT_ROUTER_EXECUTION_TIMEOUT))
     }
 }
 
-fn router_execution_timeout() -> Duration {
+fn router_execution_timeout_override() -> Option<Duration> {
     std::env::var("TURA_ROUTER_EXECUTION_TIMEOUT_SECS")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|seconds| *seconds > 0)
         .map(Duration::from_secs)
-        .unwrap_or(DEFAULT_ROUTER_EXECUTION_TIMEOUT)
+}
+
+fn router_call_is_replay_safe(method: &str) -> bool {
+    // Once enqueue_turn has been written, a transport error cannot tell us
+    // whether the router accepted it. Replaying the same runtime_id can race
+    // its now-terminal lease and must not happen implicitly.
+    method != router_contract::METHOD_ENQUEUE_TURN
 }
 
 fn router_addr_path() -> PathBuf {
@@ -1024,26 +1048,35 @@ mod tests {
     }
 
     #[test]
-    fn router_execution_timeout_defaults_to_long_prompt_budget_and_allows_override() {
+    fn router_enqueue_has_no_default_deadline_and_allows_explicit_override() {
         let _guard = crate::test_support::env_lock();
         {
             let _env = EnvGuard::set("TURA_ROUTER_EXECUTION_TIMEOUT_SECS", None);
+            assert_eq!(read_timeout_for("execution.enqueue_turn"), None);
             assert_eq!(
-                read_timeout_for("execution.enqueue_turn"),
-                Duration::from_secs(35 * 60)
+                read_timeout_for("health_check"),
+                Some(ROUTER_HEALTH_TIMEOUT)
             );
-            assert_eq!(read_timeout_for("health_check"), ROUTER_HEALTH_TIMEOUT);
             assert_eq!(
                 read_timeout_for("execution.shutdown"),
-                Duration::from_secs(10)
+                Some(Duration::from_secs(10))
             );
         }
 
         let _env = EnvGuard::set("TURA_ROUTER_EXECUTION_TIMEOUT_SECS", Some("42"));
         assert_eq!(
             read_timeout_for("execution.enqueue_turn"),
-            Duration::from_secs(42)
+            Some(Duration::from_secs(42))
         );
+    }
+
+    #[test]
+    fn router_enqueue_transport_failure_is_not_replayed() {
+        assert!(!router_call_is_replay_safe(
+            router_contract::METHOD_ENQUEUE_TURN
+        ));
+        assert!(router_call_is_replay_safe("health_check"));
+        assert!(router_call_is_replay_safe("registry.tools.list"));
     }
 
     #[test]
@@ -1398,7 +1431,7 @@ mod tests {
         let response = call_router_addr(
             &success_addr,
             &IpcRequest::health_check("health-test", 2_000),
-            Duration::from_secs(2),
+            Some(Duration::from_secs(2)),
         )?;
         assert_eq!(response["ok"], true);
         assert_eq!(response["payload"]["healthy"], true);
@@ -1427,13 +1460,64 @@ mod tests {
         let response = call_router_addr(
             &error_addr,
             &IpcRequest::call("error-test", "execution.enqueue_turn", json!({})),
-            Duration::from_secs(2),
+            Some(Duration::from_secs(2)),
         )?;
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"], "worker unavailable");
         error_server
             .join()
             .map_err(|_| anyhow!("error router server panicked"))??;
+        Ok(())
+    }
+
+    #[test]
+    fn router_socket_deadline_reproduces_slow_enqueue_failure_but_no_deadline_waits(
+    ) -> anyhow::Result<()> {
+        fn delayed_response(
+            delay: Duration,
+        ) -> anyhow::Result<(String, thread::JoinHandle<anyhow::Result<()>>)> {
+            let listener = TcpListener::bind(("127.0.0.1", 0))?;
+            let addr = listener.local_addr()?.to_string();
+            let server = thread::spawn(move || -> anyhow::Result<()> {
+                let (mut stream, _) = listener.accept()?;
+                let mut request_line = String::new();
+                std::io::BufRead::read_line(
+                    &mut BufReader::new(stream.try_clone()?),
+                    &mut request_line,
+                )?;
+                let request: serde_json::Value = serde_json::from_str(request_line.trim())?;
+                assert_eq!(request["method"], "execution.enqueue_turn");
+                thread::sleep(delay);
+                let response =
+                    serde_json::to_string(&IpcResponse::ok("slow-turn", json!({"done": true})))?;
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+                let _ = std::io::Write::write_all(&mut stream, b"\n");
+                let _ = std::io::Write::flush(&mut stream);
+                Ok(())
+            });
+            Ok((addr, server))
+        }
+
+        let request =
+            IpcRequest::call("slow-turn", router_contract::METHOD_ENQUEUE_TURN, json!({}));
+
+        let (timed_addr, timed_server) = delayed_response(Duration::from_millis(120))?;
+        let timed_result = call_router_addr(&timed_addr, &request, Some(Duration::from_millis(15)));
+        assert!(
+            timed_result.is_err(),
+            "the former fixed deadline should reproduce the premature read failure"
+        );
+        timed_server
+            .join()
+            .map_err(|_| anyhow!("timed router server panicked"))??;
+
+        let (waiting_addr, waiting_server) = delayed_response(Duration::from_millis(40))?;
+        let response = call_router_addr(&waiting_addr, &request, None)?;
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["payload"]["done"], true);
+        waiting_server
+            .join()
+            .map_err(|_| anyhow!("waiting router server panicked"))??;
         Ok(())
     }
 
