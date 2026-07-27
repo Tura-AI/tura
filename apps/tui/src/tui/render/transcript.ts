@@ -158,6 +158,19 @@ function liveMessageIDs(state: AppState, messages: Message[]): Set<string> {
       .filter((stream) => !sessionID || !stream.sessionID || stream.sessionID === sessionID)
       .map((stream) => stream.messageID),
   );
+  if (isBusyState(state)) {
+    let currentTurnStart: number | undefined;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role !== "user") continue;
+      currentTurnStart = index + 1;
+      break;
+    }
+    if (currentTurnStart !== undefined) {
+      for (const message of messages.slice(currentTurnStart)) {
+        if (message.role === "assistant") ids.add(message.id);
+      }
+    }
+  }
   for (const message of messages) {
     if (message.role === "assistant" && messageHasRunningPart(message)) ids.add(message.id);
   }

@@ -919,7 +919,78 @@ async function main() {
       );
     }
 
-    // Phase 8: Markdown headings must have identical marker-free bold
+    // Phase 8: a stable assistant snapshot can arrive before a command update
+    // makes that same message live. It must not first enter terminal-owned
+    // cache and then be appended a second time as a live message.
+    gatewayEvent("session.status", { sessionID, status: "busy" });
+    const commandAfterTextMessageID = "msg-command-after-stable-text";
+    const commandAfterTextPartID = "part-command-after-stable-text";
+    const commandAfterTextLines = Array.from(
+      { length: 36 },
+      (_item, index) => `COMMAND_AFTER_TEXT_LINE_${String(index + 1).padStart(2, "0")}`,
+    );
+    const commandAfterText = commandAfterTextLines.join("\n");
+    const commandAfterTextCreatedAt = Date.now();
+    const delayedCommand = {
+      id: commandAfterTextMessageID,
+      cmd: "COMMAND_AFTER_STABLE_TEXT",
+      at: commandAfterTextCreatedAt,
+    };
+    upsertMessage({
+      id: commandAfterTextMessageID,
+      sessionID,
+      role: "assistant",
+      parts: [{ id: commandAfterTextPartID, type: "text", text: commandAfterText }],
+      created_at: commandAfterTextCreatedAt,
+      updated_at: Date.now(),
+    });
+    await page.waitForFunction(
+      (marker) => document.body.innerText.includes(marker),
+      commandAfterTextLines.at(-1),
+      { timeout: 5_000 },
+    );
+    upsertMessage({
+      id: commandAfterTextMessageID,
+      sessionID,
+      role: "assistant",
+      parts: [
+        { id: commandAfterTextPartID, type: "text", text: commandAfterText },
+        commandPart(delayedCommand, "running"),
+      ],
+      created_at: commandAfterTextCreatedAt,
+      updated_at: Date.now(),
+    });
+    await page.waitForFunction(
+      (marker) => document.body.innerText.includes(marker),
+      delayedCommand.cmd,
+      { timeout: 5_000 },
+    );
+    upsertMessage({
+      id: commandAfterTextMessageID,
+      sessionID,
+      role: "assistant",
+      parts: [
+        { id: commandAfterTextPartID, type: "text", text: commandAfterText },
+        commandPart(delayedCommand, "completed"),
+      ],
+      created_at: commandAfterTextCreatedAt,
+      updated_at: Date.now(),
+    });
+    session = { ...session, status: "idle", updated_at: Date.now() };
+    gatewayEvent("session.status", { sessionID, status: "idle" });
+    await waitForComposer(page);
+    await delay(250);
+    captures.push(await capture(page, "15-command-after-stable-text"));
+    const commandAfterTextBuffer = await terminalBufferText(page);
+    for (const line of commandAfterTextLines) {
+      assert.equal(
+        markerCount(commandAfterTextBuffer, line),
+        1,
+        `${line} must not be duplicated when a later command makes its message live`,
+      );
+    }
+
+    // Phase 9: Markdown headings must have identical marker-free bold
     // presentation while live and after the durable message replaces the feed.
     gatewayEvent("session.status", { sessionID, status: "busy" });
     const headingMessageID = "msg-heading-handoff";
@@ -957,7 +1028,7 @@ async function main() {
     session = { ...session, status: "idle", updated_at: Date.now() };
     gatewayEvent("session.status", { sessionID, status: "idle" });
     await waitForComposer(page);
-    captures.push(await capture(page, "15-heading-handoff-final"));
+    captures.push(await capture(page, "16-heading-handoff-final"));
     const headingBuffer = await terminalBufferText(page);
     assert.equal(await terminalMarkerIsBold(page, "TUI_PRIMARY_HEADING"), true);
     assert.equal(await terminalMarkerIsBold(page, "TUI_SECONDARY_HEADING"), true);
