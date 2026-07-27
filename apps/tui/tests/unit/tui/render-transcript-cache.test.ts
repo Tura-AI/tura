@@ -262,7 +262,7 @@ test("completed user and assistant turn moves from live into transcript cache", 
   assert.doesNotMatch(liveRows, /CACHE_USER_TEXT|CACHE_AGENT_TEXT/);
 });
 
-test("render cache absorbs stable messages that precede the active live message", () => {
+test("render cache keeps newly stable messages in the active live tail", () => {
   const session = {
     id: "sess-growing-live-cache",
     title: "Growing Live Cache",
@@ -282,11 +282,11 @@ test("render cache absorbs stable messages that precede the active live message"
   const handoff = renderChatFrameParts(state, richCapabilities(), { cache: first.cache });
   const steady = renderChatFrameParts(state, richCapabilities(), { cache: handoff.cache });
 
-  assert.equal(handoff.tailCacheMessageCount, 1);
-  assert.equal(handoff.cache.cacheMessageCount, 1);
+  assert.equal(handoff.tailCacheMessageCount, 0);
+  assert.equal(handoff.cache.cacheMessageCount, 0);
   assert.equal(steady.tailCacheMessageCount, 0);
-  assert.match(stripAnsi(steady.cacheFrame), /FIRST_LIVE_MESSAGE/);
-  assert.doesNotMatch(stripAnsi(steady.liveFrame), /FIRST_LIVE_MESSAGE/);
+  assert.doesNotMatch(stripAnsi(steady.cacheFrame), /FIRST_LIVE_MESSAGE/);
+  assert.match(stripAnsi(steady.liveFrame), /FIRST_LIVE_MESSAGE/);
   assert.match(stripAnsi(steady.liveFrame), /SECOND_LIVE_MESSAGE/);
 
   function liveDelta(messageID: string, delta: string, updatedAt: number) {
@@ -309,6 +309,82 @@ test("render cache absorbs stable messages that precede the active live message"
       },
     };
   }
+});
+
+test("completed commands stay in the mutable tail until a long final response finalizes", () => {
+  const session = {
+    id: "sess-command-final-tail",
+    title: "Command Final Tail",
+    status: "busy" as const,
+  };
+  const commandMessage = (status: "running" | "completed") => ({
+    id: "msg-command-final-tail",
+    sessionID: session.id,
+    role: "assistant" as const,
+    created_at: 1_000,
+    parts: [
+      {
+        id: "part-command-final-tail",
+        type: "tool" as const,
+        tool: "command_run",
+        state: {
+          status,
+          input: {
+            commands: [
+              {
+                step: 1,
+                command_type: "shell_command",
+                command_line: "npm run recent-command",
+              },
+            ],
+          },
+        },
+      },
+    ],
+  });
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [commandMessage("running")],
+    permissions: [],
+    sessions: [session],
+  });
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          sessionID: session.id,
+          messageID: "msg-long-final-tail",
+          partID: "part-long-final-tail",
+          createdAt: 2_000,
+          updatedAt: 2_001,
+          field: "text",
+          delta: Array.from({ length: 36 }, (_, index) => `FINAL_TAIL_LINE_${index + 1}`).join(
+            "\n",
+          ),
+        },
+      },
+    },
+  });
+  const running = renderChatFrameParts(state, richCapabilities());
+  state = reducer(state, {
+    type: "hydrate",
+    session,
+    messages: [commandMessage("completed")],
+    permissions: [],
+    sessions: [session],
+  });
+  const completed = renderChatFrameParts(state, richCapabilities(), { cache: running.cache });
+  const cache = stripAnsi(completed.cacheFrame);
+  const live = stripAnsi(completed.liveFrame);
+
+  assert.equal(completed.tailCacheMessageCount, 0);
+  assert.equal(completed.cache.cacheMessageCount, 0);
+  assert.doesNotMatch(cache, /recent-command|FINAL_TAIL_LINE/u);
+  assert.match(live, /recent-command[\s\S]*FINAL_TAIL_LINE_1[\s\S]*FINAL_TAIL_LINE_36/u);
 });
 
 test("live assistant text keeps event order before a later user message", () => {

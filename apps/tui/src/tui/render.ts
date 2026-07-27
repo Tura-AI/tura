@@ -187,16 +187,26 @@ export function renderChatFrameParts(
   );
   const baseCache = reusableCache ?? renderChatCache(state, capabilities, renderCols, groups.cache);
   const tailCacheMessages = groups.cache.slice(baseCache.cacheMessageCount);
-  const tailCacheRows = transcriptRenderLinesForMessages(state, renderCols, tailCacheMessages, {
-    commandMode: "cache",
-  });
+  // Do not move the cache/live boundary while terminal scrollback owns a live
+  // prefix. Stable command snapshots join the mutable tail until it finalizes.
+  const mutableTailCacheMessages = groups.live.length ? tailCacheMessages : [];
+  const appendedTailCacheMessages = groups.live.length ? [] : tailCacheMessages;
+  const tailCacheRows = transcriptRenderLinesForMessages(
+    state,
+    renderCols,
+    appendedTailCacheMessages,
+    {
+      commandMode: "cache",
+    },
+  );
   const renderedCache = appendRenderedChatCache(
     baseCache,
     tailCacheRows,
-    tailCacheMessages.length,
+    appendedTailCacheMessages.length,
     renderCols,
   );
-  const activeLiveRows = transcriptRenderLinesForMessages(state, renderCols, groups.live, {
+  const activeLiveMessages = [...mutableTailCacheMessages, ...groups.live];
+  const activeLiveRows = transcriptRenderLinesForMessages(state, renderCols, activeLiveMessages, {
     commandMode: "live",
   });
   const liveRows = liveLinesWithCacheBoundary(renderedCache.cacheRows, activeLiveRows);
@@ -229,8 +239,8 @@ export function renderChatFrameParts(
     cacheLines,
     liveFrame: live.frame,
     liveRows,
-    tailCacheMessageCount: tailCacheMessages.length,
-    activeLiveMessageCount: groups.live.length,
+    tailCacheMessageCount: appendedTailCacheMessages.length,
+    activeLiveMessageCount: activeLiveMessages.length,
     liveStreamKey: activeLiveStreamKey(state),
     chromeFrame: chrome.frame,
     chromeCursor: chrome.cursor,
