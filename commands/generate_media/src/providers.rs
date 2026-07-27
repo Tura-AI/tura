@@ -576,10 +576,10 @@ fn parse_codex_responses_response(
 fn collect_codex_image_results(value: &Value, results: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
-            if map.get("type").and_then(Value::as_str) == Some("image_generation_call") {
-                if let Some(result) = map.get("result").and_then(Value::as_str) {
-                    results.push(result.to_string());
-                }
+            if map.get("type").and_then(Value::as_str) == Some("image_generation_call")
+                && let Some(result) = map.get("result").and_then(Value::as_str)
+            {
+                results.push(result.to_string());
             }
             for nested in map.values() {
                 collect_codex_image_results(nested, results);

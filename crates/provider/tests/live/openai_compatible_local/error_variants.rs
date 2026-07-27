@@ -32,7 +32,14 @@ async fn openai_compatible_business_flow_rejects_empty_success_shapes_without_si
         });
 
         let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+        };
         let config = ProviderConfig {
             provider: "localtest".to_string(),
             base_url: format!("http://{addr}"),
@@ -49,8 +56,26 @@ async fn openai_compatible_business_flow_rejects_empty_success_shapes_without_si
             .expect_err("empty provider success shapes should be rejected");
 
         match previous_key {
-            Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-            None => std::env::remove_var("LOCALTEST_API_KEY"),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("LOCALTEST_API_KEY", value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var("LOCALTEST_API_KEY")
+                }
+            }
         }
 
         let captured = server.join().expect("server thread joins");
@@ -109,7 +134,14 @@ async fn openai_compatible_business_flow_reports_provider_http_status_and_body()
     });
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let config = ProviderConfig {
         provider: "localtest".to_string(),
         base_url: format!("http://{addr}"),
@@ -126,8 +158,26 @@ async fn openai_compatible_business_flow_reports_provider_http_status_and_body()
         .expect_err("provider HTTP error should fail the call");
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let captured = server.join().expect("server thread joins");
@@ -167,7 +217,14 @@ async fn openai_compatible_business_flow_reports_invalid_json_response() {
     });
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let config = ProviderConfig {
         provider: "localtest".to_string(),
         base_url: format!("http://{addr}"),
@@ -184,8 +241,26 @@ async fn openai_compatible_business_flow_reports_invalid_json_response() {
         .expect_err("invalid provider JSON should fail the call");
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let captured = server.join().expect("server thread joins");
@@ -223,7 +298,14 @@ async fn openai_compatible_business_flow_reports_invalid_stream_event_json() {
     });
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let config = ProviderConfig {
         provider: "localtest".to_string(),
         base_url: format!("http://{addr}"),
@@ -244,8 +326,26 @@ async fn openai_compatible_business_flow_reports_invalid_stream_event_json() {
         .expect_err("invalid stream JSON should fail the call");
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let captured = server.join().expect("server thread joins");
@@ -285,7 +385,14 @@ async fn openai_compatible_business_flow_reports_truncated_stream_transport_erro
     });
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let config = ProviderConfig {
         provider: "localtest".to_string(),
         base_url: format!("http://{addr}"),
@@ -313,8 +420,26 @@ async fn openai_compatible_business_flow_reports_truncated_stream_transport_erro
         .expect_err("truncated provider stream must fail the call");
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let captured = server.join().expect("server thread joins");
@@ -370,7 +495,14 @@ async fn openai_compatible_business_flow_rejects_empty_stream_success_without_si
     });
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let config = ProviderConfig {
         provider: "localtest".to_string(),
         base_url: format!("http://{addr}"),
@@ -392,8 +524,26 @@ async fn openai_compatible_business_flow_rejects_empty_stream_success_without_si
         .expect_err("empty stream success must not become a null assistant turn");
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let captured = server.join().expect("server thread joins");
@@ -445,7 +595,14 @@ async fn openai_compatible_business_flow_preserves_reasoning_only_stream_as_cont
     });
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let config = ProviderConfig {
         provider: "localtest".to_string(),
         base_url: format!("http://{addr}"),
@@ -473,8 +630,26 @@ async fn openai_compatible_business_flow_preserves_reasoning_only_stream_as_cont
         .await;
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let response = result.expect("reasoning-only stream should produce content");

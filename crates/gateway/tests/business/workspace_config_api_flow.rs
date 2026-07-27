@@ -235,7 +235,8 @@ impl EnvGuard {
         let mut previous = Vec::new();
         for (key, value) in entries {
             previous.push((key, env::var_os(key)));
-            env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            unsafe { env::set_var(key, value) };
         }
         Self { entries: previous }
     }
@@ -245,9 +246,11 @@ impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (key, value) in self.entries.drain(..).rev() {
             if let Some(value) = value {
-                env::set_var(key, value);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                unsafe { env::set_var(key, value) };
             } else {
-                env::remove_var(key);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                unsafe { env::remove_var(key) };
             }
         }
     }

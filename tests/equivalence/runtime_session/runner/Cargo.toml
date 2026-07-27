@@ -1,10 +1,10 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 
 [package]
 name = "runtime-session-equivalence"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]

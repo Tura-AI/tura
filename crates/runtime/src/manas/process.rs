@@ -326,21 +326,21 @@ pub(crate) fn process_manas_internal(
             let visible_reply_before_tool = visible_runtime_reply(&runtime);
             let visible_reply_published_before_terminal_status =
                 visible_reply_before_tool.is_some();
-            if let Some(content) = visible_reply_before_tool.as_deref() {
-                if let Err(error) = publish_agent_message_from_runtime(
+            if let Some(content) = visible_reply_before_tool.as_deref()
+                && let Err(error) = publish_agent_message_from_runtime(
                     &session.session_id,
                     &runtime,
                     content.to_string(),
                     String::new(),
                     feed_publisher.as_ref(),
-                ) {
-                    warn!(
-                        session_id = %session.session_id,
-                        runtime_id = %runtime.runtime_id,
-                        error = %error,
-                        "failed to publish assistant text before tool execution"
-                    );
-                }
+                )
+            {
+                warn!(
+                    session_id = %session.session_id,
+                    runtime_id = %runtime.runtime_id,
+                    error = %error,
+                    "failed to publish assistant text before tool execution"
+                );
             }
             provider_timeout_retries = 0;
             no_tool_retries = 0;
@@ -549,21 +549,21 @@ pub(crate) fn process_manas_internal(
                 persist_session_checkpoint(&mut session_delta_writer, session, "task_focus")?;
             }
         } else {
-            if let Some(content) = visible_runtime_reply(&runtime) {
-                if let Err(error) = publish_agent_message_from_runtime(
+            if let Some(content) = visible_runtime_reply(&runtime)
+                && let Err(error) = publish_agent_message_from_runtime(
                     &session.session_id,
                     &runtime,
                     content,
                     String::new(),
                     feed_publisher.as_ref(),
-                ) {
-                    warn!(
-                        session_id = %session.session_id,
-                        runtime_id = %runtime.runtime_id,
-                        error = %error,
-                        "failed to publish final assistant message"
-                    );
-                }
+                )
+            {
+                warn!(
+                    session_id = %session.session_id,
+                    runtime_id = %runtime.runtime_id,
+                    error = %error,
+                    "failed to publish final assistant message"
+                );
             }
             seal_runtime_feed(&mut runtime_event_writer, &runtime.runtime_id)?;
             if let Some(summary) = auto_compact_summary_after_new_context(session, &runtime, &[]) {
@@ -964,21 +964,21 @@ fn run_terminal_final_response_turn(
     accumulate_session_from_runtime(session, &runtime, true)?;
     session.increment_turn(Utc::now());
     persist_session_checkpoint(session_delta_writer, session, "terminal_final_response")?;
-    if let Some(content) = visible_text {
-        if let Err(error) = publish_agent_message_from_runtime(
+    if let Some(content) = visible_text
+        && let Err(error) = publish_agent_message_from_runtime(
             &session.session_id,
             &runtime,
             content,
             String::new(),
             feed_publisher.as_ref(),
-        ) {
-            warn!(
-                session_id = %session.session_id,
-                runtime_id = %runtime.runtime_id,
-                error = %error,
-                "failed to publish terminal final response assistant message"
-            );
-        }
+        )
+    {
+        warn!(
+            session_id = %session.session_id,
+            runtime_id = %runtime.runtime_id,
+            error = %error,
+            "failed to publish terminal final response assistant message"
+        );
     }
     publish_runtime_usage_record(session, &runtime, feed_publisher.as_ref());
     if let Some(writer) = runtime_event_writer {
@@ -1130,19 +1130,54 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let previous = std::env::var_os("TURA_MANAS_MAX_TURNS");
 
-        std::env::set_var("TURA_MANAS_MAX_TURNS", "3");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_MANAS_MAX_TURNS", "3")
+        };
         assert_eq!(manas_max_turns(), 3);
 
-        std::env::set_var("TURA_MANAS_MAX_TURNS", "0");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_MANAS_MAX_TURNS", "0")
+        };
         assert_eq!(manas_max_turns(), DEFAULT_MANAS_MAX_TURNS);
 
-        std::env::set_var("TURA_MANAS_MAX_TURNS", "not-a-number");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_MANAS_MAX_TURNS", "not-a-number")
+        };
         assert_eq!(manas_max_turns(), DEFAULT_MANAS_MAX_TURNS);
 
         if let Some(previous) = previous {
-            std::env::set_var("TURA_MANAS_MAX_TURNS", previous);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_MANAS_MAX_TURNS", previous)
+            };
         } else {
-            std::env::remove_var("TURA_MANAS_MAX_TURNS");
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("TURA_MANAS_MAX_TURNS")
+            };
         }
     }
 
@@ -1594,7 +1629,14 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var_os(key);
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
             Self { key, previous }
         }
     }
@@ -1602,9 +1644,23 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             if let Some(previous) = self.previous.take() {
-                std::env::set_var(self.key, previous);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(self.key, previous)
+                };
             } else {
-                std::env::remove_var(self.key);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var(self.key)
+                };
             }
         }
     }

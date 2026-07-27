@@ -74,10 +74,10 @@ fn main() {
 
 fn restore_main_window_from_args(app: &tauri::AppHandle, args: Vec<String>) {
     if let Some(window) = app.get_webview_window("main") {
-        if let Ok(base_url) = window.url() {
-            if let Some(url) = gui_startup_url_from_args(base_url, args) {
-                let _ = window.navigate(url);
-            }
+        if let Ok(base_url) = window.url()
+            && let Some(url) = gui_startup_url_from_args(base_url, args)
+        {
+            let _ = window.navigate(url);
         }
         let _ = window.show();
         let _ = window.unminimize();
@@ -129,11 +129,12 @@ fn queue_main_window_restore(args: Vec<String>) -> bool {
     if GuiStartupParams::parse(args.clone()).is_none() {
         return false;
     }
-    if let Ok(mut pending) = pending_main_window_args().lock() {
-        *pending = Some(args);
-        true
-    } else {
-        false
+    match pending_main_window_args().lock() {
+        Ok(mut pending) => {
+            *pending = Some(args);
+            true
+        }
+        _ => false,
     }
 }
 
@@ -198,10 +199,17 @@ fn remember_active_gateway_url_if_unset() {
 
 fn remember_gateway_url(gateway_url: &str) {
     if let Some(url) = non_empty_gateway_url(gateway_url) {
-        std::env::set_var(
-            tura_path::TURA_GATEWAY_URL_ENV,
-            GatewayEndpoint::parse(&url).url(),
-        );
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(
+                tura_path::TURA_GATEWAY_URL_ENV,
+                GatewayEndpoint::parse(&url).url(),
+            )
+        };
     }
 }
 
@@ -376,9 +384,7 @@ fn usable_gateway_identity(
     my_root: &Path,
     instance_home: &Path,
 ) -> Option<GatewayIdentity> {
-    let Some(identity) = gateway_identity(endpoint) else {
-        return None;
-    };
+    let identity = gateway_identity(endpoint)?;
     (explicit || gateway_identity_matches_instance(&identity, my_root, instance_home))
         .then_some(identity)
 }
@@ -754,10 +760,10 @@ fn resolve_gateway_binary(my_root: &Path) -> Result<PathBuf, String> {
     {
         candidates.push(PathBuf::from(value));
     }
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(dir) = current_exe.parent() {
-            candidates.push(dir.join(exe_name));
-        }
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(dir) = current_exe.parent()
+    {
+        candidates.push(dir.join(exe_name));
     }
     candidates.push(my_root.join("target").join("release").join(exe_name));
     candidates.push(my_root.join("bin").join(exe_name));
@@ -783,11 +789,11 @@ fn select_gateway_endpoint(
     }
     let candidates = gateway_endpoint_candidates(requested_url, instance_home, &default_endpoint);
     for candidate in candidates {
-        if let Some(identity) = gateway_identity(&candidate) {
-            if gateway_identity_matches_instance(&identity, my_root, instance_home) {
-                write_active_gateway_url(instance_home, &candidate)?;
-                return Ok(candidate);
-            }
+        if let Some(identity) = gateway_identity(&candidate)
+            && gateway_identity_matches_instance(&identity, my_root, instance_home)
+        {
+            write_active_gateway_url(instance_home, &candidate)?;
+            return Ok(candidate);
         }
     }
     if let Some(candidate) = same_home_gateway_process_endpoint(instance_home)
@@ -1941,7 +1947,14 @@ mod tests {
                 .map(|(key, _)| (*key, std::env::var_os(key)))
                 .collect::<Vec<_>>();
             for (key, value) in values {
-                std::env::set_var(key, value);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(key, value)
+                };
             }
             Self { previous }
         }
@@ -1951,9 +1964,23 @@ mod tests {
         fn drop(&mut self) {
             for (key, value) in self.previous.drain(..).rev() {
                 if let Some(value) = value {
-                    std::env::set_var(key, value);
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    };
                 } else {
-                    std::env::remove_var(key);
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    };
                 }
             }
         }

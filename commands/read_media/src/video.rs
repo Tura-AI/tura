@@ -221,10 +221,11 @@ print(json.dumps(frames))
 
 pub(super) fn resolve_ffmpeg() -> Option<String> {
     for env_name in ["TURA_READ_MEDIA_FFMPEG", "FFMPEG_PATH"] {
-        if let Ok(path) = std::env::var(env_name) {
-            if !path.trim().is_empty() && Path::new(&path).exists() {
-                return Some(path);
-            }
+        if let Ok(path) = std::env::var(env_name)
+            && !path.trim().is_empty()
+            && Path::new(&path).exists()
+        {
+            return Some(path);
         }
     }
     resolve_imageio_ffmpeg()
@@ -276,9 +277,23 @@ mod tests {
 
     fn restore_env(key: &str, value: Option<OsString>) {
         if let Some(value) = value {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 
@@ -322,19 +337,47 @@ mod tests {
         let previous_python = std::env::var_os("TURA_READ_MEDIA_PYTHON");
         let previous_command_python = std::env::var_os("TURA_COMMAND_PYTHON");
 
-        std::env::remove_var("FFMPEG_PATH");
-        std::env::set_var(
-            "TURA_READ_MEDIA_PYTHON",
-            "definitely-missing-python-for-read-media",
-        );
-        std::env::set_var(
-            "TURA_COMMAND_PYTHON",
-            "definitely-missing-python-for-read-media",
-        );
-        std::env::set_var(
-            "TURA_READ_MEDIA_FFMPEG",
-            "definitely-missing-ffmpeg-for-read-media",
-        );
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("FFMPEG_PATH")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(
+                "TURA_READ_MEDIA_PYTHON",
+                "definitely-missing-python-for-read-media",
+            )
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(
+                "TURA_COMMAND_PYTHON",
+                "definitely-missing-python-for-read-media",
+            )
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(
+                "TURA_READ_MEDIA_FFMPEG",
+                "definitely-missing-ffmpeg-for-read-media",
+            )
+        };
         let missing = resolve_ffmpeg();
         if let Some(path) = missing.as_deref() {
             assert!(
@@ -344,7 +387,14 @@ mod tests {
         }
 
         let (_dir, fake) = fake_ffmpeg_script(true);
-        std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake)
+        };
         assert_eq!(
             resolve_ffmpeg().as_deref(),
             Some(fake.to_string_lossy().as_ref())
@@ -363,8 +413,22 @@ mod tests {
         let previous_ffmpeg_path = std::env::var_os("FFMPEG_PATH");
         let (_dir, fake) = fake_ffmpeg_script(false);
         let media = tempfile::NamedTempFile::new().expect("media file");
-        std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake);
-        std::env::remove_var("FFMPEG_PATH");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake)
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("FFMPEG_PATH")
+        };
 
         let error = process_audio(media.path(), &args(123_456)).expect_err("ffmpeg should fail");
 

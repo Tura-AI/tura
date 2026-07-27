@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import queue
+import re
 import socket
 import subprocess
 import threading
@@ -354,6 +355,23 @@ async def tui_buffer(page) -> str:
     )
 
 
+async def tui_viewport(page) -> str:
+    return await page.evaluate(
+        """() => {
+          const terminal = window.__turaTerminal;
+          const buffer = terminal?.buffer.active;
+          if (!terminal || !buffer) return '';
+          const lines = [];
+          const start = buffer.viewportY;
+          const end = Math.min(buffer.length, start + terminal.rows);
+          for (let index = start; index < end; index += 1) {
+            lines.push(buffer.getLine(index)?.translateToString(true) ?? '');
+          }
+          return lines.join('\\n');
+        }"""
+    )
+
+
 async def run_flow(gateway: SharedGateway):
     node = "node.exe" if os.name == "nt" else "node"
     gui_process = None
@@ -421,6 +439,21 @@ async def run_flow(gateway: SharedGateway):
             )
             await expect(gui_page.locator(".assistant-thinking-text")).to_be_visible(timeout=20_000)
             await tui_page.wait_for_function("() => Boolean(window.__turaTerminal)", timeout=20_000)
+            await tui_page.wait_for_function(
+                r"""() => {
+                  const terminal = window.__turaTerminal;
+                  const buffer = terminal?.buffer.active;
+                  if (!terminal || !buffer) return false;
+                  const lines = [];
+                  const start = buffer.viewportY;
+                  const end = Math.min(buffer.length, start + terminal.rows);
+                  for (let index = start; index < end; index += 1) {
+                    lines.push(buffer.getLine(index)?.translateToString(true) ?? '');
+                  }
+                  return /thinking\s+\d+s?/iu.test(lines.join(' '));
+                }""",
+                timeout=20_000,
+            )
 
             global_path = "/event"
             session_path = f"/session/{SESSION_ID}/events"
@@ -509,6 +542,21 @@ async def run_flow(gateway: SharedGateway):
                 timeout=15_000,
             )
             await expect(gui_page.locator(".assistant-thinking-text")).to_have_count(0)
+            await tui_page.wait_for_function(
+                r"""() => {
+                  const terminal = window.__turaTerminal;
+                  const buffer = terminal?.buffer.active;
+                  if (!terminal || !buffer) return false;
+                  const lines = [];
+                  const start = buffer.viewportY;
+                  const end = Math.min(buffer.length, start + terminal.rows);
+                  for (let index = start; index < end; index += 1) {
+                    lines.push(buffer.getLine(index)?.translateToString(true) ?? '');
+                  }
+                  return !/thinking\s+\d+s?/iu.test(lines.join(' '));
+                }""",
+                timeout=15_000,
+            )
             OUT.mkdir(parents=True, exist_ok=True)
             await gui_page.screenshot(path=str(OUT / "gui-final.png"), full_page=True)
             await tui_page.screenshot(path=str(OUT / "tui-final.png"), full_page=True)
@@ -521,6 +569,9 @@ async def run_flow(gateway: SharedGateway):
                         "sessionConnections": gateway.connection_count(session_path),
                         "gui": final_gui,
                         "tuiHasFinal": FINAL_TEXT in final_tui,
+                        "tuiHasThinking": bool(
+                            re.search(r"thinking\s+\d+s?", await tui_viewport(tui_page), re.I)
+                        ),
                         "browserErrors": browser_errors,
                     },
                     indent=2,

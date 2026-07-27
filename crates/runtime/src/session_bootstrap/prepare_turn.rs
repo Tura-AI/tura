@@ -15,15 +15,15 @@ pub(crate) fn bootstrap_orchestration_session(
         crate::workspace_git::ensure_workspace_git_repo(directory)?;
     }
     if let Some(session_id) = gateway_session_id {
-        if let Some(directory) = session_directory.as_ref() {
-            if let Some(mut persisted) = load_persisted_gateway_session(directory, &session_id)? {
-                persisted.prepare_for_new_user_turn(input, now);
-                if let Some(directory) = session_directory {
-                    persisted.session_directory = directory;
-                }
-                persisted.rebind_session_id(session_id);
-                return Ok(persisted);
+        if let Some(directory) = session_directory.as_ref()
+            && let Some(mut persisted) = load_persisted_gateway_session(directory, &session_id)?
+        {
+            persisted.prepare_for_new_user_turn(input, now);
+            if let Some(directory) = session_directory {
+                persisted.session_directory = directory;
             }
+            persisted.rebind_session_id(session_id);
+            return Ok(persisted);
         }
 
         let mut session = create_session_with_topic(input, session_directory)?;

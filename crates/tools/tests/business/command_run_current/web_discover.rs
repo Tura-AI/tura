@@ -38,7 +38,14 @@ fn pass_web_discover_image_download_writes_image() {
         }
     });
 
-    std::env::set_var("TURA_IMAGE_SEARCH_ENDPOINT", endpoint);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_IMAGE_SEARCH_ENDPOINT", endpoint)
+    };
     let output = command_run::execute(
         &json!({
             "commands": [
@@ -51,7 +58,14 @@ fn pass_web_discover_image_download_writes_image() {
         }),
         &root,
     );
-    std::env::remove_var("TURA_IMAGE_SEARCH_ENDPOINT");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_IMAGE_SEARCH_ENDPOINT")
+    };
     server.join().expect("server joins");
 
     assert_eq!(output["results"][0]["command_type"], "web_discover");
@@ -124,8 +138,22 @@ fn pass_web_discover_image_uses_brave_endpoint_when_key_is_set() {
         }
     });
 
-    std::env::set_var("TURA_BRAVE_SEARCH_API_KEY", "test-key");
-    std::env::set_var("TURA_BRAVE_IMAGE_SEARCH_ENDPOINT", endpoint);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_BRAVE_SEARCH_API_KEY", "test-key")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_BRAVE_IMAGE_SEARCH_ENDPOINT", endpoint)
+    };
     let output = command_run::execute(
         &json!({
             "commands": [
@@ -138,8 +166,22 @@ fn pass_web_discover_image_uses_brave_endpoint_when_key_is_set() {
         }),
         &root,
     );
-    std::env::remove_var("TURA_BRAVE_SEARCH_API_KEY");
-    std::env::remove_var("TURA_BRAVE_IMAGE_SEARCH_ENDPOINT");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_BRAVE_SEARCH_API_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_BRAVE_IMAGE_SEARCH_ENDPOINT")
+    };
     server.join().expect("server joins");
 
     assert_eq!(output["results"][0]["command_type"], "web_discover");
@@ -215,10 +257,38 @@ fn pass_web_discover_image_reads_brave_key_from_tura_config() {
         }
     });
 
-    std::env::remove_var("TURA_BRAVE_SEARCH_API_KEY");
-    std::env::remove_var("BRAVE_API_KEY");
-    std::env::remove_var("TURA_BRAVE_IMAGE_SEARCH_ENDPOINT");
-    std::env::set_var("TURA_ENV_PATH", &env_path);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_BRAVE_SEARCH_API_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("BRAVE_API_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_BRAVE_IMAGE_SEARCH_ENDPOINT")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ENV_PATH", &env_path)
+    };
     let output = command_run::execute(
         &json!({
             "commands": [
@@ -231,7 +301,14 @@ fn pass_web_discover_image_reads_brave_key_from_tura_config() {
         }),
         &root,
     );
-    std::env::remove_var("TURA_ENV_PATH");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_ENV_PATH")
+    };
     server.join().expect("server joins");
 
     assert_eq!(output["results"][0]["command_type"], "web_discover");
@@ -290,13 +367,62 @@ fn pass_web_discover_image_uses_duckduckgo_fallback_without_brave() {
         }
     });
 
-    std::env::remove_var("TURA_IMAGE_SEARCH_ENDPOINT");
-    std::env::remove_var("TURA_BRAVE_SEARCH_API_KEY");
-    std::env::remove_var("BRAVE_API_KEY");
-    std::env::set_var("TURA_BRAVE_SEARCH_DISABLED", "1");
-    std::env::set_var("TURA_EXA_SEARCH_DISABLED", "1");
-    std::env::set_var("TURA_DUCKDUCKGO_IMAGE_PAGE_ENDPOINT", page_endpoint);
-    std::env::set_var("TURA_DUCKDUCKGO_IMAGE_SEARCH_ENDPOINT", search_endpoint);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_IMAGE_SEARCH_ENDPOINT")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_BRAVE_SEARCH_API_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("BRAVE_API_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_BRAVE_SEARCH_DISABLED", "1")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_EXA_SEARCH_DISABLED", "1")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_DUCKDUCKGO_IMAGE_PAGE_ENDPOINT", page_endpoint)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_DUCKDUCKGO_IMAGE_SEARCH_ENDPOINT", search_endpoint)
+    };
     let output = command_run::execute(
         &json!({
             "commands": [
@@ -309,10 +435,38 @@ fn pass_web_discover_image_uses_duckduckgo_fallback_without_brave() {
         }),
         &root,
     );
-    std::env::remove_var("TURA_BRAVE_SEARCH_DISABLED");
-    std::env::remove_var("TURA_EXA_SEARCH_DISABLED");
-    std::env::remove_var("TURA_DUCKDUCKGO_IMAGE_PAGE_ENDPOINT");
-    std::env::remove_var("TURA_DUCKDUCKGO_IMAGE_SEARCH_ENDPOINT");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_BRAVE_SEARCH_DISABLED")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_EXA_SEARCH_DISABLED")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_DUCKDUCKGO_IMAGE_PAGE_ENDPOINT")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_DUCKDUCKGO_IMAGE_SEARCH_ENDPOINT")
+    };
     server.join().expect("server joins");
 
     assert_eq!(output["results"][0]["command_type"], "web_discover");
@@ -364,13 +518,62 @@ fn pass_web_discover_image_min_size_filters_small_downloads() {
         }
     });
 
-    std::env::remove_var("TURA_IMAGE_SEARCH_ENDPOINT");
-    std::env::remove_var("TURA_BRAVE_SEARCH_API_KEY");
-    std::env::remove_var("BRAVE_API_KEY");
-    std::env::set_var("TURA_BRAVE_SEARCH_DISABLED", "1");
-    std::env::set_var("TURA_EXA_SEARCH_DISABLED", "1");
-    std::env::set_var("TURA_DUCKDUCKGO_IMAGE_PAGE_ENDPOINT", page_endpoint);
-    std::env::set_var("TURA_DUCKDUCKGO_IMAGE_SEARCH_ENDPOINT", search_endpoint);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_IMAGE_SEARCH_ENDPOINT")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_BRAVE_SEARCH_API_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("BRAVE_API_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_BRAVE_SEARCH_DISABLED", "1")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_EXA_SEARCH_DISABLED", "1")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_DUCKDUCKGO_IMAGE_PAGE_ENDPOINT", page_endpoint)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_DUCKDUCKGO_IMAGE_SEARCH_ENDPOINT", search_endpoint)
+    };
     let output = command_run::execute(
         &json!({
             "commands": [
@@ -383,10 +586,38 @@ fn pass_web_discover_image_min_size_filters_small_downloads() {
         }),
         &root,
     );
-    std::env::remove_var("TURA_BRAVE_SEARCH_DISABLED");
-    std::env::remove_var("TURA_EXA_SEARCH_DISABLED");
-    std::env::remove_var("TURA_DUCKDUCKGO_IMAGE_PAGE_ENDPOINT");
-    std::env::remove_var("TURA_DUCKDUCKGO_IMAGE_SEARCH_ENDPOINT");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_BRAVE_SEARCH_DISABLED")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_EXA_SEARCH_DISABLED")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_DUCKDUCKGO_IMAGE_PAGE_ENDPOINT")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_DUCKDUCKGO_IMAGE_SEARCH_ENDPOINT")
+    };
     server.join().expect("server joins");
 
     assert_eq!(output["results"][0]["command_type"], "web_discover");
@@ -438,7 +669,14 @@ fn pass_web_discover_website_download_writes_markdown() {
         }
     });
 
-    std::env::set_var("TURA_WEB_DISCOVER_ENDPOINT", endpoint);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_DISCOVER_ENDPOINT", endpoint)
+    };
     let output = command_run::execute(
         &json!({
             "commands": [
@@ -451,7 +689,14 @@ fn pass_web_discover_website_download_writes_markdown() {
         }),
         &root,
     );
-    std::env::remove_var("TURA_WEB_DISCOVER_ENDPOINT");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_WEB_DISCOVER_ENDPOINT")
+    };
     server.join().expect("server joins");
 
     assert_eq!(output["results"][0]["command_type"], "web_discover");
@@ -484,7 +729,14 @@ fn pass_web_discover_direct_website_returns_structured_record_and_markdown() {
         write_http_response(&mut stream, "text/html", &body);
     });
 
-    std::env::set_var("TURA_WEB_READER_DISABLED", "1");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_WEB_READER_DISABLED", "1")
+    };
     let output = command_run::execute(
         &json!({
             "commands": [
@@ -497,7 +749,14 @@ fn pass_web_discover_direct_website_returns_structured_record_and_markdown() {
         }),
         &root,
     );
-    std::env::remove_var("TURA_WEB_READER_DISABLED");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_WEB_READER_DISABLED")
+    };
     server.join().expect("server joins");
 
     assert_eq!(output["results"][0]["success"], true);

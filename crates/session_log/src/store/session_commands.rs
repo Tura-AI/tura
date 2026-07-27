@@ -171,8 +171,8 @@ impl SessionLogStore {
                     next_sequence += 1;
                     inserted_context = true;
                 }
-                if inserted_context {
-                    if let Some(projection) = entry.projection {
+                if inserted_context
+                    && let Some(projection) = entry.projection {
                         let (inserted, projection) =
                             upsert_delta_projection(&tx, &session_id, projection)?;
                         inserted_messages += inserted;
@@ -195,7 +195,6 @@ impl SessionLogStore {
                             event,
                         });
                     }
-                }
             }
             if !management_replay && retained_from_sequence < row.retained_from_sequence {
                 anyhow::bail!(
@@ -380,14 +379,13 @@ impl SessionLogStore {
         management.use_last_tool_call_response = request.use_last_tool_call_response;
         management.disable_permission_restrictions = request.disable_permission_restrictions;
         management.replace_lifecycle_projection(projection.clone());
-        if request.auto_session_name {
-            if let Some(name) = request
+        if request.auto_session_name
+            && let Some(name) = request
                 .initial_task_plan_patch
                 .as_ref()
                 .and_then(task_plan_patch_summary_for_auto_name)
-            {
-                management.session_name = name;
-            }
+        {
+            management.session_name = name;
         }
         let metadata = SessionMetadata {
             session_directory: request.session_directory.clone(),
@@ -838,14 +836,14 @@ impl SessionLogStore {
                 })?;
             let updated_at = row.updated_at.max(now_ms);
             apply_metadata_patch(&mut management, &mut metadata, &request.metadata);
-            if request.metadata.name.is_none() && management.auto_session_name {
-                if let Some(name) = request
+            if request.metadata.name.is_none()
+                && management.auto_session_name
+                && let Some(name) = request
                     .task_plan_patch
                     .as_ref()
                     .and_then(task_plan_patch_summary_for_auto_name)
-                {
-                    management.session_name = name;
-                }
+            {
+                management.session_name = name;
             }
             management.session_last_update_at =
                 chrono::DateTime::<chrono::Utc>::from_timestamp_millis(updated_at)
@@ -1514,15 +1512,14 @@ fn persist_command_message_projection(
             management.record_user_message_at(message_at);
         }
         if inserted > 0 {
-            if management.input.user_input.trim().is_empty() {
-                if let Some(text) = projection
+            if management.input.user_input.trim().is_empty()
+                && let Some(text) = projection
                     .record
                     .get("parts")
                     .and_then(Value::as_array)
                     .and_then(|parts| parts.iter().find_map(|part| part.get("text")?.as_str()))
-                {
-                    management.input.user_input = text.to_string();
-                }
+            {
+                management.input.user_input = text.to_string();
             }
             management
                 .session_log

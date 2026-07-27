@@ -1,5 +1,5 @@
 #![deny(clippy::unwrap_used)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 pub mod api;
 pub mod channel;
@@ -52,8 +52,26 @@ pub(crate) mod test_support {
         fn drop(&mut self) {
             for (key, value) in &self.keys {
                 match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    Some(value) => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::set_var(key, value)
+                        }
+                    }
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    None => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::remove_var(key)
+                        }
+                    }
                 }
             }
         }
@@ -73,9 +91,30 @@ pub(crate) mod test_support {
             let root = tempfile::tempdir().expect("session db root");
             let home = root.path().join("home");
             std::fs::create_dir_all(&home).expect("session db home");
-            std::env::set_var("TURA_HOME", &home);
-            std::env::set_var("SESSION_LOG_DB_ROOT", root.path());
-            std::env::remove_var("TURA_DB_ROOT");
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_HOME", &home)
+            };
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("SESSION_LOG_DB_ROOT", root.path())
+            };
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("TURA_DB_ROOT")
+            };
 
             let handle = std::thread::spawn(session_log::service::run_socket_service);
             let started = std::time::Instant::now();

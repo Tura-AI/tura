@@ -26,11 +26,11 @@ pub fn task_status_schema(require_startup_task_state: bool) -> String {
         return code_tools::commands::task_status::SCHEMA.to_string();
     };
     let ids = super::runtime_prompt_manual::valid_task_type_ids();
-    if !ids.is_empty() {
-        if let Some(items) = schema.pointer_mut("/properties/task_type/items") {
-            items["enum"] =
-                serde_json::Value::Array(ids.into_iter().map(serde_json::Value::String).collect());
-        }
+    if !ids.is_empty()
+        && let Some(items) = schema.pointer_mut("/properties/task_type/items")
+    {
+        items["enum"] =
+            serde_json::Value::Array(ids.into_iter().map(serde_json::Value::String).collect());
     }
     let catalog = super::runtime_prompt_manual::task_type_catalog_for_schema_description();
     if let Some(task_type) = schema.pointer_mut("/properties/task_type") {

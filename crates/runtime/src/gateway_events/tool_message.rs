@@ -20,10 +20,10 @@ pub(crate) fn summarize_single_tool_output(tool_name: &str, output: &serde_json:
     if let Some(markdown) = first_summary_markdown(output) {
         return markdown.lines().take(10).collect::<Vec<_>>().join("\n");
     }
-    if tool_name == "command_run" {
-        if let Some(summary) = summarize_command_run_output(output) {
-            return summary;
-        }
+    if tool_name == "command_run"
+        && let Some(summary) = summarize_command_run_output(output)
+    {
+        return summary;
     }
 
     if matches!(tool_name, "find" | "glob") {

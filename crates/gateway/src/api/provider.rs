@@ -406,7 +406,14 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
         .map(|value| value.trim().to_string())
         .unwrap_or_else(|| provider_env_key(provider_id));
     upsert_env_value(&env_path, &api_key, key)?;
-    std::env::set_var(&api_key, key);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var(&api_key, key)
+    };
 
     let requested_login = auth
         .metadata
@@ -419,7 +426,14 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
     if auth.auth_type == "api" || requested_login == "api" {
         let login_key = provider_login_key(provider_id);
         upsert_env_value(&env_path, &login_key, "api")?;
-        std::env::set_var(&login_key, "api");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(&login_key, "api")
+        };
 
         upsert_provider_auth_config(provider_id, "api", Some(&login_key), auth, None)?;
     }
@@ -428,7 +442,14 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
         let login = requested_login.as_str();
         let login_key = provider_login_key(provider_id);
         upsert_env_value(&env_path, &login_key, login)?;
-        std::env::set_var(&login_key, login);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(&login_key, login)
+        };
 
         if let Some(registry_entry) = tura_llm_rust::provider_auth_registry_entry(provider_id) {
             if let (Some(refresh_key), Some(refresh)) = (
@@ -438,12 +459,26 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
                     .filter(|value| !value.trim().is_empty()),
             ) {
                 upsert_env_value(&env_path, refresh_key, refresh)?;
-                std::env::set_var(refresh_key, refresh);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(refresh_key, refresh)
+                };
             }
             if let (Some(expires_key), Some(expires)) = (registry_entry.expires_env, auth.expires) {
                 let expires_value = expires.to_string();
                 upsert_env_value(&env_path, expires_key, &expires_value)?;
-                std::env::set_var(expires_key, expires_value);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(expires_key, expires_value)
+                };
             }
             if let (Some(account_key), Some(account_id)) = (
                 registry_entry.account_env,
@@ -452,7 +487,14 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
                     .filter(|value| !value.trim().is_empty()),
             ) {
                 upsert_env_value(&env_path, account_key, account_id)?;
-                std::env::set_var(account_key, account_id);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(account_key, account_id)
+                };
             }
         }
 
@@ -728,15 +770,27 @@ fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
         _ => true,
     };
 
-    if should_clear_shared_token {
-        if let Some(token_env) = status.token_env.as_deref() {
-            upsert_env_value(&env_path, token_env, "")?;
-            std::env::remove_var(token_env);
-        }
+    if should_clear_shared_token && let Some(token_env) = status.token_env.as_deref() {
+        upsert_env_value(&env_path, token_env, "")?;
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(token_env)
+        };
     }
     if let Some(login_env) = status.login_env.as_deref() {
         upsert_env_value(&env_path, login_env, "")?;
-        std::env::remove_var(login_env);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(login_env)
+        };
     }
     for key in [
         status.refresh_env.as_deref(),
@@ -748,7 +802,14 @@ fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
     .flatten()
     {
         upsert_env_value(&env_path, key, "")?;
-        std::env::remove_var(key);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(key)
+        };
     }
 
     update_provider_auth_config_status(provider_id, "revoked")

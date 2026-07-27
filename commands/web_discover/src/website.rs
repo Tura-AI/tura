@@ -173,10 +173,10 @@ pub(super) fn response_to_website_content(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    if let Some(length) = response.content_length() {
-        if length as usize > MAX_WEBSITE_RESPONSE_SIZE {
-            return Err("response too large (exceeds 5MB limit)".to_string());
-        }
+    if let Some(length) = response.content_length()
+        && length as usize > MAX_WEBSITE_RESPONSE_SIZE
+    {
+        return Err("response too large (exceeds 5MB limit)".to_string());
     }
     let bytes = response
         .bytes()

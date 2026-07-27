@@ -463,8 +463,22 @@ fn read_media_business_flow_extracts_audio_preview_with_local_ffmpeg_and_clamped
     let fake_ffmpeg = write_fake_ffmpeg(dir.path());
     let previous_ffmpeg = std::env::var_os("TURA_READ_MEDIA_FFMPEG");
     let previous_ffmpeg_path = std::env::var_os("FFMPEG_PATH");
-    std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg);
-    std::env::remove_var("FFMPEG_PATH");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("FFMPEG_PATH")
+    };
     std::fs::write(dir.path().join("voice.mp3"), b"local fake source audio").expect("write mp3");
 
     let response = execute(
@@ -511,8 +525,22 @@ fn read_media_business_protocol_audio_preview_uses_local_ffmpeg_across_process_b
     let fake_ffmpeg = write_fake_ffmpeg(dir.path());
     let previous_ffmpeg = std::env::var_os("TURA_READ_MEDIA_FFMPEG");
     let previous_ffmpeg_path = std::env::var_os("FFMPEG_PATH");
-    std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg);
-    std::env::remove_var("FFMPEG_PATH");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("FFMPEG_PATH")
+    };
     std::fs::write(
         dir.path().join("protocol-audio.mp3"),
         b"protocol fake source audio",
@@ -585,8 +613,22 @@ fn read_media_business_flow_extracts_video_frames_and_audio_preview_with_local_f
     let fake_ffmpeg = write_fake_ffmpeg(dir.path());
     let previous_ffmpeg = std::env::var_os("TURA_READ_MEDIA_FFMPEG");
     let previous_ffmpeg_path = std::env::var_os("FFMPEG_PATH");
-    std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg);
-    std::env::remove_var("FFMPEG_PATH");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("FFMPEG_PATH")
+    };
     std::fs::write(dir.path().join("clip.mp4"), b"local fake video bytes").expect("write mp4");
 
     let response = execute(
@@ -638,9 +680,30 @@ fn read_media_business_flow_reports_video_failure_from_local_ffmpeg_and_cv2_fall
     let previous_ffmpeg = std::env::var_os("TURA_READ_MEDIA_FFMPEG");
     let previous_ffmpeg_path = std::env::var_os("FFMPEG_PATH");
     let previous_python = std::env::var_os("TURA_READ_MEDIA_PYTHON");
-    std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg);
-    std::env::remove_var("FFMPEG_PATH");
-    std::env::set_var("TURA_READ_MEDIA_PYTHON", &fake_python);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("FFMPEG_PATH")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_READ_MEDIA_PYTHON", &fake_python)
+    };
     std::fs::write(dir.path().join("broken.mp4"), b"broken fake video").expect("write broken mp4");
 
     let response = execute(
@@ -681,8 +744,22 @@ fn read_media_business_flow_mixed_batch_workers_keep_order_and_isolate_failures(
     let fake_ffmpeg = write_fake_ffmpeg(dir.path());
     let previous_ffmpeg = std::env::var_os("TURA_READ_MEDIA_FFMPEG");
     let previous_ffmpeg_path = std::env::var_os("FFMPEG_PATH");
-    std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg);
-    std::env::remove_var("FFMPEG_PATH");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_READ_MEDIA_FFMPEG", &fake_ffmpeg)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("FFMPEG_PATH")
+    };
 
     std::fs::write(dir.path().join("notes.txt"), "mixed batch notes").expect("write notes");
     std::fs::write(dir.path().join("image.png"), png_bytes()).expect("write png");
@@ -987,7 +1064,25 @@ fn env_lock() -> &'static Mutex<()> {
 
 fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
     match previous {
-        Some(value) => std::env::set_var(key, value),
-        None => std::env::remove_var(key),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            }
+        }
     }
 }

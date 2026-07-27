@@ -203,15 +203,15 @@ fn redact_media_payload_data(value: &mut serde_json::Value) {
                     }),
                 );
             }
-            if let Some(serde_json::Value::String(url)) = object.get_mut("url") {
-                if is_base64_data_url(url) {
-                    *url = "[redacted media data URL]".to_string();
-                }
+            if let Some(serde_json::Value::String(url)) = object.get_mut("url")
+                && is_base64_data_url(url)
+            {
+                *url = "[redacted media data URL]".to_string();
             }
-            if let Some(serde_json::Value::String(data)) = object.get_mut("data_base64") {
-                if !data.is_empty() {
-                    *data = "[redacted base64 file payload]".to_string();
-                }
+            if let Some(serde_json::Value::String(data)) = object.get_mut("data_base64")
+                && !data.is_empty()
+            {
+                *data = "[redacted base64 file payload]".to_string();
             }
             for child in object.values_mut() {
                 redact_media_payload_data(child);

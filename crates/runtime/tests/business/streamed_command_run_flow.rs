@@ -14,12 +14,26 @@ static MOCK_ROUTER_INIT: Mutex<()> = Mutex::new(());
 
 fn ensure_mock_router() {
     if let Some(addr) = MOCK_ROUTER_ADDR.get() {
-        std::env::set_var("TURA_ROUTER_ADDR", addr);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_ROUTER_ADDR", addr)
+        };
         return;
     }
     let _guard = MOCK_ROUTER_INIT.lock().expect("mock router init lock");
     if let Some(addr) = MOCK_ROUTER_ADDR.get() {
-        std::env::set_var("TURA_ROUTER_ADDR", addr);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_ROUTER_ADDR", addr)
+        };
         return;
     }
 
@@ -53,7 +67,14 @@ fn ensure_mock_router() {
     MOCK_ROUTER_ADDR
         .set(addr.clone())
         .expect("mock router addr set once");
-    std::env::set_var("TURA_ROUTER_ADDR", addr);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ROUTER_ADDR", addr)
+    };
 }
 
 async fn mock_router_response(raw: &str) -> Value {

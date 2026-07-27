@@ -73,10 +73,10 @@ pub fn resolve_binary_in_root(repo_root: &std::path::Path, binary_name: &str) ->
 /// checked before the source-tree `target/{release,debug}` layout used in dev.
 pub fn binary_candidates(repo_root: &std::path::Path, exe_name: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(dir) = current_exe.parent() {
-            candidates.push(dir.join(exe_name));
-        }
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(dir) = current_exe.parent()
+    {
+        candidates.push(dir.join(exe_name));
     }
     if let Some(root) = std::env::var_os("TURA_PROJECT_ROOT").map(PathBuf::from) {
         candidates.push(root.join("bin").join(exe_name));
@@ -92,10 +92,10 @@ pub fn binary_candidates(repo_root: &std::path::Path, exe_name: &str) -> Vec<Pat
 }
 
 pub fn repo_root() -> Option<PathBuf> {
-    if let Some(root) = std::env::var_os("TURA_PROJECT_ROOT").map(PathBuf::from) {
-        if root.exists() {
-            return Some(root);
-        }
+    if let Some(root) = std::env::var_os("TURA_PROJECT_ROOT").map(PathBuf::from)
+        && root.exists()
+    {
+        return Some(root);
     }
     std::env::current_dir().ok().and_then(|current| {
         current

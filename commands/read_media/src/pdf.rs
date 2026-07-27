@@ -55,10 +55,11 @@ pub(super) fn process_pdf(
             }));
         }
     }
-    if args.include_text && text.trim().is_empty() {
-        if let Ok(fallback) = fallback_pdf_text(path, args) {
-            text = fallback;
-        }
+    if args.include_text
+        && text.trim().is_empty()
+        && let Ok(fallback) = fallback_pdf_text(path, args)
+    {
+        text = fallback;
     }
     Ok((truncate_chars(&text, args.max_text_chars), previews))
 }
@@ -73,10 +74,9 @@ fn fallback_pdf_text(path: &Path, args: &ReadMediaArgs) -> Result<String, String
     }
     if let Ok(text) =
         extract_pdf_text_with_python_fitz(path, args.max_text_chars, args.pdf_max_pages)
+        && !text.trim().is_empty()
     {
-        if !text.trim().is_empty() {
-            return Ok(text);
-        }
+        return Ok(text);
     }
     let bytes = std::fs::read(path).map_err(|err| format!("failed to read pdf: {err}"))?;
     let raw = String::from_utf8_lossy(&bytes);

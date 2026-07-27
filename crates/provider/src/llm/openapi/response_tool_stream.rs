@@ -28,10 +28,10 @@ struct CodexToolCallEntry {
 
 impl CodexToolCallStreamCollector {
     pub(crate) fn push_event(&mut self, event: &Value) -> Vec<Value> {
-        if let Some(item) = event.get("item") {
-            if item.get("type").and_then(Value::as_str) == Some("function_call") {
-                self.upsert_item(item);
-            }
+        if let Some(item) = event.get("item")
+            && item.get("type").and_then(Value::as_str) == Some("function_call")
+        {
+            self.upsert_item(item);
         }
 
         match event.get("type").and_then(Value::as_str) {
@@ -39,10 +39,9 @@ impl CodexToolCallStreamCollector {
                 if let (Some(id), Some(delta)) = (
                     self.event_tool_id(event),
                     event.get("delta").and_then(Value::as_str),
-                ) {
-                    if let Some(entry) = self.entry_mut(&id) {
-                        entry.arguments.push_str(delta);
-                    }
+                ) && let Some(entry) = self.entry_mut(&id)
+                {
+                    entry.arguments.push_str(delta);
                 }
                 Vec::new()
             }
@@ -175,10 +174,10 @@ struct CodexCommandRunCommandEntry {
 
 impl CodexCommandRunCommandCollector {
     pub(crate) fn push_event(&mut self, event: &Value) -> Vec<ProviderStreamEvent> {
-        if let Some(item) = event.get("item") {
-            if item.get("type").and_then(Value::as_str) == Some("function_call") {
-                self.upsert_item(item);
-            }
+        if let Some(item) = event.get("item")
+            && item.get("type").and_then(Value::as_str) == Some("function_call")
+        {
+            self.upsert_item(item);
         }
 
         match event.get("type").and_then(Value::as_str) {
@@ -186,11 +185,10 @@ impl CodexCommandRunCommandCollector {
                 if let (Some(id), Some(delta)) = (
                     self.event_tool_id(event),
                     event.get("delta").and_then(Value::as_str),
-                ) {
-                    if let Some(entry) = self.entry_mut(&id) {
-                        entry.arguments.push_str(delta);
-                        return Self::emit_ready_commands(entry);
-                    }
+                ) && let Some(entry) = self.entry_mut(&id)
+                {
+                    entry.arguments.push_str(delta);
+                    return Self::emit_ready_commands(entry);
                 }
                 Vec::new()
             }
@@ -198,11 +196,10 @@ impl CodexCommandRunCommandCollector {
                 if let (Some(id), Some(arguments)) = (
                     self.event_tool_id(event),
                     event.get("arguments").and_then(Value::as_str),
-                ) {
-                    if let Some(entry) = self.entry_mut(&id) {
-                        entry.arguments = arguments.to_string();
-                        return Self::emit_ready_commands(entry);
-                    }
+                ) && let Some(entry) = self.entry_mut(&id)
+                {
+                    entry.arguments = arguments.to_string();
+                    return Self::emit_ready_commands(entry);
                 }
                 Vec::new()
             }
@@ -329,14 +326,11 @@ fn complete_command_run_command_objects(arguments: &str) -> Vec<Value> {
             '}' => {
                 if depth > 0 {
                     depth -= 1;
-                    if depth == 0 {
-                        if let Some(start) = object_start.take() {
-                            if let Ok(value) =
-                                serde_json::from_str::<Value>(&arguments[start..=index])
-                            {
-                                commands.push(value);
-                            }
-                        }
+                    if depth == 0
+                        && let Some(start) = object_start.take()
+                        && let Ok(value) = serde_json::from_str::<Value>(&arguments[start..=index])
+                    {
+                        commands.push(value);
                     }
                 }
             }
@@ -366,10 +360,10 @@ fn find_commands_array_start(arguments: &str) -> Option<usize> {
             }
             if ch == '"' {
                 in_string = false;
-                if let Some(start) = key_start.take() {
-                    if let Ok(key) = serde_json::from_str::<String>(&arguments[start..=index]) {
-                        last_key = Some(key);
-                    }
+                if let Some(start) = key_start.take()
+                    && let Ok(key) = serde_json::from_str::<String>(&arguments[start..=index])
+                {
+                    last_key = Some(key);
                 }
             }
             continue;

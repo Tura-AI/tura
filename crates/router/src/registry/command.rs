@@ -19,7 +19,9 @@ impl CommandRegistry {
             .into_iter()
             .find(|command| command.name == command_name);
         let output = match command.and_then(|command| command.template) {
-            Some(template) => render_command_template(&template, payload.args.as_deref().unwrap_or_default()),
+            Some(template) => {
+                render_command_template(&template, payload.args.as_deref().unwrap_or_default())
+            }
             None => format!(
                 "Command `{command_name}` is not configured. Add a markdown or JSON command under .tura/commands, .opencode/command, .opencode/commands, command, or commands."
             ),
@@ -36,10 +38,10 @@ fn discover_commands(directory: Option<&str>) -> Vec<CommandSpec> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() {
-                if let Some(command) = command_from_file(&path) {
-                    commands.push(command);
-                }
+            if path.is_file()
+                && let Some(command) = command_from_file(&path)
+            {
+                commands.push(command);
             }
         }
     }

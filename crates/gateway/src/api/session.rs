@@ -165,21 +165,20 @@ fn filter_list_sessions(
     sessions
         .into_iter()
         .filter(|session| {
-            if let Some(directory_key) = &directory_key {
-                if workspace_key(session.directory.as_deref().unwrap_or_default()) != *directory_key
-                {
-                    return false;
-                }
+            if let Some(directory_key) = &directory_key
+                && workspace_key(session.directory.as_deref().unwrap_or_default()) != *directory_key
+            {
+                return false;
             }
             if (params.roots == Some(true) || !params.include_children)
                 && session.parent_id.is_some()
             {
                 return false;
             }
-            if let Some(start) = params.start {
-                if session.updated_at < start {
-                    return false;
-                }
+            if let Some(start) = params.start
+                && session.updated_at < start
+            {
+                return false;
             }
             if let Some(search) = &search {
                 let title = session
@@ -407,12 +406,13 @@ fn percent_decode(value: &str) -> String {
     let mut output = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            if let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2])) {
-                output.push((high << 4) | low);
-                index += 3;
-                continue;
-            }
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2]))
+        {
+            output.push((high << 4) | low);
+            index += 3;
+            continue;
         }
         output.push(bytes[index]);
         index += 1;

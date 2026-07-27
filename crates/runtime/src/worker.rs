@@ -211,15 +211,43 @@ fn handle_call(payload: &Value) -> Value {
     };
 
     if no_op_manual {
-        std::env::set_var("TURA_NO_OP_MANUAL", "1");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_NO_OP_MANUAL", "1")
+        };
     } else {
-        std::env::remove_var("TURA_NO_OP_MANUAL");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_NO_OP_MANUAL")
+        };
     }
 
     if let Some(agent_spec) = agent_spec {
-        std::env::set_var("TURA_ROUTER_AGENT_SPEC", agent_spec.to_string());
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_ROUTER_AGENT_SPEC", agent_spec.to_string())
+        };
     } else {
-        std::env::remove_var("TURA_ROUTER_AGENT_SPEC");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_ROUTER_AGENT_SPEC")
+        };
     }
     match crate::mano::process_from_gateway_session_with_lease_in_directory(
         session_id.clone(),
@@ -384,8 +412,22 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let previous_pid = std::env::var_os("TURA_ROUTER_PARENT_PID");
         let previous_start = std::env::var_os("TURA_ROUTER_PARENT_START_TIME");
-        std::env::set_var("TURA_ROUTER_PARENT_PID", "1234");
-        std::env::set_var("TURA_ROUTER_PARENT_START_TIME", "5678");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_ROUTER_PARENT_PID", "1234")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_ROUTER_PARENT_START_TIME", "5678")
+        };
 
         let parent = RouterParentProcess::from_env().expect("parent env");
         assert_eq!(parent.pid, 1234);
@@ -526,9 +568,23 @@ mod tests {
 
     fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
         if let Some(value) = previous {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 }

@@ -282,13 +282,13 @@ impl SessionLogStore {
                     return Ok(RuntimeEventCommitOutcome::InvalidEvent {
                         error: "runtime_created session_id does not match registered session"
                             .to_string(),
-                    })
+                    });
                 }
                 Ok(_) => {
                     return Ok(RuntimeEventCommitOutcome::InvalidEvent {
                         error: "runtime_created fallback_from_id does not match registered runtime"
                             .to_string(),
-                    })
+                    });
                 }
                 Err(error) => return Ok(RuntimeEventCommitOutcome::InvalidEvent { error }),
             };

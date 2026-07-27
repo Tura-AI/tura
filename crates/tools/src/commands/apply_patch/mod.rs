@@ -261,10 +261,10 @@ pub fn access(patch_text: &str, session_dir: &Path) -> Access {
                     if let Some(key) = lock_key(session_dir, &change.path) {
                         keys.push(key);
                     }
-                    if let Some(move_path) = change.move_path.as_deref() {
-                        if let Some(key) = lock_key(session_dir, move_path) {
-                            keys.push(key);
-                        }
+                    if let Some(move_path) = change.move_path.as_deref()
+                        && let Some(key) = lock_key(session_dir, move_path)
+                    {
+                        keys.push(key);
                     }
                     keys
                 })
@@ -456,10 +456,10 @@ fn finish_change(
     current: &mut Option<PatchChange>,
     hunk: &mut Option<Vec<String>>,
 ) {
-    if let Some(hunk_lines) = hunk.take() {
-        if let Some(change) = current.as_mut() {
-            change.hunks.push(hunk_lines);
-        }
+    if let Some(hunk_lines) = hunk.take()
+        && let Some(change) = current.as_mut()
+    {
+        change.hunks.push(hunk_lines);
     }
     if let Some(change) = current.take() {
         changes.push(change);
@@ -548,7 +548,7 @@ fn apply_change(change: &PatchChange, session_dir: &Path) -> Result<Value, Patch
                 kind: "ParseError",
                 message: format!("unsupported patch change kind: {}", change.kind),
                 failed_change: Some(patch_change_value(change)),
-            })
+            });
         }
     }
     Ok(patch_change_value(change))
@@ -744,7 +744,9 @@ fn apply_patch_failure_guidance(kind: &str, partial: bool) -> &'static str {
         ("ContextMismatch", false) => {
             "apply_patch failed because expected context was not found; read the current file and retry with a smaller hunk."
         }
-        (_, true) => "apply_patch failed after earlier changes were applied; inspect changes before retrying.",
+        (_, true) => {
+            "apply_patch failed after earlier changes were applied; inspect changes before retrying."
+        }
         _ => "apply_patch failed; inspect error_type and message before retrying.",
     }
 }

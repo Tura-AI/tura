@@ -49,10 +49,10 @@ pub(crate) fn task_management_json(
             "start_at": task.map(|task| task.start_at).unwrap_or(session_started_at),
             "poll_interval": task.map(|task| task.poll_interval).unwrap_or_default(),
         });
-        if let Some(task) = task {
-            if let Some(task_state) = task_state_value(task) {
-                value["status"] = task_state;
-            }
+        if let Some(task) = task
+            && let Some(task_state) = task_state_value(task)
+        {
+            value["status"] = task_state;
         }
         return value;
     }

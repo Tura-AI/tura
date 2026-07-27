@@ -249,7 +249,14 @@ mod tests {
         let _guard = AGENT_ENV_LOCK.lock().await;
         let previous_root = std::env::var_os("TURA_PROJECT_ROOT");
         let temp = TempDir::new().expect("temp root");
-        std::env::set_var("TURA_PROJECT_ROOT", temp.path());
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", temp.path())
+        };
 
         let stored = upsert_agent_in_store(
             Some("helper-agent".to_string()),
@@ -287,7 +294,14 @@ mod tests {
         let _guard = AGENT_ENV_LOCK.lock().await;
         let previous_root = std::env::var_os("TURA_PROJECT_ROOT");
         let temp = TempDir::new().expect("temp root");
-        std::env::set_var("TURA_PROJECT_ROOT", temp.path());
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", temp.path())
+        };
 
         let error = upsert_agent_in_store(
             Some("../escape".to_string()),
@@ -357,8 +371,26 @@ mod tests {
 
     fn restore_project_root(previous: Option<std::ffi::OsString>) {
         match previous {
-            Some(value) => std::env::set_var("TURA_PROJECT_ROOT", value),
-            None => std::env::remove_var("TURA_PROJECT_ROOT"),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("TURA_PROJECT_ROOT", value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var("TURA_PROJECT_ROOT")
+                }
+            }
         }
     }
 }

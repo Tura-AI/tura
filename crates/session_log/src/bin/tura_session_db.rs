@@ -6,6 +6,13 @@
 
 fn main() -> anyhow::Result<()> {
     tura_path::process_hardening::harden_current_process("session_db");
-    std::env::set_var("TURA_ROLE", "session_db");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ROLE", "session_db")
+    };
     session_log::service::run_socket_service()
 }

@@ -177,12 +177,12 @@ const SIGTERM: i32 = 15;
 const PR_SET_PDEATHSIG: i32 = 1;
 
 #[cfg(unix)]
-extern "C" {
+unsafe extern "C" {
     fn kill(pid: i32, sig: i32) -> i32;
 }
 
 #[cfg(target_os = "linux")]
-extern "C" {
+unsafe extern "C" {
     fn prctl(option: i32, arg2: usize, arg3: usize, arg4: usize, arg5: usize) -> i32;
     fn getppid() -> i32;
 }

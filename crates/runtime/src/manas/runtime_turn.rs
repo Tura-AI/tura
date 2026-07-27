@@ -473,9 +473,30 @@ mod tests {
         )
         .expect("persona config should be written");
 
-        std::env::set_var("TURA_SESSION_PERSONA", "guide");
-        std::env::set_var("TURA_PROJECT_ROOT", &root);
-        std::env::remove_var("TURA_FRONTEND_SOURCE");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_SESSION_PERSONA", "guide")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", &root)
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_FRONTEND_SOURCE")
+        };
 
         let agent = AgentManagement::new(
             "agent-id".to_string(),
@@ -609,7 +630,14 @@ mod tests {
             .lock()
             .unwrap_or_else(|err| err.into_inner());
         let _env = clean_context_limit_env();
-        std::env::set_var("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", "4096");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", "4096")
+        };
         let settings = settings_with_model_context("openai", "gpt-large", 1_000_000);
         let provider = runtime_provider("openai", "gpt-large");
 
@@ -748,9 +776,23 @@ mod tests {
 
     fn restore_env(key: &str, value: Option<OsString>) {
         if let Some(value) = value {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 
@@ -771,8 +813,22 @@ mod tests {
             fixed: std::env::var_os("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS"),
             tura: std::env::var_os("TURA_CONTEXT_LIMIT_TOKENS"),
         };
-        std::env::remove_var("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS");
-        std::env::remove_var("TURA_CONTEXT_LIMIT_TOKENS");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_CONTEXT_LIMIT_TOKENS")
+        };
         guard
     }
 

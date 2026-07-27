@@ -48,10 +48,10 @@ pub(crate) async fn codex_oauth_call(
         request = request.header("session_id", "tura-codex-validation");
     }
 
-    if let Ok(account_id) = std::env::var("OPENAI_ACCOUNT_ID") {
-        if !account_id.trim().is_empty() {
-            request = request.header("ChatGPT-Account-Id", account_id);
-        }
+    if let Ok(account_id) = std::env::var("OPENAI_ACCOUNT_ID")
+        && !account_id.trim().is_empty()
+    {
+        request = request.header("ChatGPT-Account-Id", account_id);
     }
 
     let resp = send_provider_request_first_response(request).await?;
@@ -326,10 +326,10 @@ fn codex_content_item_for_role(role: &str, item: Value) -> Value {
         .get("text")
         .and_then(Value::as_str)
         .or_else(|| item.get("content").and_then(Value::as_str));
-    if matches!(kind, "input_text" | "text" | "output_text") {
-        if let Some(text) = text {
-            return codex_text_item(role, text.to_string());
-        }
+    if matches!(kind, "input_text" | "text" | "output_text")
+        && let Some(text) = text
+    {
+        return codex_text_item(role, text.to_string());
     }
     item
 }
@@ -426,16 +426,15 @@ fn process_codex_sse_line(
         if output_event {
             sink(ProviderStreamEvent::ProviderOutputStarted);
         }
-        if value.get("type").and_then(Value::as_str) == Some("response.output_text.delta") {
-            if let Some(delta) = value
+        if value.get("type").and_then(Value::as_str) == Some("response.output_text.delta")
+            && let Some(delta) = value
                 .get("delta")
                 .and_then(Value::as_str)
                 .filter(|delta| !delta.is_empty())
-            {
-                sink(ProviderStreamEvent::TextDelta {
-                    text: delta.to_string(),
-                });
-            }
+        {
+            sink(ProviderStreamEvent::TextDelta {
+                text: delta.to_string(),
+            });
         }
         for event in command_collector.push_event(&value) {
             sink(event);
@@ -549,10 +548,10 @@ pub(crate) fn normalize_codex_response_event_content(data: &Value) -> Option<Val
     let tool_calls = complete_codex_tool_calls(data);
     if !tool_calls.is_empty() {
         let mut object = serde_json::Map::new();
-        if let Some(text) = data.get("output_text").and_then(Value::as_str) {
-            if !text.trim().is_empty() {
-                object.insert("text".to_string(), Value::String(text.to_string()));
-            }
+        if let Some(text) = data.get("output_text").and_then(Value::as_str)
+            && !text.trim().is_empty()
+        {
+            object.insert("text".to_string(), Value::String(text.to_string()));
         }
         object.insert("tool_calls".to_string(), Value::Array(tool_calls));
         return Some(Value::Object(object));
@@ -608,18 +607,17 @@ fn codex_tool_schema(tool: &Value) -> Value {
 }
 
 fn normalize_codex_tool_choice(tool_choice: &Value) -> Value {
-    if tool_choice.get("type").and_then(Value::as_str) == Some("function") {
-        if let Some(name) = tool_choice
+    if tool_choice.get("type").and_then(Value::as_str) == Some("function")
+        && let Some(name) = tool_choice
             .get("function")
             .and_then(|function| function.get("name"))
             .and_then(Value::as_str)
             .filter(|name| !name.trim().is_empty())
-        {
-            return json!({
-                "type": "function",
-                "name": name,
-            });
-        }
+    {
+        return json!({
+            "type": "function",
+            "name": name,
+        });
     }
     tool_choice.clone()
 }

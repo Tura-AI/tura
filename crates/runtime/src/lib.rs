@@ -1,5 +1,5 @@
 #![deny(clippy::unwrap_used)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![allow(ambiguous_glob_reexports)]
 
 pub mod agent_router;

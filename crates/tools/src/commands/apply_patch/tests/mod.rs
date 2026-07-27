@@ -39,9 +39,9 @@ fn update_file_matches_lf_patch_against_crlf_file_and_preserves_crlf() {
     fs::write(root.join("app.txt"), "alpha\r\nold\r\nomega\r\n").expect("fixture");
 
     let result = execute(
-            "*** Begin Patch\n*** Update File: app.txt\n@@\n alpha\n-old\n+new\n omega\n*** End Patch\n",
-            &root,
-        );
+        "*** Begin Patch\n*** Update File: app.txt\n@@\n alpha\n-old\n+new\n omega\n*** End Patch\n",
+        &root,
+    );
 
     assert!(result.success, "{}", result.stderr);
     assert_eq!(
@@ -57,9 +57,9 @@ fn update_file_tolerates_trailing_whitespace_context_mismatch() {
     fs::write(root.join("app.txt"), "alpha  \nold\t\nomega\n").expect("fixture");
 
     let result = execute(
-            "*** Begin Patch\n*** Update File: app.txt\n@@\n alpha\n-old\n+new\n omega\n*** End Patch\n",
-            &root,
-        );
+        "*** Begin Patch\n*** Update File: app.txt\n@@\n alpha\n-old\n+new\n omega\n*** End Patch\n",
+        &root,
+    );
 
     assert!(result.success, "{}", result.stderr);
     assert_eq!(
@@ -75,9 +75,9 @@ fn update_file_tolerates_normalized_unicode_punctuation_context() {
     fs::write(root.join("app.txt"), "say “hello”\nold – value\n").expect("fixture");
 
     let result = execute(
-            "*** Begin Patch\n*** Update File: app.txt\n@@\n say \"hello\"\n-old - value\n+new - value\n*** End Patch\n",
-            &root,
-        );
+        "*** Begin Patch\n*** Update File: app.txt\n@@\n say \"hello\"\n-old - value\n+new - value\n*** End Patch\n",
+        &root,
+    );
 
     assert!(result.success, "{}", result.stderr);
     assert_eq!(
@@ -93,9 +93,9 @@ fn update_file_applies_multiple_hunks_without_position_shift() {
     fs::write(root.join("app.txt"), "one\nold-a\nmiddle\nold-b\nend\n").expect("fixture");
 
     let result = execute(
-            "*** Begin Patch\n*** Update File: app.txt\n@@\n-old-a\n+new-a\n@@\n-old-b\n+new-b\n*** End Patch\n",
-            &root,
-        );
+        "*** Begin Patch\n*** Update File: app.txt\n@@\n-old-a\n+new-a\n@@\n-old-b\n+new-b\n*** End Patch\n",
+        &root,
+    );
 
     assert!(result.success, "{}", result.stderr);
     assert_eq!(
@@ -113,9 +113,9 @@ fn failed_middle_file_reports_successes_and_failures_separately() {
     fs::write(root.join("third.txt"), "old\n").expect("third");
 
     let result = execute(
-            "*** Begin Patch\n*** Update File: first.txt\n@@\n-old\n+new\n*** Update File: second.txt\n@@\n-missing\n+value\n*** Update File: third.txt\n@@\n-old\n+new\n*** End Patch\n",
-            &root,
-        );
+        "*** Begin Patch\n*** Update File: first.txt\n@@\n-old\n+new\n*** Update File: second.txt\n@@\n-missing\n+value\n*** Update File: third.txt\n@@\n-old\n+new\n*** End Patch\n",
+        &root,
+    );
 
     assert!(!result.success);
     assert_eq!(result.output["error_type"], json!("ContextMismatch"));

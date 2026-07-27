@@ -180,7 +180,10 @@ fn coding_agent_executes_command_run_command_before_stream_finishes() {
             .first_command_observed_before_response_finished
             .load(Ordering::SeqCst),
         "first streamed command did not execute before the provider finished sending the response; requests={:#?}; first_exists={}; second_exists={}",
-        provider.requests.lock().expect("mock provider requests lock"),
+        provider
+            .requests
+            .lock()
+            .expect("mock provider requests lock"),
         workspace.join("streamed-first.txt").exists(),
         workspace.join("streamed-second.txt").exists()
     );

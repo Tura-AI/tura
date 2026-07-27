@@ -121,44 +121,44 @@ pub(crate) fn execute_tool_calls(
             results.push(blocked_result);
             continue;
         }
-        if tool_call.tool_name == COMMAND_RUN_TOOL {
-            if let Some(streamed_result) = streamed_command_run_result(runtime) {
-                let mut streamed_result = streamed_result;
-                apply_task_attribution_to_streamed_result(session, &mut streamed_result);
-                record_streamed_command_events(session, runtime, &streamed_result);
-                let streamed_arguments =
-                    streamed_command_run_arguments(&normalized_arguments, &streamed_result);
-                let execution_result = ToolExecutionResult {
-                    tool_name: tool_call.tool_name.clone(),
-                    arguments: streamed_arguments.clone(),
-                    success: command_run_result_success(&streamed_result),
-                    error: command_run_result_error(&streamed_result),
-                    result: streamed_result,
-                };
-                let mut execution_result = execution_result;
-                if apply_tool_result_session_state_update(
-                    session,
-                    &tool_call.tool_name,
-                    &mut execution_result.result,
-                ) {
-                    publish_task_plan_todos(session, publisher);
-                    execution_result.success = command_run_result_success(&execution_result.result);
-                    execution_result.error = command_run_result_error(&execution_result.result);
-                }
-                publish_tool_call_record(
-                    session,
-                    runtime,
-                    &execution_tool_call,
-                    streamed_arguments,
-                    &execution_result.result,
-                    execution_result.success,
-                    execution_result.error.as_deref(),
-                    tool_started_at,
-                    publisher,
-                );
-                results.push(execution_result);
-                continue;
+        if tool_call.tool_name == COMMAND_RUN_TOOL
+            && let Some(streamed_result) = streamed_command_run_result(runtime)
+        {
+            let mut streamed_result = streamed_result;
+            apply_task_attribution_to_streamed_result(session, &mut streamed_result);
+            record_streamed_command_events(session, runtime, &streamed_result);
+            let streamed_arguments =
+                streamed_command_run_arguments(&normalized_arguments, &streamed_result);
+            let execution_result = ToolExecutionResult {
+                tool_name: tool_call.tool_name.clone(),
+                arguments: streamed_arguments.clone(),
+                success: command_run_result_success(&streamed_result),
+                error: command_run_result_error(&streamed_result),
+                result: streamed_result,
+            };
+            let mut execution_result = execution_result;
+            if apply_tool_result_session_state_update(
+                session,
+                &tool_call.tool_name,
+                &mut execution_result.result,
+            ) {
+                publish_task_plan_todos(session, publisher);
+                execution_result.success = command_run_result_success(&execution_result.result);
+                execution_result.error = command_run_result_error(&execution_result.result);
             }
+            publish_tool_call_record(
+                session,
+                runtime,
+                &execution_tool_call,
+                streamed_arguments,
+                &execution_result.result,
+                execution_result.success,
+                execution_result.error.as_deref(),
+                tool_started_at,
+                publisher,
+            );
+            results.push(execution_result);
+            continue;
         }
         let execute_input = ExecuteToolInput {
             tool_name: tool_call.tool_name.clone(),

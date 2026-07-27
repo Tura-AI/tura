@@ -193,13 +193,27 @@ mod tests {
     impl EnvRestore {
         fn remove(key: &'static str) -> Self {
             let value = std::env::var_os(key);
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
             Self { key, value }
         }
 
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var_os(key);
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
             Self {
                 key,
                 value: previous,
@@ -210,16 +224,37 @@ mod tests {
     impl Drop for EnvRestore {
         fn drop(&mut self) {
             if let Some(value) = &self.value {
-                std::env::set_var(self.key, value);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(self.key, value)
+                };
             } else {
-                std::env::remove_var(self.key);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var(self.key)
+                };
             }
         }
     }
 
     #[test]
     fn get_reads_uppercase_environment_keys() {
-        std::env::set_var("TURA_CONF_TEST_KEY", "configured");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_CONF_TEST_KEY", "configured")
+        };
         let conf = TuraConfig::new(".env.missing-for-test");
 
         assert_eq!(
@@ -227,7 +262,14 @@ mod tests {
             Some("configured")
         );
 
-        std::env::remove_var("TURA_CONF_TEST_KEY");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_CONF_TEST_KEY")
+        };
     }
 
     #[test]

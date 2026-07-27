@@ -389,7 +389,7 @@ pub async fn session_event(
 fn event_stream(
     state: EventStreamState,
 ) -> impl futures::Stream<Item = Result<SseEvent, Infallible>> {
-    let stream = futures::stream::unfold(state, |mut state| async move {
+    futures::stream::unfold(state, |mut state| async move {
         loop {
             let event = if state.first {
                 state.first = false;
@@ -418,8 +418,7 @@ fn event_stream(
 
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
-    });
-    stream
+    })
 }
 
 fn event_visible_to_frontend(event: &GlobalEvent) -> bool {

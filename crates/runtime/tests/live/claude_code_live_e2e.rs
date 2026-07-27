@@ -211,7 +211,14 @@ impl EnvGuard {
             .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
             .collect::<Vec<_>>();
         for (key, value) in values {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         }
         Self { previous }
     }
@@ -221,9 +228,23 @@ impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (key, value) in &self.previous {
             if let Some(value) = value {
-                std::env::set_var(key, value);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(key, value)
+                };
             } else {
-                std::env::remove_var(key);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var(key)
+                };
             }
         }
     }

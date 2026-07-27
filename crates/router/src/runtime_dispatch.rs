@@ -179,10 +179,10 @@ async fn dispatch_run_agent_inner(
         env.push((key.clone(), value.clone()));
     }
     push_router_owned_runtime_env(&mut env);
-    if let Ok(addr) = std::env::var("TURA_ROUTER_ADDR") {
-        if !addr.trim().is_empty() {
-            env.push(("TURA_ROUTER_ADDR".to_string(), addr));
-        }
+    if let Ok(addr) = std::env::var("TURA_ROUTER_ADDR")
+        && !addr.trim().is_empty()
+    {
+        env.push(("TURA_ROUTER_ADDR".to_string(), addr));
     }
 
     let spec = WorkerSpec {
@@ -238,7 +238,9 @@ async fn dispatch_run_agent_inner(
     let worker_id = worker.worker_id.clone();
     let worker_cleanup = RuntimeWorkerCleanupGuard::new(state.manager.clone(), worker_id.clone());
     if router_debug_enabled() {
-        eprintln!("router debug: dispatch_run_agent calling worker session_id={session_id} worker_id={worker_id}");
+        eprintln!(
+            "router debug: dispatch_run_agent calling worker session_id={session_id} worker_id={worker_id}"
+        );
     }
     let call_result = state.manager.call_worker(&worker_id, ctx).await;
     worker_cleanup.stop_now().await;

@@ -63,8 +63,22 @@ async fn openai_compatible_route_business_flow_loads_named_route_from_provider_c
 
     let previous_config = std::env::var_os("TURA_PROVIDER_CONFIG");
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("TURA_PROVIDER_CONFIG", &config_path);
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-configured-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_PROVIDER_CONFIG", &config_path)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-configured-key")
+    };
 
     let settings = Settings::default()
         .await
@@ -89,12 +103,48 @@ async fn openai_compatible_route_business_flow_loads_named_route_from_provider_c
         .await;
 
     match previous_config {
-        Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
-        None => std::env::remove_var("TURA_PROVIDER_CONFIG"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_PROVIDER_CONFIG", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("TURA_PROVIDER_CONFIG")
+            }
+        }
     }
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let response = result.expect("configured route should call local provider");
@@ -262,15 +312,40 @@ async fn openai_compatible_settings_business_flow_loads_explicit_config_catalog_
     .expect("write preferred provider config");
 
     let previous_provider_config = std::env::var_os("TURA_PROVIDER_CONFIG");
-    std::env::set_var("TURA_PROVIDER_CONFIG", &preferred_config);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_PROVIDER_CONFIG", &preferred_config)
+    };
 
     let settings = Settings::default()
         .await
         .expect("explicit provider config should load");
 
     match previous_provider_config {
-        Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
-        None => std::env::remove_var("TURA_PROVIDER_CONFIG"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_PROVIDER_CONFIG", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("TURA_PROVIDER_CONFIG")
+            }
+        }
     }
 
     assert_eq!(settings.routes.len(), 2);
@@ -397,15 +472,40 @@ async fn openai_compatible_settings_business_flow_rejects_route_provider_missing
     .expect("write bad provider config");
 
     let previous_provider_config = std::env::var_os("TURA_PROVIDER_CONFIG");
-    std::env::set_var("TURA_PROVIDER_CONFIG", &config_path);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_PROVIDER_CONFIG", &config_path)
+    };
 
     let err = Settings::default()
         .await
         .expect_err("missing provider base URL should fail route construction");
 
     match previous_provider_config {
-        Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
-        None => std::env::remove_var("TURA_PROVIDER_CONFIG"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_PROVIDER_CONFIG", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("TURA_PROVIDER_CONFIG")
+            }
+        }
     }
 
     match err {

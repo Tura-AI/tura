@@ -154,7 +154,14 @@ async fn oauth_business_pkce_flow_exchanges_local_token_and_persists_auth() {
         "refresh_token": "local-refresh-token",
         "expires_in": 7200
     }));
-    std::env::set_var("OPENAI_OAUTH_TOKEN_URL", token_server.url());
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_OAUTH_TOKEN_URL", token_server.url())
+    };
 
     let Json(response) = oauth_callback(
         Path(provider_id.to_string()),
@@ -269,7 +276,14 @@ async fn oauth_business_refresh_flow_uses_local_token_endpoint_and_updates_auth(
         "refresh_token": "refreshed-refresh-token",
         "expires_in": 3600
     }));
-    std::env::set_var("OPENAI_OAUTH_TOKEN_URL", token_server.url());
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_OAUTH_TOKEN_URL", token_server.url())
+    };
 
     let Json(response) = provider_auth_refresh(Path(provider_id.to_string())).await;
 
@@ -396,7 +410,14 @@ async fn oauth_business_validate_flow_reports_local_success_and_missing_key_deta
     );
 
     write_local_provider_config(&provider_config, "https://business.example.invalid/v1");
-    std::env::remove_var("BUSINESS_LOCAL_API_KEY");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("BUSINESS_LOCAL_API_KEY")
+    };
     let Json(invalid) = provider_auth_validate(
         Path("business-local".to_string()),
         Json(ProviderAuthValidationRequest::default()),

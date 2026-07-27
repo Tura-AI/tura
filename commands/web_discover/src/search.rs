@@ -22,10 +22,9 @@ pub(super) fn search_websites(
 ) -> Result<Vec<SearchResult>, String> {
     if let Some(endpoint) =
         env_value("TURA_WEB_DISCOVER_ENDPOINT").or_else(|| env_value("TURA_WEB_SEARCH_ENDPOINT"))
+        && let Ok(results) = search_custom_endpoint(client, &endpoint, query, limit)
     {
-        if let Ok(results) = search_custom_endpoint(client, &endpoint, query, limit) {
-            return Ok(results);
-        }
+        return Ok(results);
     }
     let mut errors = Vec::new();
     for route in configured_search_routes() {
@@ -174,21 +173,21 @@ pub(super) fn parse_exa_web_results(raw: &str, limit: usize) -> Result<Vec<Searc
         for line in block.lines().chain(std::iter::once("---")) {
             let trimmed = line.trim();
             if trimmed == "---" {
-                if let Some(url) = current_url.take() {
-                    if seen.insert(url.clone()) {
-                        out.push(SearchResult {
-                            title: current_title
-                                .take()
-                                .filter(|title| !title.is_empty())
-                                .unwrap_or_else(|| "Exa web result".to_string()),
-                            url,
-                            page_url: None,
-                            snippet: truncate_chars(&clean_text(&current_snippet.join(" ")), 1_000),
-                            source: "exa_web".to_string(),
-                        });
-                        if out.len() >= limit {
-                            break;
-                        }
+                if let Some(url) = current_url.take()
+                    && seen.insert(url.clone())
+                {
+                    out.push(SearchResult {
+                        title: current_title
+                            .take()
+                            .filter(|title| !title.is_empty())
+                            .unwrap_or_else(|| "Exa web result".to_string()),
+                        url,
+                        page_url: None,
+                        snippet: truncate_chars(&clean_text(&current_snippet.join(" ")), 1_000),
+                        source: "exa_web".to_string(),
+                    });
+                    if out.len() >= limit {
+                        break;
                     }
                 }
                 current_title = None;
@@ -448,28 +447,28 @@ pub(super) fn search_bing_image_links(
             }
         }
     }
-    if out.len() < limit {
-        if let Ok(re) = Regex::new(r#"mediaurl=([^&"'>\s]+)"#) {
-            for capture in re.captures_iter(&html) {
-                let context_start = capture.get(0).map(|m| m.start()).unwrap_or(0);
-                let context_end = html.len().min(context_start + 2_500);
-                let context = &html[context_start..context_end];
-                let url = percent_decode(capture.get(1).map(|v| v.as_str()).unwrap_or_default());
-                if !url.starts_with("http") || !seen.insert(url.clone()) {
-                    continue;
-                }
-                let page_url = extract_bing_image_page_url(context);
-                let title = extract_bing_image_title(context, page_url.as_deref(), &url);
-                out.push(SearchResult {
-                    title,
-                    url,
-                    page_url: page_url.clone(),
-                    snippet: page_url.clone().unwrap_or_default(),
-                    source: "bing_images_mediaurl".to_string(),
-                });
-                if out.len() >= limit {
-                    break;
-                }
+    if out.len() < limit
+        && let Ok(re) = Regex::new(r#"mediaurl=([^&"'>\s]+)"#)
+    {
+        for capture in re.captures_iter(&html) {
+            let context_start = capture.get(0).map(|m| m.start()).unwrap_or(0);
+            let context_end = html.len().min(context_start + 2_500);
+            let context = &html[context_start..context_end];
+            let url = percent_decode(capture.get(1).map(|v| v.as_str()).unwrap_or_default());
+            if !url.starts_with("http") || !seen.insert(url.clone()) {
+                continue;
+            }
+            let page_url = extract_bing_image_page_url(context);
+            let title = extract_bing_image_title(context, page_url.as_deref(), &url);
+            out.push(SearchResult {
+                title,
+                url,
+                page_url: page_url.clone(),
+                snippet: page_url.clone().unwrap_or_default(),
+                source: "bing_images_mediaurl".to_string(),
+            });
+            if out.len() >= limit {
+                break;
             }
         }
     }
@@ -599,10 +598,10 @@ pub(super) fn extract_page_image_url(html: &str, base_url: &str) -> Option<Strin
                     .map(|value| value.as_str())
                     .unwrap_or_default(),
             );
-            if let Some(url) = resolve_page_url(base_url, &candidate) {
-                if looks_like_image_url(&url) {
-                    return Some(url);
-                }
+            if let Some(url) = resolve_page_url(base_url, &candidate)
+                && looks_like_image_url(&url)
+            {
+                return Some(url);
             }
         }
     }
@@ -921,8 +920,26 @@ mod tests {
         fn drop(&mut self) {
             for (key, value) in &self.keys {
                 match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    Some(value) => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::set_var(key, value)
+                        }
+                    }
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    None => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::remove_var(key)
+                        }
+                    }
                 }
             }
         }
@@ -982,7 +999,14 @@ mod tests {
         })
         .to_string();
         let (endpoint, server) = spawn_http_response("200 OK", "application/json", body);
-        std::env::set_var("TURA_BRAVE_WEB_SEARCH_ENDPOINT", &endpoint);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_BRAVE_WEB_SEARCH_ENDPOINT", &endpoint)
+        };
 
         let results =
             search_brave_web_links(&client(), "rust", 10, "local-key").expect("brave web results");
@@ -1009,7 +1033,14 @@ mod tests {
             "application/json",
             json!({"web":{"results":[]}}).to_string(),
         );
-        std::env::set_var("TURA_BRAVE_WEB_SEARCH_ENDPOINT", &endpoint);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_BRAVE_WEB_SEARCH_ENDPOINT", &endpoint)
+        };
 
         let empty =
             search_brave_web_links(&client(), "rust", 5, "local-key").expect_err("empty results");
@@ -1018,7 +1049,14 @@ mod tests {
 
         let (endpoint, server) =
             spawn_http_response("200 OK", "application/json", "{not json".to_string());
-        std::env::set_var("TURA_BRAVE_WEB_SEARCH_ENDPOINT", &endpoint);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_BRAVE_WEB_SEARCH_ENDPOINT", &endpoint)
+        };
         let invalid =
             search_brave_web_links(&client(), "rust", 5, "local-key").expect_err("bad JSON");
         server.join().expect("server request");
@@ -1049,7 +1087,14 @@ mod tests {
         })
         .to_string();
         let (endpoint, server) = spawn_http_response("200 OK", "application/json", body);
-        std::env::set_var("TURA_BRAVE_IMAGE_SEARCH_ENDPOINT", &endpoint);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_BRAVE_IMAGE_SEARCH_ENDPOINT", &endpoint)
+        };
 
         let results = search_brave_image_links(&client(), "profile", 10, "local-key")
             .expect("brave image results");
@@ -1081,7 +1126,14 @@ mod tests {
         "#
         .to_string();
         let (endpoint, server) = spawn_http_response("200 OK", "text/html", body);
-        std::env::set_var("TURA_IMAGE_SEARCH_ENDPOINT", &endpoint);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_IMAGE_SEARCH_ENDPOINT", &endpoint)
+        };
 
         let results = search_bing_image_links(&client(), "images", 10).expect("bing images");
         let request = server.join().expect("server request");

@@ -233,10 +233,10 @@ fn is_read_media_command_name(value: &str) -> bool {
 }
 
 fn split_cli_assignment(word: &str) -> (String, Option<String>) {
-    if let Some((key, value)) = word.split_once('=') {
-        if key.starts_with('-') {
-            return (key.to_string(), Some(value.to_string()));
-        }
+    if let Some((key, value)) = word.split_once('=')
+        && key.starts_with('-')
+    {
+        return (key.to_string(), Some(value.to_string()));
     }
     (word.to_string(), None)
 }

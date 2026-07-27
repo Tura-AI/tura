@@ -158,10 +158,10 @@ fn extract_text_content(chunk: &serde_json::Value) -> Option<String> {
     if let Some(delta) = chunk.get("delta").and_then(|d| d.as_str()) {
         return Some(delta.to_string());
     }
-    if let Some(delta_obj) = chunk.get("delta").and_then(|d| d.as_object()) {
-        if let Some(text) = delta_obj.get("text").and_then(|t| t.as_str()) {
-            return Some(text.to_string());
-        }
+    if let Some(delta_obj) = chunk.get("delta").and_then(|d| d.as_object())
+        && let Some(text) = delta_obj.get("text").and_then(|t| t.as_str())
+    {
+        return Some(text.to_string());
     }
     None
 }

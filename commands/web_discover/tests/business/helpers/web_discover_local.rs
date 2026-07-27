@@ -636,8 +636,22 @@ pub(crate) fn env_lock() -> &'static Mutex<()> {
 
 pub(crate) fn restore_env(name: &str, value: Option<std::ffi::OsString>) {
     if let Some(value) = value {
-        std::env::set_var(name, value);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(name, value)
+        };
     } else {
-        std::env::remove_var(name);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(name)
+        };
     }
 }

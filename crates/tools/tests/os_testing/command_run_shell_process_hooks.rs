@@ -26,7 +26,14 @@ fn command_result_text(result: &Value) -> String {
 #[test]
 fn pass_timeout_returns_quick_failure() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("timeout");
     let command = if cfg!(windows) {
         "Start-Sleep -Seconds 10"
@@ -58,7 +65,14 @@ fn pass_timeout_returns_quick_failure() {
 #[test]
 fn fail_timeout_kills_descendant_process_tree_quickly() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash")
+    };
     let root = temp_workspace("descendant-timeout");
     let started = Instant::now();
     let output = command_run::execute(
@@ -85,7 +99,14 @@ fn fail_timeout_kills_descendant_process_tree_quickly() {
 #[tokio::test]
 async fn pass_async_command_run_entry_does_not_start_nested_runtime() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("async-entry");
     let command = if cfg!(windows) {
         "Write-Output async-ok"
@@ -109,7 +130,14 @@ async fn pass_async_command_run_entry_does_not_start_nested_runtime() {
 #[test]
 fn pass_bash_surface_runs_posix_script_without_exposing_shell_command() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash")
+    };
     let root = temp_workspace("bash-script");
     let output = command_run::execute(
         &json!({
@@ -141,7 +169,14 @@ fn pass_zsh_surface_runs_zsh_script_without_exposing_shell_command() {
         eprintln!("zsh unavailable; skipping zsh execution fixture");
         return;
     }
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh");
+    // SAFETY: this test holds the process-wide environment lock above.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh")
+    };
     let root = temp_workspace("zsh-script");
     let output = command_run::execute(
         &json!({
@@ -169,15 +204,29 @@ fn fail_zsh_surface_reports_missing_configured_binary() {
     let _guard = env_lock_blocking();
     let previous_shell = std::env::var_os("TURA_COMMAND_RUN_SHELL");
     let previous_zsh_path = std::env::var_os("TURA_ZSH_PATH");
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh");
-    std::env::set_var(
-        "TURA_ZSH_PATH",
-        if cfg!(windows) {
-            r"C:\definitely\missing\tura-zsh.exe"
-        } else {
-            "/definitely/missing/tura-zsh"
-        },
-    );
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var(
+            "TURA_ZSH_PATH",
+            if cfg!(windows) {
+                r"C:\definitely\missing\tura-zsh.exe"
+            } else {
+                "/definitely/missing/tura-zsh"
+            },
+        )
+    };
     let root = temp_workspace("zsh-missing");
     let output = command_run::execute(
         &json!({
@@ -202,19 +251,40 @@ fn fail_zsh_surface_reports_missing_configured_binary() {
 fn pass_shell_surface_isolation_canonicalizes_to_one_active_shell() {
     let _guard = env_lock_blocking();
 
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash")
+    };
     assert_eq!(commands::canonical_command("shell_command"), "bash");
     assert_eq!(commands::canonical_command("shll"), "bash");
     assert_eq!(commands::canonical_command("bash"), "bash");
     assert_eq!(commands::canonical_command("zsh"), "bash");
 
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh")
+    };
     assert_eq!(commands::canonical_command("shell_command"), "zsh");
     assert_eq!(commands::canonical_command("shll"), "zsh");
     assert_eq!(commands::canonical_command("bash"), "zsh");
     assert_eq!(commands::canonical_command("zsh"), "zsh");
 
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shll");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shll")
+    };
     assert_eq!(commands::canonical_command("bash"), "shell_command");
     assert_eq!(commands::canonical_command("zsh"), "shell_command");
     assert_eq!(
@@ -226,7 +296,14 @@ fn pass_shell_surface_isolation_canonicalizes_to_one_active_shell() {
 #[tokio::test]
 async fn fail_pre_tool_hook_blocks_tool_before_runtime() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("pre-hook");
     let ctx = ToolContext::new(root);
     ctx.set_pre_hook(|call| {
@@ -259,7 +336,14 @@ async fn fail_pre_tool_hook_blocks_tool_before_runtime() {
 #[tokio::test]
 async fn pass_post_tool_hook_can_replace_model_visible_response() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("post-hook");
     let ctx = ToolContext::new(root);
     ctx.set_post_hook(|_call, output: &mut FunctionToolOutput| {
@@ -298,7 +382,14 @@ async fn pass_post_tool_hook_can_replace_model_visible_response() {
 #[tokio::test]
 async fn pass_shell_runtime_records_stdout_stderr_delta_events() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("stream-delta");
     let command = if cfg!(windows) {
         "Write-Output out-delta; [Console]::Error.WriteLine('err-delta')"
@@ -343,7 +434,14 @@ async fn pass_shell_runtime_records_stdout_stderr_delta_events() {
 #[tokio::test]
 async fn fail_turn_cancellation_aborts_running_shell_command() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("cancel");
     let command = if cfg!(windows) {
         "Start-Sleep -Seconds 10"
@@ -381,7 +479,14 @@ async fn fail_turn_cancellation_aborts_running_shell_command() {
 #[tokio::test]
 async fn pass_concurrent_shell_command_runs_do_not_block_async_runtime_or_cross_workspaces() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let roots = (0..4)
         .map(|index| temp_workspace(&format!("concurrent-shell-{index}")))
         .collect::<Vec<_>>();
@@ -451,7 +556,14 @@ async fn pass_concurrent_shell_command_runs_do_not_block_async_runtime_or_cross_
 #[tokio::test]
 async fn fail_timeout_aborts_reader_drain_for_pipe_holding_descendants() {
     let _guard = env_lock().await;
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash")
+    };
     let root = temp_workspace("reader-drain");
     let router = ToolRouter::new();
     let call = ToolCall {

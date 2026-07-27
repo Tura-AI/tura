@@ -268,9 +268,23 @@ mod tests {
 
     fn restore_env(name: &str, value: Option<OsString>) {
         if let Some(value) = value {
-            std::env::set_var(name, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(name, value)
+            };
         } else {
-            std::env::remove_var(name);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(name)
+            };
         }
     }
 
@@ -553,7 +567,14 @@ mod tests {
     async fn async_shell_executor_injects_updated_dotenv_values() {
         let previous_env_path = std::env::var_os("TURA_ENV_PATH");
         let previous_key = std::env::var_os("TURA_SHELL_DOTENV_TEST_KEY");
-        std::env::remove_var("TURA_SHELL_DOTENV_TEST_KEY");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_SHELL_DOTENV_TEST_KEY")
+        };
         let root = std::env::temp_dir().join(format!(
             "tura-shell-dotenv-{}-{}",
             std::process::id(),
@@ -566,7 +587,14 @@ mod tests {
         let env_path = root.join(".env");
         std::fs::write(&env_path, "TURA_SHELL_DOTENV_TEST_KEY=first\n")
             .expect("write first dotenv");
-        std::env::set_var("TURA_ENV_PATH", &env_path);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_ENV_PATH", &env_path)
+        };
 
         let context = ToolContext::new(std::env::current_dir().expect("current dir"));
         let first = execute_async(
@@ -640,14 +668,21 @@ mod tests {
     #[test]
     fn zsh_surface_returns_clear_failure_when_configured_binary_is_missing() {
         let previous = std::env::var_os("TURA_ZSH_PATH");
-        std::env::set_var(
-            "TURA_ZSH_PATH",
-            if cfg!(windows) {
-                r"C:\definitely\missing\tura-zsh.exe"
-            } else {
-                "/definitely/missing/tura-zsh"
-            },
-        );
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(
+                "TURA_ZSH_PATH",
+                if cfg!(windows) {
+                    r"C:\definitely\missing\tura-zsh.exe"
+                } else {
+                    "/definitely/missing/tura-zsh"
+                },
+            )
+        };
 
         let response = super::execute(
             r#"{"command":"print -r -- zsh-ok","timeout_ms":1000}"#,
