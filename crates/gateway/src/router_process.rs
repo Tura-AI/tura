@@ -4,10 +4,10 @@
 //! as a direct child; router then owns session_db, runtime workers, and
 //! command-run children below that tree.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex as ParkingMutex;
-use router_contract::{IpcRequest, IpcResponse, METHOD_HEALTH_CHECK, RouterEndpoint};
+use router_contract::{IpcRequest, IpcResponse, RouterEndpoint, METHOD_HEALTH_CHECK};
 use serde_json::json;
 use std::{
     io::{BufRead, BufReader, Write},
@@ -15,8 +15,8 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc,
         atomic::{AtomicU64, Ordering},
+        Arc,
     },
     time::{Duration, Instant},
 };
@@ -1271,11 +1271,11 @@ mod tests {
         assert_eq!(parsed.pid, Some(12));
         assert_eq!(parsed.process_start_time, Some(34));
 
-        assert!(
-            parse_router_endpoint(&json!({"addr": "127.0.0.1:12", "version": "old"}).to_string())
-                .expect("incompatible endpoint should parse")
-                .is_none()
-        );
+        assert!(parse_router_endpoint(
+            &json!({"addr": "127.0.0.1:12", "version": "old"}).to_string()
+        )
+        .expect("incompatible endpoint should parse")
+        .is_none());
         let missing_addr =
             parse_router_endpoint(&json!({"version": tura_path::instance_version()}).to_string())
                 .expect_err("missing address should be rejected");
@@ -1324,10 +1324,8 @@ mod tests {
             process_start_time: None,
         };
         assert!(!router_endpoint_process_identity_matches(&no_start_time));
-        assert!(
-            !terminate_router_endpoint_process(&no_start_time)
-                .expect("missing fingerprint should refuse forced termination")
-        );
+        assert!(!terminate_router_endpoint_process(&no_start_time)
+            .expect("missing fingerprint should refuse forced termination"));
     }
 
     #[test]
@@ -1473,8 +1471,8 @@ mod tests {
     }
 
     #[test]
-    fn router_socket_deadline_reproduces_slow_enqueue_failure_but_no_deadline_waits()
-    -> anyhow::Result<()> {
+    fn router_socket_deadline_reproduces_slow_enqueue_failure_but_no_deadline_waits(
+    ) -> anyhow::Result<()> {
         fn delayed_response(
             delay: Duration,
         ) -> anyhow::Result<(String, thread::JoinHandle<anyhow::Result<()>>)> {
