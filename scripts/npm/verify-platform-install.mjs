@@ -109,6 +109,7 @@ function readTarEntry(tarball, entryName) {
 
 function verifyPackedMainPackage(tarball, packInfo) {
   const expectedFiles = new Set([
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "README.zh-CN.md",
