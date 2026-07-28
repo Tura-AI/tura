@@ -14,43 +14,41 @@ pub(super) fn parse_shell_request(
     default_timeout_secs: u64,
 ) -> ShellRequest {
     let text = command_line.trim();
-    if text.starts_with('{') || text.starts_with('"') || text.starts_with('\'') {
-        if let Some(value) = parse_shell_request_json(text) {
-            if let Some(command) = value
-                .get("command")
-                .or_else(|| value.get("cmd"))
-                .and_then(Value::as_str)
-            {
-                let timeout_secs = value
-                    .get("timeout_secs")
+    if (text.starts_with('{') || text.starts_with('"') || text.starts_with('\''))
+        && let Some(value) = parse_shell_request_json(text)
+        && let Some(command) = value
+            .get("command")
+            .or_else(|| value.get("cmd"))
+            .and_then(Value::as_str)
+    {
+        let timeout_secs = value
+            .get("timeout_secs")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                value
+                    .get("timeout_ms")
                     .and_then(Value::as_u64)
-                    .or_else(|| {
-                        value
-                            .get("timeout_ms")
-                            .and_then(Value::as_u64)
-                            .map(|ms| ms.div_ceil(1000).max(1))
-                    })
-                    .unwrap_or(default_timeout_secs);
-                let cwd = value
-                    .get("workdir")
-                    .or_else(|| value.get("cwd"))
-                    .and_then(Value::as_str)
-                    .map(PathBuf::from)
-                    .map(|path| {
-                        if path.is_absolute() {
-                            path
-                        } else {
-                            session_dir.join(path)
-                        }
-                    })
-                    .unwrap_or_else(|| session_dir.to_path_buf());
-                return ShellRequest {
-                    command: normalize_shell_command_text(command),
-                    cwd,
-                    timeout_secs,
-                };
-            }
-        }
+                    .map(|ms| ms.div_ceil(1000).max(1))
+            })
+            .unwrap_or(default_timeout_secs);
+        let cwd = value
+            .get("workdir")
+            .or_else(|| value.get("cwd"))
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    session_dir.join(path)
+                }
+            })
+            .unwrap_or_else(|| session_dir.to_path_buf());
+        return ShellRequest {
+            command: normalize_shell_command_text(command),
+            cwd,
+            timeout_secs,
+        };
     }
     ShellRequest {
         command: normalize_shell_command_text(command_line),
@@ -227,10 +225,10 @@ fn decode_loose_json_string(raw: &str) -> Option<String> {
             'f' => decoded.push('\u{000c}'),
             'u' => {
                 let digits = chars.by_ref().take(4).collect::<String>();
-                if let Ok(code) = u16::from_str_radix(&digits, 16) {
-                    if let Some(value) = char::from_u32(code as u32) {
-                        decoded.push(value);
-                    }
+                if let Ok(code) = u16::from_str_radix(&digits, 16)
+                    && let Some(value) = char::from_u32(code as u32)
+                {
+                    decoded.push(value);
                 }
             }
             other => {

@@ -493,10 +493,8 @@ pub struct RawProviderConfig {
 impl Settings {
     pub async fn default() -> Result<Arc<Self>, TuraError> {
         let explicit_config = std::env::var_os("TURA_PROVIDER_CONFIG").is_some();
-        if !explicit_config {
-            if let Some(settings) = SETTINGS.get() {
-                return Ok(Arc::clone(settings));
-            }
+        if !explicit_config && let Some(settings) = SETTINGS.get() {
+            return Ok(Arc::clone(settings));
         }
         let loaded = Arc::new(crate::tura_llm_conf::load_settings().await?);
         if !explicit_config {

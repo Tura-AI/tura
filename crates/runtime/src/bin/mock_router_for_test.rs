@@ -73,54 +73,54 @@ fn main() {
         .unwrap_or(0);
 
     let mut child_summary: Option<String> = None;
-    if depth < target_depth {
-        if let Ok(self_bin) = std::env::current_exe() {
-            let child_req = json!({
-                "session_id": format!("{session_id}-child"),
-                "agent": format!("{agent}.child"),
-                "prompt": "recursive-child",
-                "parent_session_id": session_id,
-                "depth": depth + 1,
-            });
-            let body = serde_json::to_string(&child_req).unwrap_or_default();
-            let mut child = match Command::new(&self_bin)
-                .arg("run-agent")
-                .env_remove("MOCK_RECURSE_TO_DEPTH")
-                .env(
-                    "MOCK_AGENT_SUMMARY",
-                    format!("{agent}.child@depth{}", depth + 1),
-                )
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(error) => {
-                    emit_error(&format!("recursive spawn failed: {error}"));
-                    return;
-                }
-            };
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(body.as_bytes());
+    if depth < target_depth
+        && let Ok(self_bin) = std::env::current_exe()
+    {
+        let child_req = json!({
+            "session_id": format!("{session_id}-child"),
+            "agent": format!("{agent}.child"),
+            "prompt": "recursive-child",
+            "parent_session_id": session_id,
+            "depth": depth + 1,
+        });
+        let body = serde_json::to_string(&child_req).unwrap_or_default();
+        let mut child = match Command::new(&self_bin)
+            .arg("run-agent")
+            .env_remove("MOCK_RECURSE_TO_DEPTH")
+            .env(
+                "MOCK_AGENT_SUMMARY",
+                format!("{agent}.child@depth{}", depth + 1),
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(error) => {
+                emit_error(&format!("recursive spawn failed: {error}"));
+                return;
             }
-            let out = match child.wait_with_output() {
-                Ok(o) => o,
-                Err(error) => {
-                    emit_error(&format!("recursive wait failed: {error}"));
-                    return;
-                }
-            };
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            if let Ok(v) = serde_json::from_str::<Value>(stdout.trim()) {
-                let s = v
-                    .get("result")
-                    .and_then(|r| r.get("summary"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                child_summary = Some(s);
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(body.as_bytes());
+        }
+        let out = match child.wait_with_output() {
+            Ok(o) => o,
+            Err(error) => {
+                emit_error(&format!("recursive wait failed: {error}"));
+                return;
             }
+        };
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if let Ok(v) = serde_json::from_str::<Value>(stdout.trim()) {
+            let s = v
+                .get("result")
+                .and_then(|r| r.get("summary"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            child_summary = Some(s);
         }
     }
 

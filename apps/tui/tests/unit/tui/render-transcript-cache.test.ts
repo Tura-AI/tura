@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { initialState, reducer } from "../../../src/tui/reducer.js";
 import { render, renderChatFrameParts } from "../../../src/tui/render.js";
-import { transcriptLines, transcriptLiveLines } from "../../../src/tui/render/transcript.js";
+import {
+  transcriptLines,
+  transcriptLiveLines,
+  transcriptMessageGroups,
+} from "../../../src/tui/render/transcript.js";
 import { plainCapabilities, richCapabilities } from "../../../src/tui/capabilities.js";
 import { stripAnsi } from "../../../src/tui/render-terminal.js";
 import {
@@ -262,7 +266,90 @@ test("completed user and assistant turn moves from live into transcript cache", 
   assert.doesNotMatch(liveRows, /CACHE_USER_TEXT|CACHE_AGENT_TEXT/);
 });
 
-test("render cache absorbs stable messages that precede the active live message", () => {
+test("busy assistant text never moves from cache back into live when its command starts", () => {
+  const session = {
+    id: "sess-stable-text-before-command",
+    title: "Stable Text Before Command",
+    status: "busy" as const,
+  };
+  const textPart = {
+    id: "part-stable-text-before-command",
+    type: "text" as const,
+    text: Array.from(
+      { length: 36 },
+      (_item, index) => `STABLE_BEFORE_COMMAND_${String(index + 1).padStart(2, "0")}`,
+    ).join("\n"),
+  };
+  const userMessage = {
+    id: "msg-user-stable-before-command",
+    sessionID: session.id,
+    role: "user" as const,
+    created_at: 1_000,
+    parts: [{ id: "part-user-stable-before-command", type: "text" as const, text: "run it" }],
+  };
+  const assistantMessage = (status?: "running") => ({
+    id: "msg-stable-before-command",
+    sessionID: session.id,
+    role: "assistant" as const,
+    created_at: 2_000,
+    parts: [
+      textPart,
+      ...(status
+        ? [
+            {
+              id: "part-command-after-stable-text",
+              type: "tool" as const,
+              tool: "command_run",
+              state: {
+                status,
+                input: {
+                  commands: [
+                    {
+                      step: 1,
+                      command_type: "shell_command",
+                      command_line: "git log --since=3.days --stat",
+                    },
+                  ],
+                },
+              },
+            },
+          ]
+        : []),
+    ],
+  });
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [userMessage, assistantMessage()],
+    permissions: [],
+    sessions: [session],
+  });
+
+  const textOnly = renderChatFrameParts(state, richCapabilities());
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: { sessionID: session.id, info: assistantMessage("running") },
+      },
+    },
+  });
+  const commandRunning = renderChatFrameParts(state, richCapabilities(), { cache: textOnly.cache });
+
+  assert.match(stripAnsi(textOnly.cacheFrame), /run it/u);
+  assert.doesNotMatch(stripAnsi(textOnly.cacheFrame), /STABLE_BEFORE_COMMAND/u);
+  assert.match(
+    stripAnsi(textOnly.liveFrame),
+    /STABLE_BEFORE_COMMAND_01[\s\S]*STABLE_BEFORE_COMMAND_36/u,
+  );
+  assert.equal(commandRunning.cache.cacheMessageCount, textOnly.cache.cacheMessageCount);
+  assert.doesNotMatch(stripAnsi(commandRunning.cacheFrame), /STABLE_BEFORE_COMMAND/u);
+  assert.match(stripAnsi(commandRunning.liveFrame), /STABLE_BEFORE_COMMAND_01[\s\S]*Commands/u);
+});
+
+test("render cache keeps newly stable messages in the active live tail", () => {
   const session = {
     id: "sess-growing-live-cache",
     title: "Growing Live Cache",
@@ -282,11 +369,11 @@ test("render cache absorbs stable messages that precede the active live message"
   const handoff = renderChatFrameParts(state, richCapabilities(), { cache: first.cache });
   const steady = renderChatFrameParts(state, richCapabilities(), { cache: handoff.cache });
 
-  assert.equal(handoff.tailCacheMessageCount, 1);
-  assert.equal(handoff.cache.cacheMessageCount, 1);
+  assert.equal(handoff.tailCacheMessageCount, 0);
+  assert.equal(handoff.cache.cacheMessageCount, 0);
   assert.equal(steady.tailCacheMessageCount, 0);
-  assert.match(stripAnsi(steady.cacheFrame), /FIRST_LIVE_MESSAGE/);
-  assert.doesNotMatch(stripAnsi(steady.liveFrame), /FIRST_LIVE_MESSAGE/);
+  assert.doesNotMatch(stripAnsi(steady.cacheFrame), /FIRST_LIVE_MESSAGE/);
+  assert.match(stripAnsi(steady.liveFrame), /FIRST_LIVE_MESSAGE/);
   assert.match(stripAnsi(steady.liveFrame), /SECOND_LIVE_MESSAGE/);
 
   function liveDelta(messageID: string, delta: string, updatedAt: number) {
@@ -309,6 +396,82 @@ test("render cache absorbs stable messages that precede the active live message"
       },
     };
   }
+});
+
+test("completed commands stay in the mutable tail until a long final response finalizes", () => {
+  const session = {
+    id: "sess-command-final-tail",
+    title: "Command Final Tail",
+    status: "busy" as const,
+  };
+  const commandMessage = (status: "running" | "completed") => ({
+    id: "msg-command-final-tail",
+    sessionID: session.id,
+    role: "assistant" as const,
+    created_at: 1_000,
+    parts: [
+      {
+        id: "part-command-final-tail",
+        type: "tool" as const,
+        tool: "command_run",
+        state: {
+          status,
+          input: {
+            commands: [
+              {
+                step: 1,
+                command_type: "shell_command",
+                command_line: "npm run recent-command",
+              },
+            ],
+          },
+        },
+      },
+    ],
+  });
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [commandMessage("running")],
+    permissions: [],
+    sessions: [session],
+  });
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          sessionID: session.id,
+          messageID: "msg-long-final-tail",
+          partID: "part-long-final-tail",
+          createdAt: 2_000,
+          updatedAt: 2_001,
+          field: "text",
+          delta: Array.from({ length: 36 }, (_, index) => `FINAL_TAIL_LINE_${index + 1}`).join(
+            "\n",
+          ),
+        },
+      },
+    },
+  });
+  const running = renderChatFrameParts(state, richCapabilities());
+  state = reducer(state, {
+    type: "hydrate",
+    session,
+    messages: [commandMessage("completed")],
+    permissions: [],
+    sessions: [session],
+  });
+  const completed = renderChatFrameParts(state, richCapabilities(), { cache: running.cache });
+  const cache = stripAnsi(completed.cacheFrame);
+  const live = stripAnsi(completed.liveFrame);
+
+  assert.equal(completed.tailCacheMessageCount, 0);
+  assert.equal(completed.cache.cacheMessageCount, 0);
+  assert.doesNotMatch(cache, /recent-command|FINAL_TAIL_LINE/u);
+  assert.match(live, /recent-command[\s\S]*FINAL_TAIL_LINE_1[\s\S]*FINAL_TAIL_LINE_36/u);
 });
 
 test("live assistant text keeps event order before a later user message", () => {
@@ -478,6 +641,14 @@ test("runtime message stays live while its command is still running", () => {
     },
   });
 
+  assert.deepEqual(
+    transcriptMessageGroups(state).cache.map((message) => message.id),
+    ["msg-runtime-live-user"],
+  );
+  assert.deepEqual(
+    transcriptMessageGroups(state).live.map((message) => message.id),
+    ["runtime-live.message"],
+  );
   cacheRows = stripAnsi(transcriptLines(state, 100).join("\n"));
   liveRows = stripAnsi(transcriptLiveLines(state, 100).join("\n"));
   assert.doesNotMatch(cacheRows, /I will run the checks/);
@@ -528,9 +699,9 @@ test("runtime message stays live while its command is still running", () => {
 
   cacheRows = stripAnsi(transcriptLines(state, 100).join("\n"));
   liveRows = stripAnsi(transcriptLiveLines(state, 100).join("\n"));
-  assert.match(cacheRows, /I will run the checks/);
-  assert.match(cacheRows, /npm test/);
-  assert.doesNotMatch(liveRows, /I will run the checks|npm test/);
+  assert.doesNotMatch(cacheRows, /I will run the checks|npm test/);
+  assert.match(liveRows, /I will run the checks/);
+  assert.match(liveRows, /npm test/);
 
   state = reducer(state, {
     type: "messages-incremental",
@@ -567,6 +738,16 @@ test("runtime message stays live while its command is still running", () => {
         ],
       },
     ],
+  });
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "session.status",
+        properties: { sessionID: session.id, updatedAt: 1_800, status: "idle" },
+      },
+    },
   });
 
   cacheRows = stripAnsi(transcriptLines(state, 100).join("\n"));

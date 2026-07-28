@@ -230,10 +230,10 @@ fn strip_large_base64(value: &mut Value) {
     match value {
         Value::Object(object) => {
             for key in ["b64_json", "data"] {
-                if let Some(Value::String(text)) = object.get_mut(key) {
-                    if text.len() > 256 {
-                        *text = format!("[base64 omitted: {} chars]", text.len());
-                    }
+                if let Some(Value::String(text)) = object.get_mut(key)
+                    && text.len() > 256
+                {
+                    *text = format!("[base64 omitted: {} chars]", text.len());
                 }
             }
             for child in object.values_mut() {

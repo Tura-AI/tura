@@ -69,35 +69,32 @@ pub fn extract_tool_calls(content: &Value) -> Vec<ProviderToolCall> {
 
     if let Some(tool_calls) = content.get("tool_calls").and_then(Value::as_array) {
         for call in tool_calls {
-            if let Some(function) = call.get("function") {
-                if let Some(name) = function.get("name").and_then(Value::as_str) {
-                    let arguments = function.get("arguments").cloned().unwrap_or(Value::Null);
-                    calls.push(ProviderToolCall {
-                        tool_name: name.to_string(),
-                        arguments: normalize_command_run_tool_input(
-                            name,
-                            parse_arguments(arguments),
-                        ),
-                        provider_metadata: openai_tool_call_metadata(call),
-                    });
-                }
+            if let Some(function) = call.get("function")
+                && let Some(name) = function.get("name").and_then(Value::as_str)
+            {
+                let arguments = function.get("arguments").cloned().unwrap_or(Value::Null);
+                calls.push(ProviderToolCall {
+                    tool_name: name.to_string(),
+                    arguments: normalize_command_run_tool_input(name, parse_arguments(arguments)),
+                    provider_metadata: openai_tool_call_metadata(call),
+                });
             }
         }
     }
 
     if let Some(parts) = content.get("parts").and_then(Value::as_array) {
         for part in parts {
-            if let Some(function_call) = part.get("functionCall") {
-                if let Some(name) = function_call.get("name").and_then(Value::as_str) {
-                    calls.push(ProviderToolCall {
-                        tool_name: name.to_string(),
-                        arguments: normalize_command_run_tool_input(
-                            name,
-                            function_call.get("args").cloned().unwrap_or(Value::Null),
-                        ),
-                        provider_metadata: google_function_call_metadata(part),
-                    });
-                }
+            if let Some(function_call) = part.get("functionCall")
+                && let Some(name) = function_call.get("name").and_then(Value::as_str)
+            {
+                calls.push(ProviderToolCall {
+                    tool_name: name.to_string(),
+                    arguments: normalize_command_run_tool_input(
+                        name,
+                        function_call.get("args").cloned().unwrap_or(Value::Null),
+                    ),
+                    provider_metadata: google_function_call_metadata(part),
+                });
             }
         }
     }

@@ -534,8 +534,22 @@ mod tests {
         std::fs::create_dir_all(&home).expect("session db home");
         let previous_home = std::env::var_os("TURA_HOME");
         let previous_root = std::env::var_os("SESSION_LOG_DB_ROOT");
-        std::env::set_var("TURA_HOME", &home);
-        std::env::set_var("SESSION_LOG_DB_ROOT", root.path());
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_HOME", &home)
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("SESSION_LOG_DB_ROOT", root.path())
+        };
         let handle = std::thread::spawn(session_log::service::run_socket_service);
         let started = std::time::Instant::now();
         while !session_log_contract::client::service_is_running() {
@@ -763,12 +777,48 @@ mod tests {
         let _ = session_log_contract::client::call_service(&SessionLogCommand::Shutdown);
         let _ = handle.join();
         match previous_home {
-            Some(value) => std::env::set_var("TURA_HOME", value),
-            None => std::env::remove_var("TURA_HOME"),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("TURA_HOME", value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var("TURA_HOME")
+                }
+            }
         }
         match previous_root {
-            Some(value) => std::env::set_var("SESSION_LOG_DB_ROOT", value),
-            None => std::env::remove_var("SESSION_LOG_DB_ROOT"),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("SESSION_LOG_DB_ROOT", value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var("SESSION_LOG_DB_ROOT")
+                }
+            }
         }
     }
 }

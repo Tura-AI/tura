@@ -220,8 +220,26 @@ mod tests {
         fn drop(&mut self) {
             for (key, value) in &self.keys {
                 match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    Some(value) => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::set_var(key, value)
+                        }
+                    }
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    None => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::remove_var(key)
+                        }
+                    }
                 }
             }
         }
@@ -231,8 +249,22 @@ mod tests {
     fn initial_user_log_preserves_frontend_ids_from_worker_env() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let _restore = EnvRestore::capture(&[FRONTEND_MESSAGE_ID_ENV, FRONTEND_PART_ID_ENV]);
-        std::env::set_var(FRONTEND_MESSAGE_ID_ENV, "msg_tui_reopen");
-        std::env::set_var(FRONTEND_PART_ID_ENV, "part_tui_reopen");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(FRONTEND_MESSAGE_ID_ENV, "msg_tui_reopen")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(FRONTEND_PART_ID_ENV, "part_tui_reopen")
+        };
 
         let now = chrono::Utc::now();
         let mut session = SessionManagement::new(

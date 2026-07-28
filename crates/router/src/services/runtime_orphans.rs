@@ -93,10 +93,10 @@ pub fn runtime_worker_orphan_decision(
         let Some(parent) = system.process(Pid::from_u32(parent_pid)) else {
             return RuntimeWorkerOrphanDecision::Kill;
         };
-        if let Some(expected_start) = env_u64(&process.environ, "TURA_ROUTER_PARENT_START_TIME") {
-            if parent.start_time() != expected_start {
-                return RuntimeWorkerOrphanDecision::Kill;
-            }
+        if let Some(expected_start) = env_u64(&process.environ, "TURA_ROUTER_PARENT_START_TIME")
+            && parent.start_time() != expected_start
+        {
+            return RuntimeWorkerOrphanDecision::Kill;
         }
         return RuntimeWorkerOrphanDecision::Keep;
     }

@@ -144,7 +144,9 @@ pub async fn oauth_authorize_value(
         (
             url,
             OAuthMethod::Code,
-            format!("Open the login page, copy your browser token, and paste it here. Confirmation: {code}"),
+            format!(
+                "Open the login page, copy your browser token, and paste it here. Confirmation: {code}"
+            ),
         )
     } else if selected_method.kind == AuthMethodKind::OAuthPkce {
         (
@@ -315,17 +317,16 @@ async fn complete_oauth_callback(
         }
         return response;
     }
-    if pending.method == "oauth_pkce" {
-        if let Some(state) = normalized_code.state.as_deref() {
-            if pending.state.as_deref() != Some(state) {
-                return oauth_callback_response(
+    if pending.method == "oauth_pkce"
+        && let Some(state) = normalized_code.state.as_deref()
+        && pending.state.as_deref() != Some(state)
+    {
+        return oauth_callback_response(
                     &provider_id,
                     false,
                     "provider.oauth.state_mismatch",
                     "OAuth state does not match the pending authorization request. Start login again and paste the newest code.",
                 );
-            }
-        }
     }
     let tokens = if matches!(pending.method.as_str(), "oauth_pkce" | "device_code") {
         match exchange_oauth_code(&provider_id, &normalized_code, &pending).await {
@@ -447,26 +448,25 @@ fn normalize_oauth_code(code: &str) -> NormalizedOAuthCode {
             verifier: None,
         };
     }
-    if let Ok(url) = reqwest::Url::parse(trimmed) {
-        if let Some(code) = url
+    if let Ok(url) = reqwest::Url::parse(trimmed)
+        && let Some(code) = url
             .query_pairs()
             .find_map(|(key, value)| (key == "code").then(|| value.to_string()))
-        {
-            let state = url
-                .query_pairs()
-                .find_map(|(key, value)| (key == "state").then(|| value.to_string()))
-                .or_else(|| {
-                    url.fragment()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(ToString::to_string)
-                });
-            return NormalizedOAuthCode {
-                code: code.trim().to_string(),
-                state,
-                verifier: None,
-            };
-        }
+    {
+        let state = url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "state").then(|| value.to_string()))
+            .or_else(|| {
+                url.fragment()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+            });
+        return NormalizedOAuthCode {
+            code: code.trim().to_string(),
+            state,
+            verifier: None,
+        };
     }
     let mut parts = trimmed.splitn(2, '#');
     let code = parts.next().unwrap_or_default().trim().to_string();
@@ -677,7 +677,7 @@ async fn finish_oauth_redirect_callback(
             return Html(oauth_callback_html(
                 false,
                 &format!("Token exchange failed: {error}"),
-            ))
+            ));
         }
     };
     let auth = auth_update::oauth_auth(

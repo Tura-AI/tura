@@ -69,7 +69,14 @@ async fn google_business_flow_generates_content_with_tools_system_usage_and_requ
     });
 
     let previous_key = std::env::var_os("GOOGLE_API_KEY");
-    std::env::set_var("GOOGLE_API_KEY", "dummy-google-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("GOOGLE_API_KEY", "dummy-google-key")
+    };
     let config = ProviderConfig {
         provider: "google".to_string(),
         base_url: format!("http://{addr}/v1beta"),
@@ -130,8 +137,26 @@ async fn google_business_flow_generates_content_with_tools_system_usage_and_requ
         .await;
 
     match previous_key {
-        Some(value) => std::env::set_var("GOOGLE_API_KEY", value),
-        None => std::env::remove_var("GOOGLE_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("GOOGLE_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("GOOGLE_API_KEY")
+            }
+        }
     }
 
     let response = result.expect("local google provider call");
@@ -257,7 +282,14 @@ async fn google_business_flow_replays_function_call_output_and_media_sidecar() {
     });
 
     let previous_key = std::env::var_os("GOOGLE_API_KEY");
-    std::env::set_var("GOOGLE_API_KEY", "dummy-google-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("GOOGLE_API_KEY", "dummy-google-key")
+    };
     let config = ProviderConfig {
         provider: "google".to_string(),
         base_url: format!("http://{addr}"),
@@ -290,8 +322,26 @@ async fn google_business_flow_replays_function_call_output_and_media_sidecar() {
         .await;
 
     match previous_key {
-        Some(value) => std::env::set_var("GOOGLE_API_KEY", value),
-        None => std::env::remove_var("GOOGLE_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("GOOGLE_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("GOOGLE_API_KEY")
+            }
+        }
     }
 
     let response = result.expect("local google replay call");
@@ -360,7 +410,14 @@ async fn google_business_flow_embeds_local_vectors_and_rejects_missing_values() 
     });
 
     let previous_key = std::env::var_os("GOOGLE_API_KEY");
-    std::env::set_var("GOOGLE_API_KEY", "dummy-google-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("GOOGLE_API_KEY", "dummy-google-key")
+    };
     let config = ProviderConfig {
         provider: "google".to_string(),
         base_url: format!("http://{addr}"),
@@ -423,8 +480,26 @@ async fn google_business_flow_embeds_local_vectors_and_rejects_missing_values() 
     let bad_captured = bad_server.join().expect("bad google embed server joins");
 
     match previous_key {
-        Some(value) => std::env::set_var("GOOGLE_API_KEY", value),
-        None => std::env::remove_var("GOOGLE_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("GOOGLE_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("GOOGLE_API_KEY")
+            }
+        }
     }
 
     assert_eq!(
@@ -468,7 +543,14 @@ async fn google_business_flow_reports_http_status_body_and_invalid_json() {
     });
 
     let previous_key = std::env::var_os("GOOGLE_API_KEY");
-    std::env::set_var("GOOGLE_API_KEY", "dummy-google-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("GOOGLE_API_KEY", "dummy-google-key")
+    };
     let config = ProviderConfig {
         provider: "google".to_string(),
         base_url: format!("http://{addr}"),
@@ -531,8 +613,26 @@ async fn google_business_flow_reports_http_status_body_and_invalid_json() {
     let invalid_captured = invalid_server.join().expect("invalid google server joins");
 
     match previous_key {
-        Some(value) => std::env::set_var("GOOGLE_API_KEY", value),
-        None => std::env::remove_var("GOOGLE_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("GOOGLE_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("GOOGLE_API_KEY")
+            }
+        }
     }
 
     assert_eq!(

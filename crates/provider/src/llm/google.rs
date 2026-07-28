@@ -266,11 +266,12 @@ fn push_google_function_response(contents: &mut Vec<Value>, part: Value) {
                     .iter()
                     .any(|part| part.get("functionResponse").is_some())
             });
-    if last.get("role").and_then(Value::as_str) == Some("user") && last_has_function_response {
-        if let Some(parts) = last.get_mut("parts").and_then(Value::as_array_mut) {
-            parts.push(part);
-            return;
-        }
+    if last.get("role").and_then(Value::as_str) == Some("user")
+        && last_has_function_response
+        && let Some(parts) = last.get_mut("parts").and_then(Value::as_array_mut)
+    {
+        parts.push(part);
+        return;
     }
     contents.push(json!({ "role": "user", "parts": [part] }));
 }
@@ -318,20 +319,19 @@ fn build_tool_config(tool_choice: Option<&Value>) -> Option<Value> {
             _ => None, // "auto" or unknown → let the model decide
         },
         Value::Object(_) => {
-            if choice.get("type").and_then(Value::as_str) == Some("function") {
-                if let Some(name) = choice
+            if choice.get("type").and_then(Value::as_str) == Some("function")
+                && let Some(name) = choice
                     .get("function")
                     .and_then(|f| f.get("name"))
                     .and_then(Value::as_str)
                     .filter(|n| !n.trim().is_empty())
-                {
-                    return Some(json!({
-                        "functionCallingConfig": {
-                            "mode": "ANY",
-                            "allowedFunctionNames": [name]
-                        }
-                    }));
-                }
+            {
+                return Some(json!({
+                    "functionCallingConfig": {
+                        "mode": "ANY",
+                        "allowedFunctionNames": [name]
+                    }
+                }));
             }
             None
         }

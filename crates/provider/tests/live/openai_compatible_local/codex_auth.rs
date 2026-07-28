@@ -16,9 +16,23 @@ impl Drop for EnvRestore {
     fn drop(&mut self) {
         for (key, value) in self.0.drain(..) {
             if let Some(value) = value {
-                std::env::set_var(key, value);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(key, value)
+                };
             } else {
-                std::env::remove_var(key);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var(key)
+                };
             }
         }
     }
@@ -89,9 +103,30 @@ async fn codex_oauth_uses_rotated_local_auth_across_two_calls() {
         requests
     });
 
-    std::env::set_var("CODEX_HOME", &codex_home);
-    std::env::set_var("TURA_ENV_PATH", &env_path);
-    std::env::set_var("OPENAI_CODEX_ENDPOINT", &endpoint);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("CODEX_HOME", &codex_home)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ENV_PATH", &env_path)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_CODEX_ENDPOINT", &endpoint)
+    };
     for key in [
         "OPENAI_LOGIN",
         "OPENAI_API_KEY",
@@ -99,7 +134,14 @@ async fn codex_oauth_uses_rotated_local_auth_across_two_calls() {
         "OPENAI_TOKEN_EXPIRES",
         "OPENAI_ACCOUNT_ID",
     ] {
-        std::env::remove_var(key);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(key)
+        };
     }
 
     let config = TuraConfig::new(".env.missing");

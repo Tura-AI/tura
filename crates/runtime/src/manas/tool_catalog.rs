@@ -217,10 +217,10 @@ fn tool_interface_to_provider_schema_with_commands(
             .cloned()
             .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
     );
-    if name == COMMAND_RUN_TOOL {
-        if let Some(commands) = allowed_commands {
-            input_schema = restrict_command_run_schema(input_schema, commands);
-        }
+    if name == COMMAND_RUN_TOOL
+        && let Some(commands) = allowed_commands
+    {
+        input_schema = restrict_command_run_schema(input_schema, commands);
     }
     let mut parameters =
         if input_schema.get("type").and_then(|value| value.as_str()) == Some("array") {
@@ -881,7 +881,14 @@ mod tests {
     #[test]
     fn empty_agent_capabilities_do_not_enable_default_command_run_commands() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+        };
         let agent = command_run_agent_with_capabilities(&[]);
 
         let commands = command_run_commands_for_agent(&agent);
@@ -890,13 +897,27 @@ mod tests {
             commands.is_empty(),
             "an agent with no capabilities must not receive default command_run commands"
         );
-        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_SHELL")
+        };
     }
 
     #[test]
     fn empty_agent_capabilities_do_not_load_command_run_provider_tool() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+        };
         let agent = command_run_agent_with_capabilities(&[]);
         let session = session_with_task_type(vec!["debug".to_string()]);
         let commands = command_run_commands_for_agent(&agent);
@@ -908,13 +929,27 @@ mod tests {
             tools.is_empty(),
             "an agent with no capabilities must not receive the command_run provider tool"
         );
-        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_SHELL")
+        };
     }
 
     #[test]
     fn runtime_prompt_capabilities_extend_command_run_schema() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+        };
         let mut commands = command_run_commands_for_agent(&command_run_agent_with_capabilities(&[
             "command_run",
             "apply_patch",
@@ -944,13 +979,27 @@ mod tests {
                 "task_status",
             ],
         );
-        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_SHELL")
+        };
     }
 
     #[test]
     fn provider_schema_preserves_additional_properties_recursively() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_DISABLE_STRICT_JSON", "1");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_DISABLE_STRICT_JSON", "1")
+        };
 
         let schema = tool_interface_to_provider_schema(serde_json::json!({
             "name": "example",
@@ -976,13 +1025,27 @@ mod tests {
         assert!(schema.to_string().contains("additionalProperties"));
         assert_eq!(schema["function"]["strict"], false);
 
-        std::env::remove_var("TURA_COMMAND_RUN_DISABLE_STRICT_JSON");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_DISABLE_STRICT_JSON")
+        };
     }
 
     #[test]
     fn strict_json_env_requires_all_provider_object_fields() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_STRICT_JSON", "1");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_STRICT_JSON", "1")
+        };
 
         let schema = tool_interface_to_provider_schema(command_run_interface());
         let parameters = &schema["function"]["parameters"];
@@ -994,13 +1057,27 @@ mod tests {
             serde_json::json!(["command_type", "command_line", "step"])
         );
 
-        std::env::remove_var("TURA_COMMAND_RUN_STRICT_JSON");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_STRICT_JSON")
+        };
     }
 
     #[test]
     fn real_command_run_provider_schema_is_openai_strict_compatible() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_STRICT_JSON", "1");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_STRICT_JSON", "1")
+        };
 
         let interface = serde_json::from_str::<serde_json::Value>(include_str!(
             "../../../tools/src/command_run/schema.json"
@@ -1022,13 +1099,27 @@ mod tests {
         assert!(parameters["properties"].get("task_status").is_none());
         assert!(command_required.contains(&serde_json::json!("command_type")));
         assert!(command_required.contains(&serde_json::json!("step")));
-        std::env::remove_var("TURA_COMMAND_RUN_STRICT_JSON");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_STRICT_JSON")
+        };
     }
 
     #[test]
     fn command_run_provider_schema_exposes_only_shell_command_surface() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+        };
 
         let commands = default_command_run_commands();
         let schema = tool_interface_to_provider_schema_with_commands(
@@ -1056,13 +1147,27 @@ mod tests {
             "integer"
         );
 
-        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_SHELL")
+        };
     }
 
     #[test]
     fn command_run_provider_schema_exposes_only_bash_surface() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash")
+        };
 
         let commands = default_command_run_commands();
         let schema = tool_interface_to_provider_schema_with_commands(
@@ -1075,13 +1180,27 @@ mod tests {
             &["apply_patch", "bash", "web_discover", "task_status"],
         );
 
-        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_SHELL")
+        };
     }
 
     #[test]
     fn command_run_provider_schema_exposes_only_zsh_surface() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh")
+        };
 
         let commands = default_command_run_commands();
         let schema = tool_interface_to_provider_schema_with_commands(
@@ -1094,13 +1213,27 @@ mod tests {
             &["apply_patch", "zsh", "web_discover", "task_status"],
         );
 
-        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_SHELL")
+        };
     }
 
     #[test]
     fn command_run_provider_schema_injects_planning_only_when_enabled() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+        };
         let mut commands = default_command_run_commands();
         commands.insert("planning".to_string());
 
@@ -1121,7 +1254,14 @@ mod tests {
             ],
         );
 
-        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_SHELL")
+        };
     }
 
     #[test]
@@ -1175,7 +1315,14 @@ mod tests {
             });
         }
 
-        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+        };
         let session = session_with_task_type(vec!["debug".to_string()]);
         let allowed_commands = command_run_commands_for_agent(&agent);
         let tools = load_agent_capabilities_with_commands(&agent, &session, &allowed_commands)
@@ -1186,7 +1333,14 @@ mod tests {
             &["apply_patch", "shell_command", "task_status", "planning"],
         );
 
-        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_COMMAND_RUN_SHELL")
+        };
         let _ = std::fs::remove_dir_all(root);
     }
 }

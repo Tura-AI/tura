@@ -296,13 +296,27 @@ mod tests {
     fn instance_home_honors_explicit_override() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let temp = std::env::temp_dir();
-        std::env::set_var("TURA_HOME", &temp);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_HOME", &temp)
+        };
         // Normalization resolves to the same home regardless of trailing slash
         // or case differences the OS treats as equivalent.
         let home = instance_home();
         let expected = normalize_path(&temp);
         assert_eq!(home, expected);
-        std::env::remove_var("TURA_HOME");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_HOME")
+        };
     }
 
     #[test]
@@ -310,12 +324,26 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let temp = std::env::temp_dir().join("tura-path-derive-test");
         std::fs::create_dir_all(&temp).expect("create temp TURA_HOME");
-        std::env::set_var("TURA_HOME", &temp);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_HOME", &temp)
+        };
         let home = instance_home();
         assert!(home_socket("session_db").starts_with(&home));
         assert!(locks_dir().starts_with(&home));
         assert!(home_runtime_dir().starts_with(&home));
-        std::env::remove_var("TURA_HOME");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_HOME")
+        };
     }
 
     #[test]
@@ -370,7 +398,14 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let temp = tempfile::tempdir().expect("temp root");
         let previous = std::env::var_os("TURA_PROJECT_ROOT");
-        std::env::set_var("TURA_PROJECT_ROOT", temp.path());
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", temp.path())
+        };
 
         let root = canonical_root();
 
@@ -382,7 +417,14 @@ mod tests {
     fn canonical_root_ignores_missing_project_root_env() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var_os("TURA_PROJECT_ROOT");
-        std::env::set_var("TURA_PROJECT_ROOT", "Z:/definitely/missing/tura/root");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", "Z:/definitely/missing/tura/root")
+        };
 
         let root = canonical_root();
 
@@ -396,7 +438,14 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let temp = tempfile::tempdir().expect("temp home");
         let previous = std::env::var_os("TURA_HOME");
-        std::env::set_var("TURA_HOME", temp.path());
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_HOME", temp.path())
+        };
 
         assert_eq!(
             home_runtime_dir(),
@@ -442,12 +491,33 @@ mod tests {
         let tura_root = temp.path().join("tura-root");
         let previous_session = std::env::var_os("SESSION_LOG_DB_ROOT");
         let previous_tura = std::env::var_os("TURA_DB_ROOT");
-        std::env::set_var("SESSION_LOG_DB_ROOT", &session_root);
-        std::env::set_var("TURA_DB_ROOT", &tura_root);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("SESSION_LOG_DB_ROOT", &session_root)
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_DB_ROOT", &tura_root)
+        };
 
         assert_eq!(home_db_dir(), session_root.join(DB_DIR_NAME));
 
-        std::env::remove_var("SESSION_LOG_DB_ROOT");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("SESSION_LOG_DB_ROOT")
+        };
         assert_eq!(home_db_dir(), tura_root.join(DB_DIR_NAME));
 
         restore_env("SESSION_LOG_DB_ROOT", previous_session);
@@ -461,9 +531,30 @@ mod tests {
         let previous_home = std::env::var_os("TURA_HOME");
         let previous_session = std::env::var_os("SESSION_LOG_DB_ROOT");
         let previous_tura = std::env::var_os("TURA_DB_ROOT");
-        std::env::remove_var("SESSION_LOG_DB_ROOT");
-        std::env::remove_var("TURA_DB_ROOT");
-        std::env::set_var("TURA_HOME", temp.path());
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("SESSION_LOG_DB_ROOT")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_DB_ROOT")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_HOME", temp.path())
+        };
 
         assert_eq!(
             home_db_dir(),
@@ -499,9 +590,23 @@ mod tests {
 
     fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
         if let Some(value) = previous {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 }

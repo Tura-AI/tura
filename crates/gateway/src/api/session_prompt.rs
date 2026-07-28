@@ -369,18 +369,16 @@ fn prompt_payload_with_frontend_ids(
     if let Some(parts) = object
         .get_mut("parts")
         .and_then(serde_json::Value::as_array_mut)
-    {
-        if let Some(part) = parts.iter_mut().find(|part| {
+        && let Some(part) = parts.iter_mut().find(|part| {
             part.get("type")
                 .and_then(serde_json::Value::as_str)
                 .is_none_or(|part_type| part_type == "text")
-        }) {
-            if let Some(part_object) = part.as_object_mut() {
-                part_object
-                    .entry("id".to_string())
-                    .or_insert_with(|| serde_json::Value::String(part_id));
-            }
-        }
+        })
+        && let Some(part_object) = part.as_object_mut()
+    {
+        part_object
+            .entry("id".to_string())
+            .or_insert_with(|| serde_json::Value::String(part_id));
     }
     payload
 }
@@ -830,12 +828,11 @@ fn config_keys(content: &str) -> std::collections::BTreeSet<String> {
 }
 
 fn explicit_config_model_override(config: &PromptSessionConfig) -> Option<String> {
-    if config.has("model") {
-        if let Some(model) =
+    if config.has("model")
+        && let Some(model) =
             non_empty_string(config.config.model.clone()).filter(|model| model.contains('/'))
-        {
-            return Some(model);
-        }
+    {
+        return Some(model);
     }
     if !(config.has("active_provider") || config.has("active_model")) {
         return None;

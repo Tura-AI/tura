@@ -110,14 +110,13 @@ fn command_run_media_image_urls(value: &serde_json::Value) -> Vec<String> {
 fn collect_command_run_media_image_urls(value: &serde_json::Value, urls: &mut Vec<String>) {
     match value {
         serde_json::Value::Object(object) => {
-            if object.get("type").and_then(serde_json::Value::as_str) == Some("image_url") {
-                if let Some(url) = object
+            if object.get("type").and_then(serde_json::Value::as_str) == Some("image_url")
+                && let Some(url) = object
                     .get("image_url")
                     .and_then(|image_url| image_url.get("url"))
                     .and_then(serde_json::Value::as_str)
-                {
-                    urls.push(url.to_string());
-                }
+            {
+                urls.push(url.to_string());
             }
             for child in object.values() {
                 collect_command_run_media_image_urls(child, urls);
@@ -149,28 +148,27 @@ fn collect_command_run_media_input_files(
 ) {
     match value {
         serde_json::Value::Object(object) => {
-            if object.get("type").and_then(serde_json::Value::as_str) == Some("file") {
-                if let Some(data) = object
+            if object.get("type").and_then(serde_json::Value::as_str) == Some("file")
+                && let Some(data) = object
                     .get("data_base64")
                     .and_then(serde_json::Value::as_str)
-                {
-                    let file_name = object
-                        .get("file_name")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("attachment");
-                    let mime_type = object
-                        .get("mime_type")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("application/octet-stream");
-                    if mime_type == "application/octet-stream" {
-                        return;
-                    }
-                    inputs.push(serde_json::json!({
-                        "type": "input_file",
-                        "filename": file_name,
-                        "file_data": format!("data:{mime_type};base64,{data}"),
-                    }));
+            {
+                let file_name = object
+                    .get("file_name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("attachment");
+                let mime_type = object
+                    .get("mime_type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("application/octet-stream");
+                if mime_type == "application/octet-stream" {
+                    return;
                 }
+                inputs.push(serde_json::json!({
+                    "type": "input_file",
+                    "filename": file_name,
+                    "file_data": format!("data:{mime_type};base64,{data}"),
+                }));
             }
             for child in object.values() {
                 collect_command_run_media_input_files(child, inputs);

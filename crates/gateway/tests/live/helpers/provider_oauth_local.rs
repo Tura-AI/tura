@@ -365,8 +365,26 @@ impl EnvGuard {
             .collect::<Vec<_>>();
         for (key, value) in values {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                Some(value) => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    }
+                }
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                None => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    }
+                }
             }
         }
         Self { previous }
@@ -383,7 +401,14 @@ impl DynamicEnvGuard {
             .into_iter()
             .map(|key| {
                 let value = std::env::var_os(&key);
-                std::env::remove_var(&key);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var(&key)
+                };
                 (key, value)
             })
             .collect();
@@ -395,8 +420,26 @@ impl Drop for DynamicEnvGuard {
     fn drop(&mut self) {
         for (key, value) in self.previous.drain(..) {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                Some(value) => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    }
+                }
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                None => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    }
+                }
             }
         }
     }
@@ -406,8 +449,26 @@ impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (key, value) in self.previous.drain(..) {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                Some(value) => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    }
+                }
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                None => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    }
+                }
             }
         }
     }

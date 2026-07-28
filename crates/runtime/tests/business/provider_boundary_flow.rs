@@ -1141,7 +1141,14 @@ impl EnvGuard {
             .iter()
             .map(|(key, value)| {
                 let previous = std::env::var_os(key);
-                std::env::set_var(key, value);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(key, value)
+                };
                 (*key, previous)
             })
             .collect();
@@ -1153,13 +1160,27 @@ impl EnvGuard {
             .iter()
             .map(|(key, value)| {
                 let previous = std::env::var_os(key);
-                std::env::set_var(key, value);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(key, value)
+                };
                 (*key, previous)
             })
             .collect::<Vec<_>>();
         previous.extend(remove.iter().map(|key| {
             let previous = std::env::var_os(key);
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
             (*key, previous)
         }));
         Self { previous }
@@ -1170,8 +1191,26 @@ impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (key, value) in self.previous.drain(..).rev() {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                Some(value) => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    }
+                }
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                None => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    }
+                }
             }
         }
     }

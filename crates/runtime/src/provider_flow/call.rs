@@ -421,7 +421,14 @@ mod tests {
 
     #[tokio::test]
     async fn call_runtime_provider_config_failure_finishes_failed_without_network() {
-        std::env::remove_var("DEFINITELY_MISSING_PROVIDER_FOR_CALL_RUNTIME_TEST_API_KEY");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("DEFINITELY_MISSING_PROVIDER_FOR_CALL_RUNTIME_TEST_API_KEY")
+        };
         let settings = missing_key_settings();
         let config = Arc::new(TuraConfig::new(".env.missing-for-call-runtime-test"));
 

@@ -212,7 +212,14 @@ async fn google_oauth_support_prefers_provider_specific_env_then_google_default(
         "GEMINI_OAUTH_REDIRECT_URI",
         "GEMINI_OAUTH_SCOPE",
     ] {
-        std::env::remove_var(key);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(key)
+        };
     }
 
     set_env("GOOGLE_OAUTH_CLIENT_ID", "google-client");
@@ -264,7 +271,14 @@ async fn google_oauth_support_prefers_provider_specific_env_then_google_default(
         "GEMINI_OAUTH_REDIRECT_URI",
         "GEMINI_OAUTH_SCOPE",
     ] {
-        std::env::remove_var(key);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(key)
+        };
     }
 }
 
@@ -426,7 +440,14 @@ async fn catalog_enrich_provider_list_prefers_env_then_api_then_config() {
     assert!(connected.iter().any(|id| id == "test-provider"));
     assert!(!connected.iter().any(|id| id == "config-provider"));
 
-    std::env::remove_var("TURA_GATEWAY_TEST_PROVIDER_KEY");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_GATEWAY_TEST_PROVIDER_KEY")
+    };
 }
 
 #[test]
@@ -711,7 +732,14 @@ async fn provider_list_hides_claude_models_from_picker_catalog() {
 #[tokio::test]
 async fn provider_list_masks_configured_key_value() {
     let _guard = ENV_LOCK.lock().await;
-    std::env::set_var("LINE_CHANNEL_ACCESS_TOKEN", "line-test-token");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LINE_CHANNEL_ACCESS_TOKEN", "line-test-token")
+    };
 
     let settings = tura_llm_rust::Settings::default()
         .await
@@ -727,7 +755,14 @@ async fn provider_list_masks_configured_key_value() {
         .expect("LINE service provider should be listed");
     assert_eq!(line.key.as_deref(), Some("line*******oken"));
 
-    std::env::remove_var("LINE_CHANNEL_ACCESS_TOKEN");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("LINE_CHANNEL_ACCESS_TOKEN")
+    };
 }
 
 #[test]
@@ -779,8 +814,22 @@ async fn provider_auth_save_preserves_config_token_env_for_validation() {
         "TURA_PROVIDER_CONFIG",
         config_path.to_string_lossy().as_ref(),
     );
-    std::env::remove_var("CUSTOM_PROVIDER_KEY");
-    std::env::remove_var("CUSTOM-OPENAI_API_KEY");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("CUSTOM_PROVIDER_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("CUSTOM-OPENAI_API_KEY")
+    };
 
     let auth = ProviderAuth {
         auth_type: "api".to_string(),
@@ -808,10 +857,38 @@ async fn provider_auth_save_preserves_config_token_env_for_validation() {
     assert!(status.configured);
     assert!(status.authenticated);
 
-    std::env::remove_var("CUSTOM_PROVIDER_KEY");
-    std::env::remove_var("CUSTOM-OPENAI_API_KEY");
-    std::env::remove_var("TURA_ENV_PATH");
-    std::env::remove_var("TURA_PROVIDER_CONFIG");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("CUSTOM_PROVIDER_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("CUSTOM-OPENAI_API_KEY")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_ENV_PATH")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_PROVIDER_CONFIG")
+    };
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
@@ -1424,10 +1501,24 @@ fn clear_openai_refresh_test_env() {
         "CLAUDE_CODE_REFRESH_TOKEN",
         "CLAUDE_CODE_TOKEN_EXPIRES",
     ] {
-        std::env::remove_var(key);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(key)
+        };
     }
 }
 
 fn set_env(key: &str, value: &str) {
-    std::env::set_var(key, value);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var(key, value)
+    };
 }

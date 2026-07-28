@@ -502,7 +502,14 @@ fn openai_oauth_base_url_allowed(base_url: &str) -> bool {
 }
 
 async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<String, TuraError> {
-    std::env::set_var("OPENAI_LOGIN", "oauth");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_LOGIN", "oauth")
+    };
     let codex_auth = load_codex_auth_tokens();
     let access = conf
         .get("OPENAI_API_KEY")
@@ -567,8 +574,22 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
             if let Some(tokens) = codex_auth.as_ref() {
                 apply_codex_auth_env(tokens);
             } else {
-                std::env::set_var("OPENAI_API_KEY", &access);
-                std::env::set_var("OPENAI_REFRESH_TOKEN", &refresh);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("OPENAI_API_KEY", &access)
+                };
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("OPENAI_REFRESH_TOKEN", &refresh)
+                };
             }
             return Ok(access);
         }
@@ -586,14 +607,35 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
             message: "OpenAI OAuth refresh response did not include access_token".to_string(),
         })?
         .to_string();
-    std::env::set_var("OPENAI_API_KEY", &next_access);
-    if let Some(tokens) = codex_auth.as_ref() {
-        if let Some(account_id) = tokens.account_id.as_deref() {
-            std::env::set_var("OPENAI_ACCOUNT_ID", account_id);
-        }
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_API_KEY", &next_access)
+    };
+    if let Some(tokens) = codex_auth.as_ref()
+        && let Some(account_id) = tokens.account_id.as_deref()
+    {
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("OPENAI_ACCOUNT_ID", account_id)
+        };
     }
     if let Some(refresh) = body.get("refresh_token").and_then(Value::as_str) {
-        std::env::set_var("OPENAI_REFRESH_TOKEN", refresh);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("OPENAI_REFRESH_TOKEN", refresh)
+        };
     }
     let next_expires = now
         + body
@@ -601,7 +643,14 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
             .and_then(Value::as_i64)
             .unwrap_or(3600)
             * 1000;
-    std::env::set_var("OPENAI_TOKEN_EXPIRES", next_expires.to_string());
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_TOKEN_EXPIRES", next_expires.to_string())
+    };
     Ok(next_access)
 }
 
@@ -767,7 +816,14 @@ async fn try_refresh_oauth_access_token(
 
     let env_path = conf.env_path().to_path_buf();
     if let Some(token_env) = entry.token_env {
-        std::env::set_var(token_env, &access);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(token_env, &access)
+        };
         persist_env_var(&env_path, token_env, &access);
     }
     if let Some(new_refresh) = body
@@ -775,7 +831,14 @@ async fn try_refresh_oauth_access_token(
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
     {
-        std::env::set_var(refresh_env, new_refresh);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(refresh_env, new_refresh)
+        };
         persist_env_var(&env_path, refresh_env, new_refresh);
     }
     if let Some(expires_env) = entry.expires_env {
@@ -786,7 +849,14 @@ async fn try_refresh_oauth_access_token(
                 .unwrap_or(3600)
                 * 1000;
         let expires_at = expires_at.to_string();
-        std::env::set_var(expires_env, &expires_at);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(expires_env, &expires_at)
+        };
         persist_env_var(&env_path, expires_env, &expires_at);
     }
 
@@ -872,11 +942,39 @@ fn codex_auth_json_path() -> Option<PathBuf> {
 }
 
 fn apply_codex_auth_env(tokens: &CodexAuthTokens) {
-    std::env::set_var("OPENAI_LOGIN", "oauth");
-    std::env::set_var("OPENAI_API_KEY", &tokens.access_token);
-    std::env::set_var("OPENAI_REFRESH_TOKEN", &tokens.refresh_token);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_LOGIN", "oauth")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_API_KEY", &tokens.access_token)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_REFRESH_TOKEN", &tokens.refresh_token)
+    };
     if let Some(account_id) = tokens.account_id.as_deref() {
-        std::env::set_var("OPENAI_ACCOUNT_ID", account_id);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("OPENAI_ACCOUNT_ID", account_id)
+        };
     }
 }
 
@@ -934,10 +1032,10 @@ pub fn default_client(api_key: &str) -> Result<reqwest::Client, TuraError> {
 }
 
 pub fn normalize_response_content(raw: &Value) -> Value {
-    if raw.get("events").and_then(Value::as_array).is_some() {
-        if let Some(content) = crate::llm::openapi::normalize_codex_response_event_content(raw) {
-            return content;
-        }
+    if raw.get("events").and_then(Value::as_array).is_some()
+        && let Some(content) = crate::llm::openapi::normalize_codex_response_event_content(raw)
+    {
+        return content;
     }
     if let Some(message) = raw.pointer("/choices/0/message") {
         let content = message.get("content").cloned().unwrap_or(Value::Null);

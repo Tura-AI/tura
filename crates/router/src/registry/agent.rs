@@ -173,10 +173,10 @@ impl AgentRegistry {
 
     /// Resolve by explicit agent first, then fall back to session type.
     pub fn resolve(&self, agent: Option<&str>, session_type: Option<&str>) -> AgentSpec {
-        if let Some(agent) = agent {
-            if let Some(spec) = self.resolve_by_name(agent) {
-                return spec;
-            }
+        if let Some(agent) = agent
+            && let Some(spec) = self.resolve_by_name(agent)
+        {
+            return spec;
         }
         self.resolve_by_session_type(session_type.unwrap_or("general"))
     }

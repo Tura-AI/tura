@@ -714,7 +714,9 @@ pub(crate) fn gateway_stdin_eof_shuts_down_router_session_db_and_runtime(
     if let Err(error) = wait_for_file_missing(&router_addr_path(&home), PROCESS_EXIT_TIMEOUT) {
         let lifecycle = router_lifecycle_status(&home)
             .unwrap_or_else(|status_error| json!({ "status_error": status_error.to_string() }));
-        bail!("gateway EOF must explicitly shut down router/session_db/runtime-owned work: {error}; lifecycle={lifecycle}");
+        bail!(
+            "gateway EOF must explicitly shut down router/session_db/runtime-owned work: {error}; lifecycle={lifecycle}"
+        );
     }
     wait_for_file_missing(&service_addr_path(&home), PROCESS_EXIT_TIMEOUT)?;
     wait_for_process_dead(router_pid, PROCESS_EXIT_TIMEOUT).with_context(|| {
@@ -1359,7 +1361,7 @@ fn wait_for_gateway_session(port: u16, session_id: &str, timeout: Duration) -> R
                         .any(|session| session["id"].as_str() == Some(session_id))
                 }) =>
             {
-                return Ok(())
+                return Ok(());
             }
             Ok(sessions) => {
                 last_error = Some(anyhow!(

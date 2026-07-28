@@ -205,15 +205,14 @@ impl ProductStore {
         if let Some(workspace_id) = query.workspace_id.clone() {
             return workspace_id;
         }
-        if let Some(slug) = query.workspace_slug.as_deref() {
-            if let Some(workspace) = self
+        if let Some(slug) = query.workspace_slug.as_deref()
+            && let Some(workspace) = self
                 .workspaces
                 .read()
                 .values()
                 .find(|workspace| workspace.slug == slug)
-            {
-                return workspace.id.clone();
-            }
+        {
+            return workspace.id.clone();
         }
         "local".to_string()
     }

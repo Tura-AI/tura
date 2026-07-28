@@ -787,22 +787,57 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let previous_force = std::env::var_os("TURA_FORCE_PLANNING");
         let previous_execute = std::env::var_os("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
-        std::env::remove_var("TURA_FORCE_PLANNING");
-        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_FORCE_PLANNING")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING")
+        };
         let router = CommandRouter::new();
         assert_eq!(router.resolve_command_tool_name("planning"), None);
         assert!(router.handler("planning").is_none());
 
         for value in ["1", "true", "yes", "on", " TRUE "] {
-            std::env::set_var("TURA_FORCE_PLANNING", value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_FORCE_PLANNING", value)
+            };
             assert_eq!(
                 router.resolve_command_tool_name("planning"),
                 Some("planning".to_string())
             );
             assert!(router.handler("planning").is_some());
         }
-        std::env::set_var("TURA_FORCE_PLANNING", "false");
-        std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING", "yes");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_FORCE_PLANNING", "false")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING", "yes")
+        };
         assert_eq!(
             router.resolve_command_tool_name("planning"),
             Some("planning".to_string())
@@ -923,9 +958,23 @@ mod tests {
 
     fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
         if let Some(value) = previous {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 

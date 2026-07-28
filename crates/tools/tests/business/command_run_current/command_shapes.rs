@@ -3,7 +3,14 @@ use super::helpers::*;
 #[test]
 fn pass_shell_command_output_matches_current_structured_code_mode() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("shell-output");
     let output = command_run::execute(
         &json!({
@@ -26,7 +33,14 @@ fn pass_shell_command_output_matches_current_structured_code_mode() {
 #[test]
 fn pass_model_backfill_matches_current_shape_except_command_type_key() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("model-backfill");
     let output = command_run::execute(
         &json!({
@@ -64,7 +78,14 @@ fn pass_model_backfill_matches_current_shape_except_command_type_key() {
 #[test]
 fn pass_command_only_shell_text_is_mapped_to_active_shell_command() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("command-only-shell");
     let output = command_run::execute(
         &json!({
@@ -85,7 +106,14 @@ fn pass_command_only_shell_text_is_mapped_to_active_shell_command() {
 #[test]
 fn pass_top_level_workdir_is_accepted_for_current_style_shell_items() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("top-level-workdir");
     let output = command_run::execute(
         &json!({
@@ -104,8 +132,22 @@ fn pass_top_level_workdir_is_accepted_for_current_style_shell_items() {
 fn fail_cli_sandbox_rejects_shell_workdir_outside_workspace() {
     let _guard = env_lock_blocking();
     let previous_sandbox = std::env::var_os("TURA_COMMAND_RUN_SANDBOX");
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
-    std::env::set_var("TURA_COMMAND_RUN_SANDBOX", "1");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SANDBOX", "1")
+    };
     let root = temp_workspace("sandbox-shell-workdir");
     let outside = root
         .parent()
@@ -136,7 +178,14 @@ fn fail_cli_sandbox_rejects_shell_workdir_outside_workspace() {
 #[test]
 fn pass_unknown_command_with_shell_payload_is_mapped_to_active_shell_command() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("unknown-command-payload");
     let output = command_run::execute(
         &json!({
@@ -161,7 +210,14 @@ fn pass_unknown_command_with_shell_payload_is_mapped_to_active_shell_command() {
 #[test]
 fn pass_unknown_command_without_payload_runs_command_text_as_shell() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("unknown-command-no-payload");
     let output = command_run::execute(
         &json!({
@@ -186,7 +242,14 @@ fn pass_unknown_command_without_payload_runs_command_text_as_shell() {
 #[test]
 fn pass_command_line_without_command_defaults_to_active_shell_command() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("command-line-only");
     let output = command_run::execute(
         &json!({
@@ -210,7 +273,14 @@ fn pass_command_line_without_command_defaults_to_active_shell_command() {
 #[test]
 fn pass_command_line_without_command_type_accepts_workdir_and_timeout() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("default-shell-workdir");
     let subdir = root.join("subdir");
     fs::create_dir_all(&subdir).expect("temp subdir");
@@ -242,7 +312,14 @@ fn pass_command_line_without_command_type_accepts_workdir_and_timeout() {
 #[test]
 fn pass_legacy_steps_shape_is_accepted() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("legacy-steps");
     let output = command_run::execute(
         &json!({
@@ -267,7 +344,14 @@ fn pass_legacy_steps_shape_is_accepted() {
 #[test]
 fn pass_command_run_arguments_accept_requests_wrapper_and_json_fence() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("json-fence");
     let output = command_run::execute(
         &Value::String(

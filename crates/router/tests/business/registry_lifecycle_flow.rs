@@ -524,7 +524,14 @@ impl ProjectEnv {
         std::fs::create_dir_all(temp.path().join("personas").join("src"))?;
         std::fs::create_dir_all(temp.path().join("commands"))?;
         let previous_project_root = std::env::var_os("TURA_PROJECT_ROOT");
-        std::env::set_var("TURA_PROJECT_ROOT", temp.path());
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", temp.path())
+        };
         Ok(Self {
             temp,
             previous_project_root,
@@ -539,8 +546,26 @@ impl ProjectEnv {
 impl Drop for ProjectEnv {
     fn drop(&mut self) {
         match self.previous_project_root.take() {
-            Some(value) => std::env::set_var("TURA_PROJECT_ROOT", value),
-            None => std::env::remove_var("TURA_PROJECT_ROOT"),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("TURA_PROJECT_ROOT", value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var("TURA_PROJECT_ROOT")
+                }
+            }
         }
     }
 }

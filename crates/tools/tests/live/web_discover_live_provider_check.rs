@@ -58,11 +58,25 @@ fn configure_provider(provider: &str) {
 }
 
 fn set_env(key: &str, value: &str) {
-    std::env::set_var(key, value);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var(key, value)
+    };
 }
 
 fn remove_env(key: &str) {
-    std::env::remove_var(key);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var(key)
+    };
 }
 
 fn run_case(session_dir: &Path, provider: &str, name: &str, command_line: String) -> Value {
@@ -224,8 +238,7 @@ fn live_direct_image_and_youtube_url_download() {
     let markdown = std::fs::read_to_string(session_dir.join(page_path)).expect("read page md");
     assert!(markdown.contains("profile_member"), "{markdown}");
 
-    let profile_image_url =
-        "https://officialsite.cds-jp.online/prod/profile_member/105/158/2c38bd5497b94e38aba150b784a7de87.webp";
+    let profile_image_url = "https://officialsite.cds-jp.online/prod/profile_member/105/158/2c38bd5497b94e38aba150b784a7de87.webp";
     let image_command = format!(
         "web_discover image \"{profile_image_url}\" --download-dir media/newjeans --min-size=10000"
     );

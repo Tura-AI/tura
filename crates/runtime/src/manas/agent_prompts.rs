@@ -220,9 +220,30 @@ mod tests {
         )
         .expect("persona config should be written");
 
-        std::env::set_var("TURA_SESSION_PERSONA", "guide");
-        std::env::set_var("TURA_PROJECT_ROOT", &root);
-        std::env::remove_var("TURA_FRONTEND_SOURCE");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_SESSION_PERSONA", "guide")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", &root)
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_FRONTEND_SOURCE")
+        };
 
         let mut agent = test_agent(&agent_dir, "coding_agent");
         agent.add_prompt(AgentPromptItem {
@@ -292,9 +313,30 @@ mod tests {
         )
         .expect("cli communication style should be written");
 
-        std::env::remove_var("TURA_SESSION_PERSONA");
-        std::env::set_var("TURA_PROJECT_ROOT", &root);
-        std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_SESSION_PERSONA")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", &root)
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_FRONTEND_SOURCE", "cli")
+        };
 
         let mut agent = test_agent(&agent_dir, "coding_agent");
         agent.add_prompt(AgentPromptItem {
@@ -381,10 +423,31 @@ mod tests {
             prompt_directory: agent_dir,
         });
 
-        std::env::set_var("TURA_PROJECT_ROOT", &root);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROJECT_ROOT", &root)
+        };
 
-        std::env::remove_var("TURA_SESSION_PERSONA");
-        std::env::remove_var("TURA_FRONTEND_SOURCE");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_SESSION_PERSONA")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_FRONTEND_SOURCE")
+        };
         assert_eq!(
             message_contents(
                 &load_agent_system_prompt_messages(&agent).expect("gui without persona")
@@ -392,22 +455,64 @@ mod tests {
             vec!["agent prompt"]
         );
 
-        std::env::set_var("TURA_SESSION_PERSONA", "guide");
-        std::env::remove_var("TURA_FRONTEND_SOURCE");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_SESSION_PERSONA", "guide")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_FRONTEND_SOURCE")
+        };
         assert_eq!(
             message_contents(&load_agent_system_prompt_messages(&agent).expect("gui persona")),
             vec!["persona prompt", "gui communication style", "agent prompt"]
         );
 
-        std::env::remove_var("TURA_SESSION_PERSONA");
-        std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_SESSION_PERSONA")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_FRONTEND_SOURCE", "cli")
+        };
         assert_eq!(
             message_contents(&load_agent_system_prompt_messages(&agent).expect("cli no persona")),
             vec!["cli communication style", "agent prompt"]
         );
 
-        std::env::set_var("TURA_SESSION_PERSONA", "guide");
-        std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_SESSION_PERSONA", "guide")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_FRONTEND_SOURCE", "cli")
+        };
         assert_eq!(active_persona_display_name(&agent), None);
         assert_eq!(
             message_contents(&load_agent_system_prompt_messages(&agent).expect("cli persona")),
@@ -549,9 +654,23 @@ mod tests {
 
     fn restore_env(key: &str, value: Option<OsString>) {
         if let Some(value) = value {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 }

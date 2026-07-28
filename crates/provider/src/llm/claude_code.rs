@@ -218,23 +218,23 @@ impl AnthropicStreamState {
                 }
             }
             Some("content_block_delta") => {
-                if let Some(index) = event.get("index").and_then(Value::as_u64) {
-                    if let Some(delta) = event.get("delta") {
-                        self.apply_delta(index as usize, delta);
-                        output_started = true;
-                        if delta.get("type").and_then(Value::as_str) == Some("text_delta") {
-                            if let (Some(sink), Some(text)) = (
-                                stream_events,
-                                delta
-                                    .get("text")
-                                    .and_then(Value::as_str)
-                                    .filter(|text| !text.is_empty()),
-                            ) {
-                                sink(ProviderStreamEvent::TextDelta {
-                                    text: text.to_string(),
-                                });
-                            }
-                        }
+                if let Some(index) = event.get("index").and_then(Value::as_u64)
+                    && let Some(delta) = event.get("delta")
+                {
+                    self.apply_delta(index as usize, delta);
+                    output_started = true;
+                    if delta.get("type").and_then(Value::as_str) == Some("text_delta")
+                        && let (Some(sink), Some(text)) = (
+                            stream_events,
+                            delta
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .filter(|text| !text.is_empty()),
+                        )
+                    {
+                        sink(ProviderStreamEvent::TextDelta {
+                            text: text.to_string(),
+                        });
                     }
                 }
             }
@@ -301,10 +301,10 @@ impl AnthropicStreamState {
         let Some(block) = self.content.get_mut(&index) else {
             return;
         };
-        if let Some(buffer) = self.tool_input_buffers.remove(&index) {
-            if let Ok(input) = serde_json::from_str::<Value>(&buffer) {
-                block["input"] = input;
-            }
+        if let Some(buffer) = self.tool_input_buffers.remove(&index)
+            && let Ok(input) = serde_json::from_str::<Value>(&buffer)
+        {
+            block["input"] = input;
         }
         for event in command_run_events_from_anthropic_tool_block(block) {
             if let Some(sink) = stream_events {
@@ -504,11 +504,11 @@ fn convert_messages(messages: &[Value], oauth: bool) -> (Vec<Value>, Vec<Value>)
     let mut blocks: Vec<(String, Vec<Value>)> = Vec::new();
 
     let mut push = |role: &str, block: Value| {
-        if let Some((last_role, last_blocks)) = blocks.last_mut() {
-            if last_role == role {
-                last_blocks.push(block);
-                return;
-            }
+        if let Some((last_role, last_blocks)) = blocks.last_mut()
+            && last_role == role
+        {
+            last_blocks.push(block);
+            return;
         }
         blocks.push((role.to_string(), vec![block]));
     };
@@ -540,10 +540,10 @@ fn convert_messages(messages: &[Value], oauth: bool) -> (Vec<Value>, Vec<Value>)
                 push("user", chat_tool_result_block(message));
             }
             "assistant" => {
-                if let Some(text) = message_text(message.get("content")) {
-                    if !text.trim().is_empty() {
-                        push("assistant", json!({ "type": "text", "text": text }));
-                    }
+                if let Some(text) = message_text(message.get("content"))
+                    && !text.trim().is_empty()
+                {
+                    push("assistant", json!({ "type": "text", "text": text }));
                 }
                 for tool_use in chat_tool_use_blocks(message) {
                     push("assistant", tool_use);

@@ -174,7 +174,14 @@ fn openai_compatible_provider_boundary_business_flow_normalizes_runtime_visible_
     assert_eq!(passthrough["query"], "docs");
 
     let previous_prompt_cache = std::env::var_os("TURA_DISABLE_PROMPT_CACHE");
-    std::env::remove_var("TURA_DISABLE_PROMPT_CACHE");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_DISABLE_PROMPT_CACHE")
+    };
     assert!(prompt_cache_key_supported(
         "openai",
         "https://api.openai.com/v1"
@@ -199,14 +206,39 @@ fn openai_compatible_provider_boundary_business_flow_normalizes_runtime_visible_
         "localtest",
         "https://example.invalid/v1"
     ));
-    std::env::set_var("TURA_DISABLE_PROMPT_CACHE", "true");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_DISABLE_PROMPT_CACHE", "true")
+    };
     assert!(!prompt_cache_key_supported(
         "openai",
         "https://api.openai.com/v1"
     ));
     match previous_prompt_cache {
-        Some(value) => std::env::set_var("TURA_DISABLE_PROMPT_CACHE", value),
-        None => std::env::remove_var("TURA_DISABLE_PROMPT_CACHE"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_DISABLE_PROMPT_CACHE", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("TURA_DISABLE_PROMPT_CACHE")
+            }
+        }
     }
 
     assert!(openai_compatible_usage_stream_supported(
@@ -288,7 +320,14 @@ async fn openai_compatible_business_flow_normalizes_content_parts_tools_costs_an
     });
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let config = ProviderConfig {
         provider: "localtest".to_string(),
         base_url: format!("http://{addr}"),
@@ -312,8 +351,26 @@ async fn openai_compatible_business_flow_normalizes_content_parts_tools_costs_an
         .expect("content-part provider call should succeed");
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let captured = server.join().expect("server thread joins");

@@ -45,15 +45,14 @@ pub(crate) fn apply_tool_result_session_state_update(
                 .unwrap_or(&[]);
             let previous_tasks = task_plan_snapshot(&task_plan);
             replace_active_task_with_planning(&mut task_plan, steps);
-            if session.auto_session_name {
-                if let Some(summary) = task_plan
+            if session.auto_session_name
+                && let Some(summary) = task_plan
                     .detailed_tasks
                     .iter()
                     .rev()
                     .find_map(|task| non_empty_string(&task.task_summary))
-                {
-                    session.session_name = summary;
-                }
+            {
+                session.session_name = summary;
             }
             activate_first_planned_task_if_needed(&mut task_plan);
             task_topology_log = Some(task_topology_log_entry(&task_plan, steps, previous_tasks));
@@ -163,11 +162,10 @@ fn apply_task_group(
             task.status,
             PlanStatus::Doing | PlanStatus::Todo | PlanStatus::Question
         )
-    }) {
-        if task.task_summary.trim() != group.trim() {
-            task.task_summary = group;
-            changed = true;
-        }
+    }) && task.task_summary.trim() != group.trim()
+    {
+        task.task_summary = group;
+        changed = true;
     }
     changed
 }
@@ -1325,10 +1323,9 @@ mod tests {
             }
             if value.get("type").and_then(serde_json::Value::as_str)
                 == Some(RUNTIME_PROMPT_MANUAL_RECORD_TYPE)
+                && let Some(id) = value.get("task_type").and_then(serde_json::Value::as_str)
             {
-                if let Some(id) = value.get("task_type").and_then(serde_json::Value::as_str) {
-                    ids.push(id.to_string());
-                }
+                ids.push(id.to_string());
             }
         }
         ids.reverse();

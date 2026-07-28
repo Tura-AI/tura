@@ -768,10 +768,10 @@ fn attach_result_identity(result: &mut Value, command: &Value) {
         "provider_tool_call_id",
         "command_index",
     ] {
-        if !result_object.contains_key(key) {
-            if let Some(value) = command.get(key).cloned() {
-                result_object.insert(key.to_string(), value);
-            }
+        if !result_object.contains_key(key)
+            && let Some(value) = command.get(key).cloned()
+        {
+            result_object.insert(key.to_string(), value);
         }
     }
     if !result_object.contains_key("command") {
@@ -1600,7 +1600,14 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var_os(key);
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
             Self { key, previous }
         }
     }
@@ -1608,9 +1615,23 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             if let Some(previous) = self.previous.take() {
-                std::env::set_var(self.key, previous);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(self.key, previous)
+                };
             } else {
-                std::env::remove_var(self.key);
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var(self.key)
+                };
             }
         }
     }

@@ -3,7 +3,14 @@ use super::helpers::*;
 #[test]
 fn pass_missing_steps_default_to_original_order() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("steps");
     let output = command_run::execute(
         &json!({
@@ -22,7 +29,14 @@ fn pass_missing_steps_default_to_original_order() {
 #[test]
 fn pass_top_level_task_status_argument_is_not_model_visible() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("top-level-task-status");
 
     let output = command_run::execute(
@@ -41,7 +55,14 @@ fn pass_top_level_task_status_argument_is_not_model_visible() {
 #[test]
 fn pass_planning_command_routes_through_command_run() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING", "1");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING", "1")
+    };
     let root = temp_workspace("planning");
 
     let output = command_run::execute(
@@ -56,7 +77,14 @@ fn pass_planning_command_routes_through_command_run() {
         &root,
     );
 
-    std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING")
+    };
 
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(output["results"][0]["command_type"], "planning");
@@ -170,8 +198,22 @@ fn fail_task_status_rejects_status_outside_doing_question_or_done() {
 #[test]
 fn fail_planning_command_is_unavailable_by_default() {
     let _guard = env_lock_blocking();
-    std::env::remove_var("TURA_FORCE_PLANNING");
-    std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_FORCE_PLANNING")
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING")
+    };
     let root = temp_workspace("planning-disabled");
 
     let output = command_run::execute(
@@ -222,7 +264,14 @@ async fn fail_command_run_rejects_commands_outside_agent_capabilities() {
 #[test]
 fn pass_task_status_compact_context_routes_and_outputs_summary() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("compact-context");
     let output = command_run::execute(
         &json!({
@@ -253,7 +302,14 @@ fn pass_task_status_compact_context_routes_and_outputs_summary() {
 #[test]
 fn fail_task_status_compact_context_must_be_final_highest_step() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command")
+    };
     let root = temp_workspace("compact-context-position");
     let output = command_run::execute(
         &json!({

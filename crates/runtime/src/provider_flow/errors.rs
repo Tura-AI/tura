@@ -161,7 +161,14 @@ mod tests {
     fn provider_timeout_retry_waits_use_three_step_backoff() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let previous = std::env::var_os("TURA_PROVIDER_RETRY_BACKOFF_MS");
-        std::env::remove_var("TURA_PROVIDER_RETRY_BACKOFF_MS");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_PROVIDER_RETRY_BACKOFF_MS")
+        };
         assert_eq!(
             super::provider_timeout_retry_wait(0),
             Some(std::time::Duration::from_secs(5))
@@ -182,7 +189,14 @@ mod tests {
     fn provider_timeout_retry_wait_allows_fast_business_test_override() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let previous = std::env::var_os("TURA_PROVIDER_RETRY_BACKOFF_MS");
-        std::env::set_var("TURA_PROVIDER_RETRY_BACKOFF_MS", "0,1,2");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_PROVIDER_RETRY_BACKOFF_MS", "0,1,2")
+        };
 
         assert_eq!(
             super::provider_timeout_retry_wait(0),
@@ -255,7 +269,9 @@ mod tests {
         assert!(super::runtime_failure_allows_retry(&runtime));
         assert_eq!(
             super::runtime_failure_text(&runtime).as_deref(),
-            Some("all providers failed: openai:gpt-5.1 => network error: error decoding response body")
+            Some(
+                "all providers failed: openai:gpt-5.1 => network error: error decoding response body"
+            )
         );
     }
 
@@ -314,9 +330,23 @@ mod tests {
 
     fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
         if let Some(previous) = previous {
-            std::env::set_var(key, previous);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, previous)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 }

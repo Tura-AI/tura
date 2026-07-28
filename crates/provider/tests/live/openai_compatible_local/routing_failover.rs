@@ -48,7 +48,14 @@ async fn openai_compatible_business_flow_concurrent_calls_keep_request_and_respo
     });
 
     let previous_key = std::env::var_os("LOCALCONCURRENT_API_KEY");
-    std::env::set_var("LOCALCONCURRENT_API_KEY", "dummy-concurrent-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALCONCURRENT_API_KEY", "dummy-concurrent-key")
+    };
     let config = ProviderConfig {
         provider: "localconcurrent".to_string(),
         base_url: format!("http://{addr}"),
@@ -82,8 +89,26 @@ async fn openai_compatible_business_flow_concurrent_calls_keep_request_and_respo
     );
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALCONCURRENT_API_KEY", value),
-        None => std::env::remove_var("LOCALCONCURRENT_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALCONCURRENT_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALCONCURRENT_API_KEY")
+            }
+        }
     }
 
     let alpha = alpha.expect("alpha concurrent provider call");
@@ -197,7 +222,14 @@ async fn openai_compatible_route_business_flow_falls_back_after_provider_error()
     });
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let route = RouteConfig {
         default_temperature: 0.55,
         providers: vec![
@@ -232,8 +264,26 @@ async fn openai_compatible_route_business_flow_falls_back_after_provider_error()
         .await;
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let response = result.expect("route should fall back to the second local provider");
@@ -322,7 +372,14 @@ async fn openai_compatible_route_business_flow_uses_first_healthy_provider_witho
         thread::spawn(move || accept_optional_provider_request(fallback_listener, 400));
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let route = RouteConfig {
         default_temperature: 0.42,
         providers: vec![
@@ -357,8 +414,26 @@ async fn openai_compatible_route_business_flow_uses_first_healthy_provider_witho
         .await;
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let response = result.expect("route should use first healthy local provider");
@@ -450,7 +525,14 @@ async fn openai_compatible_route_business_flow_reports_all_provider_failures_wit
     });
 
     let previous_key = std::env::var_os("LOCALTEST_API_KEY");
-    std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("LOCALTEST_API_KEY", "dummy-local-key")
+    };
     let route = RouteConfig {
         default_temperature: 0.25,
         providers: vec![
@@ -486,8 +568,26 @@ async fn openai_compatible_route_business_flow_reports_all_provider_failures_wit
         .expect_err("all failing route providers should surface aggregate failure");
 
     match previous_key {
-        Some(value) => std::env::set_var("LOCALTEST_API_KEY", value),
-        None => std::env::remove_var("LOCALTEST_API_KEY"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("LOCALTEST_API_KEY", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("LOCALTEST_API_KEY")
+            }
+        }
     }
 
     let first = http_error_server.join().expect("http-error server joins");

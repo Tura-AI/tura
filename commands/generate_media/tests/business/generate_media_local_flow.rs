@@ -797,17 +797,49 @@ fn clear_speech_provider_env(provider: &str) {
 }
 
 fn set_env(key: &str, value: &str) {
-    std::env::set_var(key, value);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var(key, value)
+    };
 }
 
 fn clear_env(key: &str) {
-    std::env::remove_var(key);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var(key)
+    };
 }
 
 fn restore_env(key: &str, value: Option<String>) {
     match value {
-        Some(value) => std::env::set_var(key, value),
-        None => std::env::remove_var(key),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            }
+        }
     }
 }
 
@@ -824,7 +856,14 @@ impl DotenvIsolation {
         std::fs::write(&env_path, "").expect("write isolated dotenv");
         let previous_env_path = std::env::var_os("TURA_ENV_PATH");
         let previous_current_dir = std::env::current_dir().expect("current dir");
-        std::env::set_var("TURA_ENV_PATH", &env_path);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_ENV_PATH", &env_path)
+        };
         std::env::set_current_dir(temp.path()).expect("set isolated current dir");
         Self {
             previous_env_path,
@@ -838,8 +877,26 @@ impl Drop for DotenvIsolation {
     fn drop(&mut self) {
         let _ = std::env::set_current_dir(&self.previous_current_dir);
         match &self.previous_env_path {
-            Some(value) => std::env::set_var("TURA_ENV_PATH", value),
-            None => std::env::remove_var("TURA_ENV_PATH"),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var("TURA_ENV_PATH", value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var("TURA_ENV_PATH")
+                }
+            }
         }
     }
 }

@@ -95,7 +95,14 @@ pub(crate) async fn serve_socket() -> anyhow::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     publish_router_addr(&addr)?;
-    std::env::set_var("TURA_ROUTER_ADDR", addr.to_string());
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ROUTER_ADDR", addr.to_string())
+    };
     eprintln!("router socket daemon listening on {addr}");
     start_idle_shutdown_monitor(state.clone());
 

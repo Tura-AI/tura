@@ -110,10 +110,10 @@ pub(crate) fn normalize_command_run_frontend_state(
     metadata: Option<&serde_json::Value>,
 ) {
     let results_snapshot = command_run_frontend_results_snapshot(state, metadata);
-    if let Some(object) = state.as_object_mut() {
-        if let Some(results) = results_snapshot {
-            upsert_streamed_command_run_results(object, results);
-        }
+    if let Some(object) = state.as_object_mut()
+        && let Some(results) = results_snapshot
+    {
+        upsert_streamed_command_run_results(object, results);
     }
     let commands = command_run_frontend_commands(state, metadata);
     if let Some(object) = state.as_object_mut() {

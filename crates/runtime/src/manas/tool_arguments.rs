@@ -33,14 +33,13 @@ fn normalize_command_run_arguments(
     mut arguments: serde_json::Value,
     session_directory: &Path,
 ) -> serde_json::Value {
-    if let Some(object) = arguments.as_object_mut() {
-        if let Some(commands) = object
+    if let Some(object) = arguments.as_object_mut()
+        && let Some(commands) = object
             .get_mut("commands")
             .and_then(|value| value.as_array_mut())
-        {
-            for command in commands {
-                normalize_command_run_command(command, session_directory);
-            }
+    {
+        for command in commands {
+            normalize_command_run_command(command, session_directory);
         }
     }
     arguments
@@ -133,10 +132,10 @@ pub(super) fn normalize_workspace_path_fields(
     session_directory: &Path,
 ) {
     for field in ["path", "directory"] {
-        if let Some(value) = object.get_mut(field) {
-            if let Some(path) = value.as_str() {
-                *value = serde_json::Value::String(resolve_workspace_path(session_directory, path));
-            }
+        if let Some(value) = object.get_mut(field)
+            && let Some(path) = value.as_str()
+        {
+            *value = serde_json::Value::String(resolve_workspace_path(session_directory, path));
         }
     }
 }

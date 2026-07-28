@@ -418,8 +418,9 @@ async fn streaming_provider_drains_usage_after_tool_arguments_complete() {
                 "prompt_tokens_details": {"cached_tokens": 2048}
             }
         });
-        let body =
-                format!("data: {first}\n\ndata: {second}\n\ndata: {late_text}\n\ndata: {usage}\n\ndata: [DONE]\n\n");
+        let body = format!(
+            "data: {first}\n\ndata: {second}\n\ndata: {late_text}\n\ndata: {usage}\n\ndata: [DONE]\n\n"
+        );
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
@@ -600,8 +601,22 @@ async fn codex_oauth_call_sends_responses_reasoning_and_acceleration() {
     let endpoint = format!("http://{addr}/backend-api/codex/responses");
     let previous_endpoint = std::env::var_os("OPENAI_CODEX_ENDPOINT");
     let previous_account_id = std::env::var_os("OPENAI_ACCOUNT_ID");
-    std::env::set_var("OPENAI_CODEX_ENDPOINT", &endpoint);
-    std::env::set_var("OPENAI_ACCOUNT_ID", "acct-probe");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_CODEX_ENDPOINT", &endpoint)
+    };
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_ACCOUNT_ID", "acct-probe")
+    };
     let (tx, rx) = mpsc::channel();
 
     std::thread::spawn(move || {
@@ -638,10 +653,10 @@ async fn codex_oauth_call_sends_responses_reasoning_and_acceleration() {
         }
 
         let body = concat!(
-                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
-                "data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"ok\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
-                "data: [DONE]\n\n"
-            );
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"ok\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
+            "data: [DONE]\n\n"
+        );
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
@@ -663,12 +678,48 @@ async fn codex_oauth_call_sends_responses_reasoning_and_acceleration() {
         super::codex_oauth_call("gpt-5.1-codex", "test-token", &messages, &options, None).await;
 
     match previous_endpoint {
-        Some(value) => std::env::set_var("OPENAI_CODEX_ENDPOINT", value),
-        None => std::env::remove_var("OPENAI_CODEX_ENDPOINT"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("OPENAI_CODEX_ENDPOINT", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("OPENAI_CODEX_ENDPOINT")
+            }
+        }
     }
     match previous_account_id {
-        Some(value) => std::env::set_var("OPENAI_ACCOUNT_ID", value),
-        None => std::env::remove_var("OPENAI_ACCOUNT_ID"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("OPENAI_ACCOUNT_ID", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("OPENAI_ACCOUNT_ID")
+            }
+        }
     }
 
     result.expect("codex oauth call");
@@ -698,7 +749,14 @@ async fn codex_oauth_stream_reads_completed_usage_after_tool_call() {
     let addr = listener.local_addr().expect("local addr");
     let endpoint = format!("http://{addr}/backend-api/codex/responses");
     let previous_endpoint = std::env::var_os("OPENAI_CODEX_ENDPOINT");
-    std::env::set_var("OPENAI_CODEX_ENDPOINT", &endpoint);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("OPENAI_CODEX_ENDPOINT", &endpoint)
+    };
 
     std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept request");
@@ -787,8 +845,26 @@ async fn codex_oauth_stream_reads_completed_usage_after_tool_call() {
     .await;
 
     match previous_endpoint {
-        Some(value) => std::env::set_var("OPENAI_CODEX_ENDPOINT", value),
-        None => std::env::remove_var("OPENAI_CODEX_ENDPOINT"),
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        Some(value) => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("OPENAI_CODEX_ENDPOINT", value)
+            }
+        }
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        None => {
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("OPENAI_CODEX_ENDPOINT")
+            }
+        }
     }
 
     let metrics = result.expect("codex oauth call").metrics.expect("metrics");

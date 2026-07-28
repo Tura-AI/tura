@@ -122,11 +122,11 @@ impl SessionDbService {
         if service_is_running() {
             let _ = call_service(&session_log_contract::SessionLogCommand::Shutdown);
         }
-        if let Some(mut child) = child {
-            if !wait_for_child_exit(&mut child, std::time::Duration::from_secs(10)) {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+        if let Some(mut child) = child
+            && !wait_for_child_exit(&mut child, std::time::Duration::from_secs(10))
+        {
+            let _ = child.kill();
+            let _ = child.wait();
         }
         let _ = std::fs::remove_file(service_addr_path());
     }
@@ -167,16 +167,16 @@ impl SessionDbService {
                     .child
                     .lock()
                     .map_err(|_| anyhow!("session_db lock poisoned"))?;
-                if let Some(child) = guard.as_mut() {
-                    if let Some(status) = child.try_wait()? {
-                        *guard = None;
-                        let detail = unreachable_owner_lock_message()
-                            .map(|message| format!("; {message}"))
-                            .unwrap_or_default();
-                        return Err(anyhow!(
+                if let Some(child) = guard.as_mut()
+                    && let Some(status) = child.try_wait()?
+                {
+                    *guard = None;
+                    let detail = unreachable_owner_lock_message()
+                        .map(|message| format!("; {message}"))
+                        .unwrap_or_default();
+                    return Err(anyhow!(
                             "session_db service exited before publishing a reachable socket: {status}{detail}"
                         ));
-                    }
                 }
             }
             if started.elapsed() >= timeout {
@@ -438,10 +438,38 @@ mod tests {
                 .iter()
                 .map(|key| (*key, std::env::var_os(key)))
                 .collect::<Vec<_>>();
-            std::env::set_var("TURA_HOME", home);
-            std::env::remove_var("SESSION_LOG_DB_ROOT");
-            std::env::remove_var("TURA_DB_ROOT");
-            std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "25");
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_HOME", home)
+            };
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("SESSION_LOG_DB_ROOT")
+            };
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var("TURA_DB_ROOT")
+            };
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "25")
+            };
             Self { previous }
         }
     }
@@ -450,8 +478,26 @@ mod tests {
         fn drop(&mut self) {
             for (key, value) in self.previous.drain(..) {
                 match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    Some(value) => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::set_var(key, value)
+                        }
+                    }
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    None => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::remove_var(key)
+                        }
+                    }
                 }
             }
         }

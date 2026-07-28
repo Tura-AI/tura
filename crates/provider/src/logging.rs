@@ -172,10 +172,24 @@ mod tests {
     }
 
     fn set_env(key: &str, value: &str) {
-        std::env::set_var(key, value);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var(key, value)
+        };
     }
 
     fn remove_env(key: &str) {
-        std::env::remove_var(key);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var(key)
+        };
     }
 }

@@ -39,9 +39,30 @@ impl EquivalenceSessionDb {
         let home = root.path().join("home");
         std::fs::create_dir_all(&home)?;
         let store = SessionLogStore::open(root.path())?;
-        std::env::set_var("TURA_HOME", &home);
-        std::env::set_var("SESSION_LOG_DB_ROOT", root.path());
-        std::env::remove_var("TURA_DB_ROOT");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_HOME", &home)
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("SESSION_LOG_DB_ROOT", root.path())
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::remove_var("TURA_DB_ROOT")
+        };
 
         let handle = std::thread::spawn(move || {
             session_log::ipc::serve_blocking(store)
@@ -95,8 +116,26 @@ impl Drop for EquivalenceSessionDb {
         }
         for (key, value) in self.previous_environment.drain(..).rev() {
             match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                Some(value) => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var(key, value)
+                    }
+                }
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                None => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var(key)
+                    }
+                }
             }
         }
     }
@@ -293,7 +332,7 @@ fn gateway_busy_input_capture() -> Result<Value, Box<dyn std::error::Error>> {
     let taken = match consumed.event {
         SessionEvent::QueuedUserInputsConsumed { inputs } => inputs,
         event => {
-            return Err(io::Error::other(format!("unexpected consume event: {event:?}")).into())
+            return Err(io::Error::other(format!("unexpected consume event: {event:?}")).into());
         }
     };
     let empty = consumed.projection.pending_user_inputs;

@@ -1,5 +1,5 @@
 #![deny(clippy::unwrap_used)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 pub mod auth_registry;
 pub mod content_type_fallback;

@@ -156,12 +156,12 @@ pub(super) fn parse_cli_args(input: &str) -> Result<GenerateMediaArgs, String> {
             index += 1;
             continue;
         }
-        if index == 0 {
-            if let Ok(kind) = parse_media_kind(original_word) {
-                parts.kind = Some(kind);
-                index += 1;
-                continue;
-            }
+        if index == 0
+            && let Ok(kind) = parse_media_kind(original_word)
+        {
+            parts.kind = Some(kind);
+            index += 1;
+            continue;
         }
         let (word, inline_value) = split_cli_assignment(original_word);
         let take_value = |index: &mut usize| -> Result<String, String> {
@@ -530,10 +530,10 @@ fn is_generate_media_command_name(value: &str) -> bool {
 }
 
 fn split_cli_assignment(word: &str) -> (String, Option<String>) {
-    if let Some((key, value)) = word.split_once('=') {
-        if key.starts_with('-') {
-            return (key.to_string(), Some(value.to_string()));
-        }
+    if let Some((key, value)) = word.split_once('=')
+        && key.starts_with('-')
+    {
+        return (key.to_string(), Some(value.to_string()));
     }
     (word.to_string(), None)
 }
@@ -607,7 +607,7 @@ fn string_list_field(object: &serde_json::Map<String, Value>, keys: &[&str]) -> 
                         .iter()
                         .filter_map(Value::as_str)
                         .flat_map(split_csv)
-                        .collect()
+                        .collect();
                 }
                 Value::String(text) => return split_csv(text),
                 _ => {}

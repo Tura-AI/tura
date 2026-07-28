@@ -91,7 +91,14 @@ pub fn remove_dangerous_env_vars(
     let mut removed = Vec::new();
     for (key, _) in vars {
         if dangerous_env_key(&key) {
-            std::env::remove_var(&key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(&key)
+            };
             removed.push(key);
         }
     }
@@ -268,9 +275,30 @@ mod tests {
         let previous_ld = std::env::var_os("LD_PRELOAD");
         let previous_dyld = std::env::var_os("DYLD_TEST_REMOVE");
         let previous_safe = std::env::var_os("TURA_SAFE_TEST_ENV");
-        std::env::set_var("LD_PRELOAD", "inject.so");
-        std::env::set_var("DYLD_TEST_REMOVE", "inject.dylib");
-        std::env::set_var("TURA_SAFE_TEST_ENV", "keep");
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("LD_PRELOAD", "inject.so")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("DYLD_TEST_REMOVE", "inject.dylib")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_SAFE_TEST_ENV", "keep")
+        };
 
         let removed = remove_dangerous_env_vars([
             (OsString::from("LD_PRELOAD"), OsString::from("inject.so")),
@@ -338,9 +366,23 @@ mod tests {
 
     fn restore_env(key: &str, previous: Option<OsString>) {
         if let Some(value) = previous {
-            std::env::set_var(key, value);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var(key, value)
+            };
         } else {
-            std::env::remove_var(key);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::remove_var(key)
+            };
         }
     }
 }

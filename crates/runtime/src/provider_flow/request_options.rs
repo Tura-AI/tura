@@ -32,41 +32,39 @@ pub(crate) fn normalize_provider_messages(
             .get("role")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("user");
-        if role == "assistant" {
-            if let Some(tool_calls) = message
+        if role == "assistant"
+            && let Some(tool_calls) = message
                 .get("tool_calls")
                 .filter(|value| value.as_array().is_some_and(|calls| !calls.is_empty()))
                 .cloned()
-            {
-                let mut item = serde_json::json!({
-                    "role": "assistant",
-                    "content": message_content_value(&message),
-                    "tool_calls": tool_calls,
-                });
-                if let Some(name) = message.get("name").and_then(serde_json::Value::as_str) {
-                    item["name"] = serde_json::Value::String(name.to_string());
-                }
-                normalized.push(item);
-                continue;
+        {
+            let mut item = serde_json::json!({
+                "role": "assistant",
+                "content": message_content_value(&message),
+                "tool_calls": tool_calls,
+            });
+            if let Some(name) = message.get("name").and_then(serde_json::Value::as_str) {
+                item["name"] = serde_json::Value::String(name.to_string());
             }
+            normalized.push(item);
+            continue;
         }
-        if role == "tool" {
-            if let Some(tool_call_id) = message
+        if role == "tool"
+            && let Some(tool_call_id) = message
                 .get("tool_call_id")
                 .and_then(serde_json::Value::as_str)
                 .filter(|value| !value.trim().is_empty())
-            {
-                let mut item = serde_json::json!({
-                    "role": "tool",
-                    "content": message_content_value(&message),
-                    "tool_call_id": tool_call_id,
-                });
-                if let Some(name) = message.get("name").and_then(serde_json::Value::as_str) {
-                    item["name"] = serde_json::Value::String(name.to_string());
-                }
-                normalized.push(item);
-                continue;
+        {
+            let mut item = serde_json::json!({
+                "role": "tool",
+                "content": message_content_value(&message),
+                "tool_call_id": tool_call_id,
+            });
+            if let Some(name) = message.get("name").and_then(serde_json::Value::as_str) {
+                item["name"] = serde_json::Value::String(name.to_string());
             }
+            normalized.push(item);
+            continue;
         }
         let content = message_content_value(&message);
         if content_is_empty(&content) {
@@ -397,13 +395,49 @@ mod tests {
             .expect("provider flow env lock poisoned");
         let previous: Option<OsString> = std::env::var_os(name);
         match value {
-            Some(value) => std::env::set_var(name, value),
-            None => std::env::remove_var(name),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(name, value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var(name)
+                }
+            }
         }
         let result = run();
         match previous {
-            Some(value) => std::env::set_var(name, value),
-            None => std::env::remove_var(name),
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            Some(value) => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::set_var(name, value)
+                }
+            }
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            None => {
+                #[allow(
+                    unsafe_code,
+                    reason = "Rust 2024 process-environment mutation audited at the caller"
+                )]
+                unsafe {
+                    std::env::remove_var(name)
+                }
+            }
         }
         result
     }

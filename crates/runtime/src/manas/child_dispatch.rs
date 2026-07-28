@@ -71,12 +71,12 @@ fn resolve_router_binary() -> Result<PathBuf, String> {
         }
     }
     // Sibling of the current exe (worker and router share the same target dir).
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join(exe_name);
-            if candidate.exists() {
-                return Ok(candidate);
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join(exe_name);
+        if candidate.exists() {
+            return Ok(candidate);
         }
     }
 
@@ -185,10 +185,10 @@ pub fn dispatch_child_agents_concurrent(
 fn summarize_child_result(raw: &Value) -> String {
     let result = raw.get("result").unwrap_or(raw);
     for key in ["summary", "message", "output_text", "final_text", "text"] {
-        if let Some(text) = result.get(key).and_then(Value::as_str) {
-            if !text.trim().is_empty() {
-                return text.trim().to_string();
-            }
+        if let Some(text) = result.get(key).and_then(Value::as_str)
+            && !text.trim().is_empty()
+        {
+            return text.trim().to_string();
         }
     }
     if let Some(error) = raw.get("error").and_then(Value::as_str) {

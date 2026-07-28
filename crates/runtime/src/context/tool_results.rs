@@ -468,13 +468,12 @@ pub(super) fn flattened_command_run_results(output: &serde_json::Value) -> Vec<&
     };
     let mut flattened = Vec::new();
     for result in results {
-        if result.get("mode").and_then(|mode| mode.as_str()) == Some("batch") {
-            if let Some(batch_results) =
+        if result.get("mode").and_then(|mode| mode.as_str()) == Some("batch")
+            && let Some(batch_results) =
                 result.get("results").and_then(|results| results.as_array())
-            {
-                flattened.extend(batch_results);
-                continue;
-            }
+        {
+            flattened.extend(batch_results);
+            continue;
         }
         flattened.push(result);
     }

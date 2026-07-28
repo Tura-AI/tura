@@ -9,7 +9,14 @@ static MOCK_ROUTER_INIT: Mutex<()> = Mutex::new(());
 #[tokio::test]
 async fn command_run_without_router_addr_does_not_execute_in_runtime_process() {
     let previous = std::env::var("TURA_ROUTER_ADDR").ok();
-    std::env::remove_var("TURA_ROUTER_ADDR");
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_ROUTER_ADDR")
+    };
     let workspace = tempfile::tempdir().expect("workspace");
     let marker = workspace.path().join("must-not-exist.txt");
 
@@ -31,7 +38,14 @@ async fn command_run_without_router_addr_does_not_execute_in_runtime_process() {
     .await;
 
     if let Some(value) = previous {
-        std::env::set_var("TURA_ROUTER_ADDR", value);
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_ROUTER_ADDR", value)
+        };
     }
     assert_eq!(output["ok"], false);
     assert!(
@@ -43,7 +57,14 @@ async fn command_run_without_router_addr_does_not_execute_in_runtime_process() {
 #[tokio::test]
 async fn command_run_executes_only_after_runtime_hands_request_to_router() {
     let router_addr = ensure_mock_router();
-    std::env::set_var("TURA_ROUTER_ADDR", router_addr);
+    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ROUTER_ADDR", router_addr)
+    };
     let workspace = tempfile::tempdir().expect("workspace");
 
     let output = runtime::router_command_run::execute_command_run_value_or_error(

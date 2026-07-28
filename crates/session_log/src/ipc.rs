@@ -123,12 +123,10 @@ pub(crate) fn execute_command_with_feed(
             if matches!(
                 &result,
                 session_log_contract::RuntimeRegistrationOutcome::Registered { .. }
-            ) {
-                if let Some(entry) =
-                    store.session_feed_entry_by_event_id(&runtime_id, &projection_event_id)?
-                {
-                    committed_feed_entries.push(entry);
-                }
+            ) && let Some(entry) =
+                store.session_feed_entry_by_event_id(&runtime_id, &projection_event_id)?
+            {
+                committed_feed_entries.push(entry);
             }
             SessionLogResponse::RuntimeRegistered { result }
         }
@@ -145,12 +143,10 @@ pub(crate) fn execute_command_with_feed(
                 &result,
                 session_log_contract::RuntimeEventCommitOutcome::Applied { projection, .. }
                     if projection.state.is_terminal()
-            ) {
-                if let Some(entry) =
-                    store.session_feed_entry_by_event_id(&runtime_id, &projection_event_id)?
-                {
-                    committed_feed_entries.push(entry);
-                }
+            ) && let Some(entry) =
+                store.session_feed_entry_by_event_id(&runtime_id, &projection_event_id)?
+            {
+                committed_feed_entries.push(entry);
             }
             SessionLogResponse::RuntimeEventCommitted { result }
         }
@@ -446,8 +442,26 @@ mod tests {
                 .collect::<Vec<_>>();
             for (key, value) in values {
                 match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    Some(value) => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::set_var(key, value)
+                        }
+                    }
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    None => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::remove_var(key)
+                        }
+                    }
                 }
             }
             Self { previous }
@@ -458,8 +472,26 @@ mod tests {
         fn drop(&mut self) {
             for (key, value) in &self.previous {
                 match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    Some(value) => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::set_var(key, value)
+                        }
+                    }
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    None => {
+                        #[allow(
+                            unsafe_code,
+                            reason = "Rust 2024 process-environment mutation audited at the caller"
+                        )]
+                        unsafe {
+                            std::env::remove_var(key)
+                        }
+                    }
                 }
             }
         }
@@ -903,12 +935,35 @@ mod tests {
         fn set(connect_ms: &str, response_ms: Option<&str>) -> Self {
             let previous_connect = std::env::var_os("TURA_SESSION_DB_PROBE_TIMEOUT_MS");
             let previous_response = std::env::var_os("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS");
-            std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", connect_ms);
+            // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+            #[allow(
+                unsafe_code,
+                reason = "Rust 2024 process-environment mutation audited at the caller"
+            )]
+            unsafe {
+                std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", connect_ms)
+            };
             match response_ms {
                 Some(value) => {
-                    std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", value)
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", value)
+                    }
                 }
-                None => std::env::remove_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS"),
+                None => {
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS")
+                    }
+                }
             }
             Self {
                 previous_connect,
@@ -920,14 +975,48 @@ mod tests {
     impl Drop for ProbeEnvGuard {
         fn drop(&mut self) {
             match &self.previous_connect {
-                Some(value) => std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", value),
-                None => std::env::remove_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS"),
+                Some(value) => {
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", value)
+                    }
+                }
+                // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                None => {
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS")
+                    }
+                }
             }
             match &self.previous_response {
                 Some(value) => {
-                    std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", value)
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", value)
+                    }
                 }
-                None => std::env::remove_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS"),
+                None => {
+                    // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+                    #[allow(
+                        unsafe_code,
+                        reason = "Rust 2024 process-environment mutation audited at the caller"
+                    )]
+                    unsafe {
+                        std::env::remove_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS")
+                    }
+                }
             }
         }
     }

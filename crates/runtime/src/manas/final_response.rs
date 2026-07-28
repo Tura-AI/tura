@@ -77,10 +77,10 @@ pub(crate) fn user_visible_runtime_output_text(output: &serde_json::Value) -> Op
         "content",
         "summary",
     ] {
-        if let Some(text) = output.get(key).and_then(serde_json::Value::as_str) {
-            if let Some(visible) = user_visible_runtime_text(text) {
-                return Some(visible);
-            }
+        if let Some(text) = output.get(key).and_then(serde_json::Value::as_str)
+            && let Some(visible) = user_visible_runtime_text(text)
+        {
+            return Some(visible);
         }
     }
     let content = tura_llm_rust::normalize_response_content(output);

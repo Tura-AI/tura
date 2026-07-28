@@ -31,8 +31,22 @@ fn workspace(name: &str) -> PathBuf {
 
 fn run_bash(root: &Path, command: &str) -> serde_json::Value {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
-    std::env::remove_var("TURA_COMMAND_INTERCEPTOR_DISABLED");
+    // SAFETY: this helper holds ENV_LOCK for the duration of the environment access.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash")
+    };
+    // SAFETY: this helper holds ENV_LOCK for the duration of the environment access.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_COMMAND_INTERCEPTOR_DISABLED")
+    };
     command_run::execute(
         &json!({
             "commands": [
@@ -54,8 +68,22 @@ fn zsh_available() -> bool {
 
 fn run_zsh(root: &Path, command: &str) -> serde_json::Value {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh");
-    std::env::remove_var("TURA_COMMAND_INTERCEPTOR_DISABLED");
+    // SAFETY: this helper holds ENV_LOCK for the duration of the environment access.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh")
+    };
+    // SAFETY: this helper holds ENV_LOCK for the duration of the environment access.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_COMMAND_INTERCEPTOR_DISABLED")
+    };
     command_run::execute(
         &json!({
             "commands": [
@@ -279,8 +307,22 @@ fn non_destructive_rm_of_single_file_still_runs() {
 #[test]
 fn interceptor_opt_out_allows_safe_command_to_execute() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
-    std::env::set_var("TURA_COMMAND_INTERCEPTOR_DISABLED", "1");
+    // SAFETY: this test holds ENV_LOCK for the duration of the environment access.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash")
+    };
+    // SAFETY: this test holds ENV_LOCK for the duration of the environment access.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_COMMAND_INTERCEPTOR_DISABLED", "1")
+    };
 
     let root = workspace("opt-out");
     let marker = root.join("optout-safe.txt");
@@ -294,7 +336,14 @@ fn interceptor_opt_out_allows_safe_command_to_execute() {
         &root,
     );
 
-    std::env::remove_var("TURA_COMMAND_INTERCEPTOR_DISABLED");
+    // SAFETY: this test holds ENV_LOCK for the duration of the environment access.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::remove_var("TURA_COMMAND_INTERCEPTOR_DISABLED")
+    };
 
     assert_eq!(
         output["results"][0]["success"], true,
