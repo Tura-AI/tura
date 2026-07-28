@@ -40,6 +40,7 @@ const runtimePackage = {
   os: rootPackage.os,
   files: [
     "LICENSE",
+    "CHANGELOG.md",
     "README.md",
     "README.zh-CN.md",
     "npm/tura.mjs",

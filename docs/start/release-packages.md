@@ -3,6 +3,13 @@
 Each GitHub Release contains packages for different installation needs. Choose
 one package type; you normally do not need to download all of them.
 
+## Release notes
+
+The current release is
+[Tura 0.1.35](https://github.com/Tura-AI/tura/blob/v0.1.35/docs/changelog/0.1.35.md).
+The repository [changelog](../../CHANGELOG.md) links to notes for every
+published version.
+
 ## GUI-only installers
 
 Files beginning with `tura-gui-only-` install only the native desktop GUI. They

@@ -183,15 +183,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.source.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
         run: |
           set -euo pipefail
           log=.release-logs/asset-recovery-upload.log
           exec > >(tee "$log") 2>&1
           trap 'status=$?; if [ "$status" -ne 0 ]; then tail_output="$(tail -n 40 "$log")"; tail_output="${tail_output//'%'/'%25'}"; tail_output="${tail_output//$'\r'/'%0D'}"; tail_output="${tail_output//$'\n'/'%0A'}"; echo "::error title=Release asset recovery failed::$tail_output"; fi; exit "$status"' EXIT
 
+          release_notes="$RUNNER_TEMP/release-notes.md"
+          release_notes_url="https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/docs/changelog/${RELEASE_VERSION}.md"
+          printf '# Tura %s\n\n[Full changelog](%s)\n' "$RELEASE_VERSION" "$release_notes_url" > "$release_notes"
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --generate-notes
+            gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$release_notes"
           fi
+          gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$release_notes"
           mapfile -t assets < <(find release-assets -maxdepth 1 -type f -print | sort)
           test "${#assets[@]}" -gt 0
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
