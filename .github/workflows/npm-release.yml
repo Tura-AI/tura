@@ -321,19 +321,19 @@ jobs:
 
           [Full changelog]($releaseNotesUrl)
           "@ | Set-Content -LiteralPath $releaseNotesPath -Encoding utf8NoBOM
-          gh release view $tag *> $null
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title $tag --notes-file $releaseNotesPath
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --title $tag --notes-file $releaseNotesPath
             if ($LASTEXITCODE -ne 0) {
-              gh release view $tag *> $null
+              gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
               if ($LASTEXITCODE -ne 0) { throw "GitHub Release $tag does not exist and could not be created." }
             }
           }
-          gh release edit $tag --title $tag --notes-file $releaseNotesPath
+          gh release edit $tag --repo $env:GITHUB_REPOSITORY --title $tag --notes-file $releaseNotesPath
           if ($LASTEXITCODE -ne 0) {
             throw "GitHub Release $tag notes could not be updated."
           }
-          gh release upload $tag @assets --clobber
+          gh release upload $tag --repo $env:GITHUB_REPOSITORY @assets --clobber
 
   publish-main:
     name: Publish main npm package
