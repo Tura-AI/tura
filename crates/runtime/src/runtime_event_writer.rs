@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use lifecycle::{RuntimeAggregate, RuntimeEvent};
 use session_log_contract::{
@@ -509,15 +509,17 @@ mod tests {
             sender,
         };
 
-        assert!(publisher
-            .publish(SessionFeedEvent::AssistantTextDelta {
-                message_id: "runtime-closed-feed.message".to_string(),
-                part_id: "runtime-closed-feed.message".to_string(),
-                delta: " discarded".to_string(),
-                created_at: 1,
-                updated_at: 2,
-            })
-            .is_err());
+        assert!(
+            publisher
+                .publish(SessionFeedEvent::AssistantTextDelta {
+                    message_id: "runtime-closed-feed.message".to_string(),
+                    part_id: "runtime-closed-feed.message".to_string(),
+                    delta: " discarded".to_string(),
+                    created_at: 1,
+                    updated_at: 2,
+                })
+                .is_err()
+        );
 
         let state = state
             .lock()

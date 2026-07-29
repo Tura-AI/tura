@@ -13,8 +13,8 @@ use tura_router::registry::{AgentRegistry, CommandRegistry, PersonaRegistry, Reg
 static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
 
 #[test]
-fn router_registry_business_flow_persists_discovers_resolves_and_deletes_dynamic_agent_and_persona(
-) -> Result<()> {
+fn router_registry_business_flow_persists_discovers_resolves_and_deletes_dynamic_agent_and_persona()
+-> Result<()> {
     let _guard = env_lock();
     let project = ProjectEnv::new()?;
     let persona_registry = PersonaRegistry::from_static();
@@ -64,11 +64,13 @@ fn router_registry_business_flow_persists_discovers_resolves_and_deletes_dynamic
         saved_agent.prompt.as_deref(),
         Some("Use the router registry contract and report durable process evidence.")
     );
-    assert!(saved_agent
-        .summary
-        .capabilities
-        .iter()
-        .any(|capability| capability == "command_run" || capability == "shells"));
+    assert!(
+        saved_agent
+            .summary
+            .capabilities
+            .iter()
+            .any(|capability| capability == "command_run" || capability == "shells")
+    );
     assert_eq!(
         saved_agent.summary.path,
         PathBuf::from("agents").join("src").join("router-coding")
@@ -101,42 +103,56 @@ fn router_registry_business_flow_persists_discovers_resolves_and_deletes_dynamic
     assert_eq!(resolved.agent_name, "router-coding");
     assert_eq!(resolved.provider, "thinking");
     assert!(resolved.config.is_some());
-    assert!(resolved
-        .capabilities
-        .iter()
-        .any(|capability| capability == "web_discover"));
+    assert!(
+        resolved
+            .capabilities
+            .iter()
+            .any(|capability| capability == "web_discover")
+    );
 
     let by_session_type = reloaded_agents.resolve(None, Some("router-coding"));
     assert_eq!(by_session_type.agent_name, "router-coding");
     let fallback = reloaded_agents.resolve(Some("missing-agent"), Some("missing-session-type"));
     assert_eq!(fallback.agent_name, "general_agent");
 
-    assert!(reloaded_agents
-        .delete("router-coding")
-        .map_err(anyhow::Error::msg)?);
-    assert!(!reloaded_agents
-        .delete("router-coding")
-        .map_err(anyhow::Error::msg)?);
-    assert!(AgentRegistry::from_static()
-        .resolve_by_name("router-coding")
-        .is_none());
+    assert!(
+        reloaded_agents
+            .delete("router-coding")
+            .map_err(anyhow::Error::msg)?
+    );
+    assert!(
+        !reloaded_agents
+            .delete("router-coding")
+            .map_err(anyhow::Error::msg)?
+    );
+    assert!(
+        AgentRegistry::from_static()
+            .resolve_by_name("router-coding")
+            .is_none()
+    );
 
-    assert!(reloaded_personas
-        .delete("router-helper")
-        .map_err(anyhow::Error::msg)?);
-    assert!(!reloaded_personas
-        .delete("router-helper")
-        .map_err(anyhow::Error::msg)?);
-    assert!(PersonaRegistry::from_static()
-        .get("router-helper")
-        .is_none());
+    assert!(
+        reloaded_personas
+            .delete("router-helper")
+            .map_err(anyhow::Error::msg)?
+    );
+    assert!(
+        !reloaded_personas
+            .delete("router-helper")
+            .map_err(anyhow::Error::msg)?
+    );
+    assert!(
+        PersonaRegistry::from_static()
+            .get("router-helper")
+            .is_none()
+    );
     assert_empty_user_registry_dirs(project.path())?;
     Ok(())
 }
 
 #[test]
-fn router_registry_business_flow_rejects_invalid_agent_and_persona_ids_and_protected_deletes(
-) -> Result<()> {
+fn router_registry_business_flow_rejects_invalid_agent_and_persona_ids_and_protected_deletes()
+-> Result<()> {
     let _guard = env_lock();
     let _project = ProjectEnv::new()?;
     let personas = PersonaRegistry::from_static();
@@ -207,8 +223,8 @@ fn router_registry_business_flow_rejects_invalid_agent_and_persona_ids_and_prote
 }
 
 #[test]
-fn router_registry_business_flow_discovers_renders_and_deduplicates_workspace_commands(
-) -> Result<()> {
+fn router_registry_business_flow_discovers_renders_and_deduplicates_workspace_commands()
+-> Result<()> {
     let _guard = env_lock();
     let project = ProjectEnv::new()?;
     write_command_file(
@@ -303,9 +319,11 @@ fn router_registry_business_flow_discovers_renders_and_deduplicates_workspace_co
         command: "/not-configured".to_string(),
         args: Some(vec!["ignored".to_string()]),
     });
-    assert!(missing
-        .output
-        .contains("Command `not-configured` is not configured"));
+    assert!(
+        missing
+            .output
+            .contains("Command `not-configured` is not configured")
+    );
     assert!(missing.output.contains(".tura/commands"));
     Ok(())
 }
@@ -406,10 +424,12 @@ fn router_registry_business_flow_applies_tool_config_safety_boundary() -> Result
         .map_err(anyhow::Error::msg)?;
     assert_eq!(patched_config.id, "read_media");
     assert_eq!(patched_config.values["pdf_default_pages"], json!("10"));
-    assert!(patched_config
-        .configurable
-        .iter()
-        .any(|entry| entry.key == "pdf_default_pages"));
+    assert!(
+        patched_config
+            .configurable
+            .iter()
+            .any(|entry| entry.key == "pdf_default_pages")
+    );
 
     for (values, expected) in [
         (
@@ -434,8 +454,8 @@ fn router_registry_business_flow_applies_tool_config_safety_boundary() -> Result
 }
 
 #[test]
-fn router_registry_business_flow_bundle_uses_same_public_registries_without_cross_state_leak(
-) -> Result<()> {
+fn router_registry_business_flow_bundle_uses_same_public_registries_without_cross_state_leak()
+-> Result<()> {
     let _guard = env_lock();
     let project = ProjectEnv::new()?;
     write_command_file(
@@ -500,14 +520,18 @@ fn router_registry_business_flow_bundle_uses_same_public_registries_without_cros
             .id,
         "bundle-persona"
     );
-    assert!(reloaded
-        .agents
-        .delete("bundle-agent")
-        .map_err(anyhow::Error::msg)?);
-    assert!(reloaded
-        .personas
-        .delete("bundle-persona")
-        .map_err(anyhow::Error::msg)?);
+    assert!(
+        reloaded
+            .agents
+            .delete("bundle-agent")
+            .map_err(anyhow::Error::msg)?
+    );
+    assert!(
+        reloaded
+            .personas
+            .delete("bundle-persona")
+            .map_err(anyhow::Error::msg)?
+    );
     Ok(())
 }
 

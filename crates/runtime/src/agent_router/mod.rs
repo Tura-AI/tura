@@ -393,8 +393,8 @@ fn generate_agent_id(agent_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_agent_from_registry_entry, provider_config_from_coding_agent, resolve_project_path,
-        AgentRegistryEntry,
+        AgentRegistryEntry, build_agent_from_registry_entry, provider_config_from_coding_agent,
+        resolve_project_path,
     };
     use crate::state_machine::agent_management::{
         AgentCapabilityItem, AgentPromptItem, ValidatorConfig,

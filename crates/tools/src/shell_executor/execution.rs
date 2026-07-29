@@ -470,8 +470,8 @@ async fn drain_stream_tasks(
 #[cfg(test)]
 mod tests {
     use super::{
-        read_stream_with_deltas, run_command_with_timeout, run_tokio_command_with_timeout,
-        tail_chars, SharedOutput,
+        SharedOutput, read_stream_with_deltas, run_command_with_timeout,
+        run_tokio_command_with_timeout, tail_chars,
     };
     use crate::runtime::tool::{ToolContext, ToolRuntimeEvent};
     use std::path::PathBuf;
@@ -567,11 +567,13 @@ mod tests {
         assert!(response.success, "{}", response.stderr);
         assert_eq!(response.exit_code, 0);
         assert!(response.stdout.contains("shell-ok"), "{response:?}");
-        assert!(response
-            .output
-            .as_str()
-            .unwrap_or_default()
-            .contains("Exit code: 0"));
+        assert!(
+            response
+                .output
+                .as_str()
+                .unwrap_or_default()
+                .contains("Exit code: 0")
+        );
     }
 
     #[test]
@@ -581,11 +583,13 @@ mod tests {
         assert!(!response.success);
         assert_eq!(response.exit_code, 7);
         assert!(response.stderr.contains("shell-bad"), "{response:?}");
-        assert!(response
-            .output
-            .as_str()
-            .unwrap_or_default()
-            .contains("Stderr:"));
+        assert!(
+            response
+                .output
+                .as_str()
+                .unwrap_or_default()
+                .contains("Stderr:")
+        );
     }
 
     #[test]
@@ -607,11 +611,13 @@ mod tests {
 
         assert!(!response.success);
         assert_eq!(response.exit_code, -1);
-        assert!(response
-            .output
-            .as_str()
-            .unwrap_or_default()
-            .contains("Timed out after 1 seconds"));
+        assert!(
+            response
+                .output
+                .as_str()
+                .unwrap_or_default()
+                .contains("Timed out after 1 seconds")
+        );
     }
 
     #[tokio::test]
@@ -684,10 +690,12 @@ mod tests {
             "stdout should keep bytes read before timeout: {response:?}"
         );
         assert!(response.stderr.contains("Timed out after 1 seconds"));
-        assert!(response
-            .output
-            .as_str()
-            .unwrap_or_default()
-            .contains("retained-output"));
+        assert!(
+            response
+                .output
+                .as_str()
+                .unwrap_or_default()
+                .contains("retained-output")
+        );
     }
 }

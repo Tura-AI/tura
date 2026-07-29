@@ -4,7 +4,7 @@
 #[path = "../support/typed_session.rs"]
 mod typed_session;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use lifecycle::TaskPlan;
 use session_log::SessionLogStore;
 use session_log_contract::client::{enqueue_command, open_session_feed_subscription};
@@ -15,7 +15,7 @@ use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -107,11 +107,13 @@ fn session_db_start_quarantines_dirty_file_queue_items_and_accepts_clean_writes(
         .map_err(|_| anyhow!("session feed reader panicked"))?;
 
     assert!(session_visible("clean-direct")?);
-    assert!(store
-        .get_session(GetSessionRequest {
-            session_id: "clean-direct".to_string(),
-        })?
-        .is_some());
+    assert!(
+        store
+            .get_session(GetSessionRequest {
+                session_id: "clean-direct".to_string(),
+            })?
+            .is_some()
+    );
 
     let _ = call_service_with_retry(&SessionLogCommand::Shutdown, Duration::from_secs(10));
     service.wait(Duration::from_secs(10))?;

@@ -2,7 +2,7 @@
 //!
 //! Gateway/session reads and typed lifecycle commands use this client directly.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use lifecycle::SessionCommand;
 use session_log_contract::{
     CreateSessionRequest, DeleteSessionRequest, ExecuteSessionCommandRequest, GetSessionRequest,

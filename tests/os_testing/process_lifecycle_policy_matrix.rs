@@ -5,9 +5,9 @@
 //! not silently drift apart as process management changes.
 
 use code_tools::commands::shell_command::{
-    current_shell_process_scope_strategy, ShellProcessScopeStrategy,
+    ShellProcessScopeStrategy, current_shell_process_scope_strategy,
 };
-use tura_router::process_scope::{current_process_scope_strategy, ProcessScopeStrategy};
+use tura_router::process_scope::{ProcessScopeStrategy, current_process_scope_strategy};
 
 #[test]
 fn lifecycle_policy_matrix_covers_all_supported_os_and_process_roles() {

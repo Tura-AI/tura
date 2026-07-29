@@ -3,7 +3,7 @@ pub const PROMPT: &str = include_str!("prompt.md");
 pub const POLICY: &str = include_str!("policy.toml");
 pub const SCHEMA: &str = include_str!("schema.json");
 
-pub use crate::shell_executor::{current_shell_process_scope_strategy, ShellProcessScopeStrategy};
+pub use crate::shell_executor::{ShellProcessScopeStrategy, current_shell_process_scope_strategy};
 
 use super::CommandResponse;
 use crate::runtime::file_locks::Access;
@@ -88,7 +88,7 @@ fn payload_command_line(payload: &ToolPayload) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{payload_command_line, ShellCommandHandler};
+    use super::{ShellCommandHandler, payload_command_line};
     use crate::runtime::tool::{ToolCall, ToolContext, ToolHandler, ToolPayload};
     use serde_json::json;
 

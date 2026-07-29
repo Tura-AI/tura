@@ -21,7 +21,7 @@ use std::sync::Mutex;
 
 use lifecycle::{SessionInput, SessionLogEntry, SessionState};
 use runtime::mano;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const ROUTES: &[&str] = &["thinking", "fast", "embedding_high", "embedding_low"];
 const BASE_URL: &str = "https://api.anthropic.com/v1";

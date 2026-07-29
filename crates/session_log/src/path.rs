@@ -72,17 +72,21 @@ mod tests {
     fn empty_workspace_uses_unknown_workspace_bucket_in_instance_db() {
         let dir = workspace_session_log_dir("");
 
-        assert!(dir.ends_with(
-            std::path::Path::new("workspaces")
-                .join("_unknown")
-                .join(".tura")
-        ));
-        assert!(workspace_session_log_db("").ends_with(
-            std::path::Path::new("workspaces")
-                .join("_unknown")
-                .join(".tura")
-                .join("session_log.sqlite3")
-        ));
+        assert!(
+            dir.ends_with(
+                std::path::Path::new("workspaces")
+                    .join("_unknown")
+                    .join(".tura")
+            )
+        );
+        assert!(
+            workspace_session_log_db("").ends_with(
+                std::path::Path::new("workspaces")
+                    .join("_unknown")
+                    .join(".tura")
+                    .join("session_log.sqlite3")
+            )
+        );
     }
 
     #[test]

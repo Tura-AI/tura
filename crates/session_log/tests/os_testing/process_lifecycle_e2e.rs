@@ -7,7 +7,7 @@
 #[path = "../support/typed_session.rs"]
 mod typed_session;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use lifecycle::{SessionCommand, SessionState, TaskPlan};
 use session_log_contract::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand,
@@ -168,8 +168,8 @@ fn session_db_single_owner_bad_input_idempotent_delta_and_shutdown() -> Result<(
 }
 
 #[test]
-fn session_db_restart_after_crash_marks_running_sessions_interrupted_and_keeps_history(
-) -> Result<()> {
+fn session_db_restart_after_crash_marks_running_sessions_interrupted_and_keeps_history()
+-> Result<()> {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     let root = temp_root("session-db-crash-restart")?;
     let home = root.join("home");

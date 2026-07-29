@@ -4,7 +4,7 @@
 //! [`normalize_output`] directly. The model-facing prompt and schema live in
 //! `prompt.md` / `schema.json`, mirroring every other command.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

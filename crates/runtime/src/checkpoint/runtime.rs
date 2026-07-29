@@ -3,7 +3,7 @@
 use lifecycle::RuntimeAggregate;
 use session_log_contract::CheckpointType;
 
-use super::command_run::{checkpoint_runtime_event, RuntimeCheckpoint};
+use super::command_run::{RuntimeCheckpoint, checkpoint_runtime_event};
 
 fn checkpoint_runtime_state_event(
     runtime: &RuntimeAggregate,

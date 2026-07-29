@@ -49,7 +49,7 @@ mod tests {
         media::GatewayMediaProcessor,
         types::{ChannelKind, InboundMessage, OutboundAction, ProcessedInboundMessage},
     };
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -167,12 +167,14 @@ mod tests {
             .expect_err("handler error should be returned");
 
         assert!(error.to_string().contains("handler failed"));
-        assert!(runtime
-            .sender
-            .sent
-            .lock()
-            .expect("test sender mutex should not be poisoned")
-            .is_empty());
+        assert!(
+            runtime
+                .sender
+                .sent
+                .lock()
+                .expect("test sender mutex should not be poisoned")
+                .is_empty()
+        );
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
-use super::types::{Dimensions, GenerateMediaArgs, ImageBytes, DEFAULT_SIZE};
-use base64::{engine::general_purpose, Engine as _};
-use serde_json::{json, Value};
+use super::types::{DEFAULT_SIZE, Dimensions, GenerateMediaArgs, ImageBytes};
+use base64::{Engine as _, engine::general_purpose};
+use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

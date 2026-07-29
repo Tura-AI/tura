@@ -9,7 +9,7 @@ use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
 };
 use crate::shell_executor;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
@@ -752,11 +752,7 @@ fn apply_patch_failure_guidance(kind: &str, partial: bool) -> &'static str {
 }
 
 fn dominant_line_ending(text: &str) -> &'static str {
-    if text.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    }
+    if text.contains("\r\n") { "\r\n" } else { "\n" }
 }
 
 fn join_lines(lines: &[String], line_ending: &str, final_newline: bool) -> String {

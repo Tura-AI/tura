@@ -1,4 +1,4 @@
-use super::{execute, ShellKind};
+use super::{ShellKind, execute};
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};

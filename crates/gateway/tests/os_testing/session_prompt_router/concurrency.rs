@@ -1,8 +1,8 @@
 use super::helpers::*;
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_concurrent_sessions_enqueue_independent_router_turns(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_concurrent_sessions_enqueue_independent_router_turns()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");
@@ -118,9 +118,11 @@ async fn gateway_prompt_business_flow_concurrent_sessions_enqueue_independent_ro
                     .iter()
                     .any(|part| part.text.as_deref() == Some(&format!("Concurrent prompt {index}")))
         }));
-        assert!(!messages
-            .iter()
-            .any(|message| message.role == MessageRole::Assistant));
+        assert!(
+            !messages
+                .iter()
+                .any(|message| message.role == MessageRole::Assistant)
+        );
         assert_gateway_kept_canonical_session(&session.id)?;
     }
 

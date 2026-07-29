@@ -7,7 +7,7 @@
 #[path = "../support/typed_session.rs"]
 mod typed_session;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::body::to_bytes;
 use axum::extract::{Json, Path, Query};
 use axum::response::IntoResponse;
@@ -21,7 +21,7 @@ use gateway::session_db_client::SessionDbClient;
 use gateway::session_feed::SessionFeedReducer;
 use gateway::session_store;
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use session_log::SessionLogStore;
 use session_log_contract::SessionLogCommand;
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,8 +29,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex as StdMutex,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -49,8 +49,8 @@ const OPERATION_BUDGET: Duration = Duration::from_secs(120);
 const TEST_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn gateway_session_db_mock_runtime_handles_10_workspaces_20_tasks_2000_rich_records(
-) -> Result<()> {
+async fn gateway_session_db_mock_runtime_handles_10_workspaces_20_tasks_2000_rich_records()
+-> Result<()> {
     tokio::time::timeout(
         TEST_TIMEOUT,
         gateway_session_db_mock_runtime_pressure_impl(),

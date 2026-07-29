@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use lifecycle::{SessionCommand, SessionEvent};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use session_log_contract::client::call_service;
 use session_log_contract::{ExecuteSessionCommandRequest, SessionLogCommand, SessionLogResponse};
 

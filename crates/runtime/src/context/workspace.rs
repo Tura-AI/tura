@@ -280,11 +280,7 @@ fn parent_directory_key(path: &str) -> String {
 }
 
 fn directory_label(directory: &str) -> &str {
-    if directory.is_empty() {
-        "."
-    } else {
-        directory
-    }
+    if directory.is_empty() { "." } else { directory }
 }
 
 fn recent_file_lines(

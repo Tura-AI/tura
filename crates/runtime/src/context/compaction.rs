@@ -5,8 +5,8 @@ use crate::prompt_style::{runtime_prompt_manual, task_status};
 use lifecycle::{SessionLogEntry, SessionManagement};
 
 use super::char_budget::{
-    compact_context_byte_budget, estimated_tokens_from_bytes, truncate_text_to_char_budget,
-    COMPACT_CONTEXT_FALLBACK_MAX_ESTIMATED_TOKENS,
+    COMPACT_CONTEXT_FALLBACK_MAX_ESTIMATED_TOKENS, compact_context_byte_budget,
+    estimated_tokens_from_bytes, truncate_text_to_char_budget,
 };
 use super::text_truncate::environment_context_message;
 use super::tool_results::{

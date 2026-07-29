@@ -1,15 +1,15 @@
 use super::config::{
-    env_value, openai_auth_candidates, provider_endpoint, provider_key, provider_model, OpenAiAuth,
+    OpenAiAuth, env_value, openai_auth_candidates, provider_endpoint, provider_key, provider_model,
 };
 use super::files::{
     aspect_ratio, image_size_label, mime_type_for_format, openai_size, provider_dimensions,
     reference_data_url, reference_part_bytes,
 };
 use super::types::{GenerateMediaArgs, ImageBytes, ImageProvider, ProviderOutcome};
-use base64::{engine::general_purpose, Engine as _};
-use reqwest::blocking::{multipart, Client, RequestBuilder, Response};
+use base64::{Engine as _, engine::general_purpose};
 use reqwest::StatusCode;
-use serde_json::{json, Value};
+use reqwest::blocking::{Client, RequestBuilder, Response, multipart};
+use serde_json::{Value, json};
 use std::path::Path;
 
 #[derive(Debug)]

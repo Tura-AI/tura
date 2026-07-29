@@ -470,10 +470,12 @@ async fn fail_turn_cancellation_aborts_running_shell_command() {
 
     assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(result.result.success, Some(false));
-    assert!(result.result.code_mode_result()["stderr"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("tool task aborted"));
+    assert!(
+        result.result.code_mode_result()["stderr"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("tool task aborted")
+    );
 }
 
 #[tokio::test]
@@ -582,8 +584,10 @@ async fn fail_timeout_aborts_reader_drain_for_pipe_holding_descendants() {
 
     assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(result.result.success, Some(false));
-    assert!(result.result.code_mode_result()["stderr"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("Timed out"));
+    assert!(
+        result.result.code_mode_result()["stderr"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Timed out")
+    );
 }

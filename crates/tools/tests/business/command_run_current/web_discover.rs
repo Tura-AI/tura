@@ -626,12 +626,13 @@ fn pass_web_discover_image_min_size_filters_small_downloads() {
         .as_array()
         .expect("downloaded files");
     assert!(downloaded.is_empty());
-    assert!(root
-        .join("media/ddg")
-        .read_dir()
-        .expect("read dir")
-        .next()
-        .is_none());
+    assert!(
+        root.join("media/ddg")
+            .read_dir()
+            .expect("read dir")
+            .next()
+            .is_none()
+    );
 }
 
 #[test]

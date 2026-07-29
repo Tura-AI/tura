@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 use tura_persona::state_machine::{PersonaManagement, PersonaState};
 use tura_persona::store::{
-    default_persona_config, delete_dynamic_persona, discover_personas, load_persona,
-    save_dynamic_persona, PersonaConfig, PersonaSource, CLI_COMMUNICATION_STYLE_FILE,
-    COMMUNICATION_STYLE_DIR, COMMUNICATION_STYLE_FILE, DYNAMIC_PERSONAS_DIR, PERSONA_CONFIG_FILE,
-    PERSONA_PROMPT_DIR, STATIC_PERSONAS_DIR,
+    CLI_COMMUNICATION_STYLE_FILE, COMMUNICATION_STYLE_DIR, COMMUNICATION_STYLE_FILE,
+    DYNAMIC_PERSONAS_DIR, PERSONA_CONFIG_FILE, PERSONA_PROMPT_DIR, PersonaConfig, PersonaSource,
+    STATIC_PERSONAS_DIR, default_persona_config, delete_dynamic_persona, discover_personas,
+    load_persona, save_dynamic_persona,
 };
 
 #[test]
@@ -54,26 +54,32 @@ fn persona_business_lifecycle_saves_discovers_prefers_dynamic_and_deletes() {
         PersonaSource::Dynamic,
         "dynamic persona should win over static persona with the same id"
     );
-    assert!(project
-        .path()
-        .join(DYNAMIC_PERSONAS_DIR)
-        .join("guide")
-        .join(PERSONA_CONFIG_FILE)
-        .exists());
-    assert!(project
-        .path()
-        .join(DYNAMIC_PERSONAS_DIR)
-        .join("guide")
-        .join(PERSONA_PROMPT_DIR)
-        .join("persona.md")
-        .exists());
-    assert!(project
-        .path()
-        .join(DYNAMIC_PERSONAS_DIR)
-        .join("guide")
-        .join(PERSONA_PROMPT_DIR)
-        .join("communication_style.md")
-        .exists());
+    assert!(
+        project
+            .path()
+            .join(DYNAMIC_PERSONAS_DIR)
+            .join("guide")
+            .join(PERSONA_CONFIG_FILE)
+            .exists()
+    );
+    assert!(
+        project
+            .path()
+            .join(DYNAMIC_PERSONAS_DIR)
+            .join("guide")
+            .join(PERSONA_PROMPT_DIR)
+            .join("persona.md")
+            .exists()
+    );
+    assert!(
+        project
+            .path()
+            .join(DYNAMIC_PERSONAS_DIR)
+            .join("guide")
+            .join(PERSONA_PROMPT_DIR)
+            .join("communication_style.md")
+            .exists()
+    );
 
     let mut management = PersonaManagement::new(
         saved.management.persona_id.clone(),
@@ -116,11 +122,13 @@ fn persona_business_rules_reject_user_default_config_and_static_delete() {
     let delete_error = delete_dynamic_persona(project.path(), "builtin")
         .expect_err("static default persona cannot be deleted");
     assert!(delete_error.contains("default_config"), "{delete_error}");
-    assert!(project
-        .path()
-        .join(STATIC_PERSONAS_DIR)
-        .join("builtin")
-        .exists());
+    assert!(
+        project
+            .path()
+            .join(STATIC_PERSONAS_DIR)
+            .join("builtin")
+            .exists()
+    );
 }
 
 #[test]

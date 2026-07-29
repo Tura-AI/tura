@@ -40,8 +40,8 @@ async fn gateway_prompt_business_flow_rejects_missing_session_without_side_effec
 }
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_enqueues_router_turn_without_session_db_prewrite(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_enqueues_router_turn_without_session_db_prewrite()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");
@@ -150,8 +150,8 @@ async fn gateway_prompt_business_flow_enqueues_router_turn_without_session_db_pr
 }
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_injects_generated_frontend_ids_when_client_omits_them(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_injects_generated_frontend_ids_when_client_omits_them()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");
@@ -226,8 +226,8 @@ async fn gateway_prompt_business_flow_injects_generated_frontend_ids_when_client
 }
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_routes_only_text_parts_and_keeps_first_text_part_id(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_routes_only_text_parts_and_keeps_first_text_part_id()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");
@@ -333,8 +333,8 @@ async fn gateway_prompt_business_flow_routes_only_text_parts_and_keeps_first_tex
 }
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_repeated_turns_keep_session_stable_without_db_prewrite(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_repeated_turns_keep_session_stable_without_db_prewrite()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");

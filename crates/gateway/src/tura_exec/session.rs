@@ -4,7 +4,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use lifecycle::{SessionCommand, SessionState, TaskPlan};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use session_log_contract::{
     CreateSessionRequest, GetSessionRequest, SessionLogCommand, SessionLogResponse, SessionSnapshot,
 };
