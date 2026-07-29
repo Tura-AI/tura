@@ -12,7 +12,7 @@ Image prompts must avoid AI slop, safe stock-like defaults, and CGI-heavy fantas
 
 If an image may need background removal later, prompt for a single isolated subject on a plain solid background with a color that strongly contrasts the subject and is unrelated to the final theme palette, with crisp visible subject edges.
 
-Generate multiple distinct media assets with multiple separate `generate_media` calls in small batches. Do not ask one call to create several different assets, scenes, characters, icons, backgrounds, or deliverables at once. 
+Generate multiple distinct media assets with multiple separate `generate_media` calls in small batches. Do not ask one call to create several different assets, scenes, characters, icons, backgrounds, or deliverables at once.
 
 Keep each image call focused on one clear asset and use repeated prompt + modification calls for asset sets so each output can preserve the intended style direction and quality.
 
@@ -21,6 +21,7 @@ For speech audio, pass `speech` with only semantic voice controls: text, `--text
 Always call `read_media` in a same comma_run batch with a step after `generate_media` for generated image to see the media.
 
 Speech enums:
+
 - `text_language`: `zh_cn`, `en_us`, `ja_jp`, `ko_kr`, `es_es`, `fr_fr`
 - `role`: `female_gentle`, `female_bright`, `female_confident`, `female_young`, `male_calm`, `male_warm`, `male_deep`, `male_energetic`
 - `tone`: `neutral`, `calm`, `cheerful`, `serious`, `sad`, `whisper`
