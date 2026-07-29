@@ -1,5 +1,5 @@
 use serde_json::json;
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{Arc, atomic::Ordering};
 
 use crate::app::build_state;
 use crate::ipc_handlers::{enqueue_turn_identity, handle_ipc_request};
@@ -77,7 +77,7 @@ pub(crate) fn unpublish_router_addr() {
 
 pub(crate) async fn serve_socket() -> anyhow::Result<()> {
     use tokio::net::TcpListener;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     let _router_lock = RouterDaemonLock::acquire()?;
     let orphan_report = cleanup_orphan_runtime_workers();
@@ -238,7 +238,6 @@ struct RouterDaemonLock {
 
 impl RouterDaemonLock {
     fn acquire() -> anyhow::Result<Self> {
-        use fs2::FileExt;
         use std::io::{Seek, SeekFrom, Write};
 
         let dir = tura_path::locks_dir();
@@ -250,7 +249,7 @@ impl RouterDaemonLock {
             .read(true)
             .write(true)
             .open(&path)?;
-        file.try_lock_exclusive().map_err(|error| {
+        file.try_lock().map_err(|error| {
             anyhow::anyhow!(
                 "another router daemon already owns {}: {error}",
                 path.display()
@@ -303,8 +302,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn command_run_survives_runtime_socket_disconnect_until_router_finishes(
-    ) -> anyhow::Result<()> {
+    async fn command_run_survives_runtime_socket_disconnect_until_router_finishes()
+    -> anyhow::Result<()> {
         let state = build_state();
         let workspace = tempfile::tempdir()?;
         let started = workspace.path().join("started.txt");

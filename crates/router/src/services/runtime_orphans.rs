@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,7 +29,11 @@ pub fn cleanup_orphan_runtime_workers() -> RuntimeOrphanCleanupReport {
     let home = tura_path::instance_home();
     let current_pid = std::process::id();
     let mut system = System::new_all();
-    system.refresh_processes();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::everything(),
+    );
     cleanup_orphan_runtime_workers_in_system(&system, &home, current_pid)
 }
 
@@ -49,8 +53,12 @@ fn cleanup_orphan_runtime_workers_in_system(
             pid: pid.as_u32(),
             parent_pid: process.parent().map(Pid::as_u32),
             exe: process.exe().map(Path::to_path_buf),
-            name: process.name().to_string(),
-            environ: process.environ().to_vec(),
+            name: process.name().to_string_lossy().into_owned(),
+            environ: process
+                .environ()
+                .iter()
+                .map(|value| value.to_string_lossy().into_owned())
+                .collect(),
         };
         report.scanned += 1;
         if runtime_worker_orphan_decision(&snapshot, current_home, current_pid, system)

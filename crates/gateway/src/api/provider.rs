@@ -4,7 +4,6 @@ use crate::contracts::*;
 use crate::mock::global_store;
 use axum::extract::{Json, Path, Query};
 use chrono::Utc;
-use fs2::FileExt;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -544,7 +543,7 @@ fn provider_auth_file_lock() -> io::Result<ProviderAuthFileLock> {
         .read(true)
         .write(true)
         .open(&lock_path)?;
-    file.lock_exclusive()?;
+    file.lock()?;
     Ok(ProviderAuthFileLock { file })
 }
 

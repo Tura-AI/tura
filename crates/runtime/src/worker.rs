@@ -13,9 +13,9 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use runtime_contract::{WorkerEnvelope, WORKER_KIND_CALL, WORKER_KIND_HEALTH_CHECK};
-use serde_json::{json, Value};
-use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+use runtime_contract::{WORKER_KIND_CALL, WORKER_KIND_HEALTH_CHECK, WorkerEnvelope};
+use serde_json::{Value, json};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
 use crate::mano::ManoProcessResult;
 use lifecycle::SessionState;
@@ -71,10 +71,12 @@ fn start_router_parent_watchdog() {
     let Some(parent) = RouterParentProcess::from_env() else {
         return;
     };
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        if !parent.is_alive() {
-            std::process::exit(70);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if !parent.is_alive() {
+                std::process::exit(70);
+            }
         }
     });
 }
@@ -99,9 +101,9 @@ impl RouterParentProcess {
 
     fn is_alive(&self) -> bool {
         let mut system = System::new_with_specifics(
-            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()),
         );
-        system.refresh_processes();
+        system.refresh_processes(ProcessesToUpdate::All, true);
         let Some(process) = system.process(Pid::from_u32(self.pid)) else {
             return false;
         };
@@ -401,10 +403,12 @@ mod tests {
             payload: Value::Null,
         });
         assert_eq!(reply["ok"], false);
-        assert!(reply["error"]
-            .as_str()
-            .expect("error should be a string")
-            .contains("bogus"));
+        assert!(
+            reply["error"]
+                .as_str()
+                .expect("error should be a string")
+                .contains("bogus")
+        );
     }
 
     #[test]
@@ -441,7 +445,7 @@ mod tests {
     fn current_router_parent_process_is_alive_with_current_start_time() {
         let pid = std::process::id();
         let mut system = System::new_all();
-        system.refresh_processes();
+        system.refresh_processes(ProcessesToUpdate::All, true);
         let start_time = system
             .process(Pid::from_u32(pid))
             .expect("current process should be visible")
@@ -501,9 +505,11 @@ mod tests {
         assert_eq!(reply["ok"], false);
         assert_eq!(reply["session_id"], "failed-provider-session");
         assert_eq!(reply["session_state"], "failed");
-        assert!(reply["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("rate_limit_exceeded")));
+        assert!(
+            reply["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("rate_limit_exceeded"))
+        );
         assert_eq!(reply["final_text"], "stale fallback");
     }
 
