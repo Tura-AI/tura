@@ -55,6 +55,22 @@ authors = ["Tura"]
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
+reqwest = { version = "0.13.4", default-features = false, features = [
+  "charset",
+  "http2",
+  "system-proxy",
+  "form",
+  "json",
+  "query",
+  "stream",
+  "rustls-no-provider",
+] }
+image = { version = "0.25.10", default-features = false, features = [
+  "bmp",
+  "jpeg",
+  "png",
+  "webp",
+] }
 anyhow = "1.0.104"
 arboard = "3.6.1"
 async-trait = "0.1.91"
@@ -64,32 +80,17 @@ chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
 futures = "0.3.33"
 futures-util = "0.3.33"
-image = {
-    version = "0.25.10",
-    default-features = false,
-    features = ["bmp", "jpeg", "png", "webp"],
-}
 lifecycle = { path = "crates/lifecycle" }
 parking_lot = "0.12.5"
 pdfium-render = { version = "0.9.3", features = ["image_025"] }
 png = "0.18.1"
 redis = { version = "1.4.1", features = ["tokio-comp"] }
 regex = "1.13.1"
-reqwest = {
-  version = "0.13.4",
-  default-features = false,
-  features = [
-    "charset",
-    "http2",
-    "system-proxy",
-    "form",
-    "json",
-    "query",
-    "stream",
-    "rustls-no-provider",
-  ],
-}
-rustls = { version = "0.23.42", default-features = false, features = ["ring", "std", "tls12"] }
+rustls = { version = "0.23.42", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
+] }
 quick_html2md = "0.2.1"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -100,7 +101,10 @@ sysinfo = "0.39.6"
 tauri = "2.11.5"
 tauri-build = "2.6.3"
 tauri-plugin-single-instance = "2.4.3"
-tao = { version = "0.35.3", default-features = false, features = ["x11", "dbus"] }
+tao = { version = "0.35.3", default-features = false, features = [
+  "x11",
+  "dbus",
+] }
 tempfile = "3.27.0"
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["full"] }
