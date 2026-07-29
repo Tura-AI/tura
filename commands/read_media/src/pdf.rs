@@ -3,7 +3,7 @@ use super::previews::encode_preview_jpeg;
 use super::types::ReadMediaArgs;
 use image::DynamicImage;
 use pdfium_render::prelude::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 pub(super) fn process_pdf(
@@ -45,8 +45,10 @@ pub(super) fn process_pdf(
                         .render_form_data(true),
                 )
                 .map_err(|err| format!("failed to render pdf page: {err}"))?;
-            let bitmap = rendered.as_image();
-            let image = DynamicImage::ImageRgb8(bitmap.to_rgb8());
+            let image = rendered
+                .as_image()
+                .map_err(|err| format!("failed to convert rendered pdf page to image: {err}"))?;
+            let image = DynamicImage::ImageRgb8(image.to_rgb8());
             let encoded = encode_preview_jpeg(image, scaled_side(args.max_side, 2, 1), 80)?;
             previews.push(json!({
                 "type": "image_url",

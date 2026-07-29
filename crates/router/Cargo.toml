@@ -31,7 +31,6 @@ router_contract.workspace = true
 runtime_contract.workspace = true
 tura_path = { workspace = true }
 tools = { workspace = true }
-fs2.workspace = true
 sysinfo.workspace = true
 
 [target.'cfg(windows)'.dependencies]
