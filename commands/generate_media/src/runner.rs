@@ -4,7 +4,7 @@ use super::providers::{call_provider, dry_run_payload};
 use super::speech::{call_speech_provider, dry_run_speech_payload, write_speech};
 use super::types::{GenerateMediaArgs, ImageProvider, MediaKind, SpeechProvider};
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
 
@@ -23,6 +23,8 @@ pub(super) fn run_generate_media_inner(
     args: GenerateMediaArgs,
     session_dir: &Path,
 ) -> Result<Value, String> {
+    tura_llm_rust::install_rustls_crypto_provider()
+        .map_err(|error| format!("failed to install the rustls crypto provider: {error}"))?;
     let client = Client::builder()
         .timeout(Duration::from_secs(100))
         .user_agent("Tura generate_media/1.0")
