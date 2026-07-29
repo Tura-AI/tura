@@ -4,7 +4,7 @@ use crate::contracts::{
     AboutUpdateInstallRequest, AboutUpdateInstallResponse, BadRequestError,
 };
 use async_trait::async_trait;
-use axum::{http::StatusCode, Json};
+use axum::{Json, http::StatusCode};
 use semver::Version;
 use std::{
     collections::HashSet,
@@ -126,6 +126,10 @@ impl AboutRuntime for SystemAboutRuntime {
     }
 
     async fn add_star(&self, token: &str) -> bool {
+        if let Err(error) = tura_llm_rust::install_rustls_crypto_provider() {
+            tracing::error!(error = %error, "failed to install the rustls crypto provider");
+            return false;
+        }
         let Ok(client) = reqwest::Client::builder()
             .timeout(Duration::from_secs(12))
             .build()

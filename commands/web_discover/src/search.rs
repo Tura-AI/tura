@@ -1,3 +1,4 @@
+use super::POLICY;
 use super::download::resolve_ytdlp_command;
 use super::html::{
     direct_webpage_urls, extract_bing_image_page_url, extract_bing_image_title,
@@ -6,13 +7,12 @@ use super::html::{
 use super::policy;
 use super::types::SearchResult;
 use super::util::{
-    clean_text, command_local_python, env_value, html_unescape, json_unescape, percent_decode,
-    string_field, string_field_at, truncate_chars, EmptyDefault,
+    EmptyDefault, clean_text, command_local_python, env_value, html_unescape, json_unescape,
+    percent_decode, string_field, string_field_at, truncate_chars,
 };
-use super::POLICY;
 use regex::Regex;
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::process::{Command, Stdio};
 
 pub(super) fn search_websites(
@@ -946,6 +946,7 @@ mod tests {
     }
 
     fn client() -> Client {
+        tura_llm_rust::install_rustls_crypto_provider().expect("rustls crypto provider");
         Client::builder().build().expect("test client")
     }
 
@@ -1013,9 +1014,11 @@ mod tests {
         let request = server.join().expect("server request");
 
         assert!(request.starts_with("GET /?q=rust&count=10&safesearch=moderate "));
-        assert!(request
-            .to_ascii_lowercase()
-            .contains("x-subscription-token: local-key"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-subscription-token: local-key")
+        );
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Rust");
         assert_eq!(results[0].snippet, "systems");

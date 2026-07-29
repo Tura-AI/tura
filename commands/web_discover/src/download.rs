@@ -7,7 +7,7 @@ use super::util::{
     safe_filename, snapshot_files,
 };
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -18,6 +18,8 @@ pub(super) fn download_images(
     output_dir: &Path,
     session_dir: &Path,
 ) -> Result<(Vec<Value>, Vec<Value>), String> {
+    tura_llm_rust::install_rustls_crypto_provider()
+        .map_err(|error| format!("failed to install the rustls crypto provider: {error}"))?;
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
         .user_agent("Tura web_discover/1.0")
