@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use lifecycle::{SessionAggregate, SessionEvent, SessionState, TaskPlan};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, Row, params};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,21 @@ pub(super) fn bounded_page(
         return last;
     }
     requested.min(last)
+}
+
+pub(super) fn row_u64(row: &Row<'_>, index: usize) -> rusqlite::Result<u64> {
+    let value = row.get::<_, i64>(index)?;
+    u64::try_from(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })
+}
+
+pub(super) fn sqlite_u64(value: u64) -> rusqlite::Result<i64> {
+    i64::try_from(value).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
 }
 
 pub(super) fn string_at(value: &Value, path: &[&str]) -> Option<String> {
@@ -50,7 +65,7 @@ pub(super) fn replay_session_events(
          WHERE session_id = ?1 ORDER BY event_seq",
     )?;
     let rows = statement.query_map(params![session_id], |row| {
-        Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?))
+        Ok((row_u64(row, 0)?, row.get::<_, String>(1)?))
     })?;
     let mut events = Vec::new();
     for (expected, row) in rows.enumerate() {
@@ -81,11 +96,12 @@ pub(super) fn append_session_event(
     let event_seq = conn.query_row(
         "SELECT COALESCE(MAX(event_seq) + 1, 0) FROM session_events WHERE session_id = ?1",
         params![session_id],
-        |row| row.get::<_, u64>(0),
+        |row| row_u64(row, 0),
     )?;
+    let event_seq_sql = sqlite_u64(event_seq)?;
     conn.execute(
         "INSERT INTO session_events(session_id, event_seq, event_json) VALUES (?1, ?2, ?3)",
-        params![session_id, event_seq, serde_json::to_string(event)?],
+        params![session_id, event_seq_sql, serde_json::to_string(event)?],
     )?;
     Ok(event_seq + 1)
 }
