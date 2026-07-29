@@ -1,10 +1,13 @@
 use super::{
-    apply_codex_auth_env, load_codex_auth_tokens, normalize_response_content,
-    openai_login_is_oauth, provider_latency_timeouts, refresh_openai_access_token_if_needed,
-    set_provider_latency_timeouts, ProviderConfig, ProviderLatencyConfig, ProviderLatencyTimeouts,
+    ProviderConfig, ProviderLatencyConfig, ProviderLatencyTimeouts, apply_codex_auth_env,
+    load_codex_auth_tokens, normalize_response_content, openai_login_is_oauth,
+    provider_latency_timeouts, refresh_openai_access_token_if_needed,
+    set_provider_latency_timeouts,
 };
 use serde_json::json;
 use std::path::PathBuf;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use uuid::Uuid;
 
 struct EnvRestore {
@@ -72,6 +75,167 @@ fn provider_alias_preserves_auth_identity_and_resolves_runtime_protocol() {
     assert_eq!(gemini.provider, "gemini-api");
     assert_eq!(gemini.runtime_provider(), "google");
     assert_eq!(mistral.runtime_provider(), "mistral");
+}
+
+#[test]
+fn openai_alias_uses_chat_completions_for_non_openai_base_urls() {
+    let mimo = ProviderConfig {
+        provider: "openai".to_string(),
+        base_url: "https://api.xiaomimimo.com/v1".to_string(),
+        model: "mimo-v2.5-pro".to_string(),
+        temperature: 0.2,
+    };
+    let openai = ProviderConfig {
+        provider: "openai".to_string(),
+        base_url: "https://api.openai.com/v1".to_string(),
+        model: "gpt-5.1".to_string(),
+        temperature: 0.2,
+    };
+
+    assert_eq!(mimo.runtime_provider(), "openai-compatible");
+    assert_eq!(openai.runtime_provider(), "openai");
+}
+
+#[tokio::test]
+async fn openai_alias_call_uses_chat_completions_on_a_custom_endpoint() {
+    let _lock = crate::test_support::env_lock_async().await;
+    let _env = EnvRestore::capture(&[
+        "TURA_ENV_PATH",
+        "OPENAI_API_KEY",
+        "OPENAI_LOGIN",
+        "TURA_PROVIDER_CONFIG",
+    ]);
+    let env_dir = unique_temp_dir("openai-compatible-call");
+    let env_path = env_dir.join("tura.env");
+    std::fs::write(&env_path, "OPENAI_API_KEY=test-openai-compatible-key\n")
+        .expect("write provider test env");
+    // SAFETY: the test holds the process-environment lock for its full lifetime.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ENV_PATH", &env_path);
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("OPENAI_LOGIN");
+        std::env::remove_var("TURA_PROVIDER_CONFIG");
+    }
+    let conf = crate::TuraConfig::new(".env.missing");
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local provider fixture");
+    let address = listener.local_addr().expect("provider fixture address");
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept provider request");
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let read = socket
+                .read(&mut buffer)
+                .await
+                .expect("read provider request");
+            assert!(read > 0, "provider closed before request completed");
+            request.extend_from_slice(&buffer[..read]);
+            let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+            else {
+                continue;
+            };
+            let header_end = header_end + 4;
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    line.split_once(':').and_then(|(name, value)| {
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                })
+                .unwrap_or(0);
+            if request.len() >= header_end + content_length {
+                break;
+            }
+        }
+        let body = format!(
+            "data: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":{"content":"custom endpoint works"}}]})
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nX-Request-Id: request-custom-endpoint\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        socket
+            .write_all(response.as_bytes())
+            .await
+            .expect("write provider response");
+        String::from_utf8(request).expect("provider request is UTF-8")
+    });
+
+    let provider = ProviderConfig {
+        provider: "openai".to_string(),
+        base_url: format!("http://{address}/v1"),
+        model: "mimo-v2.5-pro".to_string(),
+        temperature: 0.2,
+    };
+    let response = provider
+        .call(
+            &conf,
+            vec![json!({"role":"user","content":"test"})],
+            super::CallOptions {
+                stream: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("custom OpenAI-compatible endpoint call");
+    let request = server.await.expect("provider fixture task");
+    let (headers, body) = request
+        .split_once("\r\n\r\n")
+        .expect("request headers and body");
+
+    assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
+    assert!(
+        headers
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-openai-compatible-key")
+    );
+    assert!(!headers.contains("/responses"));
+    assert!(body.contains("\"model\":\"mimo-v2.5-pro\""));
+    assert!(!body.contains("stream_options"));
+    assert_eq!(response.content, "custom endpoint works");
+}
+
+#[test]
+fn clinepass_uses_the_models_dev_canonical_env() {
+    let _lock = crate::test_support::env_lock();
+    let _env = EnvRestore::capture(&["TURA_ENV_PATH", "CLINE_API_KEY"]);
+    let env_dir = unique_temp_dir("clinepass-auth-env");
+    let env_path = env_dir.join("tura.env");
+    std::fs::write(&env_path, "CLINE_API_KEY=models-dev-canonical\n")
+        .expect("write provider auth env");
+    // SAFETY: the test holds the process-environment lock for its full lifetime.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at the caller"
+    )]
+    unsafe {
+        std::env::set_var("TURA_ENV_PATH", &env_path);
+        std::env::remove_var("CLINE_API_KEY");
+    }
+    let conf = crate::TuraConfig::new(".env.missing");
+    let provider = ProviderConfig {
+        provider: "cline-pass".to_string(),
+        base_url: "https://api.cline.bot/api/v1".to_string(),
+        model: "cline-pass/mimo-v2.5-pro".to_string(),
+        temperature: 0.2,
+    };
+
+    assert_eq!(
+        provider.get_api_key(&conf).expect("canonical key"),
+        "models-dev-canonical"
+    );
 }
 
 #[test]
@@ -491,36 +655,48 @@ fn auth_expired_error_detects_401_and_403_only() {
 #[test]
 fn provider_failure_retry_classifier_rejects_auth_billing_and_missing_model_errors() {
     for status in [401, 402, 403, 404] {
-        assert!(super::TuraError::HttpStatus {
-            status,
-            body: "provider rejected request".to_string(),
+        assert!(
+            super::TuraError::HttpStatus {
+                status,
+                body: "provider rejected request".to_string(),
+            }
+            .is_non_retryable_provider_failure()
+        );
+    }
+
+    assert!(
+        super::TuraError::Config {
+            message: "API Key not found for provider 'openai'".to_string(),
         }
-        .is_non_retryable_provider_failure());
-    }
+        .is_non_retryable_provider_failure()
+    );
+    assert!(
+        super::TuraError::AllProvidersFailed {
+            message: "openai:gpt => http status 404: model not found".to_string(),
+        }
+        .is_non_retryable_provider_failure()
+    );
+    assert!(
+        super::TuraError::ProviderRequest {
+            provider: "openai".to_string(),
+            message: "billing quota is not enabled".to_string(),
+        }
+        .is_non_retryable_provider_failure()
+    );
 
-    assert!(super::TuraError::Config {
-        message: "API Key not found for provider 'openai'".to_string(),
-    }
-    .is_non_retryable_provider_failure());
-    assert!(super::TuraError::AllProvidersFailed {
-        message: "openai:gpt => http status 404: model not found".to_string(),
-    }
-    .is_non_retryable_provider_failure());
-    assert!(super::TuraError::ProviderRequest {
-        provider: "openai".to_string(),
-        message: "billing quota is not enabled".to_string(),
-    }
-    .is_non_retryable_provider_failure());
-
-    assert!(!super::TuraError::HttpStatus {
-        status: 429,
-        body: "slow down".to_string(),
-    }
-    .is_non_retryable_provider_failure());
-    assert!(!super::TuraError::Network {
-        message: "connection reset".to_string(),
-    }
-    .is_non_retryable_provider_failure());
+    assert!(
+        !super::TuraError::HttpStatus {
+            status: 429,
+            body: "slow down".to_string(),
+        }
+        .is_non_retryable_provider_failure()
+    );
+    assert!(
+        !super::TuraError::Network {
+            message: "connection reset".to_string(),
+        }
+        .is_non_retryable_provider_failure()
+    );
 }
 
 #[test]

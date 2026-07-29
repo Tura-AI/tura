@@ -115,6 +115,46 @@ Runtime model calls use `routes`. The provider/model picker uses
 `model_catalog`. Keep both in sync when adding a provider that should be visible
 and callable.
 
+## Import a models.dev snapshot
+
+Tura does not fetch a provider catalog during normal startup. To discover
+additional OpenAI-compatible providers without editing the bundled config,
+download the models.dev API snapshot and opt in with
+`TURA_MODELS_DEV_CATALOG`:
+
+```sh
+curl --fail --location https://models.dev/api.json --output /path/to/models-dev-api.json
+export TURA_MODELS_DEV_CATALOG=/path/to/models-dev-api.json
+```
+
+The importer keeps existing Tura routes and providers authoritative. It admits
+only records using `@ai-sdk/openai-compatible` with an absolute HTTP(S) API,
+declared key environment variables, and text-input/text-output models with
+positive limits that do not request a native protocol, custom body, or custom
+headers. Unsupported modality/protocol records are skipped. Imported models
+use the generic Chat Completions adapter; native Responses, Anthropic Messages,
+and Google-native records remain excluded. Malformed admitted records fail the
+explicit load; provider IDs already owned by Tura are skipped rather than
+silently replaced.
+
+Use the provider/model ID from the snapshot in `TURA_SESSION_MODEL_OVERRIDE`,
+including any provider prefix present in the upstream model ID. For example,
+the ClinePass model `cline-pass/deepseek-v4-flash` is selected as:
+
+```sh
+CLINE_API_KEY="..." \
+TURA_MODELS_DEV_CATALOG=/path/to/models-dev-api.json \
+TURA_SESSION_MODEL_OVERRIDE=cline-pass/deepseek-v4-flash \
+tura
+```
+
+The models.dev record declares `CLINE_API_KEY`; use that canonical name in the
+local `.env` file.
+
+The imported model metadata records the source URL and SHA-256 digest, and the
+runtime checks all declared key environment names after static Tura auth
+mappings.
+
 ## Add an OpenAI-compatible provider
 
 This is the common case for local gateways, proxy services, and OpenAI-compatible
@@ -128,8 +168,8 @@ Add a provider entry:
     "providers": {
       "local_openai": {
         "display_name": "Local OpenAI Compatible",
-        "runtime_provider": "openai",
-        "api_style": "openai_compatible",
+        "runtime_provider": "openai-compatible",
+        "api_style": "openapi",
         "base_url": "http://127.0.0.1:11434/v1",
         "token_env": "LOCAL_OPENAI_API_KEY",
         "env": ["LOCAL_OPENAI_API_KEY"],
@@ -213,7 +253,7 @@ Use an existing adapter when possible:
 
 | Need | Use `runtime_provider` |
 | --- | --- |
-| OpenAI-compatible chat endpoint | `openai` |
+| OpenAI-compatible chat endpoint | `openai-compatible` |
 | Anthropic-compatible endpoint | `anthropic` if supported by the local adapter set |
 | Google Gemini endpoint | `google` |
 | AWS Bedrock endpoint | `bedrock` |
