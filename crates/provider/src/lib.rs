@@ -6,6 +6,7 @@ pub mod content_type_fallback;
 pub mod llm;
 pub mod logging;
 pub mod metrics;
+pub mod models_dev;
 pub mod response_extraction;
 pub mod streaming;
 pub mod tura_conf;
@@ -14,6 +15,7 @@ pub mod tura_llm_conf;
 pub mod utils;
 
 pub use auth_registry::*;
+pub use models_dev::*;
 pub use content_type_fallback::{
     provider_media_fallback, provider_unsupported_content_type,
     replace_unsupported_content_type_in_messages, ProviderMediaFallback,
