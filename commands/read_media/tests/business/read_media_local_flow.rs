@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::Cursor;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -37,9 +37,11 @@ fn read_media_business_flow_expands_directory_reports_failures_and_access_paths(
     assert_result(results, "docs/second.md", true);
     let missing = result_by_path(results, "missing.txt");
     assert_eq!(missing["success"], false);
-    assert!(missing["error"]
-        .as_str()
-        .is_some_and(|error| error.contains("media path does not exist")));
+    assert!(
+        missing["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("media path does not exist"))
+    );
 }
 
 #[test]
@@ -78,9 +80,11 @@ fn read_media_business_protocol_binary_accepts_json_arguments_and_errors() {
     assert_eq!(unsupported["ok"], true);
     assert_eq!(unsupported["success"], false);
     assert_eq!(unsupported["exit_code"], 1);
-    assert!(unsupported["stderr"]
-        .as_str()
-        .is_some_and(|stderr| stderr.contains("unsupported read_media option")));
+    assert!(
+        unsupported["stderr"]
+            .as_str()
+            .is_some_and(|stderr| stderr.contains("unsupported read_media option"))
+    );
 }
 
 #[test]
@@ -117,9 +121,11 @@ fn read_media_business_flow_reads_image_preview_and_binary_document_attachment()
         archive_result["file_attachments"][0]["mime_type"],
         "application/zip"
     );
-    assert!(archive_result["file_attachments"][0]["data_base64"]
-        .as_str()
-        .is_some_and(|value| !value.is_empty()));
+    assert!(
+        archive_result["file_attachments"][0]["data_base64"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 }
 
 #[test]
@@ -143,9 +149,11 @@ fn read_media_business_flow_reads_minimal_pdf_text_without_external_rendering_de
     assert_eq!(result["media_type"], "pdf");
     assert_eq!(result["visual_preview_count"], 0);
     assert_eq!(result["visual_previews"], json!([]));
-    assert!(result["extracted_text"]
-        .as_str()
-        .is_some_and(|text| text.contains("Local PDF business fixture")));
+    assert!(
+        result["extracted_text"]
+            .as_str()
+            .is_some_and(|text| text.contains("Local PDF business fixture"))
+    );
     assert!(response.stdout.contains("local.pdf: pdf"));
 }
 
@@ -265,8 +273,12 @@ fn read_media_business_flow_directory_expansion_uses_path_tiebreaker_for_equal_t
     ] {
         let path = media.join(name);
         std::fs::write(&path, body).expect("write tied timestamp fixture");
-        let tied = filetime::FileTime::from_unix_time(1_700_000_000, 0);
-        filetime::set_file_mtime(&path, tied).expect("set tied mtime");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open tied timestamp fixture")
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000))
+            .expect("set tied mtime");
     }
 
     let response = execute(
@@ -368,9 +380,11 @@ fn read_media_business_protocol_health_capabilities_and_unknown_kind_are_stable(
     assert_eq!(unknown["ok"], false);
     assert_eq!(unknown["success"], false);
     assert_eq!(unknown["exit_code"], 1);
-    assert!(unknown["output"]["error"]
-        .as_str()
-        .is_some_and(|error| error.contains("unsupported protocol kind")));
+    assert!(
+        unknown["output"]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("unsupported protocol kind"))
+    );
 }
 
 #[test]
@@ -396,9 +410,11 @@ fn read_media_business_flow_omits_oversized_binary_document_without_upload() {
     assert_eq!(result["file_attachment_count"], 0);
     assert_eq!(result["file_attachments"], json!([]));
     assert_eq!(result["extracted_text"], "");
-    assert!(response
-        .stdout
-        .contains("large.zip: document, 0 visual previews"));
+    assert!(
+        response
+            .stdout
+            .contains("large.zip: document, 0 visual previews")
+    );
 }
 
 #[test]
@@ -424,9 +440,11 @@ fn read_media_business_flow_reports_unknown_binary_document_as_text_warning() {
     assert_eq!(result["success"], true);
     assert_eq!(result["media_type"], "document");
     assert_eq!(result["file_attachment_count"], 0);
-    assert!(result["extracted_text"]
-        .as_str()
-        .is_some_and(|text| text.contains("could not be decoded as text")));
+    assert!(
+        result["extracted_text"]
+            .as_str()
+            .is_some_and(|text| text.contains("could not be decoded as text"))
+    );
 }
 
 #[test]
@@ -510,12 +528,16 @@ fn read_media_business_flow_extracts_audio_preview_with_local_ffmpeg_and_clamped
         "policy clamps tiny audioPreviewBytes values before invoking ffmpeg"
     );
     assert_eq!(audio_preview["truncated_to_max_size"], false);
-    assert!(audio_preview["audio_url"]["url"]
-        .as_str()
-        .is_some_and(|url| url.starts_with("data:audio/mpeg;base64,")));
-    assert!(response
-        .stdout
-        .contains("voice.mp3: audio, 0 visual previews, 1 audio previews"));
+    assert!(
+        audio_preview["audio_url"]["url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("data:audio/mpeg;base64,"))
+    );
+    assert!(
+        response
+            .stdout
+            .contains("voice.mp3: audio, 0 visual previews, 1 audio previews")
+    );
 }
 
 #[test]
@@ -574,9 +596,11 @@ fn read_media_business_protocol_audio_preview_uses_local_ffmpeg_across_process_b
         "Audio preview was compressed."
     );
     assert_eq!(result["audio_previews"][0]["compressed"], true);
-    assert!(result["audio_previews"][0]["audio_url"]["url"]
-        .as_str()
-        .is_some_and(|url| url.starts_with("data:audio/mpeg;base64,")));
+    assert!(
+        result["audio_previews"][0]["audio_url"]["url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("data:audio/mpeg;base64,"))
+    );
 }
 
 #[test]
@@ -595,9 +619,11 @@ fn read_media_business_flow_rejects_malformed_json_without_access_or_side_effect
     assert!(!response.success);
     assert_eq!(response.exit_code, 1);
     assert!(response.stdout.is_empty());
-    assert!(response
-        .stderr
-        .contains("invalid read_media command_line JSON"));
+    assert!(
+        response
+            .stderr
+            .contains("invalid read_media command_line JSON")
+    );
     assert_eq!(response.output["error"], response.stderr);
     assert_eq!(
         std::fs::read_to_string(dir.path().join("safe.txt")).expect("safe file"),
@@ -653,9 +679,11 @@ fn read_media_business_flow_extracts_video_frames_and_audio_preview_with_local_f
     assert_eq!(result["visual_contact_sheet"], true);
     assert_eq!(result["visual_previews"][0]["label"], "contact_sheet");
     assert_eq!(result["visual_previews"][0]["contact_sheet"], true);
-    assert!(result["visual_previews"][0]["image_url"]["url"]
-        .as_str()
-        .is_some_and(|url| url.starts_with("data:image/jpeg;base64,")));
+    assert!(
+        result["visual_previews"][0]["image_url"]["url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("data:image/jpeg;base64,"))
+    );
     assert_eq!(result["audio_preview_count"], 1);
     assert_eq!(result["file_attachment_count"], 0);
     let audio_preview = &result["audio_previews"][0];
@@ -663,12 +691,16 @@ fn read_media_business_flow_extracts_video_frames_and_audio_preview_with_local_f
     assert_eq!(audio_preview["audio_url"]["format"], "mp3");
     assert_eq!(audio_preview["max_size_bytes"], 100000);
     assert_eq!(audio_preview["truncated_to_max_size"], false);
-    assert!(audio_preview["audio_url"]["url"]
-        .as_str()
-        .is_some_and(|url| url.starts_with("data:audio/mpeg;base64,")));
-    assert!(response
-        .stdout
-        .contains("clip.mp4: video, 1 visual previews, 1 audio previews"));
+    assert!(
+        audio_preview["audio_url"]["url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("data:audio/mpeg;base64,"))
+    );
+    assert!(
+        response
+            .stdout
+            .contains("clip.mp4: video, 1 visual previews, 1 audio previews")
+    );
 }
 
 #[test]
@@ -818,14 +850,18 @@ fn read_media_business_flow_mixed_batch_workers_keep_order_and_isolate_failures(
     assert_eq!(results[4]["success"], true);
     assert_eq!(results[4]["media_type"], "document");
     assert_eq!(results[5]["success"], false);
-    assert!(results[5]["error"]
-        .as_str()
-        .is_some_and(|error| error.contains("media path does not exist")));
+    assert!(
+        results[5]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("media path does not exist"))
+    );
     assert_eq!(response.output["visual_contact_sheet"], true);
     assert_eq!(response.output["visual_preview_count"], 1);
-    assert!(response.output["visual_previews"][0]["image_url"]["url"]
-        .as_str()
-        .is_some_and(|url| url.starts_with("data:image/jpeg;base64,")));
+    assert!(
+        response.output["visual_previews"][0]["image_url"]["url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("data:image/jpeg;base64,"))
+    );
     assert!(response.stdout.contains("notes.txt: document"));
     assert!(response.stdout.contains("image.png: image"));
     assert!(response.stdout.contains("clip.mp4: video"));
