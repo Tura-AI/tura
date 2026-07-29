@@ -255,7 +255,7 @@ fn print_response(response: ProtocolResponse) {
 
 #[cfg(test)]
 mod tests {
-    use super::{access, execute, handle_envelope, Envelope};
+    use super::{Envelope, access, execute, handle_envelope};
     use serde_json::json;
 
     #[test]
@@ -284,9 +284,11 @@ mod tests {
         assert!(!response.success);
         assert_eq!(response.exit_code, 1);
         assert!(response.stderr.contains("unsupported read_media option"));
-        assert!(response.output["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("unsupported read_media option")));
+        assert!(
+            response.output["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("unsupported read_media option"))
+        );
     }
 
     #[test]
@@ -350,8 +352,10 @@ mod tests {
         });
         assert!(!unknown.ok);
         assert_eq!(unknown.exit_code, 1);
-        assert!(unknown.output["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("unsupported protocol kind")));
+        assert!(
+            unknown.output["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("unsupported protocol kind"))
+        );
     }
 }

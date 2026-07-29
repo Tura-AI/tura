@@ -383,9 +383,9 @@ fn static_manuals() -> Vec<RuntimePromptManual> {
 #[cfg(test)]
 mod tests {
     use super::{
+        RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE, RUNTIME_PROMPT_MANUAL_RECORD_TYPE,
         active_manual_display_names, append_missing_runtime_prompt_manuals,
         capabilities_for_task_type_ids, normalize_task_type_ids, static_manuals,
-        RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE, RUNTIME_PROMPT_MANUAL_RECORD_TYPE,
     };
     use chrono::Utc;
     use lifecycle::{SessionInput, SessionManagement};
@@ -398,12 +398,16 @@ mod tests {
             .expect("embedded debug manual");
 
         assert!(debug.prompt.contains("## Recommended TDD Debug Workflow"));
-        assert!(debug
-            .prompt
-            .contains("1. Analyze the codebase by finding and reading relevant files"));
-        assert!(debug
-            .prompt
-            .contains("5. Test edge cases to ensure your fix is robust"));
+        assert!(
+            debug
+                .prompt
+                .contains("1. Analyze the codebase by finding and reading relevant files")
+        );
+        assert!(
+            debug
+                .prompt
+                .contains("5. Test edge cases to ensure your fix is robust")
+        );
     }
 
     #[test]
@@ -486,8 +490,10 @@ mod tests {
         session.task_type = normalize_task_type_ids(["visual"]);
         session.op_manual_enabled = false;
 
-        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
-            .expect("disabled manual text should still allow capabilities"));
+        assert!(
+            append_missing_runtime_prompt_manuals(&mut session, None)
+                .expect("disabled manual text should still allow capabilities")
+        );
         assert!(runtime_prompt_manual_log_ids(&session).is_empty());
         assert!(active_manual_display_names(&session).is_empty());
         let records = command_run_capability_records(&session);
@@ -603,8 +609,10 @@ mod tests {
         );
         session.task_type = normalize_task_type_ids(["visual"]);
 
-        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
-            .expect("manuals should append"));
+        assert!(
+            append_missing_runtime_prompt_manuals(&mut session, None)
+                .expect("manuals should append")
+        );
 
         let records = session
             .session_log
@@ -630,11 +638,15 @@ mod tests {
             .get("content")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        assert!(manual_content
-            .contains("do not remove, simplify, fake, screenshot, or replace any interaction"));
+        assert!(
+            manual_content
+                .contains("do not remove, simplify, fake, screenshot, or replace any interaction")
+        );
         assert!(manual_content.contains("Do not use any remote webpage scripts"));
-        assert!(manual_content
-            .contains("must work under `file://` with local assets only, run 100% stably"));
+        assert!(
+            manual_content
+                .contains("must work under `file://` with local assets only, run 100% stably")
+        );
         assert_eq!(
             records[1].get("type").and_then(serde_json::Value::as_str),
             Some(RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE)
@@ -679,8 +691,10 @@ mod tests {
         ]);
         session.task_type = normalize_task_type_ids(["visual"]);
 
-        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
-            .expect("visual manual should append"));
+        assert!(
+            append_missing_runtime_prompt_manuals(&mut session, None)
+                .expect("visual manual should append")
+        );
 
         let records = command_run_capability_records(&session);
         assert_eq!(records.len(), 1);
@@ -704,8 +718,10 @@ mod tests {
 
         session.task_type = normalize_task_type_ids(["interactive_and_3d"]);
 
-        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
-            .expect("3D manual should append"));
+        assert!(
+            append_missing_runtime_prompt_manuals(&mut session, None)
+                .expect("3D manual should append")
+        );
 
         let records = command_run_capability_records(&session);
         assert_eq!(
@@ -740,8 +756,10 @@ mod tests {
         session.record_session_capabilities(vec!["web_discover".to_string()]);
         session.task_type = normalize_task_type_ids(["website"]);
 
-        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
-            .expect("website manual should append"));
+        assert!(
+            append_missing_runtime_prompt_manuals(&mut session, None)
+                .expect("website manual should append")
+        );
 
         assert_eq!(
             runtime_prompt_manual_log_ids(&session),
@@ -783,8 +801,10 @@ mod tests {
         session.record_session_capabilities(vec![active_shell.to_string()]);
         session.task_type = normalize_task_type_ids(["debug"]);
 
-        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
-            .expect("debug manual should append"));
+        assert!(
+            append_missing_runtime_prompt_manuals(&mut session, None)
+                .expect("debug manual should append")
+        );
 
         assert!(
             command_run_capability_records(&session).is_empty(),

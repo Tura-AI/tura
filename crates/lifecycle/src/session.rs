@@ -1260,30 +1260,36 @@ mod tests {
             task_plan: TaskPlan::default(),
         };
         assert!(SessionAggregate::replay("session-fixed".to_string(), []).is_err());
-        assert!(SessionAggregate::replay(
-            "session-fixed".to_string(),
-            [SessionEvent::RuntimeStarted {
-                runtime_id: "runtime-fixed".to_string(),
-                state: SessionState::Running,
-            }],
-        )
-        .is_err());
-        assert!(SessionAggregate::replay(
-            "session-fixed".to_string(),
-            [created.clone(), created.clone()],
-        )
-        .is_err());
-        assert!(SessionAggregate::replay(
-            "session-fixed".to_string(),
-            [
-                created,
-                SessionEvent::RuntimeStarted {
+        assert!(
+            SessionAggregate::replay(
+                "session-fixed".to_string(),
+                [SessionEvent::RuntimeStarted {
                     runtime_id: "runtime-fixed".to_string(),
-                    state: SessionState::Paused,
-                },
-            ],
-        )
-        .is_err());
+                    state: SessionState::Running,
+                }],
+            )
+            .is_err()
+        );
+        assert!(
+            SessionAggregate::replay(
+                "session-fixed".to_string(),
+                [created.clone(), created.clone()],
+            )
+            .is_err()
+        );
+        assert!(
+            SessionAggregate::replay(
+                "session-fixed".to_string(),
+                [
+                    created,
+                    SessionEvent::RuntimeStarted {
+                        runtime_id: "runtime-fixed".to_string(),
+                        state: SessionState::Paused,
+                    },
+                ],
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1517,11 +1523,13 @@ mod tests {
                 runtime_id: "runtime-fixed".to_string(),
             })
             .expect("runtime should start");
-        assert!(aggregate
-            .decide(SessionCommand::ApplyRuntimeState {
-                state: SessionState::Created,
-            })
-            .is_err());
+        assert!(
+            aggregate
+                .decide(SessionCommand::ApplyRuntimeState {
+                    state: SessionState::Created,
+                })
+                .is_err()
+        );
     }
 
     #[test]
@@ -1558,19 +1566,25 @@ mod tests {
                 .expect("deserialize runtime retry command"),
             retry
         );
-        assert!(serde_json::from_value::<SessionCommand>(serde_json::json!({
-            "command": "runtime_retried",
-            "runtime_id": "runtime-retry"
-        }))
-        .is_err());
-        assert!(serde_json::from_str::<SessionCommand>(
-            r#"{"command":"apply_runtime_state","state":"running","extra":true}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<SessionProjection>(
-            r#"{"session_id":"session-fixed","state":"created","extra":true}"#
-        )
-        .is_err());
+        assert!(
+            serde_json::from_value::<SessionCommand>(serde_json::json!({
+                "command": "runtime_retried",
+                "runtime_id": "runtime-retry"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<SessionCommand>(
+                r#"{"command":"apply_runtime_state","state":"running","extra":true}"#
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<SessionProjection>(
+                r#"{"session_id":"session-fixed","state":"created","extra":true}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1718,11 +1732,13 @@ mod tests {
     #[test]
     fn busy_queue_and_runtime_result_commands_reject_invalid_states() {
         let mut aggregate = SessionAggregate::new("session-fixed".to_string());
-        assert!(aggregate
-            .execute(SessionCommand::QueueUserInputWhileBusy {
-                input: "not busy".to_string()
-            })
-            .is_err());
+        assert!(
+            aggregate
+                .execute(SessionCommand::QueueUserInputWhileBusy {
+                    input: "not busy".to_string()
+                })
+                .is_err()
+        );
 
         aggregate
             .execute(SessionCommand::RuntimeStarted {
@@ -1735,11 +1751,13 @@ mod tests {
             aggregate.active_runtime_id.as_deref(),
             Some("runtime-fixed")
         );
-        assert!(aggregate
-            .execute(SessionCommand::RuntimeCompleted {
-                runtime_id: "runtime-stale".to_string(),
-            })
-            .is_err());
+        assert!(
+            aggregate
+                .execute(SessionCommand::RuntimeCompleted {
+                    runtime_id: "runtime-stale".to_string(),
+                })
+                .is_err()
+        );
         assert_eq!(aggregate.state, SessionState::Running);
         assert_eq!(
             aggregate.active_runtime_id.as_deref(),
@@ -1752,11 +1770,13 @@ mod tests {
             .expect("running runtime may complete");
         assert_eq!(aggregate.state, SessionState::Completed);
         assert_eq!(aggregate.active_runtime_id, None);
-        assert!(aggregate
-            .execute(SessionCommand::RuntimeFailed {
-                runtime_id: "runtime-fixed".to_string(),
-            })
-            .is_err());
+        assert!(
+            aggregate
+                .execute(SessionCommand::RuntimeFailed {
+                    runtime_id: "runtime-fixed".to_string(),
+                })
+                .is_err()
+        );
 
         let mut failed = aggregate_in_state(SessionState::Running);
         failed
@@ -1771,29 +1791,37 @@ mod tests {
             .expect("active runtime failure should apply");
         assert_eq!(failed.state, SessionState::Failed);
         assert_eq!(failed.active_runtime_id, None);
-        assert!(failed
-            .decide(SessionCommand::RuntimeStarted {
-                runtime_id: "runtime-unrelated".to_string(),
-            })
-            .is_err());
-        assert!(failed
-            .decide(SessionCommand::RuntimeRetried {
-                runtime_id: "runtime-retry".to_string(),
-                fallback_from_id: "runtime-stale".to_string(),
-            })
-            .is_err());
-        assert!(aggregate
-            .decide(SessionCommand::RuntimeRetried {
-                runtime_id: "runtime-retry".to_string(),
-                fallback_from_id: "runtime-fixed".to_string(),
-            })
-            .is_err());
-        assert!(failed
-            .decide(SessionCommand::RuntimeRetried {
-                runtime_id: "runtime-failed".to_string(),
-                fallback_from_id: "runtime-failed".to_string(),
-            })
-            .is_err());
+        assert!(
+            failed
+                .decide(SessionCommand::RuntimeStarted {
+                    runtime_id: "runtime-unrelated".to_string(),
+                })
+                .is_err()
+        );
+        assert!(
+            failed
+                .decide(SessionCommand::RuntimeRetried {
+                    runtime_id: "runtime-retry".to_string(),
+                    fallback_from_id: "runtime-stale".to_string(),
+                })
+                .is_err()
+        );
+        assert!(
+            aggregate
+                .decide(SessionCommand::RuntimeRetried {
+                    runtime_id: "runtime-retry".to_string(),
+                    fallback_from_id: "runtime-fixed".to_string(),
+                })
+                .is_err()
+        );
+        assert!(
+            failed
+                .decide(SessionCommand::RuntimeRetried {
+                    runtime_id: "runtime-failed".to_string(),
+                    fallback_from_id: "runtime-failed".to_string(),
+                })
+                .is_err()
+        );
         failed
             .execute(SessionCommand::RuntimeRetried {
                 runtime_id: "runtime-retry".to_string(),
@@ -1874,34 +1902,40 @@ mod tests {
         };
         let before = aggregate.clone();
 
-        assert!(aggregate
-            .execute(SessionCommand::StartScheduledTask {
-                task_id: "task-stale".to_string(),
-                task_summary: "Run now".to_string(),
-                start_condition: StartCondition::ScheduledTask,
-                now,
-            })
-            .is_err());
+        assert!(
+            aggregate
+                .execute(SessionCommand::StartScheduledTask {
+                    task_id: "task-stale".to_string(),
+                    task_summary: "Run now".to_string(),
+                    start_condition: StartCondition::ScheduledTask,
+                    now,
+                })
+                .is_err()
+        );
         assert_eq!(aggregate, before);
 
-        assert!(aggregate
-            .execute(SessionCommand::StartScheduledTask {
-                task_id: "task-due".to_string(),
-                task_summary: "Stale summary".to_string(),
-                start_condition: StartCondition::ScheduledTask,
-                now,
-            })
-            .is_err());
+        assert!(
+            aggregate
+                .execute(SessionCommand::StartScheduledTask {
+                    task_id: "task-due".to_string(),
+                    task_summary: "Stale summary".to_string(),
+                    start_condition: StartCondition::ScheduledTask,
+                    now,
+                })
+                .is_err()
+        );
         assert_eq!(aggregate, before);
 
-        assert!(aggregate
-            .execute(SessionCommand::StartScheduledTask {
-                task_id: "task-due".to_string(),
-                task_summary: "Run now".to_string(),
-                start_condition: StartCondition::PollingTask,
-                now,
-            })
-            .is_err());
+        assert!(
+            aggregate
+                .execute(SessionCommand::StartScheduledTask {
+                    task_id: "task-due".to_string(),
+                    task_summary: "Run now".to_string(),
+                    start_condition: StartCondition::PollingTask,
+                    now,
+                })
+                .is_err()
+        );
         assert_eq!(aggregate, before);
     }
 }

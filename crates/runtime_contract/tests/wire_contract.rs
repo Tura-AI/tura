@@ -1,8 +1,8 @@
 use runtime_contract::{
-    maximum_parallel_runtime_workers, maximum_runtime_llm_turns, CallContext, RunAgentRequest,
-    RuntimeWorkerResponse, WorkerEnvelope, DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS,
-    DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS, MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS,
-    MAXIMUM_RUNTIME_LLM_TURN_OPTIONS, WORKER_KIND_CALL, WORKER_KIND_HEALTH_CHECK,
+    CallContext, DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS, DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS,
+    MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS, MAXIMUM_RUNTIME_LLM_TURN_OPTIONS, RunAgentRequest,
+    RuntimeWorkerResponse, WORKER_KIND_CALL, WORKER_KIND_HEALTH_CHECK, WorkerEnvelope,
+    maximum_parallel_runtime_workers, maximum_runtime_llm_turns,
 };
 use serde_json::json;
 
@@ -40,11 +40,13 @@ fn run_agent_request_is_strict_and_defaults_optional_worker_inputs() {
     assert!(!request.return_log);
     assert_eq!(request.maximum_parallel_runtime_workers, None);
     assert!(request.worker_env.is_empty());
-    assert!(serde_json::from_value::<RunAgentRequest>(json!({
-        "runtime_id": "runtime-1",
-        "turn_id": "legacy"
-    }))
-    .is_err());
+    assert!(
+        serde_json::from_value::<RunAgentRequest>(json!({
+            "runtime_id": "runtime-1",
+            "turn_id": "legacy"
+        }))
+        .is_err()
+    );
 }
 
 #[test]
@@ -92,9 +94,11 @@ fn runtime_worker_response_rejects_unknown_fields_and_uses_typed_state() {
         response.session_state,
         Some(lifecycle::SessionState::Completed)
     );
-    assert!(serde_json::from_value::<RuntimeWorkerResponse>(json!({
-        "ok": true,
-        "legacy_status": "done"
-    }))
-    .is_err());
+    assert!(
+        serde_json::from_value::<RuntimeWorkerResponse>(json!({
+            "ok": true,
+            "legacy_status": "done"
+        }))
+        .is_err()
+    );
 }

@@ -1,7 +1,7 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::streaming::send_provider_request_first_response;
-use crate::tura_llm::{default_client, TuraError};
+use crate::tura_llm::{TuraError, default_client};
 
 pub async fn embed(
     base_url: &str,

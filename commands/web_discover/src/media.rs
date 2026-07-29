@@ -1,6 +1,6 @@
 use super::download::{download_images, download_ytdlp_media};
 use super::types::{SearchResult, WebDiscoverArgs};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 pub(super) fn media_records(

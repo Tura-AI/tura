@@ -4,7 +4,7 @@ use super::previews::compact_visual_previews;
 use super::processing::{media_result, process_media_file};
 use super::types::ReadMediaArgs;
 use super::types::ReadMode;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::mpsc;
 
@@ -82,9 +82,11 @@ mod tests {
         assert_eq!(result["path"], "notes.txt");
         assert_eq!(result["media_type"], "document");
         assert_eq!(result["extracted_text"], "hello from read_media");
-        assert!(output["summary_markdown"]
-            .as_str()
-            .is_some_and(|summary| summary.contains("notes.txt: document")));
+        assert!(
+            output["summary_markdown"]
+                .as_str()
+                .is_some_and(|summary| summary.contains("notes.txt: document"))
+        );
     }
 
     #[test]
@@ -97,12 +99,16 @@ mod tests {
 
         assert_eq!(result["success"], false);
         assert_eq!(result["path"], "missing.txt");
-        assert!(result["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("media path does not exist")));
-        assert!(output["summary_markdown"]
-            .as_str()
-            .is_some_and(|summary| summary.contains("missing.txt: failed")));
+        assert!(
+            result["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("media path does not exist"))
+        );
+        assert!(
+            output["summary_markdown"]
+                .as_str()
+                .is_some_and(|summary| summary.contains("missing.txt: failed"))
+        );
     }
 
     #[test]
@@ -157,11 +163,13 @@ mod tests {
             .expect("short markdown result");
 
         assert_eq!(long["media_type"], "document");
-        assert!(long["extracted_text"]
-            .as_str()
-            .is_some_and(|text| text.contains("long-start")
-                && text.contains("long-end")
-                && text.contains("[read_media text truncated]")));
+        assert!(
+            long["extracted_text"]
+                .as_str()
+                .is_some_and(|text| text.contains("long-start")
+                    && text.contains("long-end")
+                    && text.contains("[read_media text truncated]"))
+        );
         assert_eq!(short["extracted_text"], "short document body");
         assert_eq!(long["file_attachment_count"], 0);
         assert_eq!(short["file_attachment_count"], 0);

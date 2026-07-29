@@ -3,14 +3,14 @@
 //! Runtime workers orchestrate turns, but shell/tool child processes are owned
 //! here so aborting a runtime worker does not orphan process-tree cleanup.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

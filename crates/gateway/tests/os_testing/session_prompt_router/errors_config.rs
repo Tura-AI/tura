@@ -88,8 +88,8 @@ async fn gateway_prompt_business_flow_records_router_rejection_as_session_error(
 }
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_records_router_transport_error_without_db_prewrite(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_records_router_transport_error_without_db_prewrite()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");
@@ -345,8 +345,8 @@ async fn gateway_prompt_business_flow_appends_prompt_when_canonical_session_is_b
 }
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router_payload(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router_payload()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");
@@ -459,8 +459,8 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
 }
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router_payload(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router_payload()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");

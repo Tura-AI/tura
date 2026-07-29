@@ -1,7 +1,7 @@
 use super::client::{metadata_for, repo_root};
 use super::protocol::{ExternalCommandEnvelope, ExternalCommandResponse};
 use crate::runtime::tool::ToolError;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;

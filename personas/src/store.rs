@@ -518,19 +518,22 @@ mod tests {
         assert_eq!(saved.management.persona_name, "Helpful Persona");
         assert_eq!(saved.management.state, PersonaState::Active);
 
-        assert!(temp
-            .path()
-            .join("personas/helpful_persona")
-            .join(PERSONA_CONFIG_FILE)
-            .exists());
-        assert!(temp
-            .path()
-            .join("personas/helpful_persona/prompt/persona.md")
-            .exists());
-        assert!(temp
-            .path()
-            .join("personas/helpful_persona/prompt/communication_style.md")
-            .exists());
+        assert!(
+            temp.path()
+                .join("personas/helpful_persona")
+                .join(PERSONA_CONFIG_FILE)
+                .exists()
+        );
+        assert!(
+            temp.path()
+                .join("personas/helpful_persona/prompt/persona.md")
+                .exists()
+        );
+        assert!(
+            temp.path()
+                .join("personas/helpful_persona/prompt/communication_style.md")
+                .exists()
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use runtime::session_log_client::SessionLogClient;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use session_log_contract::SessionLogCommand;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -20,8 +20,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(180);
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn runtime_session_log_file_queue_pressure_10_workspaces_20_tasks_2000_rich_records(
-) -> Result<()> {
+async fn runtime_session_log_file_queue_pressure_10_workspaces_20_tasks_2000_rich_records()
+-> Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, session_log_queue_pressure_impl())
         .await
         .context("runtime session_log queue pressure exceeded total timeout")?

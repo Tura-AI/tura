@@ -1,6 +1,6 @@
 use super::args::{parse_args_text, parse_args_value};
 use super::types::{
-    ImageProvider, SpeechProvider, DEFAULT_PROVIDER_ORDER, DEFAULT_SPEECH_PROVIDER_ORDER,
+    DEFAULT_PROVIDER_ORDER, DEFAULT_SPEECH_PROVIDER_ORDER, ImageProvider, SpeechProvider,
 };
 use serde_json::json;
 use std::sync::Mutex;

@@ -260,7 +260,7 @@ fn access_external(command: &str, command_line: &str, session_dir: &Path) -> Acc
 
 #[cfg(test)]
 mod tests {
-    use super::{execute_external, CommandResponse};
+    use super::{CommandResponse, execute_external};
     use std::path::Path;
 
     fn assert_failed(response: CommandResponse) -> String {

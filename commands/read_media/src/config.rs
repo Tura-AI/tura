@@ -93,7 +93,7 @@ fn configurable_default<'a>(policy: &'a str, key: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{configurable_default, ReadMediaPolicy, POLICY};
+    use super::{POLICY, ReadMediaPolicy, configurable_default};
 
     #[test]
     fn policy_exposes_bounded_configurable_defaults() {
