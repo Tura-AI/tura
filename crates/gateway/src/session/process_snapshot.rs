@@ -160,7 +160,18 @@ fn process_info_for_session(
 
 fn runtime_shell_background_process(process: &Process) -> bool {
     let marker = format!("{BACKGROUND_PROCESS_KIND_ENV}={RUNTIME_SHELL_BACKGROUND_PROCESS_KIND}");
-    process.environ().iter().any(|value| value == &marker)
+    process
+        .environ()
+        .iter()
+        .any(|value| value.to_string_lossy() == marker)
+        || process
+            .cmd()
+            .iter()
+            .any(|value| value.to_string_lossy() == runtime_shell_process_command_marker())
+}
+
+fn runtime_shell_process_command_marker() -> &'static str {
+    "TURA_BACKGROUND_PROCESS_KIND=runtime_shell"
 }
 
 fn refresh_process_metadata(system: &mut System) {

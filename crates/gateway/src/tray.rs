@@ -876,6 +876,7 @@ mod tests {
     use tray_icon::{MouseButton, MouseButtonState};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const RUNTIME_SHELL_PROCESS_COMMAND_MARKER: &str = "TURA_BACKGROUND_PROCESS_KIND=runtime_shell";
 
     fn summary(status: Option<&str>, state: Option<&str>) -> SessionSummary {
         SessionSummary {
@@ -1315,6 +1316,7 @@ mod tests {
         };
         if runtime_shell_process {
             command.env("TURA_BACKGROUND_PROCESS_KIND", "runtime_shell");
+            command.arg(RUNTIME_SHELL_PROCESS_COMMAND_MARKER);
         } else {
             command.env_remove("TURA_BACKGROUND_PROCESS_KIND");
         }
