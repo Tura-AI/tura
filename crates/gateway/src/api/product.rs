@@ -229,7 +229,7 @@ pub fn public_config_value() -> PublicConfig {
         deployment_mode: "local".to_string(),
         signup_enabled: false,
         google_oauth_enabled: false,
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::api::about::release_version(),
     }
 }
 
@@ -443,7 +443,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{create_issue_record, filter_issues, IssueInput, IssueQuery, IssueStatus};
+    use super::{IssueInput, IssueQuery, IssueStatus, create_issue_record, filter_issues};
 
     #[test]
     fn issue_search_filters_title() {
