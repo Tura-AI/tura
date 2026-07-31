@@ -74,6 +74,7 @@ image = { version = "0.25.10", default-features = false, features = [
 anyhow = "1.0.104"
 arboard = "3.6.1"
 async-trait = "0.1.91"
+filetime = "0.2"
 axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.23.0"
 chrono = { version = "0.4.45", features = ["serde"] }
