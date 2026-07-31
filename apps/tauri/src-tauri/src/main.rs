@@ -418,7 +418,13 @@ fn usable_gateway_health(
         {
             GatewayHealth::Healthy(identity)
         }
-        GatewayHealth::Healthy(_) => GatewayHealth::Unavailable,
+        GatewayHealth::Healthy(_) => {
+            // Preserve mismatched identity as Incompatible to prevent recovery triggers
+            GatewayHealth::Incompatible(format!(
+                "Gateway identity does not match this instance: expected '{:?}', got mismatched identity",
+                my_root
+            ))
+        }
         other => other,
     }
 }
@@ -2324,6 +2330,49 @@ mod tests {
             gateway_health(&endpoint),
             GatewayHealth::Incompatible(_)
         ));
+    }
+
+    #[test]
+    fn healthy_gateway_with_mismatched_identity_is_incompatible_not_unavailable() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let my_root = test_temp_dir("mismatch-my-root");
+        let instance_home = test_temp_dir("mismatch-instance-home");
+        let foreign_root = test_temp_dir("mismatch-foreign-root");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let endpoint = GatewayEndpoint {
+            host: "127.0.0.1".to_string(),
+            port,
+            explicit_port: Some(port),
+        };
+        let foreign_root_text = foreign_root.to_string_lossy().to_string();
+        let foreign_home_text = foreign_root.join("home").to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health check");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{},\"home\":{}}}",
+                        serde_json::to_string(&foreign_root_text).expect("json root"),
+                        serde_json::to_string(&foreign_home_text).expect("json home")
+                    )
+                    .as_bytes(),
+                )
+                .expect("write health response");
+        });
+
+        assert!(
+            matches!(
+                usable_gateway_health(&endpoint, false, &my_root, &instance_home),
+                GatewayHealth::Incompatible(_)
+            ),
+            "a healthy gateway whose home/root does not match the instance must surface as Incompatible, not Unavailable"
+        );
+        let _ = fs::remove_dir_all(my_root);
+        let _ = fs::remove_dir_all(instance_home);
+        let _ = fs::remove_dir_all(foreign_root);
     }
 
     #[test]

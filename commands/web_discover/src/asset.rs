@@ -483,14 +483,26 @@ fn download_asset_candidates(
 
         let extracted_files = if ext == "zip" {
             let extract_dir = unique_dir(&type_dir, &format!("{base_name}-extracted"))?;
-            extract_zip_archive(
+            match extract_zip_archive(
                 &path,
                 &extract_dir,
                 session_dir,
                 url,
                 candidate.page_url.as_deref(),
                 asset_type,
-            )?
+            ) {
+                Ok(files) => files,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&path);
+                    records.push(asset_candidate_record(
+                        candidate,
+                        None,
+                        Vec::new(),
+                        Some(format!("zip extraction failed: {error}")),
+                    ));
+                    continue;
+                }
+            }
         } else {
             Vec::new()
         };
@@ -520,6 +532,28 @@ fn extract_zip_archive(
     validate_zip_archive_limits(&mut archive)?;
     std::fs::create_dir_all(extract_dir)
         .map_err(|err| format!("failed to create zip extract dir: {err}"))?;
+    let result = extract_zip_entries(
+        &mut archive,
+        extract_dir,
+        session_dir,
+        source_url,
+        source_page_url,
+        asset_type,
+    );
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(extract_dir);
+    }
+    result
+}
+
+fn extract_zip_entries<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    extract_dir: &Path,
+    session_dir: &Path,
+    source_url: &str,
+    source_page_url: Option<&str>,
+    asset_type: &str,
+) -> Result<Vec<Value>, String> {
     let mut out = Vec::new();
     let mut total_written = 0_u64;
     for index in 0..archive.len() {
@@ -942,6 +976,72 @@ mod zip_tests {
 
         assert!(error.contains("entries"));
         assert!(error.contains(&super::MAX_ZIP_ENTRIES.to_string()));
+    }
+
+    #[test]
+    fn failed_extraction_cleans_up_extract_directory() {
+        use std::fs::File as StdFile;
+        use std::io::{Seek, SeekFrom};
+        use zip::ZipArchive;
+
+        // Build an archive with one valid entry followed by one that declares a
+        // size far beyond the per-entry limit, so extraction fails partway.
+        let mut builder = ZipWriter::new(Cursor::new(Vec::new()));
+        builder
+            .start_file("ok.txt", SimpleFileOptions::default())
+            .expect("ok entry");
+        builder.write_all(b"ok").expect("ok content");
+        builder
+            .start_file("huge.txt", SimpleFileOptions::default())
+            .expect("huge entry");
+        builder.write_all(b"x").expect("huge content");
+        let mut raw = builder.finish().expect("fixture archive").into_inner();
+        // Rewrite the uncompressed size of the second entry to exceed the limit.
+        // The zip writer wrote the sizes in the local headers; patch the central
+        // directory entry for "huge.txt" to declare an oversized size.
+        // Locate the "huge.txt" central directory record by scanning for its name.
+        let name = b"huge.txt";
+        let mut patch_start = None;
+        for (i, window) in raw.windows(name.len()).enumerate() {
+            if window == name {
+                patch_start = Some(i);
+                break;
+            }
+        }
+        let patch_start = patch_start.expect("huge.txt name in central directory");
+        // In a central directory entry the name starts 46 bytes after the signature
+        // (0x02014b50). The uncompressed size field is at offset 24 of the fixed
+        // header, i.e. 24 + (46 - name.len()) = 24 + 46 - 8 = 62 bytes before the name.
+        let size_offset = patch_start
+            .saturating_sub(46)
+            .checked_add(24)
+            .expect("size offset");
+        let oversize = super::MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES + 1;
+        let bytes = oversize.to_le_bytes();
+        raw[size_offset..size_offset + 8].copy_from_slice(&bytes);
+
+        let temp = tempdir().expect("temporary directory");
+        let archive_path = temp.path().join("oversize.zip");
+        let extract_dir = temp.path().join("extract");
+        let session_dir = temp.path().join("session");
+        std::fs::create_dir_all(&session_dir).expect("session directory");
+        std::fs::write(&archive_path, &raw).expect("archive fixture");
+
+        let error = super::extract_zip_archive(
+            &archive_path,
+            &extract_dir,
+            &session_dir,
+            "https://example.test/oversize.zip",
+            None,
+            "3d",
+        )
+        .expect_err("oversized entry should fail extraction");
+
+        assert!(error.contains("size limit") || error.contains("cumulative"));
+        assert!(
+            !extract_dir.exists(),
+            "extract dir should be removed on failure"
+        );
     }
 
     #[test]
