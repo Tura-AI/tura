@@ -182,6 +182,7 @@ const ANTIGRAVITY_API_MODELS: &[&str] = &[
     "gemini-embedding-2",
 ];
 const DEEPSEEK_MODELS: &[&str] = &["deepseek-v4-pro", "deepseek-v4-flash"];
+const MINIMAX_MODELS: &[&str] = &["MiniMax-M3", "MiniMax-M2.7"];
 const MOONSHOT_MODELS: &[&str] = &["kimi-k2.6"];
 const QWEN_MODELS: &[&str] = &["qwen3.7-max", "qwen3.6-flash", "text-embedding-v4"];
 const XAI_MODELS: &[&str] = &["grok-4.3"];
@@ -484,6 +485,13 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         "https://api.deepseek.com",
     ),
     simple_openai_compatible(
+        "minimax",
+        "MiniMax",
+        "MINIMAX_API_KEY",
+        MINIMAX_MODELS,
+        "https://api.minimax.io/v1",
+    ),
+    simple_openai_compatible(
         "moonshotai",
         "Moonshot AI",
         "MOONSHOTAI_API_KEY",
@@ -716,6 +724,7 @@ mod tests {
             "antigravity-api",
             "openrouter",
             "deepseek",
+            "minimax",
             "moonshotai",
             "qwen",
             "qwen_cn",
@@ -732,6 +741,23 @@ mod tests {
                 "missing registry entry for {provider_id}"
             );
         }
+    }
+
+    #[test]
+    fn minimax_registry_exposes_api_key_models_and_openai_compatible_capabilities() {
+        let entry = provider_auth_registry_entry("minimax").expect("minimax registry entry");
+
+        assert_eq!(entry.runtime_provider_id, "minimax");
+        assert_eq!(entry.default_base_url, "https://api.minimax.io/v1");
+        assert_eq!(entry.token_env, Some("MINIMAX_API_KEY"));
+        assert_eq!(entry.supported_models, MINIMAX_MODELS);
+        assert_eq!(entry.auth_methods.len(), 1);
+        assert_eq!(entry.auth_methods[0].kind, AuthMethodKind::ApiKey);
+        assert_eq!(entry.auth_methods[0].login, "api");
+        assert!(entry.capabilities.supports_api_key);
+        assert!(entry.capabilities.supports_streaming);
+        assert!(entry.capabilities.supports_tool_call_streaming);
+        assert!(entry.capabilities.supports_model_validation);
     }
 
     #[test]
