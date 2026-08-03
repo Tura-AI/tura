@@ -14,7 +14,7 @@
 
 <h1 align="center">Tura: 16.7% better performance, 77.5% fewer rounds.</h1>
 
-Tura is An Open-source agent runtime harness, that produces better results using fewer tokens.
+Tura is an open-source agent runtime harness that delivers better results with fewer tokens.
 
 Across 20 DeepSWE v1.1 tasks, each run three times per agent, Tura creates a substantial token-budget advantage by reducing repeated context and model round trips. You can spend that advantage in two ways. Direct turns most of it into lower cost: 77.5% fewer aggregate tokens than Codex CLI, with a comparable verifier success rate of 65.0% versus 63.3%. Balanced puts more of the saved budget back into reasoning, investigation, and verification. It reached an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
 
