@@ -12,7 +12,7 @@
 
 <p align="center"><strong>English</strong> | <a href="README.zh-CN.md">简体中文</a></p>
 
-<h1 align="center">Tura: 16.7% better performance, 77.5% fewer rounds.</h1>
+<h1 align="center">Tura: 16.7% better performance, 77.5% fewer tokens. </h1>
 
 Tura is an open-source agent runtime harness that delivers better results with fewer tokens.
 
