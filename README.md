@@ -16,7 +16,7 @@
 
 Tura is an open-source agent runtime harness that delivers better results with fewer tokens.
 
-Across 20 DeepSWE v1.1 tasks, each run three times per agent, Tura creates a substantial token-budget advantage by reducing repeated context and model round trips. You can spend that advantage in two ways. Direct turns most of it into lower cost: 77.5% fewer aggregate tokens than Codex CLI, with a comparable verifier success rate of 65.0% versus 63.3%. Balanced puts more of the saved budget back into reasoning, investigation, and verification. It reached an 80.0% success rate—16.7 percentage points higher than Codex CLI—while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
+Across 20 DeepSWE v1.1 tasks, each run three times per agent, Tura creates a substantial token-budget advantage by reducing repeated context and model round trips. You can spend that advantage in two ways. Direct turns most of it into lower cost: 77.5% fewer aggregate tokens than Codex CLI, with a comparable verifier success rate of 65.0% versus 63.3%. Balanced puts more of the saved budget back into reasoning, investigation, and verification. It reached an 80.0% success rate: 16.7 percentage points higher than Codex CLI: while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
 
 ### Benchmark
 
@@ -63,14 +63,14 @@ Most coding agents still depend on repetitive tool-calling loops: inspect, wait,
 _**Tool-calling coding agent:**_
 
 ```bash
-# Turn 1 — inspect environment
+# Turn 1 :  inspect environment
 
 rg -n "TODO|command_run|handler" crates/
 rg --files crates/runtime/src crates/tools/src
 ```
 
 ```bash
-# Turn 2 — apply patch
+# Turn 2 :  apply patch
 
 *** Begin Patch
 *** Update File: crates/tools/src/command_run/handler.rs
@@ -81,19 +81,19 @@ rg --files crates/runtime/src crates/tools/src
 ```
 
 ```bash
-# Turn 3 — build
+# Turn 3 :  build
 
 cargo build -p runtime
 ```
 
 ```bash
-# Turn 4 — run tests
+# Turn 4 :  run tests
 
 cargo test -p runtime --lib
 ```
 
 ```bash
-# Turn 5 — run lint validation
+# Turn 5 :  run lint validation
 
 cargo clippy -p runtime --all-targets
 ```
