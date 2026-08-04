@@ -622,6 +622,23 @@ pub(crate) fn process_manas_internal(
 
             let has_active_doing_task = active_doing_task_user_message(session).is_some();
             if has_visible_reply {
+                // In goal_mode, only task_status done/question should end the session.
+                // A visible text reply without tool_calls is not a terminal signal --
+                // continue the loop so the model can emit task_status in a later turn.
+                if session.goal_mode
+                    && supports_task_status
+                    && should_continue_no_tool_task_status_retry(session, no_tool_retries)
+                {
+                    no_tool_retries = no_tool_retries.saturating_add(1);
+                    push_no_tool_task_status_retry_message(&mut current_messages, session);
+                    warn!(
+                        session_id = %session.session_id,
+                        turn = turn,
+                        no_tool_retries = no_tool_retries,
+                        "goal-mode turn produced visible reply but no tool_calls; retrying until task_status settles"
+                    );
+                    continue;
+                }
                 if complete_active_doing_task_after_non_planning_reply(
                     session,
                     !session.goal_mode && !supports_planning,
@@ -1553,6 +1570,44 @@ mod tests {
             true
         ));
         assert!(completed.path().join(".git").exists());
+    }
+
+    #[test]
+    fn goal_mode_visible_reply_without_tool_calls_should_retry_not_break() {
+        // In goal_mode, visible_reply + no tool_calls should route through
+        // should_retry_no_tool_task_status (which returns true for goal_mode)
+        // instead of breaking immediately. This is the fix for the issue where
+        // models that don't include task_status in their first command_run batch
+        // get terminated after a single visible reply.
+        let mut session = test_session("goal-visible-reply-retry");
+        session.goal_mode = true;
+
+        // goal_mode + supports_task_status → should_retry returns true
+        assert!(should_retry_no_tool_task_status(&session, false, true, false));
+
+        // goal_mode + retries within budget → should_continue returns true
+        assert!(should_continue_no_tool_task_status_retry(&session, 0));
+        assert!(should_continue_no_tool_task_status_retry(&session, 5));
+
+        // non-goal_mode + no active doing task → should_retry returns false
+        session.goal_mode = false;
+        assert!(!should_retry_no_tool_task_status(&session, false, true, false));
+    }
+
+    #[test]
+    fn goal_mode_visible_reply_retries_exhausted_should_break() {
+        // Even in goal_mode, if retries are somehow exhausted (shouldn't happen
+        // since should_continue returns true unconditionally for goal_mode),
+        // the session should eventually terminate via manas_max_turns.
+        let mut session = test_session("goal-visible-reply-exhausted");
+        session.goal_mode = true;
+
+        // goal_mode always allows continue (no retry limit)
+        assert!(should_continue_no_tool_task_status_retry(&session, 100));
+        assert!(should_continue_no_tool_task_status_retry(&session, 1000));
+
+        // But without supports_task_status, should_retry returns false
+        assert!(!should_retry_no_tool_task_status(&session, false, false, false));
     }
 
     fn test_session(id: &str) -> SessionManagement {
