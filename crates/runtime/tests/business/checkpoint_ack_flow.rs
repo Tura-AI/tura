@@ -1,8 +1,9 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::{Duration as ChronoDuration, Utc};
 use runtime::checkpoint::{
-    checkpoint_command_ready, checkpoint_command_run_finished, checkpoint_command_run_started,
-    checkpoint_command_started, checkpoint_streamed_command_finished, StreamedCommandCheckpoint,
+    StreamedCommandCheckpoint, checkpoint_command_ready, checkpoint_command_run_finished,
+    checkpoint_command_run_started, checkpoint_command_started,
+    checkpoint_streamed_command_finished,
 };
 use rusqlite::Connection;
 use serde_json::json;

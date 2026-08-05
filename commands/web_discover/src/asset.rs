@@ -8,11 +8,16 @@ use super::util::{
 };
 use regex::Regex;
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fs::File;
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
+
+const MAX_ZIP_ENTRIES: usize = 10_000;
+const MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub(super) struct AssetSourceQuery {
@@ -478,14 +483,26 @@ fn download_asset_candidates(
 
         let extracted_files = if ext == "zip" {
             let extract_dir = unique_dir(&type_dir, &format!("{base_name}-extracted"))?;
-            extract_zip_archive(
+            match extract_zip_archive(
                 &path,
                 &extract_dir,
                 session_dir,
                 url,
                 candidate.page_url.as_deref(),
                 asset_type,
-            )?
+            ) {
+                Ok(files) => files,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&path);
+                    records.push(asset_candidate_record(
+                        candidate,
+                        None,
+                        Vec::new(),
+                        Some(format!("zip extraction failed: {error}")),
+                    ));
+                    continue;
+                }
+            }
         } else {
             Vec::new()
         };
@@ -510,11 +527,35 @@ fn extract_zip_archive(
     source_page_url: Option<&str>,
     asset_type: &str,
 ) -> Result<Vec<Value>, String> {
-    std::fs::create_dir_all(extract_dir)
-        .map_err(|err| format!("failed to create zip extract dir: {err}"))?;
     let file = File::open(archive_path).map_err(|err| format!("failed to open zip: {err}"))?;
     let mut archive = ZipArchive::new(file).map_err(|err| format!("failed to read zip: {err}"))?;
+    validate_zip_archive_limits(&mut archive)?;
+    std::fs::create_dir_all(extract_dir)
+        .map_err(|err| format!("failed to create zip extract dir: {err}"))?;
+    let result = extract_zip_entries(
+        &mut archive,
+        extract_dir,
+        session_dir,
+        source_url,
+        source_page_url,
+        asset_type,
+    );
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(extract_dir);
+    }
+    result
+}
+
+fn extract_zip_entries<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    extract_dir: &Path,
+    session_dir: &Path,
+    source_url: &str,
+    source_page_url: Option<&str>,
+    asset_type: &str,
+) -> Result<Vec<Value>, String> {
     let mut out = Vec::new();
+    let mut total_written = 0_u64;
     for index in 0..archive.len() {
         let mut entry = archive
             .by_index(index)
@@ -532,8 +573,18 @@ fn extract_zip_archive(
         }
         let mut target_file =
             File::create(&target).map_err(|err| format!("failed to write zip entry: {err}"))?;
-        std::io::copy(&mut entry, &mut target_file)
-            .map_err(|err| format!("failed to extract zip entry: {err}"))?;
+        if let Err(error) = copy_zip_entry(&mut entry, &mut target_file, index, &mut total_written)
+        {
+            drop(target_file);
+            let cleanup = std::fs::remove_file(&target).err();
+            return Err(match cleanup {
+                Some(cleanup_error) => format!(
+                    "{error}; failed to remove partial zip entry {}: {cleanup_error}",
+                    target.display()
+                ),
+                None => error,
+            });
+        }
         out.push(downloaded_file_value(
             &target,
             session_dir,
@@ -543,6 +594,99 @@ fn extract_zip_archive(
         ));
     }
     Ok(out)
+}
+
+fn validate_zip_archive_limits<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<(), String> {
+    validate_zip_entry_count(archive.len())?;
+    let mut total_uncompressed = 0_u64;
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|err| format!("failed to read zip entry metadata: {err}"))?;
+        validate_zip_entry_size(index, entry.size(), &mut total_uncompressed)?;
+    }
+    Ok(())
+}
+
+fn validate_zip_entry_count(entry_count: usize) -> Result<(), String> {
+    if entry_count > MAX_ZIP_ENTRIES {
+        return Err(format!(
+            "zip archive contains {entry_count} entries; limit is {MAX_ZIP_ENTRIES}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_zip_entry_size(
+    index: usize,
+    uncompressed_bytes: u64,
+    total_uncompressed: &mut u64,
+) -> Result<(), String> {
+    if uncompressed_bytes > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES {
+        return Err(format!(
+            "zip entry {index} declares {uncompressed_bytes} uncompressed bytes; limit is {MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES}"
+        ));
+    }
+    let next_total = total_uncompressed.checked_add(uncompressed_bytes).ok_or_else(|| {
+        format!(
+            "zip archive uncompressed size exceeds cumulative limit {MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES}"
+        )
+    })?;
+    if next_total > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES {
+        return Err(format!(
+            "zip archive declares {next_total} uncompressed bytes; cumulative limit is {MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES}"
+        ));
+    }
+    *total_uncompressed = next_total;
+    Ok(())
+}
+
+fn copy_zip_entry<R: Read, W: Write>(
+    entry: &mut R,
+    target: &mut W,
+    index: usize,
+    total_written: &mut u64,
+) -> Result<(), String> {
+    let mut entry_written = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = entry
+            .read(&mut buffer)
+            .map_err(|err| format!("failed to extract zip entry {index}: {err}"))?;
+        if read == 0 {
+            return Ok(());
+        }
+        let read = u64::try_from(read).map_err(|_| {
+            format!("zip entry {index} read size does not fit in the configured limits")
+        })?;
+        let next_entry = entry_written.checked_add(read).ok_or_else(|| {
+            format!("zip entry {index} exceeds the configured uncompressed size limits")
+        })?;
+        if next_entry > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES {
+            return Err(format!(
+                "zip entry {index} exceeds the uncompressed size limit {MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES}"
+            ));
+        }
+        let next_total = total_written.checked_add(read).ok_or_else(|| {
+            format!(
+                "zip archive exceeds the cumulative uncompressed size limit {MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES}"
+            )
+        })?;
+        if next_total > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES {
+            return Err(format!(
+                "zip archive exceeds the cumulative uncompressed size limit {MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES}"
+            ));
+        }
+        target
+            .write_all(
+                &buffer[..usize::try_from(read).map_err(|_| {
+                    format!("zip entry {index} read size does not fit in the configured limits")
+                })?],
+            )
+            .map_err(|err| format!("failed to extract zip entry {index}: {err}"))?;
+        entry_written = next_entry;
+        *total_written = next_total;
+    }
 }
 
 fn unique_dir(parent: &Path, base_name: &str) -> Result<PathBuf, String> {
@@ -745,4 +889,253 @@ fn classify_asset_type(url: &str, text: &str, source: Option<&str>, fallback_typ
 
 fn has_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
+}
+
+#[cfg(test)]
+mod zip_tests {
+    use std::io::{Cursor, Read, Write};
+
+    use tempfile::tempdir;
+    use zip::write::{SimpleFileOptions, ZipWriter};
+
+    const STORED_AND_DEFLATED_ZIP_HEX: &str = concat!(
+        "504b030414000000000000002100a12907d10e0000000e0000000a000000",
+        "73746f7265642e74787473746f726564207061796c6f6164504b030414000000",
+        "080000002100b01f5f7d1200000010000000130000006e65737465642f6465666c",
+        "617465642e7478744b494dcb492c494d512848acccc94f4c0100504b0102140314",
+        "000000000000002100a12907d10e0000000e0000000a000000000000000000000080",
+        "010000000073746f7265642e747874504b0102140314000000080000002100b01f",
+        "5f7d12000000100000001300000000000000000000008001360000006e6573746564",
+        "2f6465666c617465642e747874504b050600000000020002007900000079000000",
+        "0000"
+    );
+
+    const UNSUPPORTED_COMPRESSION_ZIP_HEX: &str = concat!(
+        "504b030414000000000000002100a12907d10e0000000e0000000a000000",
+        "73746f7265642e74787473746f726564207061796c6f6164504b030414000000",
+        "5d0000002100b01f5f7d1200000010000000130000006e65737465642f6465666c",
+        "617465642e7478744b494dcb492c494d512848acccc94f4c0100504b0102140314",
+        "000000000000002100a12907d10e0000000e0000000a000000000000000000000080",
+        "010000000073746f7265642e747874504b01021403140000005d0000002100b01f",
+        "5f7d12000000100000001300000000000000000000008001360000006e6573746564",
+        "2f6465666c617465642e747874504b050600000000020002007900000079000000",
+        "0000"
+    );
+
+    fn decode_hex(value: &str) -> Vec<u8> {
+        value
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).expect("hex fixture"), 16)
+                    .expect("valid hex fixture")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reader_supports_stored_and_deflated_entries() {
+        let bytes = decode_hex(STORED_AND_DEFLATED_ZIP_HEX);
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("valid zip fixture");
+
+        let mut stored = String::new();
+        archive
+            .by_name("stored.txt")
+            .expect("stored entry")
+            .read_to_string(&mut stored)
+            .expect("stored entry content");
+        assert_eq!(stored, "stored payload");
+
+        let mut deflated = String::new();
+        archive
+            .by_name("nested/deflated.txt")
+            .expect("deflated entry")
+            .read_to_string(&mut deflated)
+            .expect("deflated entry content");
+        assert_eq!(deflated, "deflated payload");
+    }
+
+    #[test]
+    fn reader_reports_unsupported_compression_method() {
+        let bytes = decode_hex(UNSUPPORTED_COMPRESSION_ZIP_HEX);
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("valid zip fixture");
+        let error = archive
+            .by_name("nested/deflated.txt")
+            .expect_err("method 93 should be unsupported by the minimal reader");
+
+        assert!(matches!(
+            error,
+            zip::result::ZipError::CompressionMethodNotSupported(93)
+        ));
+    }
+
+    #[test]
+    fn extraction_rejects_too_many_entries() {
+        let error = super::validate_zip_entry_count(super::MAX_ZIP_ENTRIES + 1)
+            .expect_err("entry count above the limit should fail");
+
+        assert!(error.contains("entries"));
+        assert!(error.contains(&super::MAX_ZIP_ENTRIES.to_string()));
+    }
+
+    #[test]
+    fn failed_extraction_cleans_up_extract_directory() {
+        use std::fs::File as StdFile;
+        use std::io::{Seek, SeekFrom};
+        use zip::ZipArchive;
+
+        // Build an archive with one valid entry followed by one that declares a
+        // size far beyond the per-entry limit, so extraction fails partway.
+        let mut builder = ZipWriter::new(Cursor::new(Vec::new()));
+        builder
+            .start_file("ok.txt", SimpleFileOptions::default())
+            .expect("ok entry");
+        builder.write_all(b"ok").expect("ok content");
+        builder
+            .start_file("huge.txt", SimpleFileOptions::default())
+            .expect("huge entry");
+        builder.write_all(b"x").expect("huge content");
+        let mut raw = builder.finish().expect("fixture archive").into_inner();
+        // Rewrite the uncompressed size of the second entry to exceed the limit.
+        // The zip writer wrote the sizes in the local headers; patch the central
+        // directory entry for "huge.txt" to declare an oversized size.
+        // Locate the "huge.txt" central directory record by scanning for its name.
+        let name = b"huge.txt";
+        let mut patch_start = None;
+        for (i, window) in raw.windows(name.len()).enumerate() {
+            if window == name {
+                patch_start = Some(i);
+                break;
+            }
+        }
+        let patch_start = patch_start.expect("huge.txt name in central directory");
+        // In a central directory entry the name starts 46 bytes after the signature
+        // (0x02014b50). The uncompressed size field is at offset 24 of the fixed
+        // header, i.e. 24 + (46 - name.len()) = 24 + 46 - 8 = 62 bytes before the name.
+        let size_offset = patch_start
+            .saturating_sub(46)
+            .checked_add(24)
+            .expect("size offset");
+        let oversize = super::MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES + 1;
+        let bytes = oversize.to_le_bytes();
+        raw[size_offset..size_offset + 8].copy_from_slice(&bytes);
+
+        let temp = tempdir().expect("temporary directory");
+        let archive_path = temp.path().join("oversize.zip");
+        let extract_dir = temp.path().join("extract");
+        let session_dir = temp.path().join("session");
+        std::fs::create_dir_all(&session_dir).expect("session directory");
+        std::fs::write(&archive_path, &raw).expect("archive fixture");
+
+        let error = super::extract_zip_archive(
+            &archive_path,
+            &extract_dir,
+            &session_dir,
+            "https://example.test/oversize.zip",
+            None,
+            "3d",
+        )
+        .expect_err("oversized entry should fail extraction");
+
+        assert!(error.contains("size limit") || error.contains("cumulative"));
+        assert!(
+            !extract_dir.exists(),
+            "extract dir should be removed on failure"
+        );
+    }
+
+    #[test]
+    fn extraction_rejects_an_oversized_entry() {
+        let mut total = 0;
+        let error = super::validate_zip_entry_size(
+            3,
+            super::MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES + 1,
+            &mut total,
+        )
+        .expect_err("entry above the per-entry limit should fail");
+
+        assert!(error.contains("entry 3"));
+        assert!(error.contains("uncompressed bytes"));
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn extraction_rejects_excessive_cumulative_size() {
+        let mut total = 0;
+        super::validate_zip_entry_size(0, super::MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES, &mut total)
+            .expect("first entry should fit the cumulative limit");
+        super::validate_zip_entry_size(1, super::MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES, &mut total)
+            .expect("second entry should fit the cumulative limit");
+        let error = super::validate_zip_entry_size(2, 1, &mut total)
+            .expect_err("cumulative size above the limit should fail");
+
+        assert!(error.contains("cumulative limit"));
+        assert_eq!(total, super::MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES);
+    }
+
+    #[test]
+    fn extraction_preserves_stored_deflated_and_traversal_behavior() {
+        let bytes = decode_hex(STORED_AND_DEFLATED_ZIP_HEX);
+        let temp = tempdir().expect("temporary directory");
+        let archive_path = temp.path().join("assets.zip");
+        let extract_dir = temp.path().join("assets");
+        let session_dir = temp.path().join("session");
+        std::fs::create_dir_all(&session_dir).expect("session directory");
+        std::fs::write(&archive_path, bytes).expect("archive fixture");
+
+        let extracted = super::extract_zip_archive(
+            &archive_path,
+            &extract_dir,
+            &session_dir,
+            "https://example.test/assets.zip",
+            None,
+            "3d",
+        )
+        .expect("stored and deflated archive should extract");
+
+        assert_eq!(extracted.len(), 2);
+        assert_eq!(
+            std::fs::read_to_string(extract_dir.join("stored.txt")).expect("stored output"),
+            "stored payload"
+        );
+        assert_eq!(
+            std::fs::read_to_string(extract_dir.join("nested/deflated.txt"))
+                .expect("deflated output"),
+            "deflated payload"
+        );
+
+        let traversal_bytes = {
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            writer
+                .start_file("../outside.txt", SimpleFileOptions::default())
+                .expect("traversal fixture entry");
+            writer
+                .write_all(b"must not escape")
+                .expect("traversal fixture content");
+            writer
+                .start_file("safe.txt", SimpleFileOptions::default())
+                .expect("safe fixture entry");
+            writer.write_all(b"safe").expect("safe fixture content");
+            writer.finish().expect("traversal fixture").into_inner()
+        };
+        let traversal_path = temp.path().join("traversal.zip");
+        let traversal_dir = temp.path().join("traversal");
+        std::fs::write(&traversal_path, traversal_bytes).expect("traversal archive");
+        let extracted = super::extract_zip_archive(
+            &traversal_path,
+            &traversal_dir,
+            &session_dir,
+            "https://example.test/traversal.zip",
+            None,
+            "3d",
+        )
+        .expect("unsafe paths should be skipped");
+
+        assert_eq!(extracted.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(traversal_dir.join("safe.txt")).expect("safe output"),
+            "safe"
+        );
+        assert!(!temp.path().join("outside.txt").exists());
+    }
 }

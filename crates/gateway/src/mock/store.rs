@@ -3,7 +3,7 @@
 
 use crate::contracts::*;
 use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
-use crate::session::manager::{coding_agent_provider, CODING_AGENT_NAME};
+use crate::session::manager::{CODING_AGENT_NAME, coding_agent_provider};
 use crate::types::OutboundAction;
 use chrono::Utc;
 use parking_lot::RwLock;
@@ -513,9 +513,7 @@ pub struct PendingOAuth {
 // Global Store Instance
 // ============================================================================
 
-lazy_static::lazy_static! {
-    pub static ref GLOBAL_STORE: Store = Store::new();
-}
+pub static GLOBAL_STORE: std::sync::LazyLock<Store> = std::sync::LazyLock::new(Store::new);
 
 pub fn global_store() -> &'static Store {
     &GLOBAL_STORE
@@ -553,11 +551,13 @@ mod tests {
         let messages = store.get_messages(&session.id);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, MessageRole::Assistant);
-        assert!(messages[0].parts[0]
-            .text
-            .as_deref()
-            .unwrap_or_default()
-            .contains("ready to help"));
+        assert!(
+            messages[0].parts[0]
+                .text
+                .as_deref()
+                .unwrap_or_default()
+                .contains("ready to help")
+        );
 
         let providers = store
             .list_providers()

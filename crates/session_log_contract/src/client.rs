@@ -5,14 +5,12 @@ use std::io::{BufRead, BufReader, Error as IoError, ErrorKind, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
-use fs2::FileExt;
-
 use crate::{ServiceEndpoint, SessionFeedEntry, SessionLogCommand, SessionLogResponse};
+use anyhow::{Context, Result, anyhow};
 
 const ADDR_FILE: &str = "service.addr";
 const QUEUE_DIR: &str = "message_queue";
@@ -302,7 +300,7 @@ pub fn unreachable_owner_lock_message() -> Option<String> {
             ));
         }
     };
-    match file.try_lock_exclusive() {
+    match file.try_lock() {
         Ok(()) => {
             let _ = file.unlock();
             None
@@ -417,7 +415,7 @@ fn owner_lock_is_held(path: &std::path::Path) -> bool {
         Ok(file) => file,
         Err(_) => return true,
     };
-    match file.try_lock_exclusive() {
+    match file.try_lock() {
         Ok(()) => {
             let _ = file.unlock();
             false
@@ -591,10 +589,12 @@ mod tests {
             addr: matching.addr,
             version: "0.0.0-other+release".to_string(),
         };
-        assert!(ensure_version_compatible(&mismatched)
-            .expect_err("foreign builds must be refused")
-            .to_string()
-            .contains("different build"));
+        assert!(
+            ensure_version_compatible(&mismatched)
+                .expect_err("foreign builds must be refused")
+                .to_string()
+                .contains("different build")
+        );
     }
 
     #[test]

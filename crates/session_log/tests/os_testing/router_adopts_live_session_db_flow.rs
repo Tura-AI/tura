@@ -5,9 +5,9 @@
 #[path = "../support/typed_session.rs"]
 mod typed_session;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use lifecycle::TaskPlan;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use session_log_contract::client::enqueue_command;
 use session_log_contract::{GetSessionRequest, SessionLogCommand, SessionLogResponse};
 use std::{
@@ -308,7 +308,7 @@ fn cleanup_target_backend_processes(repo: &Path, timeout: Duration) -> Result<()
 fn target_backend_process_pids(repo: &Path) -> Result<Vec<u32>> {
     let target = canonical_or_self(&target_dir(repo));
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let mut pids = Vec::new();
     for (pid, process) in system.processes() {
         if ![
@@ -335,7 +335,7 @@ fn target_backend_process_pids(repo: &Path) -> Result<Vec<u32>> {
 
 fn terminate_process_quietly(pid: u32) {
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
         let _ = process.kill();
     }

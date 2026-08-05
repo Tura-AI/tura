@@ -1,13 +1,14 @@
-use super::helpers::{
-    append_session_event, replay_session_events, session_state_text, task_management_value,
-};
 use super::SessionLogStore;
+use super::helpers::{
+    append_session_event, replay_session_events, row_u64, session_state_text, sqlite_u64,
+    task_management_value,
+};
 use anyhow::{Context, Result};
 use lifecycle::{
     RuntimeAggregate, RuntimeEvent, RuntimeQuery, RuntimeState, SessionAggregate, SessionCommand,
     SessionManagement, SessionQuery,
 };
-use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use session_log_contract::{
     ActivateRuntimeLeaseRequest, CommitRuntimeEventRequest, RegisterRuntimeRequest,
     ReplayRuntimeRequest, RuntimeEventCommitOutcome, RuntimeLeaseOutcome,
@@ -224,7 +225,7 @@ impl SessionLogStore {
                     |row| {
                         Ok((
                             row.get::<_, String>(0)?,
-                            row.get::<_, u64>(1)?,
+                            row_u64(row, 1)?,
                             row.get::<_, String>(2)?,
                         ))
                     },
@@ -300,8 +301,8 @@ impl SessionLogStore {
                  ) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     request.runtime_id,
-                    request.event_seq,
-                    revision,
+                    sqlite_u64(request.event_seq)?,
+                    sqlite_u64(revision)?,
                     request.idempotency_key,
                     event_json
                 ],
@@ -311,7 +312,12 @@ impl SessionLogStore {
                 "UPDATE runtimes SET revision = ?2, last_event_seq = ?3,
                     terminal = ?4, lease_active = CASE WHEN ?4 THEN 0 ELSE lease_active END
                  WHERE runtime_id = ?1",
-                params![request.runtime_id, revision, request.event_seq, terminal],
+                params![
+                    request.runtime_id,
+                    sqlite_u64(revision)?,
+                    sqlite_u64(request.event_seq)?,
+                    terminal
+                ],
             )?;
             if terminal {
                 let projection =
@@ -471,8 +477,8 @@ fn load_runtime_row(conn: &rusqlite::Connection, runtime_id: &str) -> Result<Opt
                 fallback_from_id: row.get(1)?,
                 lease_id: row.get(2)?,
                 lease_active: row.get(3)?,
-                revision: row.get(4)?,
-                last_event_seq: row.get(5)?,
+                revision: row_u64(row, 4)?,
+                last_event_seq: row_u64(row, 5)?,
                 terminal: row.get(6)?,
             })
         },
@@ -485,7 +491,7 @@ fn runtime_cursor(conn: &rusqlite::Connection, runtime_id: &str) -> Result<(u64,
     conn.query_row(
         "SELECT revision, last_event_seq FROM runtimes WHERE runtime_id = ?1",
         params![runtime_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| Ok((row_u64(row, 0)?, row_u64(row, 1)?)),
     )
     .map_err(Into::into)
 }

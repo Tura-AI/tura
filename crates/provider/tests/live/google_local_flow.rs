@@ -1,10 +1,10 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 use tokio::sync::Mutex;
 use tura_llm_rust::{
-    extract_response_text, extract_tool_calls, CallOptions, ProviderConfig, TuraConfig, TuraError,
+    CallOptions, ProviderConfig, TuraConfig, TuraError, extract_response_text, extract_tool_calls,
 };
 
 #[derive(Debug)]
@@ -355,8 +355,7 @@ async fn google_business_flow_replays_function_call_output_and_media_sidecar() {
         "command_run"
     );
     assert_eq!(
-        captured.body["contents"][1]["parts"][0]["functionCall"]["args"]["commands"][0]
-            ["command_line"],
+        captured.body["contents"][1]["parts"][0]["functionCall"]["args"]["commands"][0]["command_line"],
         "python draw.py"
     );
     assert_eq!(

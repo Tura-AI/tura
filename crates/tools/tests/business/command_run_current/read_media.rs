@@ -61,10 +61,12 @@ async fn pass_internal_command_rebuilds_tool_call_and_dispatches_router_handler(
 
     assert_eq!(result.call_id, "call_test");
     assert_eq!(result.result.success, Some(true));
-    assert!(result.result.code_mode_result()["stdout"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("router-ok"));
+    assert!(
+        result.result.code_mode_result()["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("router-ok")
+    );
 }
 
 #[test]
@@ -94,10 +96,12 @@ fn fail_unsupported_internal_command_returns_model_visible_result() {
     );
 
     assert_eq!(output["results"][0]["success"], false);
-    assert!(output["results"][0]["error"]
-        .as_str()
-        .expect("error should be a string")
-        .contains("unsupported command_run command"));
+    assert!(
+        output["results"][0]["error"]
+            .as_str()
+            .expect("error should be a string")
+            .contains("unsupported command_run command")
+    );
 }
 
 #[test]
@@ -169,10 +173,12 @@ fn pass_read_media_pdf_text_fallback_is_context_sized() {
     assert_eq!(output["results"][0]["success"], true);
     let media = &output["results"][0]["output"]["media_results"][0];
     assert_eq!(media["media_type"], "pdf");
-    assert!(media["extracted_text"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("Quarterly media brief"));
+    assert!(
+        media["extracted_text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Quarterly media brief")
+    );
     assert!(
         serde_json::to_string(&output).expect("serialize").len() < 120_000,
         "read_media output should stay reasonably small"
@@ -355,9 +361,11 @@ fn pass_read_media_small_unknown_binary_document_returns_file_attachment() {
         media["file_attachments"][0]["mime_type"],
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     );
-    assert!(media["file_attachments"][0]["data_base64"]
-        .as_str()
-        .is_some_and(|value| !value.is_empty()));
+    assert!(
+        media["file_attachments"][0]["data_base64"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 }
 
 #[test]

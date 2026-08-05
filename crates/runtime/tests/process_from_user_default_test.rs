@@ -34,26 +34,36 @@ fn default_agent_registry_loads_coding_agent() {
         coding_agent_provider_name()
     );
     assert!(!agents[0].validator.need_validator);
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "search_services"));
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "persist_tool"));
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "planning"));
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "send_message_to_user"));
-    assert!(agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "task_status"));
+    assert!(
+        !agents[0]
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability.capability_name == "search_services")
+    );
+    assert!(
+        !agents[0]
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability.capability_name == "persist_tool")
+    );
+    assert!(
+        !agents[0]
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability.capability_name == "planning")
+    );
+    assert!(
+        !agents[0]
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability.capability_name == "send_message_to_user")
+    );
+    assert!(
+        agents[0]
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability.capability_name == "task_status")
+    );
 }
 
 #[test]
@@ -77,22 +87,30 @@ fn default_directory_session_loads_coding_agent() {
         coding_agent_provider_name()
     );
     assert!(!agents[0].validator.need_validator);
-    assert!(agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "shells"));
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "planning"));
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "send_message_to_user"));
-    assert!(agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "task_status"));
+    assert!(
+        agents[0]
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability.capability_name == "shells")
+    );
+    assert!(
+        !agents[0]
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability.capability_name == "planning")
+    );
+    assert!(
+        !agents[0]
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability.capability_name == "send_message_to_user")
+    );
+    assert!(
+        agents[0]
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability.capability_name == "task_status")
+    );
 }
 
 #[test]

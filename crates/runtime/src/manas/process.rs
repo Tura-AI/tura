@@ -2,11 +2,11 @@ use crate::gateway_events::{
     frontend_session_id, publish_agent_message_from_runtime, publish_runtime_failure_message,
     publish_runtime_usage_record,
 };
+use crate::manas::TASK_STATUS_COMMAND;
 use crate::manas::constants::PLANNING_TOOL;
 use crate::manas::prompt_messages::push_no_tool_task_status_retry_message;
 use crate::manas::runtime_turn::execute_turn;
 use crate::manas::tool_catalog::{command_run_commands_for_agent, planning_child_depth};
-use crate::manas::TASK_STATUS_COMMAND;
 use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
 use crate::prompt_style::{
     provider_retry, runtime_prompt_manual, tail_injection, terminal_final_response,
@@ -17,15 +17,14 @@ use chrono::Utc;
 use std::thread;
 use tracing::{info, warn};
 use tura_llm_rust::{
-    provider_media_fallback, replace_unsupported_content_type_in_messages, ProviderMediaFallback,
+    ProviderMediaFallback, provider_media_fallback, replace_unsupported_content_type_in_messages,
 };
 
-use crate::checkpoint::session_snapshot::{persist_session_checkpoint, SessionDeltaWriter};
+use crate::checkpoint::session_snapshot::{SessionDeltaWriter, persist_session_checkpoint};
 use crate::context::{
-    accumulate_tool_result_with_provider_metadata, build_context,
-    compact_session_context_automatically_with_capabilities,
+    CompactContextAgentMessage, ContextInput, accumulate_tool_result_with_provider_metadata,
+    build_context, compact_session_context_automatically_with_capabilities,
     compact_session_context_with_agent_message_and_capabilities, estimated_tokens_from_bytes_u64,
-    CompactContextAgentMessage, ContextInput,
 };
 use crate::manas::ManasOverrides;
 use crate::provider_flow::errors::{
@@ -621,11 +620,9 @@ pub(crate) fn process_manas_internal(
             let has_visible_reply = visible_runtime_reply(&runtime).is_some();
 
             let has_active_doing_task = active_doing_task_user_message(session).is_some();
-            if has_visible_reply {
-                if complete_active_doing_task_after_non_planning_reply(
-                    session,
-                    !session.goal_mode && !supports_planning,
-                ) {
+            if should_end_no_tool_turn_after_visible_reply(session, has_visible_reply) {
+                if complete_active_doing_task_after_non_planning_reply(session, !supports_planning)
+                {
                     persist_session_checkpoint(
                         &mut session_delta_writer,
                         session,
@@ -830,6 +827,13 @@ fn should_retry_no_tool_task_status(
         return true;
     }
     supports_planning && has_active_doing_task
+}
+
+fn should_end_no_tool_turn_after_visible_reply(
+    session: &SessionManagement,
+    has_visible_reply: bool,
+) -> bool {
+    has_visible_reply && !session.goal_mode
 }
 
 fn should_continue_no_tool_task_status_retry(
@@ -1081,13 +1085,13 @@ fn terminal_status_needs_final_response_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_compact_summary_after_new_context, commit_terminal_session_checkpoint,
-        complete_active_doing_task_after_non_planning_reply, increment_turn_with_fresh_timestamp,
-        manas_max_turns, messages_with_initial_context_prefix,
+        DEFAULT_MANAS_MAX_TURNS, auto_compact_summary_after_new_context,
+        commit_terminal_session_checkpoint, complete_active_doing_task_after_non_planning_reply,
+        increment_turn_with_fresh_timestamp, manas_max_turns, messages_with_initial_context_prefix,
         should_auto_complete_non_planning_doing_after_tool_turn,
-        should_continue_no_tool_task_status_retry, should_end_turn_without_task_status_backfill,
-        should_retry_no_tool_task_status, terminal_status_needs_final_response_turn,
-        DEFAULT_MANAS_MAX_TURNS,
+        should_continue_no_tool_task_status_retry, should_end_no_tool_turn_after_visible_reply,
+        should_end_turn_without_task_status_backfill, should_retry_no_tool_task_status,
+        terminal_status_needs_final_response_turn,
     };
     use crate::tool_router::execute_tool::ToolExecutionResult;
     use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
@@ -1321,6 +1325,22 @@ mod tests {
         ));
         assert!(!should_retry_no_tool_task_status(
             &session, true, false, true
+        ));
+    }
+
+    #[test]
+    fn visible_no_tool_reply_ends_normal_mode_but_goal_mode_requires_task_status() {
+        let mut session = test_session("session-visible-goal-retry");
+
+        assert!(should_end_no_tool_turn_after_visible_reply(&session, true));
+        assert!(!should_end_no_tool_turn_after_visible_reply(
+            &session, false
+        ));
+
+        session.goal_mode = true;
+        assert!(!should_end_no_tool_turn_after_visible_reply(&session, true));
+        assert!(should_retry_no_tool_task_status(
+            &session, false, true, false
         ));
     }
 

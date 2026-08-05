@@ -6,7 +6,7 @@ use crate::tura_llm::CallOptions;
 use serde_json::json;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::{mpsc, OnceLock};
+use std::sync::{OnceLock, mpsc};
 use tokio::sync::Mutex;
 
 async fn codex_endpoint_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
@@ -453,10 +453,12 @@ async fn streaming_provider_drains_usage_after_tool_arguments_complete() {
         result.content["tool_calls"][0]["function"]["arguments"]["pattern"],
         "foo"
     );
-    assert!(!result
-        .content
-        .to_string()
-        .contains("late text after tool call"));
+    assert!(
+        !result
+            .content
+            .to_string()
+            .contains("late text after tool call")
+    );
     let metrics = result.metrics.expect("metrics");
     assert_eq!(metrics.usage.input_tokens, Some(3000));
     assert_eq!(metrics.usage.cached_input_tokens, Some(2048));

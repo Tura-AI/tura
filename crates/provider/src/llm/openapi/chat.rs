@@ -6,8 +6,9 @@
 //! reassembly, and includes the MiniMax XML tool-call shim.
 
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::error::Error as _;
 use std::time::Instant;
 
 use super::common::{
@@ -18,9 +19,9 @@ use crate::streaming::{
     next_provider_stream_chunk, read_provider_response_body, send_provider_request_first_response,
 };
 use crate::tura_llm::{
-    default_client, normalize_response_content, record_context_utilization, CallMetrics,
-    CallOptions, CostDetails, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink,
-    TuraError, UsageDetails,
+    CallMetrics, CallOptions, CostDetails, ProviderResponse, ProviderStreamEvent,
+    ProviderStreamEventSink, TuraError, UsageDetails, default_client, normalize_response_content,
+    record_context_utilization,
 };
 use crate::utils::{
     deep_merge_json, emit_command_run_stream_events_from_content, strip_json_fence,
@@ -128,14 +129,19 @@ pub async fn call_with_stream_events(
         });
     }
 
-    let mut content = normalize_response_content(&data);
+    // ClinePass keeps the OpenAI-compatible completion under a successful
+    // `{ "success": true, "data": ... }` envelope for non-stream requests.
+    // Preserve the provider's raw response while normalizing the inner
+    // completion for the shared Chat Completions contract.
+    let completion_data = unwrap_chat_completion_response(provider, base_url, &data);
+    let mut content = normalize_response_content(&completion_data);
     if let Some(text) = content.as_str() {
         content = Value::String(strip_json_fence(text));
     }
-    validate_chat_success_content(provider, &data, &content)?;
+    validate_chat_success_content(provider, &completion_data, &content)?;
     emit_command_run_stream_events_from_content(&content, stream_events.as_ref());
 
-    let mut metrics = extract_openapi_metrics(&data, options.context_window);
+    let mut metrics = extract_openapi_metrics(&completion_data, options.context_window);
     metrics.provider_request_id = req_id;
 
     Ok(ProviderResponse {
@@ -143,6 +149,24 @@ pub async fn call_with_stream_events(
         raw: data,
         metrics: Some(metrics),
     })
+}
+
+fn unwrap_chat_completion_response(provider: &str, base_url: &str, data: &Value) -> Value {
+    let cline_pass_endpoint = url::Url::parse(base_url.trim())
+        .ok()
+        .and_then(|url| {
+            url.host_str()
+                .map(|host| host.eq_ignore_ascii_case("api.cline.bot"))
+        })
+        .unwrap_or(false);
+    if (provider.eq_ignore_ascii_case("cline-pass") || cline_pass_endpoint)
+        && data.get("success").and_then(Value::as_bool) == Some(true)
+        && let Some(inner) = data.get("data")
+        && inner.get("choices").is_some()
+    {
+        return inner.clone();
+    }
+    data.clone()
 }
 
 fn validate_chat_success_content(
@@ -414,10 +438,12 @@ async fn stream_call(
 ) -> Result<ProviderResponse, TuraError> {
     let resp = send_provider_request_first_response(client.post(url).json(&payload)).await?;
     let status = resp.status();
+    let response_metadata = StreamResponseMetadata::from_response(&resp);
     if !status.is_success() {
-        let body = resp.text().await.map_err(|e| TuraError::Network {
-            message: e.to_string(),
-        })?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|error| provider_stream_body_error(provider, &response_metadata, 0, &error))?;
         return Err(TuraError::HttpStatus {
             status: status.as_u16(),
             body,
@@ -428,20 +454,23 @@ async fn stream_call(
     let mut full_content = String::new();
     let mut tool_calls = Vec::new();
     let mut stream_state = OpenAiCompatibleStreamState::default();
-    let mut pending = String::new();
+    let mut pending = Vec::new();
+    let mut received_bytes = 0;
     let mut saw_output = false;
     let mut last_output_at = Instant::now();
 
     while let Some(chunk) =
         next_provider_stream_chunk(&mut stream, saw_output, last_output_at).await?
     {
-        let data = chunk.map_err(|e| TuraError::Network {
-            message: e.to_string(),
+        let data = chunk.map_err(|error| {
+            provider_stream_body_error(provider, &response_metadata, received_bytes, &error)
         })?;
-        pending.push_str(&String::from_utf8_lossy(&data));
+        received_bytes += data.len();
+        pending.extend_from_slice(&data);
 
-        while let Some(line_end) = pending.find('\n') {
-            let line = pending[..line_end].trim_end_matches('\r').to_string();
+        while let Some(line_end) = pending.iter().position(|byte| *byte == b'\n') {
+            let line =
+                decode_stream_line(provider, &response_metadata, &pending[..line_end])?.to_string();
             pending.drain(..=line_end);
             if process_openai_compatible_stream_line(
                 &line,
@@ -461,10 +490,10 @@ async fn stream_call(
             break;
         }
     }
-    if !pending.trim().is_empty() && !stream_state.stream_done {
-        let line = pending.trim_end_matches('\r').to_string();
+    if !pending.iter().all(u8::is_ascii_whitespace) && !stream_state.stream_done {
+        let line = decode_stream_line(provider, &response_metadata, &pending)?;
         let _ = process_openai_compatible_stream_line(
-            &line,
+            line,
             &mut full_content,
             &mut tool_calls,
             &mut stream_state,
@@ -520,6 +549,89 @@ async fn stream_call(
         content,
         raw: json!({ "tool_calls": tool_calls, "usage": stream_state.stream_usage }),
         metrics: Some(metrics),
+    })
+}
+
+struct StreamResponseMetadata {
+    request_id: Option<String>,
+    content_type: Option<String>,
+    content_encoding: Option<String>,
+    content_length: Option<String>,
+    transfer_encoding: Option<String>,
+    http_version: String,
+}
+
+impl StreamResponseMetadata {
+    fn from_response(response: &reqwest::Response) -> Self {
+        let header = |name| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
+        };
+        Self {
+            request_id: header("x-request-id"),
+            content_type: header("content-type"),
+            content_encoding: header("content-encoding"),
+            content_length: header("content-length"),
+            transfer_encoding: header("transfer-encoding"),
+            http_version: format!("{:?}", response.version()),
+        }
+    }
+
+    fn diagnostic_context(&self) -> String {
+        format!(
+            "request_id={}, content_type={}, content_encoding={}, content_length={}, \
+             transfer_encoding={}, http_version={}",
+            self.request_id.as_deref().unwrap_or("<none>"),
+            self.content_type.as_deref().unwrap_or("<none>"),
+            self.content_encoding.as_deref().unwrap_or("<none>"),
+            self.content_length.as_deref().unwrap_or("<none>"),
+            self.transfer_encoding.as_deref().unwrap_or("<none>"),
+            self.http_version,
+        )
+    }
+}
+
+fn provider_stream_body_error(
+    provider: &str,
+    metadata: &StreamResponseMetadata,
+    received_bytes: usize,
+    error: &reqwest::Error,
+) -> TuraError {
+    let mut causes = vec![error.to_string()];
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let message = cause.to_string();
+        if causes.last() != Some(&message) {
+            causes.push(message);
+        }
+        source = cause.source();
+    }
+    TuraError::Network {
+        message: format!(
+            "OpenAI-compatible chat stream body failed for provider '{provider}' after \
+             {received_bytes} bytes ({}): {}",
+            metadata.diagnostic_context(),
+            causes.join(": ")
+        ),
+    }
+}
+
+fn decode_stream_line<'a>(
+    provider: &str,
+    metadata: &StreamResponseMetadata,
+    bytes: &'a [u8],
+) -> Result<&'a str, TuraError> {
+    let bytes = bytes.strip_suffix(b"\r").unwrap_or(bytes);
+    std::str::from_utf8(bytes).map_err(|error| TuraError::Network {
+        message: format!(
+            "OpenAI-compatible chat stream contained invalid UTF-8 for provider '{provider}' \
+             at SSE line byte {} ({}): {error}",
+            error.valid_up_to(),
+            metadata.diagnostic_context()
+        ),
     })
 }
 

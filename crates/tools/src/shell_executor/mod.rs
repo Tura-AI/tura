@@ -7,17 +7,18 @@ mod response;
 mod shell;
 
 pub use process::{
-    current_shell_process_scope_strategy, terminate_retained_shell_process_scopes,
-    ShellProcessScopeStrategy,
+    ShellProcessScopeStrategy, current_shell_process_scope_strategy,
+    terminate_retained_shell_process_scopes,
 };
 
-use crate::commands::{apply_patch, command_safety, CommandResponse};
+use crate::commands::{CommandResponse, apply_patch, command_safety};
 use crate::runtime::tool::ToolContext;
 use std::path::Path;
 use std::process::Command;
 
 const BACKGROUND_PROCESS_KIND_ENV: &str = "TURA_BACKGROUND_PROCESS_KIND";
 const RUNTIME_SHELL_BACKGROUND_PROCESS_KIND: &str = "runtime_shell";
+const RUNTIME_SHELL_PROCESS_COMMAND_MARKER: &str = "TURA_BACKGROUND_PROCESS_KIND=runtime_shell";
 const BASH_DOCKER_CONTAINER_ENV: &str = "TURA_BASH_DOCKER_CONTAINER";
 const BASH_DOCKER_WORKDIR_ENV: &str = "TURA_BASH_DOCKER_WORKDIR";
 
@@ -109,6 +110,9 @@ pub fn execute(
             .arg(&command_text);
         command
     };
+    if use_posix {
+        command.arg(RUNTIME_SHELL_PROCESS_COMMAND_MARKER);
+    }
     command.current_dir(&request.cwd);
     apply_current_dotenv_env(&mut command);
     command.env(
@@ -197,6 +201,9 @@ pub async fn execute_async(
             .arg(&command_text);
         command
     };
+    if use_posix {
+        command.arg(RUNTIME_SHELL_PROCESS_COMMAND_MARKER);
+    }
     command.current_dir(&request.cwd);
     apply_current_dotenv_env_async(&mut command);
     command.env(
@@ -257,7 +264,7 @@ pub(crate) fn json_like_output(
 
 #[cfg(test)]
 mod tests {
-    use super::{execute, execute_async, read_batch, request, shell, ShellKind};
+    use super::{ShellKind, execute, execute_async, read_batch, request, shell};
     use crate::runtime::tool::ToolContext;
     use read_batch::space_batched_read_command;
     use request::{embedded_apply_patch_text, parse_shell_request};
@@ -503,16 +510,20 @@ mod tests {
     #[test]
     fn does_not_space_complex_or_single_read_commands() {
         assert!(space_batched_read_command("Get-Content src/a.py", false).is_none());
-        assert!(space_batched_read_command(
-            "Get-Content src/a.py | Select-String needle; Get-Content src/b.py",
-            false
-        )
-        .is_none());
-        assert!(space_batched_read_command(
-            "$files=@('src/a.py','src/b.py'); foreach ($f in $files) { Get-Content $f }",
-            false
-        )
-        .is_none());
+        assert!(
+            space_batched_read_command(
+                "Get-Content src/a.py | Select-String needle; Get-Content src/b.py",
+                false
+            )
+            .is_none()
+        );
+        assert!(
+            space_batched_read_command(
+                "$files=@('src/a.py','src/b.py'); foreach ($f in $files) { Get-Content $f }",
+                false
+            )
+            .is_none()
+        );
     }
 
     #[test]

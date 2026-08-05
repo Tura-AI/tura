@@ -209,8 +209,8 @@ fn lock_path(key: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     #[test]

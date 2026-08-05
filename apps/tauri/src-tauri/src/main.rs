@@ -1,7 +1,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use serde::Serialize;
+use std::ffi::OsStr;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -9,9 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
-use tauri::webview::PageLoadEvent;
+use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tauri::Manager;
+use tauri::webview::PageLoadEvent;
 use url::Url;
 
 const GATEWAY_BUILD_KIND: &str = "release";
@@ -33,6 +34,13 @@ struct NativeInputFile {
     name: String,
     content_base64: String,
     mime_type: Option<&'static str>,
+}
+
+#[derive(Debug)]
+enum GatewayHealth {
+    Healthy(GatewayIdentity),
+    Unavailable,
+    Incompatible(String),
 }
 
 static PENDING_MAIN_WINDOW_ARGS: OnceLock<Mutex<Option<Vec<String>>>> = OnceLock::new();
@@ -281,10 +289,19 @@ fn start_gateway_with_launcher(
     let instance_home = instance_home_for_runtime_root(&my_root);
     let endpoint =
         select_gateway_endpoint(gateway_url, gateway_url_explicit, &my_root, &instance_home)?;
-    if let Some(identity) =
-        usable_gateway_identity(&endpoint, gateway_url_explicit, &my_root, &instance_home)
-    {
-        return connected_gateway_response(&instance_home, &endpoint, "connected", Some(identity));
+    match usable_gateway_health(&endpoint, gateway_url_explicit, &my_root, &instance_home) {
+        GatewayHealth::Healthy(identity) => {
+            return connected_gateway_response(
+                &instance_home,
+                &endpoint,
+                "connected",
+                Some(identity),
+            );
+        }
+        GatewayHealth::Incompatible(reason) => {
+            return Err(incompatible_gateway_message(&endpoint, &reason));
+        }
+        GatewayHealth::Unavailable => {}
     }
     if gateway_url_explicit {
         return Err(format!(
@@ -293,10 +310,8 @@ fn start_gateway_with_launcher(
         ));
     }
     match launcher(&endpoint, &my_root, &instance_home) {
-        Ok(launched) => {
-            if let Some(identity) =
-                usable_gateway_identity(&launched, false, &my_root, &instance_home)
-            {
+        Ok(launched) => match usable_gateway_health(&launched, false, &my_root, &instance_home) {
+            GatewayHealth::Healthy(identity) => {
                 return connected_gateway_response(
                     &instance_home,
                     &launched,
@@ -304,21 +319,29 @@ fn start_gateway_with_launcher(
                     Some(identity),
                 );
             }
-        }
+            GatewayHealth::Incompatible(reason) => {
+                return Err(incompatible_gateway_message(&launched, &reason));
+            }
+            GatewayHealth::Unavailable => {}
+        },
         Err(error) if !gateway_startup_timeout_error(&error) => return Err(error),
         Err(_) => {}
     }
     if terminate_active_gateway_process(&instance_home) {
         let relaunched = launcher(&endpoint, &my_root, &instance_home)?;
-        if let Some(identity) =
-            usable_gateway_identity(&relaunched, false, &my_root, &instance_home)
-        {
-            return connected_gateway_response(
-                &instance_home,
-                &relaunched,
-                "connected",
-                Some(identity),
-            );
+        match usable_gateway_health(&relaunched, false, &my_root, &instance_home) {
+            GatewayHealth::Healthy(identity) => {
+                return connected_gateway_response(
+                    &instance_home,
+                    &relaunched,
+                    "connected",
+                    Some(identity),
+                );
+            }
+            GatewayHealth::Incompatible(reason) => {
+                return Err(incompatible_gateway_message(&relaunched, &reason));
+            }
+            GatewayHealth::Unavailable => {}
         }
         return Err(format!(
             "gateway did not become healthy for this home at {}",
@@ -375,18 +398,42 @@ fn endpoint_is_usable(
     my_root: &Path,
     instance_home: &Path,
 ) -> bool {
-    usable_gateway_identity(endpoint, explicit, my_root, instance_home).is_some()
+    matches!(
+        usable_gateway_health(endpoint, explicit, my_root, instance_home),
+        GatewayHealth::Healthy(_)
+    )
 }
 
-fn usable_gateway_identity(
+fn usable_gateway_health(
     endpoint: &GatewayEndpoint,
     explicit: bool,
     my_root: &Path,
     instance_home: &Path,
-) -> Option<GatewayIdentity> {
-    let identity = gateway_identity(endpoint)?;
-    (explicit || gateway_identity_matches_instance(&identity, my_root, instance_home))
-        .then_some(identity)
+) -> GatewayHealth {
+    match gateway_health(endpoint) {
+        GatewayHealth::Healthy(identity)
+            if explicit
+                || gateway_identity_matches_instance(&identity, my_root, instance_home)
+                || packaged_gui_gateway_identity_is_trusted(&identity, endpoint, my_root) =>
+        {
+            GatewayHealth::Healthy(identity)
+        }
+        GatewayHealth::Healthy(_) => {
+            // Preserve mismatched identity as Incompatible to prevent recovery triggers
+            GatewayHealth::Incompatible(format!(
+                "Gateway identity does not match this instance: expected '{:?}', got mismatched identity",
+                my_root
+            ))
+        }
+        other => other,
+    }
+}
+
+fn incompatible_gateway_message(endpoint: &GatewayEndpoint, reason: &str) -> String {
+    format!(
+        "gateway at {} returned an incompatible health response: {reason}",
+        endpoint.url()
+    )
 }
 
 fn launch_gateway_process(
@@ -395,8 +442,13 @@ fn launch_gateway_process(
     instance_home: &Path,
 ) -> Result<GatewayEndpoint, String> {
     let executable = resolve_gateway_binary(my_root)?;
+    let runtime_root = executable
+        .parent()
+        .map(runtime_root_from_start)
+        .filter(|root| is_runtime_root(root))
+        .unwrap_or_else(|| my_root.to_path_buf());
     let mut command = Command::new(&executable);
-    configure_gateway_runtime_command(&mut command, my_root, instance_home, target)
+    configure_gateway_runtime_command(&mut command, &runtime_root, instance_home, target)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .stdin(Stdio::null());
@@ -579,12 +631,29 @@ fn native_input_file_from_rgba(
     height: usize,
     rgba: Vec<u8>,
 ) -> Result<NativeInputFile, String> {
-    let buffer = image::RgbaImage::from_raw(width as u32, height as u32, rgba)
-        .ok_or_else(|| "clipboard image has invalid RGBA dimensions".to_string())?;
+    let invalid_dimensions = || "clipboard image has invalid RGBA dimensions".to_string();
+    let width = u32::try_from(width).map_err(|_| invalid_dimensions())?;
+    let height = u32::try_from(height).map_err(|_| invalid_dimensions())?;
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(invalid_dimensions)?;
+    if rgba.len() != expected_len {
+        return Err(invalid_dimensions());
+    }
+
     let mut png = Vec::new();
-    image::DynamicImage::ImageRgba8(buffer)
-        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-        .map_err(|err| format!("failed to encode clipboard image: {err}"))?;
+    {
+        let mut encoder = png::Encoder::new(&mut png, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|err| format!("failed to encode clipboard image: {err}"))?;
+        writer
+            .write_image_data(&rgba)
+            .map_err(|err| format!("failed to encode clipboard image: {err}"))?;
+    }
     Ok(NativeInputFile {
         name: name.to_string(),
         content_base64: general_purpose::STANDARD.encode(png),
@@ -667,7 +736,25 @@ fn instance_home_for_runtime_root(runtime_root: &Path) -> PathBuf {
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
         .map(|path| normalize_path(&path))
+        .or_else(|| packaged_application_home(runtime_root))
         .unwrap_or_else(|| normalize_path(runtime_root))
+}
+
+fn packaged_application_home(runtime_root: &Path) -> Option<PathBuf> {
+    if !macos_bundle_runtime_root(runtime_root) {
+        return None;
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|home| {
+            normalize_path(
+                &home
+                    .join("Library")
+                    .join("Application Support")
+                    .join("dev.tura.tura-gui"),
+            )
+        })
 }
 
 /// Runtime root the running GUI belongs to (its own package directory).
@@ -697,6 +784,19 @@ fn current_project_root() -> PathBuf {
         .filter(|path| !path.as_os_str().is_empty())
         .map(|path| normalize_path(&path))
         .unwrap_or_else(current_runtime_root)
+}
+
+fn macos_bundle_runtime_root(path: &Path) -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    path.ends_with(Path::new("Contents").join("MacOS"))
+        && path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .and_then(OsStr::to_str)
+            .is_some_and(|name| name.ends_with(".app"))
 }
 
 fn same_root(left: &str, right: &Path) -> bool {
@@ -754,24 +854,155 @@ fn resolve_gateway_binary(my_root: &Path) -> Result<PathBuf, String> {
     } else {
         "tura_gateway"
     };
-    let mut candidates = Vec::new();
     if let Some(value) =
         std::env::var_os("TURA_GATEWAY_BIN").or_else(|| std::env::var_os("TURA_GATEWAY_EXE"))
     {
-        candidates.push(PathBuf::from(value));
+        let path = PathBuf::from(value);
+        if !path.as_os_str().is_empty() {
+            return require_executable_gateway_override(path);
+        }
     }
-    if let Ok(current_exe) = std::env::current_exe()
-        && let Some(dir) = current_exe.parent()
-    {
-        candidates.push(dir.join(exe_name));
-    }
-    candidates.push(my_root.join("target").join("release").join(exe_name));
-    candidates.push(my_root.join("bin").join(exe_name));
-    candidates.push(my_root.join(exe_name));
-    candidates
+
+    let current_exe = std::env::current_exe().ok();
+    let path_entries = std::env::var_os("PATH")
+        .as_deref()
+        .map(std::env::split_paths)
         .into_iter()
-        .find(|candidate| candidate.is_file())
-        .ok_or_else(|| "gateway binary not found; build or install tura_gateway first".to_string())
+        .flatten()
+        .collect::<Vec<_>>();
+    let npm_roots = npm_global_module_roots();
+    gateway_binary_candidates(
+        my_root,
+        current_exe.as_deref(),
+        &path_entries,
+        &npm_roots,
+        exe_name,
+    )
+    .into_iter()
+    .find(|candidate| is_executable_file(candidate))
+    .ok_or_else(|| {
+        "gateway executable not found; install tura-ai globally with npm or set TURA_GATEWAY_BIN"
+            .to_string()
+    })
+}
+
+fn gateway_binary_candidates(
+    my_root: &Path,
+    current_exe: Option<&Path>,
+    path_entries: &[PathBuf],
+    npm_module_roots: &[PathBuf],
+    exe_name: &str,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = current_exe.and_then(Path::parent) {
+        push_unique_path(&mut candidates, dir.join(exe_name));
+    }
+    for candidate in [
+        my_root.join("target").join("release").join(exe_name),
+        my_root.join("bin").join(exe_name),
+        my_root.join(exe_name),
+    ] {
+        push_unique_path(&mut candidates, candidate);
+    }
+    for directory in path_entries {
+        push_unique_path(&mut candidates, directory.join(exe_name));
+    }
+    for node_modules in npm_module_roots {
+        for package in [
+            node_modules.join("tura-ai"),
+            node_modules.join("@tura-ai").join("tura"),
+        ] {
+            push_unique_path(
+                &mut candidates,
+                package.join("target").join("release").join(exe_name),
+            );
+        }
+    }
+    candidates
+}
+
+fn npm_global_module_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for root in [
+        PathBuf::from("/opt/homebrew/lib/node_modules"),
+        PathBuf::from("/usr/local/lib/node_modules"),
+    ] {
+        push_unique_path(&mut roots, root);
+    }
+    let Some(home) = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    else {
+        return roots;
+    };
+    for root in [
+        home.join(".npm-global").join("lib").join("node_modules"),
+        home.join(".local").join("lib").join("node_modules"),
+    ] {
+        push_unique_path(&mut roots, root);
+    }
+    for versions_root in [
+        home.join(".nvm").join("versions").join("node"),
+        home.join(".local")
+            .join("share")
+            .join("fnm")
+            .join("node-versions"),
+        home.join(".fnm").join("node-versions"),
+    ] {
+        let Ok(entries) = std::fs::read_dir(versions_root) else {
+            continue;
+        };
+        let mut version_roots = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        version_roots.sort_by(|left, right| right.cmp(left));
+        for version_root in version_roots {
+            let direct = version_root.join("lib").join("node_modules");
+            let installed = version_root
+                .join("installation")
+                .join("lib")
+                .join("node_modules");
+            push_unique_path(&mut roots, direct);
+            push_unique_path(&mut roots, installed);
+        }
+    }
+    roots
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !paths.iter().any(|path| path == &candidate) {
+        paths.push(candidate);
+    }
+}
+
+fn require_executable_gateway_override(path: PathBuf) -> Result<PathBuf, String> {
+    if is_executable_file(&path) {
+        return Ok(path);
+    }
+    Err(format!(
+        "TURA_GATEWAY_BIN points to a missing or non-executable file: {}",
+        path.display()
+    ))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn select_gateway_endpoint(
@@ -790,7 +1021,8 @@ fn select_gateway_endpoint(
     let candidates = gateway_endpoint_candidates(requested_url, instance_home, &default_endpoint);
     for candidate in candidates {
         if let Some(identity) = gateway_identity(&candidate)
-            && gateway_identity_matches_instance(&identity, my_root, instance_home)
+            && (gateway_identity_matches_instance(&identity, my_root, instance_home)
+                || packaged_gui_gateway_identity_is_trusted(&identity, &candidate, my_root))
         {
             write_active_gateway_url(instance_home, &candidate)?;
             return Ok(candidate);
@@ -808,20 +1040,16 @@ fn select_gateway_endpoint(
 fn same_home_gateway_process_endpoint(instance_home: &Path) -> Option<GatewayEndpoint> {
     let mut system = System::new();
     system.refresh_processes_specifics(
-        ProcessRefreshKind::new()
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
             .with_environ(UpdateKind::Always)
             .with_exe(UpdateKind::Always),
     );
     system.processes().values().find_map(|process| {
-        let snapshot = GatewayProcessSnapshot {
-            name: process.name().to_string(),
-            exe: process.exe().map(Path::to_path_buf),
-            cmd: process.cmd().to_vec(),
-            environ: process.environ().to_vec(),
-            cwd: process.cwd().map(Path::to_path_buf),
-        };
+        let snapshot = gateway_process_snapshot(process);
         gateway_process_endpoint_from_snapshot(&snapshot, instance_home)
     })
 }
@@ -833,6 +1061,24 @@ struct GatewayProcessSnapshot {
     cmd: Vec<String>,
     environ: Vec<String>,
     cwd: Option<PathBuf>,
+}
+
+fn gateway_process_snapshot(process: &Process) -> GatewayProcessSnapshot {
+    GatewayProcessSnapshot {
+        name: process.name().to_string_lossy().into_owned(),
+        exe: process.exe().map(Path::to_path_buf),
+        cmd: process
+            .cmd()
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect(),
+        environ: process
+            .environ()
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect(),
+        cwd: process.cwd().map(Path::to_path_buf),
+    }
 }
 
 fn gateway_process_endpoint_from_snapshot(
@@ -997,13 +1243,7 @@ fn terminate_gateway_process_record(record: &ActiveGatewayProcessRecord) -> bool
     if process.start_time() != record.process_start_time {
         return false;
     }
-    let snapshot = GatewayProcessSnapshot {
-        name: process.name().to_string(),
-        exe: process.exe().map(Path::to_path_buf),
-        cmd: process.cmd().to_vec(),
-        environ: process.environ().to_vec(),
-        cwd: process.cwd().map(Path::to_path_buf),
-    };
+    let snapshot = gateway_process_snapshot(process);
     if !is_gateway_process(&snapshot) {
         return false;
     }
@@ -1014,6 +1254,7 @@ fn terminate_gateway_process_record(record: &ActiveGatewayProcessRecord) -> bool
 struct GatewayIdentity {
     root: String,
     home: String,
+    exe_dir: String,
     pid: Option<u32>,
     process_start_time: Option<u64>,
 }
@@ -1021,33 +1262,97 @@ struct GatewayIdentity {
 /// Probe `/global/health`; on a healthy gateway return its reported identity,
 /// otherwise `None`.
 fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<GatewayIdentity> {
-    endpoint.socket_addrs().into_iter().find_map(|addr| {
-        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(350)).ok()?;
+    match gateway_health(endpoint) {
+        GatewayHealth::Healthy(identity) => Some(identity),
+        GatewayHealth::Unavailable | GatewayHealth::Incompatible(_) => None,
+    }
+}
+
+fn gateway_health(endpoint: &GatewayEndpoint) -> GatewayHealth {
+    let mut incompatible = None;
+    for addr in endpoint.socket_addrs() {
+        let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(350)) else {
+            continue;
+        };
         let _ = stream.set_read_timeout(Some(Duration::from_millis(900)));
         let _ = stream.set_write_timeout(Some(Duration::from_millis(900)));
         let request = format!(
             "GET /global/health HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
             endpoint.host, endpoint.port
         );
-        stream.write_all(request.as_bytes()).ok()?;
+        if stream.write_all(request.as_bytes()).is_err() {
+            continue;
+        }
         let mut response = String::new();
-        stream.read_to_string(&mut response).ok()?;
-        gateway_identity_from_http_response(&response)
-    })
+        if stream.read_to_string(&mut response).is_err() || !http_response_is_complete(&response) {
+            continue;
+        }
+        match parse_gateway_identity_from_http_response(&response) {
+            Ok(identity) => return GatewayHealth::Healthy(identity),
+            Err(_) if retryable_gateway_health_response(&response) => {}
+            Err(reason) => incompatible = Some(reason),
+        }
+    }
+    incompatible
+        .map(GatewayHealth::Incompatible)
+        .unwrap_or(GatewayHealth::Unavailable)
 }
 
-fn gateway_identity_from_http_response(response: &str) -> Option<GatewayIdentity> {
-    let (status_line, _) = response.split_once("\r\n")?;
-    let mut status_parts = status_line.split_ascii_whitespace();
-    if !matches!(status_parts.next(), Some("HTTP/1.0" | "HTTP/1.1"))
-        || status_parts.next() != Some("200")
-    {
-        return None;
+fn http_response_is_complete(response: &str) -> bool {
+    let Some((headers, body)) = response.split_once("\r\n\r\n") else {
+        return false;
+    };
+    let content_length = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())
+            .flatten()
+    });
+    content_length.is_none_or(|length| body.len() >= length)
+}
+
+fn retryable_gateway_health_response(response: &str) -> bool {
+    let status = response
+        .lines()
+        .next()
+        .and_then(|line| line.split_ascii_whitespace().nth(1))
+        .and_then(|status| status.parse::<u16>().ok());
+    if status.is_some_and(|status| (500..=599).contains(&status)) {
+        return true;
     }
-    let (_, body) = response.split_once("\r\n\r\n")?;
-    let value = serde_json::from_str::<serde_json::Value>(body.trim()).ok()?;
+    response
+        .split_once("\r\n\r\n")
+        .and_then(|(_, body)| serde_json::from_str::<serde_json::Value>(body.trim()).ok())
+        .and_then(|body| body.get("healthy").and_then(serde_json::Value::as_bool))
+        == Some(false)
+}
+
+#[cfg(test)]
+fn gateway_identity_from_http_response(response: &str) -> Option<GatewayIdentity> {
+    parse_gateway_identity_from_http_response(response).ok()
+}
+
+fn parse_gateway_identity_from_http_response(response: &str) -> Result<GatewayIdentity, String> {
+    let (status_line, _) = response
+        .split_once("\r\n")
+        .ok_or_else(|| "missing HTTP status line".to_string())?;
+    let mut status_parts = status_line.split_ascii_whitespace();
+    if !matches!(status_parts.next(), Some("HTTP/1.0" | "HTTP/1.1")) {
+        return Err("unsupported HTTP response version".to_string());
+    }
+    let status = status_parts
+        .next()
+        .ok_or_else(|| "missing HTTP response status".to_string())?;
+    if status != "200" {
+        return Err(format!("health endpoint returned HTTP {status}"));
+    }
+    let (_, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| "missing HTTP response body".to_string())?;
+    let value = serde_json::from_str::<serde_json::Value>(body.trim())
+        .map_err(|error| format!("health body is not valid JSON: {error}"))?;
     if value.get("healthy").and_then(serde_json::Value::as_bool) != Some(true) {
-        return None;
+        return Err("health body does not report healthy=true".to_string());
     }
     let root = value
         .get("root")
@@ -1059,6 +1364,11 @@ fn gateway_identity_from_http_response(response: &str) -> Option<GatewayIdentity
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let exe_dir = value
+        .get("exe_dir")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let pid = value
         .get("pid")
         .and_then(serde_json::Value::as_u64)
@@ -1066,9 +1376,10 @@ fn gateway_identity_from_http_response(response: &str) -> Option<GatewayIdentity
     let process_start_time = value
         .get("process_start_time")
         .and_then(serde_json::Value::as_u64);
-    Some(GatewayIdentity {
+    Ok(GatewayIdentity {
         root,
         home,
+        exe_dir,
         pid,
         process_start_time,
     })
@@ -1083,6 +1394,89 @@ fn gateway_identity_matches_instance(
         return same_root(&identity.home, instance_home);
     }
     same_root(&identity.root, my_root)
+}
+
+fn packaged_gui_gateway_identity_is_trusted(
+    identity: &GatewayIdentity,
+    endpoint: &GatewayEndpoint,
+    my_root: &Path,
+) -> bool {
+    if !macos_bundle_runtime_root(my_root) || !endpoint.is_loopback() {
+        return false;
+    }
+    let exe_name = if cfg!(windows) {
+        "tura_gateway.exe"
+    } else {
+        "tura_gateway"
+    };
+    let executable = Path::new(&identity.exe_dir).join(exe_name);
+    if !is_executable_file(&executable) {
+        return false;
+    }
+    let npm_roots = npm_global_module_roots();
+    let npm_candidates = gateway_binary_candidates(my_root, None, &[], &npm_roots, exe_name);
+    let known_executable = npm_candidates
+        .iter()
+        .any(|candidate| comparable_path(candidate) == comparable_path(&executable));
+    let reported_root = Path::new(&identity.root);
+    let known_executable = known_executable
+        || (is_runtime_root(reported_root)
+            && gateway_binary_candidates(reported_root, None, &[], &[], exe_name)
+                .iter()
+                .any(|candidate| comparable_path(candidate) == comparable_path(&executable)));
+    known_executable && gateway_identity_matches_live_process(identity, endpoint, &executable)
+}
+
+fn gateway_identity_matches_live_process(
+    identity: &GatewayIdentity,
+    endpoint: &GatewayEndpoint,
+    expected_executable: &Path,
+) -> bool {
+    let (Some(pid), Some(process_start_time)) = (identity.pid, identity.process_start_time) else {
+        return false;
+    };
+    let mut system = System::new_all();
+    system.refresh_all();
+    let Some(process) = system.process(Pid::from_u32(pid)) else {
+        return false;
+    };
+    if process.start_time() != process_start_time {
+        return false;
+    }
+    let Some(actual_executable) = process.exe() else {
+        return false;
+    };
+    if !same_executable_file(actual_executable, expected_executable) {
+        return false;
+    }
+    let snapshot = GatewayProcessSnapshot {
+        exe: Some(actual_executable.to_path_buf()),
+        ..gateway_process_snapshot(process)
+    };
+    match gateway_process_endpoint_from_snapshot(&snapshot, Path::new(&identity.home)) {
+        Some(process_endpoint) => process_endpoint.url() == endpoint.url(),
+        None => {
+            gateway_process_port(&snapshot).is_none()
+                && endpoint.port
+                    == tura_path::default_gateway_port_for_build_kind(GATEWAY_BUILD_KIND)
+        }
+    }
+}
+
+fn same_executable_file(left: &Path, right: &Path) -> bool {
+    #[cfg(not(unix))]
+    {
+        return comparable_path(left) == comparable_path(right);
+    }
+    #[cfg(unix)]
+    let (Ok(left), Ok(right)) = (left.metadata(), right.metadata()) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        left.dev() == right.dev() && left.ino() == right.ino()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1137,6 +1531,14 @@ impl GatewayEndpoint {
         };
         format!("http://{host}:{}", self.port)
     }
+
+    fn is_loopback(&self) -> bool {
+        self.host.eq_ignore_ascii_case("localhost")
+            || self
+                .host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    }
 }
 
 impl Default for GatewayEndpoint {
@@ -1186,6 +1588,67 @@ mod tests {
 
         drop(env);
         let _ = fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn packaged_gui_uses_writable_application_support_home() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let root = test_temp_dir("packaged-gui-home");
+        let bundle_runtime = root
+            .join("Applications")
+            .join("tura_gui.app")
+            .join("Contents")
+            .join("MacOS");
+        fs::create_dir_all(&bundle_runtime).expect("create bundle runtime");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&bundle_runtime, fs::Permissions::from_mode(0o555))
+                .expect("make bundle runtime read-only");
+        }
+        let home = root.join("user");
+        fs::create_dir_all(&home).expect("create user home");
+        let home_text = home.to_string_lossy().to_string();
+        let env = TestEnv::set([("TURA_HOME", ""), ("HOME", home_text.as_str())]);
+
+        let instance_home = instance_home_for_runtime_root(&bundle_runtime);
+
+        assert_eq!(
+            instance_home,
+            home.join("Library")
+                .join("Application Support")
+                .join("dev.tura.tura-gui")
+        );
+        assert!(!instance_home.starts_with(&bundle_runtime));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&bundle_runtime, fs::Permissions::from_mode(0o755))
+                .expect("restore bundle runtime permissions");
+        }
+        drop(env);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn packaged_gui_preserves_explicit_instance_home() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let root = test_temp_dir("packaged-gui-explicit-home");
+        let bundle_runtime = root.join("tura_gui.app").join("Contents").join("MacOS");
+        fs::create_dir_all(&bundle_runtime).expect("create bundle runtime");
+        let explicit_home = root.join("explicit-home");
+        let explicit_home_text = explicit_home.to_string_lossy().to_string();
+        let env = TestEnv::set([("TURA_HOME", explicit_home_text.as_str())]);
+
+        assert_eq!(
+            instance_home_for_runtime_root(&bundle_runtime),
+            explicit_home
+        );
+
+        drop(env);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1302,23 +1765,27 @@ mod tests {
 
     #[test]
     fn gui_startup_args_require_gateway_url() {
-        assert!(gui_startup_url_from_args(
-            Url::parse("http://127.0.0.1:5174/").expect("base url"),
-            vec!["--workspace".to_string(), "C:\\repo".to_string()],
-        )
-        .is_none());
+        assert!(
+            gui_startup_url_from_args(
+                Url::parse("http://127.0.0.1:5174/").expect("base url"),
+                vec!["--workspace".to_string(), "C:\\repo".to_string()],
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn gui_startup_args_ignore_blank_transient_url() {
-        assert!(gui_startup_url_from_args(
-            Url::parse("about:blank").expect("blank url"),
-            vec![
-                "--gateway-url".to_string(),
-                "http://127.0.0.1:4126".to_string(),
-            ],
-        )
-        .is_none());
+        assert!(
+            gui_startup_url_from_args(
+                Url::parse("about:blank").expect("blank url"),
+                vec![
+                    "--gateway-url".to_string(),
+                    "http://127.0.0.1:4126".to_string(),
+                ],
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -1331,10 +1798,12 @@ mod tests {
         ];
 
         assert!(queue_main_window_restore(args.clone()));
-        assert!(take_pending_main_window_args_for_base_url(
-            &Url::parse("about:blank").expect("blank url")
-        )
-        .is_none());
+        assert!(
+            take_pending_main_window_args_for_base_url(
+                &Url::parse("about:blank").expect("blank url")
+            )
+            .is_none()
+        );
         assert_eq!(take_pending_main_window_args(), Some(args));
     }
 
@@ -1496,11 +1965,12 @@ mod tests {
 
     #[test]
     fn gateway_health_parser_accepts_standard_json_whitespace() {
-        let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"healthy\": true, \"root\": \"C:/repo\", \"home\": \"C:/home\", \"pid\": 42, \"process_start_time\": 7}";
+        let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"healthy\": true, \"root\": \"C:/repo\", \"home\": \"C:/home\", \"exe_dir\": \"C:/repo/target/release\", \"pid\": 42, \"process_start_time\": 7}";
         let identity = gateway_identity_from_http_response(response).expect("healthy identity");
 
         assert_eq!(identity.root, "C:/repo");
         assert_eq!(identity.home, "C:/home");
+        assert_eq!(identity.exe_dir, "C:/repo/target/release");
         assert_eq!(identity.pid, Some(42));
         assert_eq!(identity.process_start_time, Some(7));
         assert!(
@@ -1530,6 +2000,93 @@ mod tests {
                 "accepted invalid gateway health status line: {status_line}"
             );
         }
+    }
+
+    #[test]
+    fn gateway_health_parser_reports_incompatible_contract_details() {
+        assert_eq!(
+            parse_gateway_identity_from_http_response(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"healthy\":false}"
+            )
+            .expect_err("unhealthy body must be incompatible"),
+            "health body does not report healthy=true"
+        );
+        assert_eq!(
+            parse_gateway_identity_from_http_response(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nmissing"
+            )
+            .expect_err("missing health route must be incompatible"),
+            "health endpoint returned HTTP 404"
+        );
+        assert!(retryable_gateway_health_response(
+            "HTTP/1.1 503 Service Unavailable\r\n\r\nstarting"
+        ));
+        assert!(retryable_gateway_health_response(
+            "HTTP/1.1 200 OK\r\n\r\n{\"healthy\":false}"
+        ));
+        assert!(!retryable_gateway_health_response(
+            "HTTP/1.1 200 OK\r\n\r\nnot-json"
+        ));
+    }
+
+    #[test]
+    fn gateway_binary_candidates_preserve_local_path_and_npm_order() {
+        let candidates = gateway_binary_candidates(
+            Path::new("/Applications/tura_gui.app/Contents/MacOS"),
+            Some(Path::new(
+                "/Applications/tura_gui.app/Contents/MacOS/tura_gui",
+            )),
+            &[PathBuf::from("/custom/bin")],
+            &[
+                PathBuf::from("/opt/homebrew/lib/node_modules"),
+                PathBuf::from("/usr/local/lib/node_modules"),
+            ],
+            "tura_gateway",
+        );
+
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("/Applications/tura_gui.app/Contents/MacOS/tura_gateway"),
+                PathBuf::from(
+                    "/Applications/tura_gui.app/Contents/MacOS/target/release/tura_gateway"
+                ),
+                PathBuf::from("/Applications/tura_gui.app/Contents/MacOS/bin/tura_gateway"),
+                PathBuf::from("/custom/bin/tura_gateway"),
+                PathBuf::from("/opt/homebrew/lib/node_modules/tura-ai/target/release/tura_gateway"),
+                PathBuf::from(
+                    "/opt/homebrew/lib/node_modules/@tura-ai/tura/target/release/tura_gateway"
+                ),
+                PathBuf::from("/usr/local/lib/node_modules/tura-ai/target/release/tura_gateway"),
+                PathBuf::from(
+                    "/usr/local/lib/node_modules/@tura-ai/tura/target/release/tura_gateway"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn gateway_binary_override_requires_an_executable_file() {
+        let temp = test_temp_dir("gateway-executable-validation");
+        let binary = temp.join("tura_gateway");
+        fs::write(&binary, b"gateway").expect("write gateway fixture");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o644))
+                .expect("set non-executable permissions");
+            assert!(require_executable_gateway_override(binary.clone()).is_err());
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
+                .expect("set executable permissions");
+        }
+
+        assert_eq!(
+            require_executable_gateway_override(binary.clone())
+                .expect("executable gateway override"),
+            binary
+        );
+        let _ = fs::remove_dir_all(temp);
     }
 
     #[test]
@@ -1705,7 +2262,7 @@ mod tests {
     }
 
     #[test]
-    fn open_tcp_port_without_health_response_is_not_reachable() {
+    fn open_tcp_port_without_health_response_is_retryable_unavailable() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
         let port = listener.local_addr().expect("local addr").port();
         let endpoint = GatewayEndpoint {
@@ -1717,7 +2274,105 @@ mod tests {
             let (_stream, _) = listener.accept().expect("accept probe");
             std::thread::sleep(Duration::from_millis(1_200));
         });
-        assert!(gateway_identity(&endpoint).is_none());
+        assert!(matches!(
+            gateway_health(&endpoint),
+            GatewayHealth::Unavailable
+        ));
+    }
+
+    #[test]
+    fn partial_http_health_response_is_retryable_unavailable() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let endpoint = GatewayEndpoint {
+            host: "127.0.0.1".to_string(),
+            port,
+            explicit_port: Some(port),
+        };
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept probe");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 32\r\n\r\n{\"healthy\":",
+                )
+                .expect("write partial health response");
+        });
+
+        assert!(matches!(
+            gateway_health(&endpoint),
+            GatewayHealth::Unavailable
+        ));
+    }
+
+    #[test]
+    fn complete_invalid_health_response_is_incompatible() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let endpoint = GatewayEndpoint {
+            host: "127.0.0.1".to_string(),
+            port,
+            explicit_port: Some(port),
+        };
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept probe");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\nok",
+                )
+                .expect("write invalid health response");
+        });
+
+        assert!(matches!(
+            gateway_health(&endpoint),
+            GatewayHealth::Incompatible(_)
+        ));
+    }
+
+    #[test]
+    fn healthy_gateway_with_mismatched_identity_is_incompatible_not_unavailable() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let my_root = test_temp_dir("mismatch-my-root");
+        let instance_home = test_temp_dir("mismatch-instance-home");
+        let foreign_root = test_temp_dir("mismatch-foreign-root");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let endpoint = GatewayEndpoint {
+            host: "127.0.0.1".to_string(),
+            port,
+            explicit_port: Some(port),
+        };
+        let foreign_root_text = foreign_root.to_string_lossy().to_string();
+        let foreign_home_text = foreign_root.join("home").to_string_lossy().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health check");
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"healthy\":true,\"root\":{},\"home\":{}}}",
+                        serde_json::to_string(&foreign_root_text).expect("json root"),
+                        serde_json::to_string(&foreign_home_text).expect("json home")
+                    )
+                    .as_bytes(),
+                )
+                .expect("write health response");
+        });
+
+        assert!(
+            matches!(
+                usable_gateway_health(&endpoint, false, &my_root, &instance_home),
+                GatewayHealth::Incompatible(_)
+            ),
+            "a healthy gateway whose home/root does not match the instance must surface as Incompatible, not Unavailable"
+        );
+        let _ = fs::remove_dir_all(my_root);
+        let _ = fs::remove_dir_all(instance_home);
+        let _ = fs::remove_dir_all(foreign_root);
     }
 
     #[test]
@@ -1726,11 +2381,12 @@ mod tests {
         let snapshot = gateway_process_snapshot(
             "tura_gateway.exe",
             Some(home.join("bin").join("tura_gateway.exe")),
-            vec![home
-                .join("bin")
-                .join("tura_gateway.exe")
-                .display()
-                .to_string()],
+            vec![
+                home.join("bin")
+                    .join("tura_gateway.exe")
+                    .display()
+                    .to_string(),
+            ],
             vec![
                 format!("TURA_HOME={}", home.display()),
                 "TURA_GATEWAY_PORT=4789".to_string(),
@@ -1858,6 +2514,96 @@ mod tests {
             .expect_err("explicit absent gateway must fail without spawning");
 
         assert!(error.contains("explicit gateway is not running at"));
+    }
+
+    #[test]
+    fn start_gateway_surfaces_process_start_failure() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let home = test_temp_dir("start-gateway-process-failure-home");
+        let project_root = test_temp_dir("start-gateway-process-failure-root");
+        let home_text = home.to_string_lossy().to_string();
+        let project_root_text = project_root.to_string_lossy().to_string();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind free port");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        let port_text = port.to_string();
+        let env = TestEnv::set([
+            ("TURA_HOME", home_text.as_str()),
+            ("TURA_PROJECT_ROOT", project_root_text.as_str()),
+            (tura_path::TURA_GATEWAY_URL_ENV, ""),
+            (tura_path::TURA_GATEWAY_PORT_ENV, port_text.as_str()),
+        ]);
+
+        let error =
+            start_gateway_with_launcher("http://127.0.0.1:4126", false, |_target, _root, _home| {
+                Err("failed to start gateway /missing/tura_gateway: permission denied".to_string())
+            })
+            .expect_err("process-start failure must be returned");
+
+        assert!(error.contains("failed to start gateway"));
+        assert!(error.contains("permission denied"));
+        drop(env);
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn finder_bundle_trust_requires_live_matching_process_identity() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env test lock");
+        let root = test_temp_dir("finder-process-identity");
+        let app_runtime = root.join("tura_gui.app").join("Contents").join("MacOS");
+        fs::create_dir_all(&app_runtime).expect("create app runtime");
+        let npm_release = root
+            .join(".npm-global")
+            .join("lib")
+            .join("node_modules")
+            .join("tura-ai")
+            .join("target")
+            .join("release");
+        fs::create_dir_all(&npm_release).expect("create npm release");
+        let gateway_binary = npm_release.join("tura_gateway");
+        let current_exe = std::env::current_exe().expect("current test executable");
+        fs::hard_link(&current_exe, &gateway_binary).expect("link npm gateway fixture");
+        let root_text = root.to_string_lossy().to_string();
+        let env = TestEnv::set([("HOME", root_text.as_str())]);
+        let mut system = System::new_all();
+        system.refresh_all();
+        let pid = std::process::id();
+        let start_time = system
+            .process(Pid::from_u32(pid))
+            .expect("current test process")
+            .start_time();
+        let endpoint = default_gateway_endpoint();
+        let identity = GatewayIdentity {
+            root: "/npm/global/tura-ai".to_string(),
+            home: "/other/home".to_string(),
+            exe_dir: npm_release.to_string_lossy().to_string(),
+            pid: Some(pid),
+            process_start_time: Some(start_time),
+        };
+
+        assert!(packaged_gui_gateway_identity_is_trusted(
+            &identity,
+            &endpoint,
+            &app_runtime
+        ));
+        let mut spoofed = identity.clone();
+        spoofed.process_start_time = Some(start_time.saturating_add(1));
+        assert!(!packaged_gui_gateway_identity_is_trusted(
+            &spoofed,
+            &endpoint,
+            &app_runtime
+        ));
+        spoofed = identity;
+        spoofed.pid = Some(u32::MAX);
+        assert!(!packaged_gui_gateway_identity_is_trusted(
+            &spoofed,
+            &endpoint,
+            &app_runtime
+        ));
+        drop(env);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

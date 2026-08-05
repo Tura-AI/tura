@@ -7,9 +7,9 @@ use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
 use lifecycle::RuntimeAggregate;
 use lifecycle::SessionManagement;
 
+use super::USER_AGENT_CONTEXT_ROLE;
 use super::compaction::context_compaction_messages;
 use super::types::ContextState;
-use super::USER_AGENT_CONTEXT_ROLE;
 #[derive(Debug, Clone)]
 pub struct ContextInput<'a> {
     pub session: &'a SessionManagement,
@@ -505,8 +505,8 @@ use super::tool_results::{
 #[cfg(test)]
 mod tests {
     use super::{
-        accumulate_message, accumulate_tool_result, accumulate_tool_result_with_provider_metadata,
-        build_context, build_messages_from_session, ContextInput,
+        ContextInput, accumulate_message, accumulate_tool_result,
+        accumulate_tool_result_with_provider_metadata, build_context, build_messages_from_session,
     };
     use crate::context::USER_AGENT_CONTEXT_ROLE;
     use crate::context::{compact_session_context, compact_session_context_automatically};
@@ -1712,15 +1712,21 @@ mod tests {
         assert!(contents.iter().any(|content| content.contains(
             "Continue working toward the active thread user goal and Operation Manual."
         )));
-        assert!(contents
-            .iter()
-            .any(|content| content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE")));
-        assert!(!contents
-            .iter()
-            .any(|content| content.contains("perform a completion audit")));
-        assert!(!contents
-            .iter()
-            .any(|content| content.contains("STALE TASK FOCUS OBJECTIVE")));
+        assert!(
+            contents
+                .iter()
+                .any(|content| content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"))
+        );
+        assert!(
+            !contents
+                .iter()
+                .any(|content| content.contains("perform a completion audit"))
+        );
+        assert!(
+            !contents
+                .iter()
+                .any(|content| content.contains("STALE TASK FOCUS OBJECTIVE"))
+        );
         assert_eq!(
             contents
                 .iter()
@@ -1746,12 +1752,16 @@ mod tests {
             .filter_map(|message| message.get("content").and_then(serde_json::Value::as_str))
             .collect::<Vec<_>>();
 
-        assert!(contents
-            .iter()
-            .any(|content| content.contains("Agent compact handoff:\ncompact handoff summary")));
-        assert!(!contents
-            .iter()
-            .any(|content| content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE")));
+        assert!(
+            contents
+                .iter()
+                .any(|content| content.contains("Agent compact handoff:\ncompact handoff summary"))
+        );
+        assert!(
+            !contents
+                .iter()
+                .any(|content| content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"))
+        );
     }
 
     #[test]
@@ -1841,12 +1851,16 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(contents.iter().any(|content| content.contains("user-0")));
-        assert!(contents
-            .iter()
-            .any(|content| content.contains("assistant-0")));
-        assert!(contents
-            .iter()
-            .any(|content| content.contains("assistant-1")));
+        assert!(
+            contents
+                .iter()
+                .any(|content| content.contains("assistant-0"))
+        );
+        assert!(
+            contents
+                .iter()
+                .any(|content| content.contains("assistant-1"))
+        );
         assert!(contents.iter().any(|content| content.contains("user-3")));
         assert_eq!(
             output

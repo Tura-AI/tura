@@ -1,6 +1,5 @@
 use super::SessionLogStore;
 use anyhow::{Context, Result};
-use fs2::FileExt;
 use rusqlite::Connection;
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
@@ -94,7 +93,7 @@ fn sqlite_init_file_lock(path: &Path) -> Result<SqliteInitFileLock> {
             }
         }
     };
-    file.lock_exclusive()
+    file.lock()
         .with_context(|| format!("failed to lock SQLite init lock {}", lock_path.display()))?;
     Ok(SqliteInitFileLock { file })
 }

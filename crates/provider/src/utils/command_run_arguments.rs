@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::{json_prefix, xml_parameters};
 
@@ -309,9 +309,11 @@ mod tests {
         let command = &normalized["commands"][0];
 
         assert_eq!(command["command_type"], "apply_patch");
-        assert!(command["command_line"]
-            .as_str()
-            .expect("command line")
-            .starts_with("*** Begin Patch"));
+        assert!(
+            command["command_line"]
+                .as_str()
+                .expect("command line")
+                .starts_with("*** Begin Patch")
+        );
     }
 }

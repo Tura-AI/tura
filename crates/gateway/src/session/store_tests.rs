@@ -406,11 +406,13 @@ fn add_tool_message_normalizes_running_state_with_final_output_metadata() {
         state.get("error").and_then(serde_json::Value::as_str),
         Some("bad command")
     );
-    assert!(state
-        .get("time")
-        .and_then(|time| time.get("end"))
-        .and_then(serde_json::Value::as_i64)
-        .is_some());
+    assert!(
+        state
+            .get("time")
+            .and_then(|time| time.get("end"))
+            .and_then(serde_json::Value::as_i64)
+            .is_some()
+    );
 }
 
 #[test]
@@ -1323,12 +1325,16 @@ fn system_context_does_not_enter_frontend_session_db_projection() {
             .all(|message| message.role != MessageRole::System),
         "frontend messages must not expose system prompts: {frontend_messages:#?}"
     );
-    assert!(frontend_messages
-        .iter()
-        .any(|message| message.id == "msg_visible_user"));
-    assert!(frontend_messages
-        .iter()
-        .any(|message| message.id == "msg_visible_assistant"));
+    assert!(
+        frontend_messages
+            .iter()
+            .any(|message| message.id == "msg_visible_user")
+    );
+    assert!(
+        frontend_messages
+            .iter()
+            .any(|message| message.id == "msg_visible_assistant")
+    );
     assert!(
         reopened
             .get_messages(&session.id)
@@ -1454,14 +1460,16 @@ fn user_messages_preserve_and_hydrate_pending_task_management_state() {
         .get_session(&session.id)
         .expect("hydrated session should exist");
     assert_eq!(persisted.task_management, previous_task_management);
-    assert!(hydrated
-        .get_frontend_messages(&session.id)
-        .iter()
-        .any(|message| message.parts.iter().any(|part| {
-            part.text
-                .as_deref()
-                .is_some_and(|text| text.contains("保持计划等待"))
-        })));
+    assert!(
+        hydrated
+            .get_frontend_messages(&session.id)
+            .iter()
+            .any(|message| message.parts.iter().any(|part| {
+                part.text
+                    .as_deref()
+                    .is_some_and(|text| text.contains("保持计划等待"))
+            }))
+    );
 
     let _ = std::fs::remove_dir_all(root);
 }

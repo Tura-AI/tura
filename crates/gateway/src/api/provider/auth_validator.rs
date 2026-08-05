@@ -1,6 +1,6 @@
 use chrono::Utc;
 
-use super::{config::config_value, ProviderAuthStatusResponse};
+use super::{ProviderAuthStatusResponse, config::config_value};
 
 /// Refresh-ahead window. The background scheduler runs hourly, so a token is
 /// considered "expiring soon" if it would lapse within this window (slightly

@@ -4,7 +4,7 @@
 //! child process tree created by shell/tool commands.
 
 use router_contract::{IpcRequest, IpcResponse};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -299,7 +299,7 @@ fn command_run_router_timeout() -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_run_error_payload, command_run_results, RouterCommandRunExecutor};
+    use super::{RouterCommandRunExecutor, command_run_error_payload, command_run_results};
     use serde_json::json;
 
     #[test]

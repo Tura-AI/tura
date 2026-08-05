@@ -1,15 +1,15 @@
-use crate::prompt_style::{agent_identity, compact_context, self_reflection, PromptBuilder};
-use crate::provider_flow::call::{call_runtime_with_writer, CallRuntimeInput};
+use crate::prompt_style::{PromptBuilder, agent_identity, compact_context, self_reflection};
+use crate::provider_flow::call::{CallRuntimeInput, call_runtime_with_writer};
 use crate::runtime::create_runtime::{
-    create_runtime, generate_runtime_id, runtime_provider_config_from_tura, CreateRuntimeInput,
+    CreateRuntimeInput, create_runtime, generate_runtime_id, runtime_provider_config_from_tura,
 };
 use crate::runtime::types::ToolCallData;
 use crate::runtime_event_writer::RuntimeEventWriter;
 use crate::state_machine::agent_management::AgentManagement;
-use lifecycle::RuntimeId;
-use lifecycle::SessionManagement;
 #[cfg(test)]
 use lifecycle::DEFAULT_CONTEXT_TOKEN_LIMIT;
+use lifecycle::RuntimeId;
+use lifecycle::SessionManagement;
 use lifecycle::{RuntimeAggregate, UsageReport};
 
 use super::agent_prompts::{active_persona_display_name, load_agent_system_prompt_messages};

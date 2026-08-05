@@ -8,7 +8,11 @@ import {
 import type { AppState } from "../../app/src/state/global-store";
 
 let invokeCalls: Array<{ command: string; args: unknown }> = [];
-let invokeResult: unknown = { status: "connected" };
+let invokeResult: unknown = {
+  ok: true,
+  status: "connected",
+  gatewayUrl: "http://127.0.0.1:4126",
+};
 let invokeError: unknown;
 
 mock.module("@tauri-apps/api/core", () => ({
@@ -25,11 +29,15 @@ describe("gateway startup wrapper", () => {
 
   beforeEach(() => {
     invokeCalls = [];
-    invokeResult = { status: "connected" };
+    invokeResult = {
+      ok: true,
+      status: "connected",
+      gatewayUrl: "http://127.0.0.1:4126",
+    };
     invokeError = undefined;
     globalThis.window = {
-      setTimeout: (_callback: TimerHandler, _timeout?: number) => 0,
-      clearTimeout: (_handle?: number) => undefined,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
     } as Window & typeof globalThis;
   });
 
@@ -66,10 +74,19 @@ describe("gateway startup wrapper", () => {
     expect(invokeCalls).toHaveLength(0);
   });
 
+  test("surfaces an incompatible browser health response", async () => {
+    globalThis.fetch = (async () => new Response("ok", { status: 200 })) as typeof fetch;
+    const { setState } = stateHarness();
+
+    await expect(tryStartGateway("http://localhost:4100", false, setState)).rejects.toThrow(
+      "Gateway health response is incompatible",
+    );
+  });
+
   test("uses the Tauri command inside the Tauri runtime", async () => {
     globalThis.window = {
-      setTimeout: (_callback: TimerHandler, _timeout?: number) => 0,
-      clearTimeout: (_handle?: number) => undefined,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
       __TAURI_INTERNALS__: {},
     } as Window & typeof globalThis;
     const { setState } = stateHarness();
@@ -86,11 +103,15 @@ describe("gateway startup wrapper", () => {
 
   test("uses the gateway url returned by the Tauri connect command", async () => {
     globalThis.window = {
-      setTimeout: (_callback: TimerHandler, _timeout?: number) => 0,
-      clearTimeout: (_handle?: number) => undefined,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
       __TAURI_INTERNALS__: {},
     } as Window & typeof globalThis;
-    invokeResult = { status: "connected", gatewayUrl: "http://127.0.0.1:49231" };
+    invokeResult = {
+      ok: true,
+      status: "connected",
+      gatewayUrl: "http://127.0.0.1:49231",
+    };
     const { state, setState } = stateHarness();
 
     await expect(tryStartGateway("http://127.0.0.1:4126", false, setState)).resolves.toBe(true);
@@ -98,16 +119,32 @@ describe("gateway startup wrapper", () => {
     expect(state().gatewayUrl).toBe("http://127.0.0.1:49231");
   });
 
-  test("returns false when the Tauri connect command cannot reach gateway", async () => {
+  test("surfaces the actionable Tauri gateway startup failure", async () => {
     globalThis.window = {
-      setTimeout: (_callback: TimerHandler, _timeout?: number) => 0,
-      clearTimeout: (_handle?: number) => undefined,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
       __TAURI_INTERNALS__: {},
     } as Window & typeof globalThis;
     invokeError = new Error("gateway unavailable");
     const { setState } = stateHarness();
 
-    await expect(tryStartGateway("http://localhost:4126", false, setState)).resolves.toBe(false);
+    await expect(tryStartGateway("http://localhost:4126", false, setState)).rejects.toThrow(
+      "gateway unavailable",
+    );
+  });
+
+  test("rejects an incompatible Tauri startup response", async () => {
+    globalThis.window = {
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
+      __TAURI_INTERNALS__: {},
+    } as Window & typeof globalThis;
+    invokeResult = { ok: true, status: "connected" };
+    const { setState } = stateHarness();
+
+    await expect(tryStartGateway("http://localhost:4126", false, setState)).rejects.toThrow(
+      "incompatible response",
+    );
   });
 
   test("recognizes abort, timeout, and fetch failures as gateway timeouts", () => {
@@ -140,11 +177,33 @@ describe("gateway startup wrapper", () => {
   test("health polling rejects non-gateway 200 responses", async () => {
     globalThis.fetch = (async () => new Response("ok", { status: 200 })) as typeof fetch;
     globalThis.window = {
-      setTimeout: (callback: TimerHandler, _timeout?: number) => {
+      setTimeout: (callback: TimerHandler) => {
         if (typeof callback === "function") callback();
         return 0;
       },
-      clearTimeout: (_handle?: number) => undefined,
+      clearTimeout: () => undefined,
+    } as Window & typeof globalThis;
+    const { setState } = stateHarness();
+
+    await expect(waitForGatewayHealth("http://127.0.0.1:4126", 1, setState)).rejects.toThrow(
+      "Gateway health response is incompatible",
+    );
+  });
+
+  test("health polling keeps startup 503 and healthy=false responses retryable", async () => {
+    let call = 0;
+    globalThis.fetch = (async () => {
+      call += 1;
+      return call === 1
+        ? new Response("starting", { status: 503 })
+        : Response.json({ healthy: false });
+    }) as typeof fetch;
+    globalThis.window = {
+      setTimeout: (callback: TimerHandler) => {
+        if (typeof callback === "function") callback();
+        return 0;
+      },
+      clearTimeout: () => undefined,
     } as Window & typeof globalThis;
     const { setState } = stateHarness();
 

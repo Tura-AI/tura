@@ -4,15 +4,14 @@
 //! monitor it, but gateway/runtime data calls target this service.
 
 use anyhow::Result;
-use fs2::FileExt;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
-use crate::{file_queue, ipc, SessionLogStore};
+use crate::{SessionLogStore, file_queue, ipc};
 use session_log_contract::client::session_db_owner_lock_path;
 
 /// Run the session_db process: boot the owned store, mark interrupted sessions,
@@ -95,7 +94,7 @@ impl SessionDbOwnerLock {
             .read(true)
             .write(true)
             .open(&path)?;
-        file.try_lock_exclusive().map_err(|error| {
+        file.try_lock().map_err(|error| {
             anyhow::anyhow!(
                 "another session_db owner already owns {}: {error}",
                 path.display()

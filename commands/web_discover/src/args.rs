@@ -1,6 +1,6 @@
 use super::types::{
-    WebDiscoverArgs, DEFAULT_IMAGE_MIN_SIZE, DEFAULT_MAX_RESULTS, DEFAULT_MAX_SIZE,
-    DEFAULT_MIN_SIZE,
+    DEFAULT_IMAGE_MIN_SIZE, DEFAULT_MAX_RESULTS, DEFAULT_MAX_SIZE, DEFAULT_MIN_SIZE,
+    WebDiscoverArgs,
 };
 use super::util::{split_cli_words, string_field, u64_field};
 use serde_json::Value;

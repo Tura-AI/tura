@@ -9,7 +9,7 @@ use lifecycle::{
     TaskPlan,
 };
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use session_log_contract::{
     CreateSessionRequest, GetSessionRequest, ListSessionRecordsRequest, PersistSessionDeltaRequest,
     ReadContextSliceRequest, ReadSessionFeedRequest, SessionContextRecord, SessionDeltaEntry,
@@ -124,7 +124,7 @@ fn insert_workspace_session(
                  VALUES (?1, ?2, ?3)",
                 params![
                     session_id,
-                    event_seq as u64,
+                    i64::try_from(event_seq).expect("event sequence"),
                     serde_json::to_string(event).expect("event json")
                 ],
             )?;

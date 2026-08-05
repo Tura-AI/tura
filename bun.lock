@@ -1,0 +1,24 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "tura-ai",
+      "optionalDependencies": {
+        "tura-darwin-arm64": "0.1.35",
+        "tura-darwin-x64": "0.1.35",
+        "tura-linux-x64": "0.1.35",
+        "tura-win32-x64": "0.1.35",
+      },
+    },
+  },
+  "packages": {
+    "tura-darwin-arm64": ["tura-darwin-arm64@0.1.35", "", { "os": "darwin", "cpu": "arm64" }, "sha512-78NuA9gXTY/q15fIVKJF9E6cFs+Ya8pC+l3MU3NJLlKVCgfP0J91qahRMLyUCdTfGxZJrimtpueG5s5UM8wv5Q=="],
+
+    "tura-darwin-x64": ["tura-darwin-x64@0.1.35", "", { "os": "darwin", "cpu": "x64" }, "sha512-vf3xDqp+fRS43ZY/+JnqE9cyUs4jk7e/T3GxtiGqlF5+sywOXV9Er97phpGRUVzE35hSrk+uZ40wZHD2/9L8Ng=="],
+
+    "tura-linux-x64": ["tura-linux-x64@0.1.35", "", { "os": "linux", "cpu": "x64" }, "sha512-nVxAYpKV6nh5qUjcXxh4MAGYBbv4b8P/7LfnbcCCxM4nxWGIz6OUmfnjcESQS4XzUVuMBE19bL7jMquFP+ubOQ=="],
+
+    "tura-win32-x64": ["tura-win32-x64@0.1.35", "", { "os": "win32", "cpu": "x64" }, "sha512-QHdYqZoLkzcA5l3ebRXl+AQk6slZxFaYPqQW5TUeZDdhLjT/SW26Dqyw1K4ekCwmnU7J5ll6K8j7AV2cyo0b7g=="],
+  }
+}
