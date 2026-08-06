@@ -386,14 +386,18 @@ mod tests {
         assert_eq!(config.provider["model_reasoning_effort"], "high");
         assert_eq!(config.provider["model_acceleration_enabled"], true);
         assert_eq!(config.provider["tool_choice"], "Auto");
-        assert!(config
-            .agent_capabilities
-            .iter()
-            .any(|capability| capability["capability_name"] == "shells"));
-        assert!(config
-            .agent_capabilities
-            .iter()
-            .any(|capability| capability["capability_name"] == "web_discover"));
+        assert!(
+            config
+                .agent_capabilities
+                .iter()
+                .any(|capability| capability["capability_name"] == "shells")
+        );
+        assert!(
+            config
+                .agent_capabilities
+                .iter()
+                .any(|capability| capability["capability_name"] == "web_discover")
+        );
         assert_eq!(config.validator["need_validator"], false);
     }
 
@@ -440,11 +444,13 @@ mod tests {
         );
         assert_eq!(saved.summary.aliases, vec!["helper", "coder"]);
         assert_eq!(saved.summary.provider.as_deref(), Some("thinking"));
-        assert!(saved
-            .summary
-            .capabilities
-            .iter()
-            .any(|capability| capability == "apply_patch"));
+        assert!(
+            saved
+                .summary
+                .capabilities
+                .iter()
+                .any(|capability| capability == "apply_patch")
+        );
         assert_eq!(saved.prompt.as_deref(), Some("Use careful tests."));
 
         let config_path = temp
@@ -452,11 +458,12 @@ mod tests {
             .join("agents/src/coding-helper")
             .join(AGENT_CONFIG_FILE);
         assert!(config_path.exists());
-        assert!(temp
-            .path()
-            .join("agents/src/coding-helper")
-            .join(AGENT_PROMPT_FILE)
-            .exists());
+        assert!(
+            temp.path()
+                .join("agents/src/coding-helper")
+                .join(AGENT_PROMPT_FILE)
+                .exists()
+        );
     }
 
     #[test]

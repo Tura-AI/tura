@@ -1,7 +1,7 @@
 use runtime_contract::{
-    maximum_parallel_runtime_workers, maximum_runtime_llm_turns,
     DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS, DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS,
     MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS, MAXIMUM_RUNTIME_LLM_TURN_OPTIONS,
+    maximum_parallel_runtime_workers, maximum_runtime_llm_turns,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -533,7 +533,7 @@ fn serialize_json_value(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_config, save_config, serialize_config, CommandRunStallGuardConfig, TuraSessionConfig,
+        CommandRunStallGuardConfig, TuraSessionConfig, parse_config, save_config, serialize_config,
     };
 
     #[test]

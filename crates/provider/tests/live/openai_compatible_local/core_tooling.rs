@@ -510,8 +510,8 @@ async fn openai_compatible_business_flow_preserves_native_tool_conversation_shap
 }
 
 #[tokio::test]
-async fn openai_compatible_business_flow_non_stream_tool_calls_extract_structured_arguments_and_metrics(
-) {
+async fn openai_compatible_business_flow_non_stream_tool_calls_extract_structured_arguments_and_metrics()
+ {
     let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local provider");
     let addr = listener.local_addr().expect("local provider addr");
@@ -774,9 +774,11 @@ async fn openai_compatible_business_flow_forwards_documented_request_options_and
     let captured = server.join().expect("server thread joins");
     assert_eq!(captured.method, "POST");
     assert_eq!(captured.path, "/chat/completions");
-    assert!(captured
-        .headers
-        .contains("authorization: bearer dummy-local-key"));
+    assert!(
+        captured
+            .headers
+            .contains("authorization: bearer dummy-local-key")
+    );
     assert_eq!(captured.body["model"], "local-model");
     assert_eq!(
         captured.body["messages"][0]["content"],
@@ -1019,12 +1021,16 @@ async fn openai_compatible_business_flow_writes_success_and_error_logs_to_config
         error_request.body["messages"][0]["content"],
         "write an error provider log"
     );
-    assert!(success_request
-        .headers
-        .contains("authorization: bearer dummy-log-key"));
-    assert!(error_request
-        .headers
-        .contains("authorization: bearer dummy-log-key"));
+    assert!(
+        success_request
+            .headers
+            .contains("authorization: bearer dummy-log-key")
+    );
+    assert!(
+        error_request
+            .headers
+            .contains("authorization: bearer dummy-log-key")
+    );
     assert_eq!(success.content.as_str(), Some("logged success"));
     match error {
         TuraError::HttpStatus { status, body } => {
@@ -1056,15 +1062,19 @@ async fn openai_compatible_business_flow_writes_success_and_error_logs_to_config
     );
     assert_eq!(error_log["request"]["params"]["context_window"], 333);
     assert!(error_log.get("response").is_none());
-    assert!(error_log
-        .get("error")
-        .and_then(Value::as_str)
-        .is_some_and(|message| {
-            message.contains("http status 503") && message.contains("logged failure body")
-        }));
-    assert!(error_log["call_id"]
-        .as_str()
-        .is_some_and(|call_id| call_id.len() >= 16));
+    assert!(
+        error_log
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|message| {
+                message.contains("http status 503") && message.contains("logged failure body")
+            })
+    );
+    assert!(
+        error_log["call_id"]
+            .as_str()
+            .is_some_and(|call_id| call_id.len() >= 16)
+    );
 
     let success_log = logs
         .iter()

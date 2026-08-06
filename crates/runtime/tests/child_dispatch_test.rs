@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use runtime::manas::child_dispatch::{
-    dispatch_child_agent, dispatch_child_agents_concurrent, ChildAgentRequest,
+    ChildAgentRequest, dispatch_child_agent, dispatch_child_agents_concurrent,
 };
 
 fn mock_router_bin() -> PathBuf {

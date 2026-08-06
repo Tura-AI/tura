@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::{ipc, SessionLogStore};
+use crate::{SessionLogStore, ipc};
 use session_log_contract::client::{failed_queue_dir, pending_queue_dir, processing_queue_dir};
 use session_log_contract::{SessionFeedEntry, SessionLogCommand};
 

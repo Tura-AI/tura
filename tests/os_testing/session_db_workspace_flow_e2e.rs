@@ -5,7 +5,7 @@
 //! sessions, records, checkpoints, deletion, and graceful shutdown without
 //! relying on third-party services.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use lifecycle::{SessionCommand, SessionManagement, TaskPlan};
 use serde_json::json;
 use session_log::SessionLogStore;
@@ -25,8 +25,8 @@ use std::{
 static SERIAL: Mutex<()> = Mutex::new(());
 
 #[test]
-fn session_db_workspace_flow_handles_concurrent_clients_checkpoint_idempotency_and_deletes(
-) -> Result<()> {
+fn session_db_workspace_flow_handles_concurrent_clients_checkpoint_idempotency_and_deletes()
+-> Result<()> {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     let root = temp_root("workspace-session-db-flow")?;
     let home = root.join("home");
@@ -517,9 +517,11 @@ fn assert_list_sessions(
         SessionLogResponse::Sessions { page, sessions } => {
             assert_eq!(page.total, total);
             assert_eq!(sessions.len(), expected_len);
-            assert!(sessions
-                .iter()
-                .all(|session| session.workspace == workspace && session.message_count >= 1));
+            assert!(
+                sessions
+                    .iter()
+                    .all(|session| session.workspace == workspace && session.message_count >= 1)
+            );
             Ok(())
         }
         other => bail!("unexpected sessions response: {other:?}"),

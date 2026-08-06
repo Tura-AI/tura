@@ -723,7 +723,11 @@ fn stop_all_session_processes(session_directory: &Path) {
 
 fn terminate_gateway_clients_by_command_line(gateway_url: &str) {
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::everything(),
+    );
     let current_pid = std::process::id();
     let gateway_url = gateway_url.trim_end_matches('/');
     for process in system.processes().values() {
@@ -747,7 +751,7 @@ fn is_gateway_client_process(process: &sysinfo::Process, gateway_url: &str) -> b
         .cmd()
         .iter()
         .chain(process.environ().iter())
-        .map(ToString::to_string)
+        .map(|value| value.to_string_lossy().into_owned())
         .collect::<Vec<String>>();
     let has_gateway_url = fields.iter().any(|value| {
         value.trim_end_matches('/').contains(gateway_url)

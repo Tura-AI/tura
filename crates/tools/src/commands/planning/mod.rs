@@ -8,7 +8,7 @@ use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

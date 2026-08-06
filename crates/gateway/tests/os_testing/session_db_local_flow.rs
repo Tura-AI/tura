@@ -1,7 +1,7 @@
 #[path = "../support/typed_session.rs"]
 mod typed_session;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use gateway::session_db_client::SessionDbClient;
 use lifecycle::{SessionState, TaskPlan};
 use serde_json::json;

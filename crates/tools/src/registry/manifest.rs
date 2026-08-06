@@ -151,7 +151,7 @@ fn read_manifest(path: &Path) -> Option<CommandManifest> {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_registry_directories, discover_manifests, manifest_for, CommandExecution};
+    use super::{CommandExecution, command_registry_directories, discover_manifests, manifest_for};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};

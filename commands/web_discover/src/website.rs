@@ -1,11 +1,11 @@
 use super::files::relative_or_display;
 use super::html::{extract_reader_title, extract_title, html_to_markdown_text};
 use super::types::{
-    SearchResult, WebsiteContent, MAX_WEBSITE_RESPONSE_SIZE, MIN_WEBSITE_TEXT_CHARS_FOR_READER,
+    MAX_WEBSITE_RESPONSE_SIZE, MIN_WEBSITE_TEXT_CHARS_FOR_READER, SearchResult, WebsiteContent,
 };
 use super::util::{env_value, middle_truncate_chars, safe_filename};
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 pub(super) fn website_records(

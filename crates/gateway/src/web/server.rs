@@ -2,8 +2,8 @@
 
 use crate::api;
 use axum::{
-    routing::{get, patch, post, put},
     Router,
+    routing::{get, patch, post, put},
 };
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};

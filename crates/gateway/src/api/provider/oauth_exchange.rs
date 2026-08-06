@@ -1,5 +1,5 @@
 use base64::Engine;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{Duration, Instant, sleep};
 use tura_llm_rust::OAuthAuthorizeKind;
 
 use crate::mock::global_store;
@@ -32,6 +32,7 @@ pub(super) struct GithubDeviceCodeResponse {
 pub(super) async fn start_github_copilot_device_flow(
     provider_id: &str,
 ) -> anyhow::Result<GithubDeviceCodeResponse> {
+    tura_llm_rust::install_rustls_crypto_provider()?;
     let client_id = github_copilot_oauth_client_id()
         .ok_or_else(|| anyhow::anyhow!("GITHUB_COPILOT_CLIENT_ID is not configured"))?;
     let scope = github_copilot_oauth_scope();
@@ -105,6 +106,7 @@ async fn exchange_github_copilot_device_code(
     provider_id: &str,
     pending: &crate::mock::store::PendingOAuth,
 ) -> anyhow::Result<OAuthTokenResponse> {
+    tura_llm_rust::install_rustls_crypto_provider()?;
     let client_id = github_copilot_oauth_client_id()
         .ok_or_else(|| anyhow::anyhow!("GITHUB_COPILOT_CLIENT_ID is not configured"))?;
     let device_code = pending
@@ -184,6 +186,7 @@ async fn exchange_openai_oauth_code(
     code: &str,
     pending: &crate::mock::store::PendingOAuth,
 ) -> anyhow::Result<OAuthTokenResponse> {
+    tura_llm_rust::install_rustls_crypto_provider()?;
     let code_verifier = pending
         .code_verifier
         .as_deref()
@@ -232,6 +235,7 @@ pub(super) async fn exchange_anthropic_oauth_code(
     normalized_code: &NormalizedOAuthCode,
     pending: &crate::mock::store::PendingOAuth,
 ) -> anyhow::Result<OAuthTokenResponse> {
+    tura_llm_rust::install_rustls_crypto_provider()?;
     let code_verifier = pending
         .code_verifier
         .as_deref()
@@ -292,6 +296,7 @@ async fn exchange_google_oauth_code(
     code: &str,
     pending: &crate::mock::store::PendingOAuth,
 ) -> anyhow::Result<OAuthTokenResponse> {
+    tura_llm_rust::install_rustls_crypto_provider()?;
     let code_verifier = pending
         .code_verifier
         .as_deref()

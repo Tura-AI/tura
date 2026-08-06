@@ -7,8 +7,8 @@ use std::{
 use crate::context::user_input_content_value;
 use crate::profile_timings;
 use crate::prompt_style::{
-    context_blocks, runtime_prompt_manual, tail_injection, task_status, user_new_command,
-    PromptBuilder,
+    PromptBuilder, context_blocks, runtime_prompt_manual, tail_injection, task_status,
+    user_new_command,
 };
 use lifecycle::ContextTokenStats;
 use lifecycle::SessionManagement;

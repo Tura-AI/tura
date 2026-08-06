@@ -47,9 +47,9 @@ impl WorkerProcessScope {
     fn attach(child: &Child) -> Result<Option<Self>> {
         use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
         use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
         };
         use windows_sys::Win32::System::Threading::{
             OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
@@ -211,7 +211,7 @@ fn configure_parent_death_signal(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{current_process_scope_strategy, ProcessScopeStrategy};
+    use super::{ProcessScopeStrategy, current_process_scope_strategy};
 
     #[test]
     fn current_platform_uses_expected_worker_scope_strategy() {

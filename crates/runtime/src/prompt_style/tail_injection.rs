@@ -52,7 +52,7 @@ pub fn append_tail_message(messages: &mut Vec<Value>, message: Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_tail_prompt, TailPrompt};
+    use super::{TailPrompt, append_tail_prompt};
 
     #[test]
     fn tail_prompt_preserves_requested_role() {

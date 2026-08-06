@@ -222,9 +222,11 @@ mod tests {
         assert!(!serialized.contains("data:audio/mpeg;base64"));
         assert!(!serialized.contains("data:application/pdf;base64"));
         assert!(!serialized.contains(&"D".repeat(1_000)));
-        assert!(sanitized["output"]
-            .as_str()
-            .is_some_and(|output| output.contains("characters truncated")));
+        assert!(
+            sanitized["output"]
+                .as_str()
+                .is_some_and(|output| output.contains("characters truncated"))
+        );
     }
 
     #[test]

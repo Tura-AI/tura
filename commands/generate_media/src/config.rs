@@ -1,9 +1,9 @@
 use super::args::{parse_provider_order, parse_speech_provider_order};
 use super::types::{
-    ImageProvider, SpeechProvider, DEFAULT_OUTPUT_DIR, DEFAULT_PROVIDER_ORDER,
-    DEFAULT_SPEECH_OUTPUT_DIR, DEFAULT_SPEECH_PROVIDER_ORDER,
+    DEFAULT_OUTPUT_DIR, DEFAULT_PROVIDER_ORDER, DEFAULT_SPEECH_OUTPUT_DIR,
+    DEFAULT_SPEECH_PROVIDER_ORDER, ImageProvider, SpeechProvider,
 };
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use dotenvy::from_path_iter;
 use serde_json::Value;
 use std::path::PathBuf;

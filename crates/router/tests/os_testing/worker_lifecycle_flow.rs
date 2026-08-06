@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use runtime_contract::CallContext;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -250,8 +250,8 @@ async fn router_worker_business_flow_skips_non_protocol_stdout_noise_before_resp
 }
 
 #[tokio::test]
-async fn router_worker_business_flow_stop_by_key_only_cleans_target_session_and_allows_recreate(
-) -> Result<()> {
+async fn router_worker_business_flow_stop_by_key_only_cleans_target_session_and_allows_recreate()
+-> Result<()> {
     let temp = tempfile::tempdir().context("temp stop-by-key worker dir")?;
     let script = write_worker_script(temp.path())?;
     let python = python_executable()?;
@@ -339,8 +339,8 @@ async fn router_worker_business_flow_stop_by_key_only_cleans_target_session_and_
 }
 
 #[tokio::test]
-async fn router_worker_business_flow_stale_worker_id_fails_cleanly_after_key_stop_and_recreate(
-) -> Result<()> {
+async fn router_worker_business_flow_stale_worker_id_fails_cleanly_after_key_stop_and_recreate()
+-> Result<()> {
     let temp = tempfile::tempdir().context("temp stale worker id dir")?;
     let script = write_worker_script(temp.path())?;
     let python = python_executable()?;
@@ -419,8 +419,8 @@ async fn router_worker_business_flow_stale_worker_id_fails_cleanly_after_key_sto
 }
 
 #[tokio::test]
-async fn router_worker_business_flow_stop_by_key_interrupts_slow_worker_without_registry_leak(
-) -> Result<()> {
+async fn router_worker_business_flow_stop_by_key_interrupts_slow_worker_without_registry_leak()
+-> Result<()> {
     let temp = tempfile::tempdir().context("temp slow stop worker dir")?;
     let script = write_worker_script(temp.path())?;
     let python = python_executable()?;
@@ -495,8 +495,8 @@ async fn router_worker_business_flow_stop_by_key_interrupts_slow_worker_without_
 }
 
 #[tokio::test]
-async fn router_worker_business_flow_prefix_stop_interrupts_many_in_flight_workers_and_recovers(
-) -> Result<()> {
+async fn router_worker_business_flow_prefix_stop_interrupts_many_in_flight_workers_and_recovers()
+-> Result<()> {
     let temp = tempfile::tempdir().context("temp prefix stop worker dir")?;
     let script = write_worker_script(temp.path())?;
     let python = python_executable()?;
@@ -859,7 +859,7 @@ fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
 
 fn process_alive(pid: u32) -> bool {
     let mut system = System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     system.process(Pid::from_u32(pid)).is_some_and(|process| {
         !matches!(
             process.status(),

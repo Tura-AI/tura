@@ -380,7 +380,7 @@ mod tests {
     use std::collections::HashMap;
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
-    use tura_llm_rust::{strip_thought_blocks, ModelCatalog, ProviderEnumCatalog, Settings};
+    use tura_llm_rust::{ModelCatalog, ProviderEnumCatalog, Settings, strip_thought_blocks};
 
     const REASONING_ENV: &str = "TURA_SESSION_REASONING_EFFORT";
     const ACCEL_ENV: &str = "TURA_SESSION_ACCELERATION_ENABLED";
@@ -619,6 +619,21 @@ mod tests {
             stream_options(&minimax_route, true),
             Some(serde_json::json!({ "include_usage": true }))
         );
+    }
+
+    #[test]
+    fn stream_options_omits_usage_for_openai_alias_on_mimo_endpoint() {
+        let mimo_route = tura_llm_rust::RouteConfig {
+            default_temperature: 0.2,
+            providers: vec![tura_llm_rust::ProviderConfig {
+                provider: "openai".to_string(),
+                base_url: "https://api.xiaomimimo.com/v1".to_string(),
+                model: "mimo-v2.5-pro".to_string(),
+                temperature: 0.2,
+            }],
+        };
+
+        assert_eq!(stream_options(&mimo_route, true), None);
     }
 
     #[test]

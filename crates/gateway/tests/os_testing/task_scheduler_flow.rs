@@ -906,8 +906,8 @@ async fn gateway_task_scheduler_business_flow_concurrent_edits_race_scheduler_ti
 }
 
 #[test]
-fn gateway_task_scheduler_business_flow_hydrates_persisted_due_task_after_store_restart(
-) -> anyhow::Result<()> {
+fn gateway_task_scheduler_business_flow_hydrates_persisted_due_task_after_store_restart()
+-> anyhow::Result<()> {
     let _guard = SCHEDULER_ENV_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());

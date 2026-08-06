@@ -51,10 +51,12 @@ fn openai_compatible_provider_boundary_business_flow_normalizes_runtime_visible_
         1
     );
     assert_eq!(messages[0]["content"][1]["type"], "input_text");
-    assert!(messages[0]["content"][1]["text"]
-        .as_str()
-        .expect("file fallback text")
-        .contains("input_file"));
+    assert!(
+        messages[0]["content"][1]["text"]
+            .as_str()
+            .expect("file fallback text")
+            .contains("input_file")
+    );
     assert_eq!(
         messages[0]["content"][2]["type"], "input_image",
         "retrying file content must not remove required image content"

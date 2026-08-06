@@ -61,7 +61,7 @@ pub(crate) fn json_like_output(
 mod tests {
     use super::{json_like_output, shell_output_value};
     use crate::commands::CommandResponse;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     #[test]
     fn shell_output_value_keeps_flat_stream_fields() {

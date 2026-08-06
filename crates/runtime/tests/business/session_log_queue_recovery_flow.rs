@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use lifecycle::{SessionCommand, SessionState};
 use runtime::session_log_client::SessionLogClient;
 use serde_json::json;
@@ -92,8 +92,8 @@ fn runtime_session_log_business_flow_replays_queued_write_after_service_start() 
 }
 
 #[test]
-fn runtime_session_log_business_flow_drains_concurrent_offline_writes_without_lost_records(
-) -> Result<()> {
+fn runtime_session_log_business_flow_drains_concurrent_offline_writes_without_lost_records()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let temp = tempfile::tempdir().context("temp runtime concurrent queue root")?;
     let home = temp.path().join("home");
@@ -192,8 +192,8 @@ fn runtime_session_log_business_flow_drains_concurrent_offline_writes_without_lo
 }
 
 #[test]
-fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and_idempotent(
-) -> Result<()> {
+fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and_idempotent()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let temp = tempfile::tempdir().context("temp runtime online session log root")?;
     let home = temp.path().join("home");
@@ -493,8 +493,8 @@ fn runtime_session_log_business_flow_restart_marks_running_session_interrupted()
 }
 
 #[test]
-fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_history(
-) -> Result<()> {
+fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_history()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let temp = tempfile::tempdir().context("temp runtime interrupted resume root")?;
     let home = temp.path().join("home");

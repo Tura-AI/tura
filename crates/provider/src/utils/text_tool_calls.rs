@@ -1,5 +1,5 @@
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{
     json_prefix, normalize_command_run_tool_input, parse_xml_parameter_value, xml_parameters,

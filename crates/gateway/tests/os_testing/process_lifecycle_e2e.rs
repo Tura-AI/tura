@@ -5,7 +5,7 @@
 //! take the same home, then checks explicit shutdown and front-lease idle
 //! cleanup paths.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::json;
 use std::{
     io::{BufRead, BufReader, Read, Write},

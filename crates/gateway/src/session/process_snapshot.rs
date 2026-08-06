@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use sysinfo::{Pid, Process, System};
+use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System};
 
 const MAX_PROCESSES: usize = 24;
 const MAX_CMD_CHARS: usize = 500;
@@ -28,7 +28,7 @@ pub struct SessionProcessInfo {
 pub fn collect_session_process_snapshot(session_directory: &Path) -> SessionProcessSnapshot {
     let target = normalize_path(session_directory);
     let mut system = System::new_all();
-    system.refresh_processes();
+    refresh_process_metadata(&mut system);
 
     let mut processes = system
         .processes()
@@ -55,7 +55,7 @@ pub fn collect_runtime_shell_process_snapshot(session_directory: &Path) -> Sessi
 pub fn stop_session_process(session_directory: &Path, target_pid: u32) -> Result<(), String> {
     let target = normalize_path(session_directory);
     let mut system = System::new_all();
-    system.refresh_processes();
+    refresh_process_metadata(&mut system);
 
     let Some((_, process)) = system
         .processes()
@@ -81,7 +81,7 @@ pub fn stop_session_process(session_directory: &Path, target_pid: u32) -> Result
 pub fn stop_runtime_shell_process(session_directory: &Path, target_pid: u32) -> Result<(), String> {
     let target = normalize_path(session_directory);
     let mut system = System::new_all();
-    system.refresh_processes();
+    refresh_process_metadata(&mut system);
 
     let Some((_, process)) = system
         .processes()
@@ -114,7 +114,12 @@ fn process_info_for_session(
     process: &Process,
     target: &Path,
 ) -> Option<SessionProcessInfo> {
-    let cmd = process.cmd().join(" ");
+    let cmd = process
+        .cmd()
+        .iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
     let cwd_matches = process
         .cwd()
         .map(|cwd| path_is_under(cwd, target))
@@ -131,7 +136,9 @@ fn process_info_for_session(
 
     let kind = if runtime_shell_background_process(process) {
         RUNTIME_SHELL_BACKGROUND_PROCESS_KIND
-    } else if cmd.contains("command_run") || process.name().contains("command_run") {
+    } else if cmd.contains("command_run")
+        || process.name().to_string_lossy().contains("command_run")
+    {
         "command_run"
     } else {
         "workspace"
@@ -139,7 +146,7 @@ fn process_info_for_session(
 
     Some(SessionProcessInfo {
         pid: pid.as_u32(),
-        name: process.name().to_string(),
+        name: process.name().to_string_lossy().into_owned(),
         exe: process.exe().map(|path| path.display().to_string()),
         cwd: process.cwd().map(|path| path.display().to_string()),
         command_line: truncate(&cmd, MAX_CMD_CHARS),
@@ -154,6 +161,14 @@ fn process_info_for_session(
 fn runtime_shell_background_process(process: &Process) -> bool {
     let marker = format!("{BACKGROUND_PROCESS_KIND_ENV}={RUNTIME_SHELL_BACKGROUND_PROCESS_KIND}");
     process.environ().iter().any(|value| value == &marker)
+}
+
+fn refresh_process_metadata(system: &mut System) {
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::everything(),
+    );
 }
 
 fn command_mentions_path(cmd: &str, target: &Path) -> bool {
