@@ -6,7 +6,7 @@
 //! `.tura/session_log.sqlite3` stores without public network access, API keys,
 //! or third-party services.
 
-pub(crate) use anyhow::{anyhow, bail, Context, Result};
+pub(crate) use anyhow::{Context, Result, anyhow, bail};
 pub(crate) use lifecycle::{
     PlanStatus, SessionCommand, SessionInput, SessionManagement, SessionState, TaskPlan, TaskStep,
 };
@@ -397,9 +397,11 @@ pub(crate) fn assert_workspace_page(
             assert_eq!(actual_page.total, total);
             assert_eq!(actual_page.page_size, page_size.clamp(1, 500));
             assert_eq!(sessions.len(), expected_len);
-            assert!(sessions
-                .iter()
-                .all(|session| session.workspace == workspace));
+            assert!(
+                sessions
+                    .iter()
+                    .all(|session| session.workspace == workspace)
+            );
             Ok(())
         }
         other => bail!("unexpected list sessions response: {other:?}"),

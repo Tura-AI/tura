@@ -1,6 +1,6 @@
 use super::paths::{extension_lower, truncate_chars};
 use super::types::{MediaContent, ReadMediaArgs};
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use serde_json::json;
 use std::path::Path;
 
@@ -118,7 +118,7 @@ fn mime_type_for_path(path: &Path) -> &'static str {
 mod tests {
     use super::{mime_type_for_path, process_document};
     use crate::types::ReadMediaArgs;
-    use base64::{engine::general_purpose, Engine as _};
+    use base64::{Engine as _, engine::general_purpose};
 
     fn args(include_text: bool, attachment_bytes: u64) -> ReadMediaArgs {
         ReadMediaArgs {

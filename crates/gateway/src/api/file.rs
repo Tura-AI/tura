@@ -3,10 +3,10 @@
 use crate::contracts::*;
 use crate::mock::global_store;
 use axum::{
-    extract::Query,
-    http::{header, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::Query,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use base64::Engine;
 use std::collections::HashMap;
@@ -947,14 +947,18 @@ mod tests {
             names,
             vec![("src", "directory"), ("a.txt", "file"), ("b.txt", "file")]
         );
-        assert!(entries
-            .iter()
-            .all(|entry| entry.git_status.as_deref() == Some("not_git")));
-        assert!(entries
-            .iter()
-            .find(|entry| entry.name == "a.txt")
-            .and_then(|entry| entry.size_bytes)
-            .is_some());
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.git_status.as_deref() == Some("not_git"))
+        );
+        assert!(
+            entries
+                .iter()
+                .find(|entry| entry.name == "a.txt")
+                .and_then(|entry| entry.size_bytes)
+                .is_some()
+        );
     }
 
     #[test]

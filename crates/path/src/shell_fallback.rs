@@ -97,8 +97,8 @@ fn windows_powershell_fallback_paths() -> &'static [&'static str] {
 #[cfg(all(test, windows))]
 mod tests {
     use super::{
-        resolve_program_on_path_from, resolve_windows_powershell_from, resolve_windows_shell,
-        resolve_windows_shell_from, WindowsShellKind,
+        WindowsShellKind, resolve_program_on_path_from, resolve_windows_powershell_from,
+        resolve_windows_shell, resolve_windows_shell_from,
     };
     use std::ffi::OsStr;
     use std::fs;

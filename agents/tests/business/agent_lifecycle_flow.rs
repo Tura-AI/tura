@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 use tura_agents::store::{
-    default_agent_config, delete_dynamic_agent, discover_agents, load_agent, save_dynamic_agent,
-    AgentSource, AGENTS_DIR, AGENT_CONFIG_FILE, AGENT_PROMPT_FILE,
+    AGENT_CONFIG_FILE, AGENT_PROMPT_FILE, AGENTS_DIR, AgentSource, default_agent_config,
+    delete_dynamic_agent, discover_agents, load_agent, save_dynamic_agent,
 };
 
 #[test]
@@ -26,11 +26,13 @@ fn agent_business_lifecycle_saves_discovers_alias_loads_and_deletes_dynamic_agen
     assert_eq!(saved.summary.source, AgentSource::Dynamic);
     assert_eq!(saved.summary.provider.as_deref(), Some("flagship_fast"));
     assert_eq!(saved.summary.aliases, vec!["reviewer", "code_review"]);
-    assert!(saved
-        .summary
-        .capabilities
-        .iter()
-        .any(|capability| capability == "command_run" || capability == "shells"));
+    assert!(
+        saved
+            .summary
+            .capabilities
+            .iter()
+            .any(|capability| capability == "command_run" || capability == "shells")
+    );
     assert_eq!(
         saved.prompt.as_deref(),
         Some("Review diffs, call out risks first, and keep summaries short.")
@@ -41,18 +43,22 @@ fn agent_business_lifecycle_saves_discovers_alias_loads_and_deletes_dynamic_agen
     let discovered = discover_agents(project.path());
     assert_eq!(discovered.len(), 1);
     assert_eq!(discovered[0].summary.id, "code-reviewer");
-    assert!(project
-        .path()
-        .join(AGENTS_DIR)
-        .join("code-reviewer")
-        .join(AGENT_CONFIG_FILE)
-        .exists());
-    assert!(project
-        .path()
-        .join(AGENTS_DIR)
-        .join("code-reviewer")
-        .join(AGENT_PROMPT_FILE)
-        .exists());
+    assert!(
+        project
+            .path()
+            .join(AGENTS_DIR)
+            .join("code-reviewer")
+            .join(AGENT_CONFIG_FILE)
+            .exists()
+    );
+    assert!(
+        project
+            .path()
+            .join(AGENTS_DIR)
+            .join("code-reviewer")
+            .join(AGENT_PROMPT_FILE)
+            .exists()
+    );
 
     assert!(delete_dynamic_agent(project.path(), "code_review").expect("delete by alias"));
     assert!(load_agent(project.path(), "code-reviewer").is_none());

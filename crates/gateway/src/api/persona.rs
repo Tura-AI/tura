@@ -1,10 +1,10 @@
 use crate::api::registry;
 use crate::contracts::{BadRequestError, UpsertPersonaRequest};
 use axum::{
-    extract::Path,
-    http::{header, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::Path,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use std::path::{Component, Path as FilePath};
 

@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 #[cfg(test)]
 use std::sync::atomic::Ordering;
 
@@ -8,10 +8,10 @@ use crate::services;
 use crate::shutdown::mark_router_shutting_down;
 use router_contract::{
     ExecuteCommandRequest, GetToolConfigResponse, GetToolResponse, IpcRequest, IpcResponse,
-    ListCommandsRequest, ListCommandsResponse, ListToolsResponse, PatchToolConfigRequest,
-    PatchToolRequest, ToolRegistryRequest, ToolRequest, METHOD_ENQUEUE_TURN,
+    ListCommandsRequest, ListCommandsResponse, ListToolsResponse, METHOD_ENQUEUE_TURN,
     METHOD_EXECUTE_COMMAND, METHOD_GET_TOOL, METHOD_GET_TOOL_CONFIG, METHOD_HEALTH_CHECK,
     METHOD_LIST_COMMANDS, METHOD_LIST_TOOLS, METHOD_PATCH_TOOL, METHOD_PATCH_TOOL_CONFIG,
+    PatchToolConfigRequest, PatchToolRequest, ToolRegistryRequest, ToolRequest,
 };
 use tura_router::registry::ToolRegistry;
 
@@ -193,9 +193,11 @@ mod tests {
         assert!(state.shutdown.load(Ordering::SeqCst));
         assert_eq!(response.payload["status"], "shutting_down");
         assert_eq!(response.payload["runtime_workers_stopped"], 0);
-        assert!(response.payload["background_process_scopes_terminated"]
-            .as_u64()
-            .is_some());
+        assert!(
+            response.payload["background_process_scopes_terminated"]
+                .as_u64()
+                .is_some()
+        );
         Ok(())
     }
 
@@ -318,10 +320,12 @@ mod tests {
             ),
         ));
         assert!(!malformed.ok);
-        assert!(malformed
-            .error
-            .as_deref()
-            .is_some_and(|error| error.contains("unknown field `legacy`")));
+        assert!(
+            malformed
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("unknown field `legacy`"))
+        );
         Ok(())
     }
 }

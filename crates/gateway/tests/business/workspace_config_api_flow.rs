@@ -2,9 +2,9 @@
 
 use anyhow::{Context, Result};
 use axum::{
+    Json,
     extract::Query,
     http::{HeaderMap, HeaderValue},
-    Json,
 };
 use gateway::api::{
     global::{get_config, health, patch_config},
@@ -168,9 +168,11 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
         .map_err(|(_, body)| anyhow::anyhow!(body))?;
     assert_eq!(default_project.name.as_deref(), Some("tura_workspace"));
     assert!(PathBuf::from(&default_project.worktree).is_dir());
-    assert!(PathBuf::from(&default_project.worktree)
-        .join(".git")
-        .exists());
+    assert!(
+        PathBuf::from(&default_project.worktree)
+            .join(".git")
+            .exists()
+    );
     assert_eq!(
         normalize_slashes(default_project.worktree),
         normalize_path(documents.join("tura_workspace"))
@@ -193,16 +195,20 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
     );
 
     let Json(projects) = list_projects().await;
-    assert!(projects
-        .iter()
-        .any(|project| normalize_slashes(&project.worktree) == normalize_path(&selected)));
+    assert!(
+        projects
+            .iter()
+            .any(|project| normalize_slashes(&project.worktree) == normalize_path(&selected))
+    );
     assert!(projects
         .iter()
         .any(|project| normalize_slashes(&project.worktree) == normalize_path(&header_selected)));
-    assert!(projects
-        .iter()
-        .any(|project| normalize_slashes(&project.worktree)
-            == normalize_path(documents.join("tura_workspace"))));
+    assert!(
+        projects
+            .iter()
+            .any(|project| normalize_slashes(&project.worktree)
+                == normalize_path(documents.join("tura_workspace")))
+    );
 
     Ok(())
 }

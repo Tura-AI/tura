@@ -7,11 +7,11 @@ use crate::contracts::{
     GlobalEvent, Session as ApiSession, SessionContextTokens, SessionStatus as ApiSessionStatus,
     UpdateSessionRequest as ApiUpdateSessionRequest,
 };
-use crate::session::config::{load_config, merge_config, TuraSessionConfig};
+use crate::session::config::{TuraSessionConfig, load_config, merge_config};
 use crate::session::manager::{
-    agent_for_session_type, default_use_last_tool_call_response_for_session,
-    normalize_session_type, runtime_provider_for_session, SessionInfo, SessionManager,
-    CODING_AGENT_NAME,
+    CODING_AGENT_NAME, SessionInfo, SessionManager, agent_for_session_type,
+    default_use_last_tool_call_response_for_session, normalize_session_type,
+    runtime_provider_for_session,
 };
 use crate::session_db_client::SessionDbClient;
 use chrono::{DateTime, Utc};
@@ -1525,9 +1525,8 @@ fn session_info_from_snapshot(snapshot: &SessionSnapshot) -> Result<SessionInfo,
     })
 }
 
-lazy_static::lazy_static! {
-    pub static ref SESSION_STORE: SessionStore = SessionStore::empty();
-}
+pub static SESSION_STORE: std::sync::LazyLock<SessionStore> =
+    std::sync::LazyLock::new(SessionStore::empty);
 
 pub fn session_store() -> &'static SessionStore {
     &SESSION_STORE

@@ -2,8 +2,8 @@ use chrono::Utc;
 use lifecycle::{ProviderConfig, ToolChoice};
 use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
 use lifecycle::{RuntimeCallResultStatus, RuntimeState};
-use runtime::runtime::call_runtime::{call_runtime, CallRuntimeInput};
-use serde_json::{json, Value};
+use runtime::runtime::call_runtime::{CallRuntimeInput, call_runtime};
+use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -90,17 +90,21 @@ async fn runtime_provider_timeout_business_flow_marks_runtime_timed_out_without_
     assert_eq!(runtime_error.error_code.as_deref(), Some("CALL_TIMED_OUT"));
     assert!(runtime_error.retry_allowed);
     assert!(runtime_error.fallback_allowed);
-    assert!(runtime_error
-        .error_text
-        .as_deref()
-        .is_some_and(|text| text.contains("runtime call timed out after 1000 ms")));
+    assert!(
+        runtime_error
+            .error_text
+            .as_deref()
+            .is_some_and(|text| text.contains("runtime call timed out after 1000 ms"))
+    );
     assert_eq!(result.usage, None);
 
     let request = provider.join();
     assert!(request.starts_with("POST /chat/completions "));
-    assert!(request
-        .to_ascii_lowercase()
-        .contains("authorization: bearer local-timeout-key"));
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer local-timeout-key")
+    );
 }
 
 #[tokio::test]
@@ -207,9 +211,11 @@ async fn streamed_command_run_waits_for_commands_after_provider_stream_completes
         output.pointer("/streamed_command_run_result/results/0/success"),
         Some(&json!(true))
     );
-    assert!(output
-        .pointer("/streamed_command_run_result/early_finish_reason")
-        .is_none());
+    assert!(
+        output
+            .pointer("/streamed_command_run_result/early_finish_reason")
+            .is_none()
+    );
     assert_eq!(
         output.pointer("/provider_content/text"),
         Some(&json!("provider stream completed")),
@@ -220,9 +226,11 @@ async fn streamed_command_run_waits_for_commands_after_provider_stream_completes
 
     let request = provider.request();
     assert!(request.starts_with("POST /responses "));
-    assert!(request
-        .to_ascii_lowercase()
-        .contains("authorization: bearer local-stream-key"));
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer local-stream-key")
+    );
 }
 
 #[tokio::test]
@@ -312,9 +320,11 @@ async fn failed_apply_patch_finishes_tool_turn_without_cancelling_runtime() {
         output.pointer("/streamed_command_run_result/early_finish_reason"),
         Some(&json!("apply_patch_failed"))
     );
-    assert!(output
-        .pointer("/streamed_command_run_result/cancelled")
-        .is_none());
+    assert!(
+        output
+            .pointer("/streamed_command_run_result/cancelled")
+            .is_none()
+    );
     assert_eq!(
         output.pointer("/streamed_command_run_result/results/0/success"),
         Some(&json!(false))

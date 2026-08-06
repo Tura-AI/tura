@@ -1,10 +1,10 @@
-use super::connection::{init_workspace_db, with_connection};
-use super::helpers::{remove_sqlite_files, replay_session_events};
 use super::SessionLogStore;
+use super::connection::{init_workspace_db, with_connection};
+use super::helpers::{remove_sqlite_files, replay_session_events, row_u64};
 use crate::path::normalize_workspace;
 use anyhow::Result;
 use lifecycle::{SessionCommand, SessionState};
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use session_log_contract::{
     CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, ExecuteSessionCommandRequest,
     MarkSessionInterruptedRequest, SessionFeedEntry, SessionFeedEvent,
@@ -267,7 +267,7 @@ fn deletion_feed_entry(
     let cursor = tx.query_row(
         "SELECT COALESCE(MAX(cursor) + 1, 1) FROM session_feed_events WHERE session_id = ?1",
         params![session_id],
-        |row| row.get::<_, u64>(0),
+        |row| row_u64(row, 0),
     )?;
     Ok(SessionFeedEntry {
         session_id: session_id.to_string(),

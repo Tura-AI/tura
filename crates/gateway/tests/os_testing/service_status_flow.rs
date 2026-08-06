@@ -3,13 +3,13 @@ use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use gateway::api::service::get_service_status;
 use gateway::mock::global_store;
 use router_contract::{IpcRequest, IpcResponse};
@@ -17,8 +17,8 @@ use router_contract::{IpcRequest, IpcResponse};
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
-async fn gateway_service_status_business_flow_reports_router_session_processes_and_docker_shape(
-) -> Result<()> {
+async fn gateway_service_status_business_flow_reports_router_session_processes_and_docker_shape()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let temp = tempfile::tempdir().context("service status temp root")?;
     let home = temp.path().join("home");
@@ -218,7 +218,7 @@ fn publish_fake_router_endpoint(home: &Path, addr: &str, process_start_time: u64
 
 fn current_process_start_time(pid: u32) -> Option<u64> {
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     system
         .process(sysinfo::Pid::from_u32(pid))
         .map(sysinfo::Process::start_time)

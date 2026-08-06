@@ -11,7 +11,7 @@ use super::search::{search_media_links, search_websites};
 use super::types::{SearchResult, WebDiscoverArgs};
 use super::website::website_records;
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
 
@@ -30,6 +30,8 @@ pub(super) fn run_web_discover_inner(
     args: WebDiscoverArgs,
     session_dir: &Path,
 ) -> Result<Value, String> {
+    tura_llm_rust::install_rustls_crypto_provider()
+        .map_err(|error| format!("failed to install the rustls crypto provider: {error}"))?;
     let should_download = true;
     let client = Client::builder()
         .timeout(Duration::from_secs(30))

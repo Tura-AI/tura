@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::extract::{Json, Path};
 use gateway::api::session::{abort_session, create_session_value};
 use gateway::contracts::{CreateSessionRequest, SessionDirectoryParams};
@@ -162,8 +162,8 @@ async fn gateway_abort_session_stops_router_worker_without_workspace_process_sca
 }
 
 #[tokio::test]
-async fn gateway_create_session_records_kill_processes_on_start_without_workspace_scan(
-) -> Result<()> {
+async fn gateway_create_session_records_kill_processes_on_start_without_workspace_scan()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("test root")?;
     let home = root.path().join("home");

@@ -282,9 +282,11 @@ fn safe_command_runs_for_real() {
         created.exists(),
         "safe command should have created the file"
     );
-    assert!(fs::read_to_string(&created)
-        .unwrap_or_default()
-        .contains("hello"));
+    assert!(
+        fs::read_to_string(&created)
+            .unwrap_or_default()
+            .contains("hello")
+    );
 }
 
 #[test]

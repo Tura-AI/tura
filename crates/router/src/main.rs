@@ -12,9 +12,9 @@ mod runtime_utils;
 mod services;
 mod shutdown;
 
+pub(crate) use app::AppState;
 #[cfg(test)]
 pub(crate) use app::build_state;
-pub(crate) use app::AppState;
 pub(crate) use runtime_dispatch::dispatch_run_agent_with_runtime_slot;
 
 fn main() -> anyhow::Result<()> {

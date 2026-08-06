@@ -4,7 +4,7 @@ use crate::contracts::{
     AboutUpdateInstallRequest, AboutUpdateInstallResponse, BadRequestError,
 };
 use async_trait::async_trait;
-use axum::{http::StatusCode, Json};
+use axum::{Json, http::StatusCode};
 use semver::Version;
 use std::{
     collections::HashSet,
@@ -126,6 +126,10 @@ impl AboutRuntime for SystemAboutRuntime {
     }
 
     async fn add_star(&self, token: &str) -> bool {
+        if let Err(error) = tura_llm_rust::install_rustls_crypto_provider() {
+            tracing::error!(error = %error, "failed to install the rustls crypto provider");
+            return false;
+        }
         let Ok(client) = reqwest::Client::builder()
             .timeout(Duration::from_secs(12))
             .build()
@@ -297,7 +301,7 @@ fn parse_npm_version(value: String) -> Result<Version, AboutError> {
         .map_err(|_| AboutError::Runtime("npm returned an invalid Tura version".to_string()))
 }
 
-fn release_version() -> String {
+pub(crate) fn release_version() -> String {
     for key in ["TURA_RELEASE_VERSION", "TURA_VERSION"] {
         if let Ok(value) = std::env::var(key) {
             let value = value.trim();
@@ -315,19 +319,32 @@ fn release_version() -> String {
 }
 
 fn package_json_candidates() -> Vec<PathBuf> {
+    let root = std::env::var_os("TURA_PROJECT_ROOT").map(PathBuf::from);
+    let current = std::env::current_dir().ok();
+    let executable = std::env::current_exe().ok();
+    package_json_candidates_from(root.as_deref(), current.as_deref(), executable.as_deref())
+}
+
+fn package_json_candidates_from(
+    project_root: Option<&Path>,
+    current_dir: Option<&Path>,
+    executable: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    if let Some(root) = std::env::var_os("TURA_PROJECT_ROOT") {
-        candidates.push(PathBuf::from(root).join("package.json"));
+    if let Some(root) = project_root {
+        candidates.push(root.join("package.json"));
     }
-    if let Ok(current) = std::env::current_dir() {
+    if let Some(current) = current_dir {
         candidates.push(current.join("package.json"));
     }
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(parent) = executable.parent()
-    {
-        candidates.push(parent.join("package.json"));
-        if let Some(grandparent) = parent.parent() {
-            candidates.push(grandparent.join("package.json"));
+    if let Some(executable) = executable {
+        for ancestor in executable
+            .parent()
+            .into_iter()
+            .flat_map(|parent| parent.ancestors())
+            .take(6)
+        {
+            candidates.push(ancestor.join("package.json"));
         }
     }
     candidates
@@ -366,11 +383,7 @@ where
 }
 
 fn npm_executable() -> &'static str {
-    if cfg!(windows) {
-        "npm.cmd"
-    } else {
-        "npm"
-    }
+    if cfg!(windows) { "npm.cmd" } else { "npm" }
 }
 
 fn spawn_detached_npm_install(version: &Version) -> std::io::Result<()> {
@@ -600,5 +613,30 @@ mod tests {
 
         assert!(matches!(error, AboutError::Invalid(_)));
         assert!(runtime.events().is_empty());
+    }
+
+    #[test]
+    fn release_version_candidates_reach_the_owning_npm_package() {
+        let temp = tempfile::tempdir().expect("temp package root");
+        let package_root = temp.path().join("node_modules").join(NPM_PACKAGE_NAME);
+        let executable = package_root
+            .join("target")
+            .join("release")
+            .join("tura_gateway");
+        std::fs::create_dir_all(executable.parent().expect("executable parent"))
+            .expect("create executable parent");
+        std::fs::write(
+            package_root.join("package.json"),
+            r#"{"name":"tura-ai","version":"0.1.35"}"#,
+        )
+        .expect("write package metadata");
+
+        let candidates = package_json_candidates_from(None, None, Some(&executable));
+        let package_json = package_root.join("package.json");
+        assert!(candidates.contains(&package_json));
+        assert_eq!(
+            package_release_version(&package_json).as_deref(),
+            Some("0.1.35")
+        );
     }
 }

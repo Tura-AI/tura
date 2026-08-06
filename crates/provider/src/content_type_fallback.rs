@@ -109,7 +109,7 @@ fn replace_unsupported_content_type(value: &mut Value, content_type: &'static st
 #[cfg(test)]
 mod tests {
     use super::{
-        provider_media_fallback, provider_unsupported_content_type, ProviderMediaFallback,
+        ProviderMediaFallback, provider_media_fallback, provider_unsupported_content_type,
     };
 
     #[test]

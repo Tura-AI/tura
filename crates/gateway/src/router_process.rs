@@ -4,10 +4,9 @@
 //! as a direct child; router then owns session_db, runtime workers, and
 //! command-run children below that tree.
 
-use anyhow::{anyhow, Context, Result};
-use once_cell::sync::OnceCell;
+use anyhow::{Context, Result, anyhow};
 use parking_lot::Mutex as ParkingMutex;
-use router_contract::{IpcRequest, IpcResponse, RouterEndpoint, METHOD_HEALTH_CHECK};
+use router_contract::{IpcRequest, IpcResponse, METHOD_HEALTH_CHECK, RouterEndpoint};
 use serde_json::json;
 use std::{
     io::{BufRead, BufReader, Write},
@@ -15,8 +14,8 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
+        Arc, OnceLock,
         atomic::{AtomicU64, Ordering},
-        Arc,
     },
     time::{Duration, Instant},
 };
@@ -53,14 +52,14 @@ pub struct RouterProcess {
     last_error: ParkingMutex<Option<String>>,
 }
 
-static ROUTER_PROCESS: OnceCell<Arc<RouterProcess>> = OnceCell::new();
+static ROUTER_PROCESS: OnceLock<Arc<RouterProcess>> = OnceLock::new();
 
 pub fn global_router_process() -> Result<Arc<RouterProcess>> {
     global_router_process_from(&ROUTER_PROCESS, RouterProcess::new)
 }
 
 fn global_router_process_from(
-    cell: &OnceCell<Arc<RouterProcess>>,
+    cell: &OnceLock<Arc<RouterProcess>>,
     init: impl FnOnce() -> Result<RouterProcess>,
 ) -> Result<Arc<RouterProcess>> {
     if let Some(process) = cell.get() {
@@ -700,7 +699,7 @@ fn terminate_router_endpoint_process(endpoint: &RouterEndpoint) -> Result<bool> 
         return Ok(false);
     }
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) else {
         return Ok(false);
     };
@@ -740,7 +739,7 @@ fn terminate_router_from_lock() -> Result<bool> {
         return Ok(false);
     }
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) else {
         return Ok(false);
     };
@@ -767,7 +766,7 @@ fn wait_for_process_to_exit(pid: u32, timeout: Duration) -> bool {
     let started = Instant::now();
     while started.elapsed() < timeout {
         let mut system = sysinfo::System::new_all();
-        system.refresh_processes();
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
         if system.process(sysinfo::Pid::from_u32(pid)).is_none() {
             return true;
         }
@@ -858,7 +857,7 @@ fn same_path(left: &str, right: &Path) -> bool {
 
 fn current_process_start_time(pid: u32) -> Option<u64> {
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     system
         .process(sysinfo::Pid::from_u32(pid))
         .map(sysinfo::Process::start_time)
@@ -1271,11 +1270,11 @@ mod tests {
         assert_eq!(parsed.pid, Some(12));
         assert_eq!(parsed.process_start_time, Some(34));
 
-        assert!(parse_router_endpoint(
-            &json!({"addr": "127.0.0.1:12", "version": "old"}).to_string()
-        )
-        .expect("incompatible endpoint should parse")
-        .is_none());
+        assert!(
+            parse_router_endpoint(&json!({"addr": "127.0.0.1:12", "version": "old"}).to_string())
+                .expect("incompatible endpoint should parse")
+                .is_none()
+        );
         let missing_addr =
             parse_router_endpoint(&json!({"version": tura_path::instance_version()}).to_string())
                 .expect_err("missing address should be rejected");
@@ -1324,8 +1323,10 @@ mod tests {
             process_start_time: None,
         };
         assert!(!router_endpoint_process_identity_matches(&no_start_time));
-        assert!(!terminate_router_endpoint_process(&no_start_time)
-            .expect("missing fingerprint should refuse forced termination"));
+        assert!(
+            !terminate_router_endpoint_process(&no_start_time)
+                .expect("missing fingerprint should refuse forced termination")
+        );
     }
 
     #[test]
@@ -1471,8 +1472,8 @@ mod tests {
     }
 
     #[test]
-    fn router_socket_deadline_reproduces_slow_enqueue_failure_but_no_deadline_waits(
-    ) -> anyhow::Result<()> {
+    fn router_socket_deadline_reproduces_slow_enqueue_failure_but_no_deadline_waits()
+    -> anyhow::Result<()> {
         fn delayed_response(
             delay: Duration,
         ) -> anyhow::Result<(String, thread::JoinHandle<anyhow::Result<()>>)> {
@@ -1543,7 +1544,7 @@ mod tests {
 
     #[test]
     fn global_router_process_returns_initialization_error_without_panicking() {
-        let cell = OnceCell::new();
+        let cell = OnceLock::new();
         let error = match global_router_process_from(&cell, || {
             Err(anyhow!("router binary missing for test"))
         }) {

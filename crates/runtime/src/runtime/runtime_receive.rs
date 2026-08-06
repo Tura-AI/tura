@@ -245,7 +245,7 @@ pub async fn enqueue_tool_calls(
         redis::cmd("RPUSH")
             .arg(&queue_key)
             .arg(&payload)
-            .query_async::<_, ()>(&mut con)
+            .query_async::<()>(&mut con)
             .await
             .map_err(|e| format!("failed to enqueue tool call: {e}"))?;
     }
@@ -256,8 +256,8 @@ pub async fn enqueue_tool_calls(
 #[cfg(test)]
 mod tests {
     use super::{
-        command_run_stream_event_command, execute_runtime_stream_command_batch, runtime_receive,
-        RuntimeReceiveInput,
+        RuntimeReceiveInput, command_run_stream_event_command,
+        execute_runtime_stream_command_batch, runtime_receive,
     };
     use serde_json::json;
 

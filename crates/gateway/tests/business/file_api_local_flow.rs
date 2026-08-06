@@ -1,7 +1,7 @@
 use axum::body::{self, Body};
 use axum::extract::{Json, Query};
 use axum::http::StatusCode;
-use axum::http::{header, Method, Request};
+use axum::http::{Method, Request, header};
 use axum::response::IntoResponse;
 use gateway::api::file::{
     get_file_content, get_file_media, list_files, open_file, open_file_location, save_input_file,
@@ -284,9 +284,11 @@ async fn gateway_file_api_business_flow_open_actions_validate_paths_before_proce
     .await
     .expect_err("relative open without workspace should fail");
     assert_eq!(missing_workspace.0, StatusCode::BAD_REQUEST);
-    assert!(missing_workspace
-        .1
-        .contains("No workspace directory was provided for file open"));
+    assert!(
+        missing_workspace
+            .1
+            .contains("No workspace directory was provided for file open")
+    );
 
     let escape = open_file(Query(FileContentQuery {
         directory: Some(root.to_string_lossy().to_string()),

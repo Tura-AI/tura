@@ -1,12 +1,12 @@
-use super::helpers::{
-    append_session_event, i64_at, path_text, replay_session_events, session_state_text, string_at,
-    task_management_value,
-};
 use super::SessionLogStore;
+use super::helpers::{
+    append_session_event, i64_at, path_text, replay_session_events, row_u64, session_state_text,
+    sqlite_u64, string_at, task_management_value,
+};
 use crate::path::{normalize_workspace, workspace_session_log_db};
 use anyhow::{Context, Result};
 use lifecycle::{SessionAggregate, SessionCommand, SessionInput, SessionManagement, SessionQuery};
-use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::Value;
 use session_log_contract::{
     CreateSessionRequest, ExecuteSessionCommandRequest, PersistSessionDeltaRequest,
@@ -65,7 +65,7 @@ impl SessionLogStore {
                     .query_row(
                         "SELECT delta_json FROM management_deltas
                          WHERE session_id = ?1 AND sequence = ?2",
-                        params![session_id, management_sequence],
+                        params![session_id, sqlite_u64(management_sequence)?],
                         |row| row.get::<_, String>(0),
                     )
                     .optional()?;
@@ -85,7 +85,11 @@ impl SessionLogStore {
                 tx.execute(
                     "INSERT INTO management_deltas(session_id, sequence, delta_json)
                      VALUES (?1, ?2, ?3)",
-                    params![session_id, management_sequence, management_delta_json],
+                    params![
+                        session_id,
+                        sqlite_u64(management_sequence)?,
+                        management_delta_json
+                    ],
                 )?;
                 row.next_management_sequence + 1
             };
@@ -132,7 +136,7 @@ impl SessionLogStore {
                         .query_row(
                             "SELECT record_json, projection_json FROM session_context_records
                              WHERE session_id = ?1 AND sequence = ?2",
-                            params![session_id, entry.context.sequence],
+                            params![session_id, sqlite_u64(entry.context.sequence)?],
                             |row| {
                                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
                             },
@@ -144,7 +148,7 @@ impl SessionLogStore {
                     {
                         anyhow::bail!(
                             "context sequence {} was already used for a different entry in session {}",
-                            entry.context.sequence,
+                            sqlite_u64(entry.context.sequence)?,
                             session_id
                         );
                     }
@@ -163,7 +167,7 @@ impl SessionLogStore {
                          ) VALUES (?1, ?2, ?3, ?4)",
                         params![
                             session_id,
-                            entry.context.sequence,
+                            sqlite_u64(entry.context.sequence)?,
                             raw_record,
                             projection_json
                         ],
@@ -238,9 +242,9 @@ impl SessionLogStore {
                     task_management_json,
                     management_json,
                     session_json,
-                    next_sequence,
-                    retained_from_sequence,
-                    next_management_sequence,
+                    sqlite_u64(next_sequence)?,
+                    sqlite_u64(retained_from_sequence)?,
+                    sqlite_u64(next_management_sequence)?,
                 ],
             )?;
             tx.commit()?;
@@ -1395,9 +1399,9 @@ fn load_delta_session_row(
                     )
                 })?,
                 management_json: row.get(2)?,
-                next_context_sequence: row.get(3)?,
-                retained_from_sequence: row.get(4)?,
-                next_management_sequence: row.get(5)?,
+                next_context_sequence: row_u64(row, 3)?,
+                retained_from_sequence: row_u64(row, 4)?,
+                next_management_sequence: row_u64(row, 5)?,
             })
         },
     )

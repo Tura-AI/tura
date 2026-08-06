@@ -11,7 +11,7 @@ use crate::provider_flow::errors::{
     finish_provider_call_failure, finish_runtime_failure, runtime_timeout,
 };
 use crate::provider_flow::provider_response::apply_provider_response;
-use crate::provider_flow::provider_streaming::{call_runtime_streaming, RuntimeStreamingInput};
+use crate::provider_flow::provider_streaming::{RuntimeStreamingInput, call_runtime_streaming};
 pub use crate::provider_flow::request_options::route_by_name;
 use crate::provider_flow::request_options::{
     normalize_provider_messages, parallel_tool_calls_enabled, prompt_cache_key,
@@ -361,7 +361,7 @@ pub async fn dequeue_runtime(
 
 #[cfg(test)]
 mod tests {
-    use super::{call_runtime, CallRuntimeInput};
+    use super::{CallRuntimeInput, call_runtime};
     use chrono::Utc;
     use lifecycle::{ProviderConfig, ToolChoice};
     use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
@@ -469,10 +469,12 @@ mod tests {
         assert_eq!(runtime_error.error_code.as_deref(), Some("CALL_FAILED"));
         assert!(!runtime_error.retry_allowed);
         assert!(!runtime_error.fallback_allowed);
-        assert!(runtime_error
-            .error_text
-            .as_deref()
-            .unwrap_or_default()
-            .contains("API Key not found"));
+        assert!(
+            runtime_error
+                .error_text
+                .as_deref()
+                .unwrap_or_default()
+                .contains("API Key not found")
+        );
     }
 }

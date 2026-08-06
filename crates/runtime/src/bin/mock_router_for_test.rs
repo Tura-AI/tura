@@ -15,7 +15,7 @@
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn main() {
     let mut args = std::env::args().skip(1);

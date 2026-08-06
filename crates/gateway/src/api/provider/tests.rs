@@ -1,5 +1,5 @@
 use super::auth_validation::{
-    validate_provider_credentials_remotely, ProviderCredentialValidation,
+    ProviderCredentialValidation, validate_provider_credentials_remotely,
 };
 use super::catalog::{
     apply_catalog_model_detail, browser_login_provider_defaults, default_model_for_provider,
@@ -481,11 +481,13 @@ fn catalog_enrich_provider_list_adds_registry_metadata_and_fallback_env() {
             "oauth.login"
         ]))
     );
-    assert!(providers[0]
-        .options
-        .get("auth_methods")
-        .and_then(|value| value.as_array())
-        .is_some_and(|methods| !methods.is_empty()));
+    assert!(
+        providers[0]
+            .options
+            .get("auth_methods")
+            .and_then(|value| value.as_array())
+            .is_some_and(|methods| !methods.is_empty())
+    );
 }
 
 #[test]
@@ -527,6 +529,22 @@ fn provider_env_keys_use_registry_compatibility_aliases() {
     assert_eq!(provider_env_key("openai-api"), "OPENAI_API_KEY");
     assert_eq!(provider_login_key("anthropic-api"), "ANTHROPIC_LOGIN");
     assert_eq!(provider_env_key("gemini-api"), "GEMINI_API_KEY");
+}
+
+#[test]
+fn provider_env_keys_include_all_imported_environment_names() {
+    assert_eq!(
+        provider_env_keys_from(
+            "custom-compatible",
+            ["CUSTOM_PRIMARY_KEY", "CUSTOM_SECONDARY_KEY"]
+                .into_iter()
+                .map(String::from),
+        ),
+        vec![
+            "CUSTOM_PRIMARY_KEY".to_string(),
+            "CUSTOM_SECONDARY_KEY".to_string()
+        ]
+    );
 }
 
 #[test]
@@ -619,11 +637,13 @@ async fn provider_list_projects_non_llm_catalog_entries() {
         .iter()
         .find(|provider| provider.id == "feishu")
         .expect("Feishu service provider should be listed");
-    assert!(response
-        .enums
-        .domains
-        .iter()
-        .any(|domain| domain == "communication"));
+    assert!(
+        response
+            .enums
+            .domains
+            .iter()
+            .any(|domain| domain == "communication")
+    );
     assert!(response.enums.api_styles.iter().any(|style| style == "mcp"));
     assert!(feishu.models.is_empty());
     assert_eq!(
@@ -647,10 +667,11 @@ async fn provider_list_projects_non_llm_catalog_entries() {
         .expect("LINE service provider should be listed");
     assert!(line.models.is_empty());
     assert_eq!(line.api.as_deref(), Some("https://api.line.me/v2/bot"));
-    assert!(line
-        .env
-        .iter()
-        .any(|env| env == "LINE_CHANNEL_ACCESS_TOKEN"));
+    assert!(
+        line.env
+            .iter()
+            .any(|env| env == "LINE_CHANNEL_ACCESS_TOKEN")
+    );
     assert_eq!(
         line.options
             .get("auth_methods")
@@ -670,10 +691,12 @@ async fn provider_list_projects_non_llm_catalog_entries() {
         duckduckgo.api.as_deref(),
         Some("https://html.duckduckgo.com/html/")
     );
-    assert!(duckduckgo
-        .env
-        .iter()
-        .any(|env| env == "TURA_DUCKDUCKGO_SEARCH_ENDPOINT"));
+    assert!(
+        duckduckgo
+            .env
+            .iter()
+            .any(|env| env == "TURA_DUCKDUCKGO_SEARCH_ENDPOINT")
+    );
     assert_eq!(
         duckduckgo
             .options
@@ -945,10 +968,12 @@ async fn provider_auth_refresh_updates_expired_openai_oauth_env_and_config() {
         std::env::var("OPENAI_REFRESH_TOKEN").as_deref(),
         Ok("new-refresh")
     );
-    assert!(std::env::var("OPENAI_TOKEN_EXPIRES")
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .is_some_and(|expires| expires > Utc::now().timestamp_millis()));
+    assert!(
+        std::env::var("OPENAI_TOKEN_EXPIRES")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .is_some_and(|expires| expires > Utc::now().timestamp_millis())
+    );
     let config = std::fs::read_to_string(&config_path).expect("read config");
     assert!(
         config.contains("\"status\": \"connected\"") || config.contains("\"status\":\"connected\"")
@@ -1202,10 +1227,12 @@ async fn provider_auth_refresh_covers_google_and_gemini_oauth_methods() {
             std::env::var(case.refresh_env).as_deref(),
             Ok(case.refresh_token())
         );
-        assert!(std::env::var(case.expires_env)
-            .ok()
-            .and_then(|value| value.parse::<i64>().ok())
-            .is_some_and(|expires| expires > Utc::now().timestamp_millis()));
+        assert!(
+            std::env::var(case.expires_env)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .is_some_and(|expires| expires > Utc::now().timestamp_millis())
+        );
         let config = std::fs::read_to_string(&config_path).expect("read config");
         assert!(config.contains(case.provider_id));
         assert!(config.contains(case.refresh_env));
@@ -1265,10 +1292,12 @@ async fn provider_auth_refresh_covers_claude_code_oauth_method() {
         std::env::var("CLAUDE_CODE_REFRESH_TOKEN").as_deref(),
         Ok("claude-new-refresh")
     );
-    assert!(std::env::var("CLAUDE_CODE_TOKEN_EXPIRES")
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .is_some_and(|expires| expires > Utc::now().timestamp_millis()));
+    assert!(
+        std::env::var("CLAUDE_CODE_TOKEN_EXPIRES")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .is_some_and(|expires| expires > Utc::now().timestamp_millis())
+    );
     let config = std::fs::read_to_string(&config_path).expect("read config");
     assert!(config.contains("claude-code"));
     assert!(config.contains("CLAUDE_CODE_REFRESH_TOKEN"));

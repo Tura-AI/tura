@@ -388,8 +388,8 @@ fn find_commands_array_start(arguments: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        codex_event_tool_calls, complete_command_run_command_objects, find_commands_array_start,
-        CodexCommandRunCommandCollector, CodexToolCallStreamCollector,
+        CodexCommandRunCommandCollector, CodexToolCallStreamCollector, codex_event_tool_calls,
+        complete_command_run_command_objects, find_commands_array_start,
     };
     use crate::tura_llm::ProviderStreamEvent;
     use serde_json::json;
@@ -432,17 +432,19 @@ mod tests {
     #[test]
     fn tool_call_collector_emits_once_when_done_and_finish_repeat() {
         let mut collector = CodexToolCallStreamCollector::default();
-        assert!(collector
-            .push_event(&json!({
-                "type": "response.output_item.added",
-                "item": {
-                    "id": "fc_once",
-                    "call_id": "call_once",
-                    "type": "function_call",
-                    "name": "command_run"
-                }
-            }))
-            .is_empty());
+        assert!(
+            collector
+                .push_event(&json!({
+                    "type": "response.output_item.added",
+                    "item": {
+                        "id": "fc_once",
+                        "call_id": "call_once",
+                        "type": "function_call",
+                        "name": "command_run"
+                    }
+                }))
+                .is_empty()
+        );
         let ready = collector.push_event(&json!({
             "type": "response.function_call_arguments.done",
             "item_id": "fc_once",
@@ -469,25 +471,29 @@ mod tests {
             "item": {"id": "fc_missing_name", "type": "function_call", "arguments": ""}
         }));
 
-        assert!(collector
-            .push_event(&json!({
-                "type": "response.function_call_arguments.delta",
-                "item_id": "fc_missing_name",
-                "delta": "{\"commands\":["
-            }))
-            .is_empty());
+        assert!(
+            collector
+                .push_event(&json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "fc_missing_name",
+                    "delta": "{\"commands\":["
+                }))
+                .is_empty()
+        );
         assert!(collector.finish().is_empty());
 
-        assert!(collector
-            .push_event(&json!({
-                "type": "response.output_item.added",
-                "item": {
-                    "id": "fc_missing_name",
-                    "type": "function_call",
-                    "name": "command_run"
-                }
-            }))
-            .is_empty());
+        assert!(
+            collector
+                .push_event(&json!({
+                    "type": "response.output_item.added",
+                    "item": {
+                        "id": "fc_missing_name",
+                        "type": "function_call",
+                        "name": "command_run"
+                    }
+                }))
+                .is_empty()
+        );
         let ready = collector.push_event(&json!({
             "type": "response.function_call_arguments.done",
             "item_id": "fc_missing_name",

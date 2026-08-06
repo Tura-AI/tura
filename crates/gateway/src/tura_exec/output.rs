@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::cli::CliConfig;
 use super::env::normalize_model;
@@ -607,7 +607,7 @@ mod tests {
         turn_completed_event, turn_log_summary,
     };
     use crate::tura_exec::cli::CliConfig;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::path::PathBuf;
 
     #[test]
@@ -806,11 +806,13 @@ mod tests {
         );
 
         assert_eq!(changes.len(), 2);
-        assert!(changes[0]["path"]
-            .as_str()
-            .unwrap_or_default()
-            .replace('\\', "/")
-            .ends_with("C:/workspace/src/lib.rs"));
+        assert!(
+            changes[0]["path"]
+                .as_str()
+                .unwrap_or_default()
+                .replace('\\', "/")
+                .ends_with("C:/workspace/src/lib.rs")
+        );
         assert_eq!(changes[0]["kind"], "update");
         assert_eq!(changes[1]["kind"], "create");
 

@@ -8,8 +8,8 @@ use super::oauth_support::{
     openai_oauth_token_url,
 };
 use super::{
-    auth_registry, auth_update, auth_validator, build_provider_auth_status, persist_provider_auth,
-    ProviderAuthStatusResponse,
+    ProviderAuthStatusResponse, auth_registry, auth_update, auth_validator,
+    build_provider_auth_status, persist_provider_auth,
 };
 
 pub(super) async fn refresh_provider_auth_if_needed(
@@ -95,6 +95,8 @@ async fn refresh_anthropic_provider_auth(
     provider_id: &str,
     status: &ProviderAuthStatusResponse,
 ) -> Result<(), String> {
+    tura_llm_rust::install_rustls_crypto_provider()
+        .map_err(|error| format!("failed to install the rustls crypto provider: {error}"))?;
     let refresh_env = status
         .refresh_env
         .as_deref()
@@ -141,6 +143,8 @@ async fn refresh_oauth_provider_auth(
     extra_params: Vec<(String, String)>,
     display_name: &str,
 ) -> Result<(), String> {
+    tura_llm_rust::install_rustls_crypto_provider()
+        .map_err(|error| format!("failed to install the rustls crypto provider: {error}"))?;
     let refresh_env = status
         .refresh_env
         .as_deref()

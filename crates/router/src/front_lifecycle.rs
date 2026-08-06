@@ -1,9 +1,9 @@
 use parking_lot::Mutex as ParkingMutex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use std::time::{Duration as StdDuration, Instant};
 

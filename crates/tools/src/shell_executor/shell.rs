@@ -265,13 +265,17 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert_eq!(candidates[0], "/bin/zsh");
         } else if cfg!(windows) {
-            assert!(candidates
-                .iter()
-                .all(|candidate| candidate.ends_with(".exe")));
+            assert!(
+                candidates
+                    .iter()
+                    .all(|candidate| candidate.ends_with(".exe"))
+            );
         } else {
-            assert!(candidates
-                .iter()
-                .all(|candidate| candidate.contains("/zsh")));
+            assert!(
+                candidates
+                    .iter()
+                    .all(|candidate| candidate.contains("/zsh"))
+            );
         }
     }
 

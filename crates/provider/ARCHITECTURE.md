@@ -20,6 +20,7 @@ This crate owns current Tura provider behavior:
 - `provider_config.json`
 - `.env` / `TURA_ENV_PATH`
 - `TURA_PROVIDER_CONFIG`
+- optional offline models.dev catalog import
 - provider call logs under project-root `log/provider/`
 - OpenAI-compatible, Google, and Bedrock providers
 - usage/cost extraction already present in provider responses
@@ -110,6 +111,56 @@ Provider does not own:
 
 Runtime calls Provider for one model call. Gateway reads Provider settings,
 health, usage, and auth state through APIs.
+
+## models.dev Catalog Import
+
+models.dev is catalog input, not a provider adapter. Normal startup never
+contacts `models.dev`. To opt in, download a snapshot explicitly and point Tura
+at the local file:
+
+```sh
+curl --fail --location https://models.dev/api.json --output /path/to/models-dev-api.json
+TURA_MODELS_DEV_CATALOG=/path/to/models-dev-api.json tura
+```
+
+The loader keeps the bundled provider configuration as the base and imports
+only new providers whose catalog record uses
+`@ai-sdk/openai-compatible`, supplies an absolute HTTP(S) `api`, declares
+authentication environment variables, and has at least one model with both
+text input and text output that does not request a native SDK, Responses API,
+custom headers, or custom body. Imported providers use the existing generic
+chat-completions dispatch.
+Models without both text input and text output, plus protocol-overridden
+models, are classified as unsupported and skipped before token-limit
+validation. Explicit embedding and reranking records, and records without
+positive context and output limits, are also not imported. Ambiguous IDs,
+modalities, or lifecycle status and malformed importable chat-completions
+records still fail closed.
+Tura-owned routes, route order, tiers, provider auth records, and existing
+providers are not replaced. Imported provider IDs that collide
+case-insensitively with configured providers are skipped deterministically,
+while malformed or ambiguous catalog records still fail the explicit load.
+
+Projected model metadata retains capabilities, limits, modalities, lifecycle
+status, and a `models_dev_source` option containing the source URL, local path,
+SHA-256 digest, and `sha256:<digest>` revision. The first models.dev env name is
+displayed as `token_env`; runtime key lookup checks every declared env name
+after any static Tura auth mapping.
+
+Use the exact imported model ID in `TURA_SESSION_MODEL_OVERRIDE`. The override
+already contains the provider prefix when the upstream model ID does:
+
+```sh
+OPENCODE_API_KEY=... \
+TURA_MODELS_DEV_CATALOG=/path/to/models-dev-api.json \
+TURA_SESSION_MODEL_OVERRIDE=opencode/glm-5 \
+tura
+
+CLINE_API_KEY=... \
+TURA_MODELS_DEV_CATALOG=/path/to/models-dev-api.json \
+TURA_SESSION_MODEL_OVERRIDE=cline-pass/deepseek-v4-flash \
+tura
+```
 
 ## Provider Call Logs
 
@@ -586,7 +637,7 @@ functions with the already-normalized content payload from
 | `extract_tool_calls(&Value) -> Vec<ProviderToolCall>` | Pull tool calls from OpenAI `tool_calls` array / Google `parts[].functionCall + thoughtSignature` |
 | `strip_thought_blocks(&str) -> String` | Remove `<thought>…</thought>` leakage |
 | `prompt_cache_key_supported(provider, base_url) -> bool` | Whether to attach OpenAI prompt-cache key (`TURA_DISABLE_PROMPT_CACHE` honored) |
-| `openai_compatible_usage_stream_supported(provider, base_url) -> bool` | Whether the route accepts `stream_options.include_usage` (OpenAI/minimax/qwen/openrouter family) |
+| `openai_compatible_usage_stream_supported(provider, base_url) -> bool` | Whether the route targets a documented endpoint that accepts the optional `stream_options.include_usage` field; provider aliases alone are not sufficient |
 | `provider_unsupported_content_type(error_text) -> Option<&'static str>` | Detect provider rejection of `input_image` / `input_audio` / `input_file` from error string |
 | `replace_unsupported_content_type_in_messages(messages, content_type) -> usize` | Replace rejected media blocks with `input_text` placeholders; returns replacement count |
 

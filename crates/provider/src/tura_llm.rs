@@ -18,12 +18,12 @@ use crate::utils::{strip_text_tool_calls, text_tool_calls_value};
 #[path = "tura_llm_config.rs"]
 mod tura_llm_config;
 pub use tura_llm_config::{
-    apply_latency_for_tier, latency_level_for_tier, provider_latency_config,
-    provider_latency_timeouts, set_provider_latency_config, set_provider_latency_timeouts,
     CallOptions, CatalogModelConfig, CatalogModelDetail, CatalogModelLimit, CatalogModelModalities,
     ModelCatalog, ProviderAuthConfig, ProviderCatalogConfig, ProviderEnumCatalog,
     ProviderLatencyConfig, ProviderLatencyTimeouts, RawProviderConfig, RawRouteConfig, RootConfig,
-    RouteConfig, Settings, SETTINGS,
+    RouteConfig, SETTINGS, Settings, apply_latency_for_tier, latency_level_for_tier,
+    provider_latency_config, provider_latency_timeouts, set_provider_latency_config,
+    set_provider_latency_timeouts,
 };
 
 #[derive(Debug, Clone)]
@@ -166,7 +166,17 @@ pub struct ProviderConfig {
 
 impl ProviderConfig {
     fn runtime_provider(&self) -> &str {
-        crate::auth_registry::runtime_provider_id(&self.provider)
+        let runtime_provider = crate::auth_registry::runtime_provider_id(&self.provider);
+        if runtime_provider.eq_ignore_ascii_case("openai")
+            && !openai_responses_base_url_allowed(&self.base_url)
+        {
+            // The OpenAI adapter speaks the Responses API. A provider alias
+            // may still point at an OpenAI-compatible Chat Completions host;
+            // route those endpoints through the generic adapter instead of
+            // silently sending `/responses` requests.
+            return "openai-compatible";
+        }
+        runtime_provider
     }
 
     pub fn validate(&self) -> Result<(), TuraError> {
@@ -196,6 +206,11 @@ impl ProviderConfig {
     fn get_api_key(&self, conf: &TuraConfig) -> Result<String, TuraError> {
         crate::auth_registry::provider_token_env(&self.provider)
             .and_then(|key| conf.get(key))
+            .or_else(|| {
+                crate::models_dev::configured_token_envs(&self.provider)
+                    .into_iter()
+                    .find_map(|key| conf.get(&key))
+            })
             .or_else(|| conf.get(&format!("{}_API_KEY", self.provider.to_uppercase())))
             .or_else(|| conf.get(&format!("{}_api_key", self.provider)))
             .or_else(|| conf.get(&self.provider))
@@ -490,10 +505,10 @@ fn should_use_openai_oauth(provider: &str, base_url: &str, conf: &TuraConfig) ->
     }
     provider.eq_ignore_ascii_case("openai")
         && openai_login_is_oauth(conf)
-        && openai_oauth_base_url_allowed(base_url)
+        && openai_responses_base_url_allowed(base_url)
 }
 
-fn openai_oauth_base_url_allowed(base_url: &str) -> bool {
+fn openai_responses_base_url_allowed(base_url: &str) -> bool {
     let normalized = base_url.trim().trim_end_matches('/');
     matches!(
         normalized,
@@ -549,6 +564,9 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
         .ok_or_else(|| TuraError::Config {
             message: "Configuration key 'OPENAI_REFRESH_TOKEN' not found".to_string(),
         })?;
+    crate::install_rustls_crypto_provider().map_err(|error| TuraError::Network {
+        message: error.to_string(),
+    })?;
     let response = reqwest::Client::new()
         .post("https://auth.openai.com/oauth/token")
         .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
@@ -769,6 +787,9 @@ async fn try_refresh_oauth_access_token(
         _ => return Ok(None),
     };
 
+    crate::install_rustls_crypto_provider().map_err(|error| TuraError::Network {
+        message: error.to_string(),
+    })?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
@@ -1000,6 +1021,9 @@ fn provider_config_json_path() -> Option<PathBuf> {
 }
 
 pub fn default_client(api_key: &str) -> Result<reqwest::Client, TuraError> {
+    crate::install_rustls_crypto_provider().map_err(|error| TuraError::Network {
+        message: error.to_string(),
+    })?;
     reqwest::Client::builder()
         .default_headers({
             let mut headers = reqwest::header::HeaderMap::new();

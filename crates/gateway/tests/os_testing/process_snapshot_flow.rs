@@ -3,11 +3,13 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use gateway::session::process_snapshot::{
-    collect_runtime_shell_process_snapshot, collect_session_process_snapshot,
-    stop_runtime_shell_process, stop_session_process, SessionProcessInfo,
+    SessionProcessInfo, collect_runtime_shell_process_snapshot, collect_session_process_snapshot,
+    stop_runtime_shell_process, stop_session_process,
 };
+
+const RUNTIME_SHELL_PROCESS_COMMAND_MARKER: &str = "TURA_BACKGROUND_PROCESS_KIND=runtime_shell";
 
 #[test]
 fn gateway_process_snapshot_business_flow_isolates_and_stops_session_processes() -> Result<()> {
@@ -138,6 +140,7 @@ fn spawn_long_running_child(workspace: &Path, runtime_shell_process: bool) -> Re
     };
     if runtime_shell_process {
         command.env("TURA_BACKGROUND_PROCESS_KIND", "runtime_shell");
+        command.arg(RUNTIME_SHELL_PROCESS_COMMAND_MARKER);
     } else {
         command.env_remove("TURA_BACKGROUND_PROCESS_KIND");
     }

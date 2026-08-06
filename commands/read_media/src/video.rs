@@ -1,7 +1,7 @@
 use super::paths::{command_configured_python, command_local_python, find_on_path, temp_work_dir};
 use super::types::{MediaContent, ReadMediaArgs};
-use base64::{engine::general_purpose, Engine as _};
-use serde_json::{json, Value};
+use base64::{Engine as _, engine::general_purpose};
+use serde_json::{Value, json};
 use std::path::Path;
 
 pub(super) fn process_video(path: &Path, args: &ReadMediaArgs) -> Result<MediaContent, String> {

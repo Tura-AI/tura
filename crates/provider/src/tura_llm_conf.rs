@@ -19,7 +19,14 @@ fn config_path() -> PathBuf {
 pub async fn load_settings() -> Result<Settings, TuraError> {
     let path = config_path();
     let content = fs::read_to_string(&path).await.map_err(TuraError::io)?;
-    let cfg: RootConfig = serde_json::from_str(&content)?;
+    let mut cfg: RootConfig = serde_json::from_str(&content)?;
+    if let Some(projection) = crate::models_dev::load_configured_projection().await? {
+        crate::models_dev::merge_projection(&mut cfg, projection).map_err(|error| {
+            TuraError::Config {
+                message: error.to_string(),
+            }
+        })?;
+    }
     crate::tura_llm::set_provider_latency_timeouts(cfg.provider_latency.selected_timeouts());
     crate::tura_llm::set_provider_latency_config(cfg.provider_latency.clone());
 
@@ -33,12 +40,14 @@ pub async fn load_settings() -> Result<Settings, TuraError> {
         .map(|route| routes.insert(name.clone(), route))?;
     }
 
-    Ok(Settings {
+    let settings = Settings {
         provider_base_url: cfg.provider_base_url,
         routes,
         model_catalog: cfg.model_catalog,
         provider_enums: cfg.provider_enums,
-    })
+    };
+    crate::models_dev::install_runtime_metadata(&settings);
+    Ok(settings)
 }
 
 #[cfg(test)]
@@ -108,9 +117,11 @@ mod tests {
             );
         }
         assert_eq!(settings.routes.len(), 4);
-        assert!(settings
-            .configured_model_catalog()
-            .contains_key("openrouter"));
+        assert!(
+            settings
+                .configured_model_catalog()
+                .contains_key("openrouter")
+        );
         assert_eq!(
             settings.provider_base_url("mistral").as_deref(),
             Some("https://api.mistral.ai/v1")

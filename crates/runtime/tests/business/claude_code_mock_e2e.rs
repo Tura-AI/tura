@@ -21,7 +21,7 @@ use std::thread;
 
 use lifecycle::{SessionInput, SessionLogEntry, SessionState};
 use runtime::mano;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[path = "../support/session_db_support.rs"]
 mod session_db_support;

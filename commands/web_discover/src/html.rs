@@ -3,7 +3,7 @@ use super::types::SearchResult;
 use super::util::{
     clean_text, extension_from_url, html_unescape, json_unescape, percent_decode, split_cli_words,
 };
-use quick_html2md::{html_to_markdown_with_options, MarkdownOptions};
+use quick_html2md::{MarkdownOptions, html_to_markdown_with_options};
 use regex::Regex;
 
 pub(super) fn extract_bing_image_page_url(context: &str) -> Option<String> {
@@ -279,11 +279,7 @@ pub(super) fn extract_reader_title(text: &str) -> Option<String> {
 
 pub(super) fn direct_webpage_url(query: &str) -> Option<String> {
     let mut urls = direct_webpage_urls(query);
-    if urls.len() == 1 {
-        urls.pop()
-    } else {
-        None
-    }
+    if urls.len() == 1 { urls.pop() } else { None }
 }
 
 pub(super) fn direct_webpage_urls(query: &str) -> Vec<String> {
