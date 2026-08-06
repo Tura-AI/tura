@@ -138,7 +138,7 @@ pub(crate) fn parameter_policy(provider: &str) -> ProviderParameterPolicy {
 
 #[cfg(test)]
 mod tests {
-    use super::{parameter_policy, ProviderApiStyle};
+    use super::{ProviderApiStyle, parameter_policy};
 
     #[test]
     fn all_configured_provider_families_have_parameter_policies() {

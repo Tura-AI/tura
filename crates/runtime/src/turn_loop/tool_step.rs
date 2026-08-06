@@ -228,8 +228,8 @@ fn command_run_result_error_value(result: &serde_json::Value) -> Option<String> 
 mod tests {
     use super::extract_compact_context_results;
     use crate::context::{
-        build_messages_from_session, compact_session_context_with_agent_message,
-        CompactContextAgentMessage,
+        CompactContextAgentMessage, build_messages_from_session,
+        compact_session_context_with_agent_message,
     };
     use crate::manas::COMMAND_RUN_TOOL;
     use crate::tool_router::execute_tool::ToolExecutionResult;

@@ -24,7 +24,7 @@ pub async fn call(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{parameter_policy, ProviderApiStyle};
+    use super::super::{ProviderApiStyle, parameter_policy};
 
     #[test]
     fn google_provider_uses_google_api_policy_and_ignores_openapi_only_parameters() {

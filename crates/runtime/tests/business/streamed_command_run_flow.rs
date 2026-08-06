@@ -2,7 +2,7 @@ use runtime::runtime::runtime_receive::{
     command_run_stream_event_command, execute_runtime_stream_command_batch,
     execute_runtime_stream_event,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -262,10 +262,14 @@ async fn streamed_command_batch_executes_multiple_ready_commands_in_ordered_resu
     );
     assert_shell_result(&results[0], true);
     assert_shell_result(&results[1], true);
-    assert!(text_at(&workspace.path().join("streamed-batch-one.txt"))
-        .contains("runtime-stream-batch-one"));
-    assert!(text_at(&workspace.path().join("streamed-batch-two.txt"))
-        .contains("runtime-stream-batch-two"));
+    assert!(
+        text_at(&workspace.path().join("streamed-batch-one.txt"))
+            .contains("runtime-stream-batch-one")
+    );
+    assert!(
+        text_at(&workspace.path().join("streamed-batch-two.txt"))
+            .contains("runtime-stream-batch-two")
+    );
 }
 
 #[tokio::test]
@@ -451,7 +455,9 @@ async fn streamed_command_batches_repeated_workspaces_do_not_cross_talk() {
             result["command_type"] == expected_shell_command_type() && result["success"] == true
         }));
         assert!(text_at(&workspace.path().join(&first_file)).contains(&format!("{marker}-first")));
-        assert!(text_at(&workspace.path().join(&second_file)).contains(&format!("{marker}-second")));
+        assert!(
+            text_at(&workspace.path().join(&second_file)).contains(&format!("{marker}-second"))
+        );
         let entries = workspace_entries(workspace.path());
         assert_eq!(
             entries.len(),

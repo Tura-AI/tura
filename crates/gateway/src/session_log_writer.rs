@@ -3,7 +3,7 @@
 //! Runtime owns turn/checkpoint writes. Gateway only writes session lifecycle
 //! mutations that are initiated directly by frontend actions.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use session_log_contract::{SessionLogCommand, SessionLogResponse};
 
 pub fn write_session_log(command: SessionLogCommand) -> Result<()> {

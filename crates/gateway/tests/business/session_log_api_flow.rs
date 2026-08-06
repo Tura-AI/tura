@@ -1,7 +1,7 @@
 #[path = "../support/typed_session.rs"]
 mod typed_session;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use axum::body;
 use axum::extract::{Path, Query};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -11,7 +11,7 @@ use gateway::api::session_log::{
 };
 use gateway::contracts::{SessionLogListParams, SessionLogRecordsParams};
 use lifecycle::TaskPlan;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use session_log::SessionLogStore;
 use session_log_contract::SessionLogCommand;
 use std::path::Path as FsPath;
@@ -135,8 +135,8 @@ async fn gateway_session_log_api_business_flow_lists_workspaces_sessions_and_rec
 }
 
 #[tokio::test]
-async fn gateway_session_log_api_business_flow_reports_bad_gateway_when_session_db_is_down(
-) -> Result<()> {
+async fn gateway_session_log_api_business_flow_reports_bad_gateway_when_session_db_is_down()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");
@@ -168,10 +168,12 @@ async fn gateway_session_log_api_business_flow_reports_bad_gateway_when_session_
     )
     .await?;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(sessions["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("session_db"));
+    assert!(
+        sessions["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("session_db")
+    );
 
     let (status, records) = response_json(
         session_log_records(
@@ -186,10 +188,12 @@ async fn gateway_session_log_api_business_flow_reports_bad_gateway_when_session_
     )
     .await?;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(records["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("session_db"));
+    assert!(
+        records["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("session_db")
+    );
     Ok(())
 }
 

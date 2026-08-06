@@ -6,10 +6,10 @@ use crate::contracts::{SessionLogListParams, SessionLogRecordsParams};
 use crate::mock::global_store;
 use crate::session_db_client::SessionDbClient;
 use axum::{
+    Json,
     extract::{Path, Query},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use serde_json::Value;
 

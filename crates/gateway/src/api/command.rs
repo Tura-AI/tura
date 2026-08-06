@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use router_contract::{CommandSpec, ExecuteCommandRequest as RouterExecuteCommandRequest};
 
 use crate::contracts::{Command, ExecuteCommandRequest, ExecuteCommandResponse};

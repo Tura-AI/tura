@@ -78,7 +78,7 @@ fn payload_command_line(payload: &ToolPayload) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{payload_command_line, ZshHandler};
+    use super::{ZshHandler, payload_command_line};
     use crate::runtime::tool::{ToolCall, ToolContext, ToolHandler, ToolPayload};
     use serde_json::json;
 

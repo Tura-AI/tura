@@ -1,1 +1,1 @@
-edge-tts>=6.1.0
+edge-tts>=7.2.8

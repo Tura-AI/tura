@@ -2,8 +2,8 @@ use chrono::Utc;
 use tracing::{error, info};
 
 use crate::agent_router::activate_agents_by_session_type;
-use crate::checkpoint::session_snapshot::{persist_session_checkpoint, SessionDeltaWriter};
-use crate::manas::{process_manas_internal, ManasInput};
+use crate::checkpoint::session_snapshot::{SessionDeltaWriter, persist_session_checkpoint};
+use crate::manas::{ManasInput, process_manas_internal};
 use crate::mano::{ManoOverrides, ManoProcessResult};
 use crate::runtime_event_writer::RuntimeEventWriter;
 use crate::session_bootstrap::{
@@ -315,7 +315,7 @@ pub fn process_from_user_internal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{build_messages_from_session, USER_AGENT_CONTEXT_ROLE};
+    use crate::context::{USER_AGENT_CONTEXT_ROLE, build_messages_from_session};
     use chrono::Utc;
     use lifecycle::{SessionInput, SessionManagement};
     use std::fs;
@@ -547,10 +547,12 @@ mod tests {
                     .is_some_and(|content| content.contains("<WORKSPACE_SNAPSHOT>"))
             })
             .expect("initial messages should include workspace snapshot");
-        assert!(initial_snapshot["content"]
-            .as_str()
-            .expect("snapshot content should be text")
-            .contains("src/lib.rs"));
+        assert!(
+            initial_snapshot["content"]
+                .as_str()
+                .expect("snapshot content should be text")
+                .contains("src/lib.rs")
+        );
         assert_eq!(initial_snapshot["role"], "developer");
         let replayed_snapshot = replayed
             .iter()

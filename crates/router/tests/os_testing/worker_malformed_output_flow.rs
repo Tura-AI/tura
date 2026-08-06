@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use runtime_contract::CallContext;
 use serde_json::json;
 use std::path::{Path, PathBuf};

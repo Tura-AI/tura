@@ -2,7 +2,7 @@ use super::connection::{init_workspace_db, with_connection};
 use super::helpers::{parse_json_field, replay_session_events};
 use anyhow::Result;
 use lifecycle::{SessionManagement, SessionProjection, SessionQuery};
-use rusqlite::{params, OptionalExtension, Row};
+use rusqlite::{OptionalExtension, Row, params};
 use serde_json::Value;
 use session_log_contract::SessionMetadata;
 use std::path::{Path, PathBuf};

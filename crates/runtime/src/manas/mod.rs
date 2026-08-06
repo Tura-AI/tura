@@ -13,7 +13,7 @@ pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(()
 
 pub(crate) use constants::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
 pub(crate) use final_response::{user_visible_runtime_output_text, user_visible_runtime_text};
-pub(crate) use process::{process_manas_internal, ManasInput};
+pub(crate) use process::{ManasInput, process_manas_internal};
 
 use crate::state_machine::agent_management::AgentManagement;
 use lifecycle::SessionManagement;

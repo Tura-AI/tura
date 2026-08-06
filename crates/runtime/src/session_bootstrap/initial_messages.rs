@@ -1,6 +1,6 @@
 use crate::context::{
-    accumulate_message, build_messages_from_session, user_input_content_matches,
-    user_input_content_value, ContextualUserFragment, WorkspaceSnapshot, USER_AGENT_CONTEXT_ROLE,
+    ContextualUserFragment, USER_AGENT_CONTEXT_ROLE, WorkspaceSnapshot, accumulate_message,
+    build_messages_from_session, user_input_content_matches, user_input_content_value,
 };
 use crate::prompt_style::context_blocks;
 use lifecycle::SessionManagement;

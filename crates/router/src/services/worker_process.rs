@@ -3,19 +3,19 @@ use std::{
     fs::OpenOptions, io::Write as StdWrite, path::Path, process::Stdio, sync::Arc, time::Duration,
 };
 
-use anyhow::{anyhow, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, anyhow};
+use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::{Mutex, Notify},
-    time::{timeout, Instant},
+    time::{Instant, timeout},
 };
 use tracing::{error, info, warn};
 
 use runtime_contract::{CallContext, WorkerEnvelope};
 
-use super::process_scope::{attach_child_scope, configure_scoped_spawn, WorkerProcessScope};
+use super::process_scope::{WorkerProcessScope, attach_child_scope, configure_scoped_spawn};
 
 const WORKER_HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -797,9 +797,8 @@ fn process_debug_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        env_flag, env_value, one_shot_input_bytes, one_shot_worker_mode,
-        parse_one_shot_worker_stdout, sanitize_log_component, worker_stderr_log_path, WorkerMode,
-        WorkerProcess,
+        WorkerMode, WorkerProcess, env_flag, env_value, one_shot_input_bytes, one_shot_worker_mode,
+        parse_one_shot_worker_stdout, sanitize_log_component, worker_stderr_log_path,
     };
     use runtime_contract::CallContext;
     use serde_json::json;

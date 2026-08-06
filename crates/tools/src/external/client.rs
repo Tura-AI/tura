@@ -187,9 +187,11 @@ policy = "policy.toml"
 
         assert!(!candidates.is_empty());
         assert!(candidates.iter().any(|path| path.ends_with(exe_name)));
-        assert!(candidates
-            .iter()
-            .any(|path| path.to_string_lossy().contains("target")));
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.to_string_lossy().contains("target"))
+        );
     }
 
     #[test]

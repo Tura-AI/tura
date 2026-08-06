@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use runtime_contract::CallContext;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -434,7 +434,7 @@ async fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
 
 fn process_alive(pid: u32) -> bool {
     let mut system = System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     system.process(Pid::from_u32(pid)).is_some_and(|process| {
         !matches!(
             process.status(),

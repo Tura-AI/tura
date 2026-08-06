@@ -1299,15 +1299,17 @@ mod tests {
             .expect("fallback source should replay");
         assert_eq!(replayed, retry_runtime);
 
-        assert!(RuntimeAggregate::new_with_fallback(
-            "runtime-self".to_string(),
-            "session-test".to_string(),
-            "agent-test".to_string(),
-            provider_config(),
-            Utc::now(),
-            Some("runtime-self".to_string()),
-        )
-        .is_err());
+        assert!(
+            RuntimeAggregate::new_with_fallback(
+                "runtime-self".to_string(),
+                "session-test".to_string(),
+                "agent-test".to_string(),
+                provider_config(),
+                Utc::now(),
+                Some("runtime-self".to_string()),
+            )
+            .is_err()
+        );
 
         let mut invalid_events = runtime().take_uncommitted_events();
         let RuntimeEvent::RuntimeCreated {
@@ -1390,9 +1392,11 @@ mod tests {
             .expect("finish success");
 
         assert_eq!(runtime.context_tokens.input, 42);
-        assert!(runtime
-            .update_context_tokens(runtime.context_tokens)
-            .is_err());
+        assert!(
+            runtime
+                .update_context_tokens(runtime.context_tokens)
+                .is_err()
+        );
         assert!(matches!(
             runtime.next_uncommitted_event(),
             Some(RuntimeEvent::RuntimeCreated { .. })
