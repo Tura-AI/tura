@@ -3,9 +3,9 @@ use serde_json::Value;
 use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
     mpsc::{self, RecvTimeoutError},
-    Arc, Mutex,
 };
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -14,9 +14,9 @@ use tracing::error;
 use crate::gateway_events::{emit_cli_live_command_run_results, emit_cli_live_command_run_started};
 use crate::provider_flow::checkpointing;
 use crate::provider_flow::streamed_command_run::{
-    command_run_live_delta_result, command_run_stream_event_command,
-    publish_streamed_command_run_update, streamed_command_event_record,
-    streamed_command_result_record, StreamedCommandEvent, StreamedCommandRunUpdate,
+    StreamedCommandEvent, StreamedCommandRunUpdate, command_run_live_delta_result,
+    command_run_stream_event_command, publish_streamed_command_run_update,
+    streamed_command_event_record, streamed_command_result_record,
 };
 use crate::router_command_run::execute_command_value_results;
 use crate::runtime_event_writer::RuntimeFeedPublisher;
@@ -966,19 +966,20 @@ fn streamed_command_run_provider_metadata(commands: &[Value]) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
+        SpawnStreamedCommandRunTask, StreamedCommandRunState,
         apply_patch_failed_streamed_command_run_result, ensure_streamed_command_run_tool_record,
         spawn_streamed_command_run_task, streamed_command_already_seen,
-        SpawnStreamedCommandRunTask, StreamedCommandRunState,
     };
     use chrono::Utc;
     use lifecycle::RuntimeState;
     use lifecycle::{ProviderConfig, ToolChoice};
     use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
-    use serde_json::json;
     use serde_json::Value;
+    use serde_json::json;
     use std::sync::{
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc,
     };
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

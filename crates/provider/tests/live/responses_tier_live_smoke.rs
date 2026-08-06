@@ -15,7 +15,7 @@
 //! Providers without a key are SKIPped (e.g. qwen if `QWEN_API_KEY` is absent).
 //! qwen deliberately uses the *international* DashScope endpoint.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tura_llm_rust::tura_conf::TuraConfig;
 use tura_llm_rust::tura_llm::{CallOptions, ProviderConfig};
 

@@ -492,7 +492,8 @@ pub struct RawProviderConfig {
 
 impl Settings {
     pub async fn default() -> Result<Arc<Self>, TuraError> {
-        let explicit_config = std::env::var_os("TURA_PROVIDER_CONFIG").is_some();
+        let explicit_config = std::env::var_os("TURA_PROVIDER_CONFIG").is_some()
+            || std::env::var_os(crate::models_dev::MODELS_DEV_CATALOG_ENV).is_some();
         if !explicit_config && let Some(settings) = SETTINGS.get() {
             return Ok(Arc::clone(settings));
         }
@@ -505,6 +506,9 @@ impl Settings {
 
     pub fn normalize_model_name(provider: &str, model: &str) -> String {
         let model = model.trim();
+        if crate::models_dev::is_imported_model_id(provider, model) {
+            return model.to_string();
+        }
         let prefix = format!("{provider}/");
         if model.starts_with(&prefix) {
             return model[prefix.len()..].to_string();
@@ -641,12 +645,11 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_latency_for_tier, latency_level_for_tier, provider_latency_config,
-        provider_latency_timeouts, set_provider_latency_config, set_provider_latency_timeouts,
         CatalogModelConfig, CatalogModelDetail, CatalogModelLimit, CatalogModelModalities,
         ModelCatalog, ProviderCatalogConfig, ProviderEnumCatalog, ProviderLatencyConfig,
         ProviderLatencyTimeouts, RawProviderConfig, RawRouteConfig, RootConfig, RouteConfig,
-        Settings,
+        Settings, apply_latency_for_tier, latency_level_for_tier, provider_latency_config,
+        provider_latency_timeouts, set_provider_latency_config, set_provider_latency_timeouts,
     };
     use crate::{ProviderConfig, TuraError};
     use serde_json::json;
@@ -742,9 +745,11 @@ mod tests {
             .expect_err("temperature above 2.0 is invalid");
 
         assert!(matches!(error, TuraError::Validation { .. }));
-        assert!(error
-            .to_string()
-            .contains("default_temperature must be within [0.0, 2.0]"));
+        assert!(
+            error
+                .to_string()
+                .contains("default_temperature must be within [0.0, 2.0]")
+        );
     }
 
     #[test]
@@ -778,9 +783,11 @@ mod tests {
             .provider("anthropic")
             .expect_err("missing provider should report route context");
         assert!(matches!(error, TuraError::Config { .. }));
-        assert!(error
-            .to_string()
-            .contains("This route has no provider named 'anthropic'"));
+        assert!(
+            error
+                .to_string()
+                .contains("This route has no provider named 'anthropic'")
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::api::registry;
 use crate::contracts::*;
-use axum::{extract::Path, http::StatusCode, Json};
+use axum::{Json, extract::Path, http::StatusCode};
 use std::collections::HashMap;
 
 pub async fn list_agents() -> Json<Vec<Agent>> {
@@ -271,20 +271,22 @@ mod tests {
         assert_eq!(stored.summary.id, "helper-agent");
         assert_eq!(stored.config.agent_name, "helper-agent");
         assert_eq!(stored.prompt.as_deref(), Some("Help with local tasks."));
-        assert!(temp
-            .path()
-            .join("agents")
-            .join("src")
-            .join("helper-agent")
-            .join("agent_config.json")
-            .exists());
-        assert!(temp
-            .path()
-            .join("agents")
-            .join("src")
-            .join("helper-agent")
-            .join("prompt.md")
-            .exists());
+        assert!(
+            temp.path()
+                .join("agents")
+                .join("src")
+                .join("helper-agent")
+                .join("agent_config.json")
+                .exists()
+        );
+        assert!(
+            temp.path()
+                .join("agents")
+                .join("src")
+                .join("helper-agent")
+                .join("prompt.md")
+                .exists()
+        );
 
         restore_project_root(previous_root);
     }

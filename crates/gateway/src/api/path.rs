@@ -1,5 +1,5 @@
 use crate::contracts::{PathParams, PathResponse};
-use axum::{extract::Query, http::HeaderMap, Json};
+use axum::{Json, extract::Query, http::HeaderMap};
 
 pub async fn get_paths(headers: HeaderMap, Query(params): Query<PathParams>) -> Json<PathResponse> {
     let home = std::env::var("USERPROFILE")

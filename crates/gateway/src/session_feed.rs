@@ -2,11 +2,11 @@
 
 use crate::api::session::frontend_safe_reply_message;
 use crate::contracts::{CommandUpdatedProperties, GlobalEvent, SessionContextTokens};
-use crate::session::{session_store, MessageRole, SessionStore};
+use crate::session::{MessageRole, SessionStore, session_store};
 use crate::session_db_client::SessionDbClient;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use session_log_contract::client::{
-    open_session_feed_subscription, SessionFeedSubscription, SessionFeedSubscriptionCancellation,
+    SessionFeedSubscription, SessionFeedSubscriptionCancellation, open_session_feed_subscription,
 };
 use session_log_contract::{SessionFeedCommandUpdate, SessionFeedEntry, SessionFeedEvent};
 use std::collections::{HashMap, HashSet};
@@ -714,9 +714,11 @@ mod tests {
         created_entry.session_id = session_id.clone();
         created_entry.runtime_id = None;
 
-        assert!(reducer
-            .apply(created_entry)
-            .expect("reduce created snapshot"));
+        assert!(
+            reducer
+                .apply(created_entry)
+                .expect("reduce created snapshot")
+        );
         let session = store.get_session(&session_id).expect("created cache entry");
         assert_eq!(session.name.as_deref(), Some("Created by feed"));
         assert_eq!(session.model.as_deref(), Some("model-Created by feed"));
@@ -855,9 +857,11 @@ mod tests {
         );
         duplicate_value.session_id = session_id;
         duplicate_value.runtime_id = None;
-        assert!(reducer
-            .apply(duplicate_value)
-            .expect("advance cursor for equal snapshot"));
+        assert!(
+            reducer
+                .apply(duplicate_value)
+                .expect("advance cursor for equal snapshot")
+        );
         let events = std::iter::from_fn(|| store.next_event(&mut event_cursor)).collect::<Vec<_>>();
         assert_eq!(
             events
@@ -926,18 +930,22 @@ mod tests {
         deleted.session_id = session_id.clone();
         deleted.runtime_id = None;
 
-        assert!(reducer
-            .apply(deleted.clone())
-            .expect("reduce deletion tombstone across startup gap"));
+        assert!(
+            reducer
+                .apply(deleted.clone())
+                .expect("reduce deletion tombstone across startup gap")
+        );
         assert!(store.get_session(&session_id).is_none());
         assert!(matches!(
             store.next_event(&mut event_cursor),
             Some(GlobalEvent::SessionDeleted { properties })
                 if properties.session_id == session_id && properties.info.id == session_id
         ));
-        assert!(!reducer
-            .apply(deleted)
-            .expect("deduplicate deletion tombstone"));
+        assert!(
+            !reducer
+                .apply(deleted)
+                .expect("deduplicate deletion tombstone")
+        );
         assert!(store.next_event(&mut event_cursor).is_none());
     }
 
@@ -959,9 +967,11 @@ mod tests {
         tombstone.session_id = session_id;
         tombstone.runtime_id = None;
 
-        assert!(reducer
-            .apply(tombstone)
-            .expect("feed wins cursor after local projection deletion"));
+        assert!(
+            reducer
+                .apply(tombstone)
+                .expect("feed wins cursor after local projection deletion")
+        );
         let events = std::iter::from_fn(|| store.next_event(&mut event_cursor)).collect::<Vec<_>>();
         assert_eq!(
             events
@@ -1034,10 +1044,12 @@ mod tests {
             .session_lifecycle_projection(&session_id)
             .expect("lifecycle after feed");
         assert_eq!(after.state, before.state);
-        assert!(store
-            .get_messages(&session_id)
-            .iter()
-            .any(|message| message.id == "feed-runtime.message"));
+        assert!(
+            store
+                .get_messages(&session_id)
+                .iter()
+                .any(|message| message.id == "feed-runtime.message")
+        );
     }
 
     #[test]
@@ -1134,9 +1146,11 @@ mod tests {
             },
         );
         completed.session_id = session_id.clone();
-        assert!(reducer
-            .apply(completed)
-            .expect("reduce completed durable text"));
+        assert!(
+            reducer
+                .apply(completed)
+                .expect("reduce completed durable text")
+        );
         assert_eq!(reducer.cursors.get(&session_id), Some(&1));
 
         let messages = store.get_messages(&session_id);
@@ -1249,14 +1263,18 @@ mod tests {
         );
         system_entry.session_id = session_id.clone();
 
-        assert!(reducer
-            .apply(system_entry)
-            .expect("ignore system message projection"));
+        assert!(
+            reducer
+                .apply(system_entry)
+                .expect("ignore system message projection")
+        );
         assert_eq!(reducer.cursors.get(&session_id), Some(&1));
-        assert!(store
-            .get_messages(&session_id)
-            .iter()
-            .all(|candidate| candidate.id != message.id));
+        assert!(
+            store
+                .get_messages(&session_id)
+                .iter()
+                .all(|candidate| candidate.id != message.id)
+        );
 
         let events = std::iter::from_fn(|| store.next_event(&mut event_cursor)).collect::<Vec<_>>();
         assert!(events.iter().all(|event| {
@@ -1316,18 +1334,22 @@ mod tests {
         assert!(reducer.apply(todos).expect("reduce todos"));
 
         let events = std::iter::from_fn(|| store.next_event(&mut cursor)).collect::<Vec<_>>();
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, GlobalEvent::MessageUpdated { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, GlobalEvent::MessageUpdated { .. }))
+        );
         assert!(events.iter().any(|event| matches!(
             event,
             GlobalEvent::CommandUpdated { properties }
                 if properties.command_id == "command-1"
                     && properties.runtime_id == "feed-runtime"
         )));
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, GlobalEvent::TodoUpdated { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, GlobalEvent::TodoUpdated { .. }))
+        );
         assert_eq!(store.get_todos(&session_id)[0]["id"], "todo-1");
     }
 

@@ -4,11 +4,11 @@ use lifecycle::{ProviderConfig, ToolChoice};
 use lifecycle::{RuntimeAggregate, RuntimeProviderConfig};
 use lifecycle::{SessionInput, SessionManagement};
 use runtime::context::{
-    accumulate_message, accumulate_tool_result, accumulate_tool_result_with_provider_metadata,
-    build_context, build_messages_from_session, user_input_content_matches,
-    user_input_content_value, ContextInput,
+    ContextInput, accumulate_message, accumulate_tool_result,
+    accumulate_tool_result_with_provider_metadata, build_context, build_messages_from_session,
+    user_input_content_matches, user_input_content_value,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 fn business_session(user_input: &str) -> SessionManagement {

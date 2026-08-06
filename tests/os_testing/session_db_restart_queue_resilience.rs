@@ -6,7 +6,7 @@
 //! `.tura/session_log.sqlite3` stores without public network access, API keys,
 //! or third-party services.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use session_log_contract::{
     DeleteSessionRequest, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
     SessionLogCommand, SessionLogResponse,
@@ -21,8 +21,8 @@ use std::{
 mod helpers;
 use helpers::*;
 #[test]
-fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpoint_idempotency(
-) -> Result<()> {
+fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpoint_idempotency()
+-> Result<()> {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("session-db-restart-queue")?;
     let workspace = env.workspace("primary")?;
@@ -157,8 +157,8 @@ fn session_db_restarts_drain_offline_queue_quarantine_bad_items_and_keep_checkpo
 }
 
 #[test]
-fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losing_history(
-) -> Result<()> {
+fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losing_history()
+-> Result<()> {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("session-db-restart-interrupted")?;
     let workspace = env.workspace("recovery")?;
@@ -244,8 +244,8 @@ fn session_db_restart_marks_running_and_paused_sessions_interrupted_without_losi
 }
 
 #[test]
-fn session_db_handles_concurrent_short_lived_clients_after_restart_with_workspace_pagination(
-) -> Result<()> {
+fn session_db_handles_concurrent_short_lived_clients_after_restart_with_workspace_pagination()
+-> Result<()> {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("session-db-concurrent-after-restart")?;
     let workspace_a = env.workspace("workspace-a")?;

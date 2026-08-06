@@ -6,7 +6,7 @@
 //! per-provider divergences are captured by [`ResponsesProfile`] as a small
 //! provider quirk layer.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Instant;
 
 use super::common::{
@@ -15,8 +15,8 @@ use super::common::{
 use crate::metrics::extract_openapi_metrics;
 use crate::streaming::{next_provider_stream_chunk, send_provider_request_first_response};
 use crate::tura_llm::{
-    normalize_response_content, CostDetails, ProviderResponse, ProviderStreamEvent,
-    ProviderStreamEventSink, TuraError,
+    CostDetails, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink, TuraError,
+    normalize_response_content,
 };
 use crate::utils::{deep_merge_json, openai_responses_content_from_canonical, strip_json_fence};
 
@@ -27,6 +27,9 @@ pub(crate) async fn codex_oauth_call(
     options: &CallOptions,
     stream_events: Option<ProviderStreamEventSink>,
 ) -> Result<ProviderResponse, TuraError> {
+    crate::install_rustls_crypto_provider().map_err(|error| TuraError::Network {
+        message: error.to_string(),
+    })?;
     let client = reqwest::Client::builder()
         .build()
         .map_err(|err| TuraError::Network {
@@ -101,6 +104,9 @@ pub(crate) async fn responses_api_key_call(
     options: &CallOptions,
     stream_events: Option<ProviderStreamEventSink>,
 ) -> Result<ProviderResponse, TuraError> {
+    crate::install_rustls_crypto_provider().map_err(|error| TuraError::Network {
+        message: error.to_string(),
+    })?;
     let profile = ResponsesProfile::for_provider(provider);
     let client = reqwest::Client::builder()
         .build()
@@ -710,7 +716,7 @@ fn codex_output_item_tool_call(item: &Value) -> Option<Value> {
 mod response_tool_stream;
 #[cfg(test)]
 pub(crate) use response_tool_stream::CodexToolCallStreamCollector;
-pub(crate) use response_tool_stream::{codex_event_tool_calls, CodexCommandRunCommandCollector};
+pub(crate) use response_tool_stream::{CodexCommandRunCommandCollector, codex_event_tool_calls};
 fn codex_tool_call_value(id: &str, name: &str, arguments: Value) -> Value {
     json!({
         "id": id,

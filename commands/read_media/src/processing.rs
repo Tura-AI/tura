@@ -5,10 +5,10 @@ use super::pdf::process_pdf;
 use super::previews::{draw_text, encode_preview_jpeg};
 use super::types::{MediaContent, ReadMediaArgs, ReadMode};
 use super::video::{process_audio, process_video, process_video_with_python_cv2, resolve_ffmpeg};
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use image::{DynamicImage, Rgb, RgbImage};
 use pdfium_render::prelude::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 pub(super) fn process_media_file(
@@ -102,7 +102,10 @@ fn process_pdf_thumbnail(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Value>
                 .render_form_data(true),
         )
         .map_err(|err| format!("failed to render pdf page: {err}"))?;
-    let image = DynamicImage::ImageRgb8(rendered.as_image().to_rgb8());
+    let image = rendered
+        .as_image()
+        .map_err(|err| format!("failed to convert rendered pdf page to image: {err}"))?;
+    let image = DynamicImage::ImageRgb8(image.to_rgb8());
     let encoded = encode_preview_jpeg(image, scaled_side(args.max_side, 2, 1), 80)?;
     Ok(vec![json!({
         "type": "image_url",

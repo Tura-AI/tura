@@ -189,7 +189,7 @@ pub async fn enqueue_tool_result(
     redis::cmd("RPUSH")
         .arg(&queue_key)
         .arg(&payload)
-        .query_async::<_, ()>(&mut con)
+        .query_async::<()>(&mut con)
         .await
         .map_err(|e| format!("failed to enqueue tool result: {e}"))?;
 

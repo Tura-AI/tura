@@ -358,10 +358,12 @@ mod tests {
 
         let message =
             super::active_todo_task_user_message(&session).expect("todo task is executable");
-        assert!(message["content"]
-            .as_str()
-            .expect("message content")
-            .contains("Task 2"));
+        assert!(
+            message["content"]
+                .as_str()
+                .expect("message content")
+                .contains("Task 2")
+        );
     }
 
     #[test]

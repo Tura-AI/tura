@@ -6,10 +6,10 @@
 //! kill on the current OS, and records the expected cleanup strategy for other
 //! supported OS families without requiring those hosts.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use code_tools::{
     command_run,
-    commands::shell_command::{current_shell_process_scope_strategy, ShellProcessScopeStrategy},
+    commands::shell_command::{ShellProcessScopeStrategy, current_shell_process_scope_strategy},
 };
 use serde_json::json;
 use std::{
@@ -22,8 +22,8 @@ use std::{
 use sysinfo::{Pid, System};
 use tokio::process::Command;
 use tura_router::process_scope::{
-    attach_child_scope, configure_scoped_spawn, current_process_scope_strategy,
-    ProcessScopeStrategy,
+    ProcessScopeStrategy, attach_child_scope, configure_scoped_spawn,
+    current_process_scope_strategy,
 };
 
 const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -181,8 +181,8 @@ fn process_scope_management_command_run_timeout_kills_spawned_child_tree() -> Re
 }
 
 #[test]
-fn process_scope_management_command_run_success_preserves_background_child_until_router_shutdown(
-) -> Result<()> {
+fn process_scope_management_command_run_success_preserves_background_child_until_router_shutdown()
+-> Result<()> {
     let _scope_guard = command_run_scope_guard()?;
     let temp = tempfile::tempdir().context("temp command_run background workspace")?;
     let pid_file = temp.path().join("command-run-background-child.pid");
@@ -482,6 +482,6 @@ fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
 
 fn process_alive(pid: u32) -> bool {
     let mut system = System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     system.process(Pid::from_u32(pid)).is_some()
 }

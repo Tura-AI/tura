@@ -6,11 +6,11 @@ use super::html::*;
 use super::output::*;
 use super::search::*;
 use super::types::{
-    SearchResult, WebDiscoverArgs, DEFAULT_IMAGE_MIN_SIZE, DEFAULT_MAX_RESULTS, DEFAULT_MAX_SIZE,
-    DEFAULT_MIN_SIZE,
+    DEFAULT_IMAGE_MIN_SIZE, DEFAULT_MAX_RESULTS, DEFAULT_MAX_SIZE, DEFAULT_MIN_SIZE, SearchResult,
+    WebDiscoverArgs,
 };
 use super::util::*;
-use super::{access, execute, handle_envelope, Envelope};
+use super::{Envelope, access, execute, handle_envelope};
 use reqwest::blocking::Client;
 use serde_json::json;
 use std::fs;
@@ -40,6 +40,7 @@ fn direct_webpage_url_accepts_only_single_http_url() {
 
 #[test]
 fn direct_media_urls_bypass_search() {
+    tura_llm_rust::install_rustls_crypto_provider().expect("rustls crypto provider");
     let client = Client::builder().build().expect("client");
     let image = search_media_links(
         &client,
@@ -868,15 +869,17 @@ fn file_helpers_resolve_relative_absolute_and_unique_downloads() {
         workspace_relative_path("media/image", session_dir),
         Some(PathBuf::from("media/image"))
     );
-    assert!(workspace_relative_path(
-        temp.path()
-            .parent()
-            .unwrap_or(temp.path())
-            .to_string_lossy()
-            .as_ref(),
-        session_dir
-    )
-    .is_none());
+    assert!(
+        workspace_relative_path(
+            temp.path()
+                .parent()
+                .unwrap_or(temp.path())
+                .to_string_lossy()
+                .as_ref(),
+            session_dir
+        )
+        .is_none()
+    );
 
     let first = write_unique_download(&output_dir, "profile", "jpg", b"one").expect("write first");
     let second =
@@ -1011,10 +1014,12 @@ fn protocol_health_capabilities_access_and_unknown_are_local() {
         payload: json!({}),
     });
     assert!(!unknown.ok);
-    assert!(unknown.output["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("unsupported protocol kind"));
+    assert!(
+        unknown.output["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unsupported protocol kind")
+    );
 }
 
 #[test]
@@ -1078,6 +1083,7 @@ fn custom_search_endpoint_posts_query_and_filters_missing_urls() {
     })
     .to_string();
     let (endpoint, server) = spawn_json_endpoint(body);
+    tura_llm_rust::install_rustls_crypto_provider().expect("rustls crypto provider");
     let client = Client::builder().build().expect("client");
 
     let results = search_custom_endpoint(&client, &endpoint, "rust query", 3)

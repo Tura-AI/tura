@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use super::catalog::{provider_api_from_settings, provider_env_from_settings};
 use super::{
-    config_value, ProviderAuthActionDetail, ProviderAuthStatusResponse,
-    ProviderAuthValidationRequest,
+    ProviderAuthActionDetail, ProviderAuthStatusResponse, ProviderAuthValidationRequest,
+    config_value,
 };
 
 pub(super) struct ProviderValidationReceipt {
@@ -229,6 +229,12 @@ pub(super) async fn validate_provider_credentials_remotely(
         .or_else(|| registry_entry.map(|entry| entry.runtime_provider_id))
         .unwrap_or(provider_id);
     let token = token.map(str::trim).filter(|value| !value.is_empty());
+    if let Err(error) = tura_llm_rust::install_rustls_crypto_provider() {
+        return ProviderCredentialValidation::Failed(validation_detail(
+            "provider.validation.client_setup_failed",
+            Some(error.to_string()),
+        ));
+    }
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
         .build()
@@ -976,6 +982,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_response_maps_success_warning_rejection_and_request_errors() {
+        tura_llm_rust::install_rustls_crypto_provider().expect("rustls crypto provider");
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(1))
             .build()

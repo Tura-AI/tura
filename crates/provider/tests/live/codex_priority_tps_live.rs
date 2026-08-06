@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tura_llm_rust::tura_conf::TuraConfig;
 use tura_llm_rust::tura_llm::{CallOptions, ProviderConfig, ProviderResponse};
 

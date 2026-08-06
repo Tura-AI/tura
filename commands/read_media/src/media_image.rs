@@ -1,6 +1,6 @@
 use super::previews::encode_preview_jpeg;
 use super::types::ReadMediaArgs;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 pub(super) fn process_image(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Value>, String> {

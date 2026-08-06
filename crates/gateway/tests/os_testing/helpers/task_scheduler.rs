@@ -9,7 +9,7 @@ pub(crate) use gateway::contracts::{
     SessionStatus as ApiSessionStatus, UpdateSessionTaskManagementRequest,
 };
 pub(crate) use gateway::session::MessageRole;
-pub(crate) use gateway::{session_store, SessionStore};
+pub(crate) use gateway::{SessionStore, session_store};
 pub(crate) use lifecycle::SessionCommand;
 pub(crate) use serde_json::json;
 pub(crate) use session_log::SessionLogStore;

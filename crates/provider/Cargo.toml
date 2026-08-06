@@ -72,9 +72,12 @@ dotenvy.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 futures-util.workspace = true
 regex.workspace = true
+sha2.workspace = true
 tura_path.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

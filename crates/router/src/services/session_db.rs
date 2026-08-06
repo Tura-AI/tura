@@ -3,7 +3,7 @@
 //! Router starts and health-checks the service, but it must not parse or proxy
 //! normal session DB read/write payloads.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::json;
 use session_log_contract::client::{
     call_service, service_addr_path, service_is_running, unreachable_owner_lock_message,
@@ -12,8 +12,8 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -175,8 +175,8 @@ impl SessionDbService {
                         .map(|message| format!("; {message}"))
                         .unwrap_or_default();
                     return Err(anyhow!(
-                            "session_db service exited before publishing a reachable socket: {status}{detail}"
-                        ));
+                        "session_db service exited before publishing a reachable socket: {status}{detail}"
+                    ));
                 }
             }
             if started.elapsed() >= timeout {
@@ -259,7 +259,7 @@ fn find_repo_root(path: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_repo_root, resolve_binary, SessionDbService};
+    use super::{SessionDbService, find_repo_root, resolve_binary};
     use session_log_contract::client::service_addr_path;
     use std::io::{BufRead, Write};
     use std::net::TcpListener;

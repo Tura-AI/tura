@@ -10,8 +10,9 @@ pub mod session_snapshot;
 
 pub use client::CheckpointClient;
 pub use command_run::{
-    checkpoint_command_ready, checkpoint_command_run_finished, checkpoint_command_run_started,
-    checkpoint_command_started, checkpoint_streamed_command_finished, StreamedCommandCheckpoint,
+    StreamedCommandCheckpoint, checkpoint_command_ready, checkpoint_command_run_finished,
+    checkpoint_command_run_started, checkpoint_command_started,
+    checkpoint_streamed_command_finished,
 };
 pub use runtime::{
     checkpoint_provider_call_finished, checkpoint_provider_call_started, checkpoint_turn_failed,

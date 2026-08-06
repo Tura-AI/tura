@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use serde_json::json;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -23,9 +23,11 @@ fn generate_media_business_flow_openai_saves_base64_image() {
         let (mut stream, _) = listener.accept().expect("accept");
         let request = read_request(&mut stream);
         assert!(request.contains("POST /v1/images/generations"));
-        assert!(request
-            .to_ascii_lowercase()
-            .contains("authorization: bearer sk-test-openai-key"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer sk-test-openai-key")
+        );
         assert!(request.contains("\"prompt\":\"studio cat"));
         assert!(request.contains("\"size\":\"1024x1024\""));
         write_json(
@@ -344,10 +346,12 @@ fn generate_media_business_flow_configured_order_falls_back_to_openai_and_keeps_
         "replicate_z_image_turbo"
     );
     assert_eq!(response.output["attempts"][0]["success"], false);
-    assert!(response.output["attempts"][0]["error"]
-        .as_str()
-        .expect("first attempt error")
-        .contains("Replicate Z-Image Turbo failed"));
+    assert!(
+        response.output["attempts"][0]["error"]
+            .as_str()
+            .expect("first attempt error")
+            .contains("Replicate Z-Image Turbo failed")
+    );
     assert_eq!(
         response.output["attempts"][1]["provider"],
         "chatgpt_image_2"
@@ -396,15 +400,21 @@ fn generate_media_business_flow_returns_provider_errors_when_all_fallbacks_fail(
     server.join().expect("server");
 
     assert!(!response.success);
-    assert!(response
-        .stderr
-        .contains("replicate_z_image_turbo: Replicate Z-Image Turbo failed"));
-    assert!(response
-        .stderr
-        .contains("chatgpt_image_2: OpenAI image generation failed"));
-    assert!(response
-        .stderr
-        .contains("set one of the matching media generation keys to enable generate_media"));
+    assert!(
+        response
+            .stderr
+            .contains("replicate_z_image_turbo: Replicate Z-Image Turbo failed")
+    );
+    assert!(
+        response
+            .stderr
+            .contains("chatgpt_image_2: OpenAI image generation failed")
+    );
+    assert!(
+        response
+            .stderr
+            .contains("set one of the matching media generation keys to enable generate_media")
+    );
     assert!(response.stderr.contains("REPLICATE_API_TOKEN"));
     assert!(response.stderr.contains("OPENAI_API_KEY"));
     assert_eq!(response.output["error"], response.stderr);
@@ -430,12 +440,16 @@ fn generate_media_business_flow_reports_media_generation_key_help_when_no_provid
     restore_env("REPLICATE_API_KEY", saved_replicate_key);
 
     assert!(!response.success);
-    assert!(response
-        .stderr
-        .contains("all generate_media providers failed"));
-    assert!(response
-        .stderr
-        .contains("set one of the matching media generation keys to enable generate_media"));
+    assert!(
+        response
+            .stderr
+            .contains("all generate_media providers failed")
+    );
+    assert!(
+        response
+            .stderr
+            .contains("set one of the matching media generation keys to enable generate_media")
+    );
     assert!(response.stderr.contains("REPLICATE_API_TOKEN"));
     assert_eq!(response.output["error"], response.stderr);
 }
@@ -468,12 +482,16 @@ fn generate_media_business_flow_reports_speech_key_help_when_no_provider_is_avai
     restore_env("XI_API_KEY", saved_xi);
 
     assert!(!response.success);
-    assert!(response
-        .stderr
-        .contains("all generate_media speech providers failed"));
-    assert!(response
-        .stderr
-        .contains("set one of the matching media generation keys to enable generate_media speech"));
+    assert!(
+        response
+            .stderr
+            .contains("all generate_media speech providers failed")
+    );
+    assert!(
+        response.stderr.contains(
+            "set one of the matching media generation keys to enable generate_media speech"
+        )
+    );
     assert!(response.stderr.contains("ELEVENLABS_API_KEY"));
     assert_eq!(response.output["error"], response.stderr);
 }
@@ -501,9 +519,11 @@ fn generate_media_business_protocol_access_and_dry_run_are_stable() {
     assert!(response.success, "{}", response.stderr);
     assert_eq!(response.output["dry_run"], true);
     assert_eq!(response.output["providers"][0]["provider"], "grok3");
-    assert!(response.output["providers"][0]["request"]
-        .get("image")
-        .is_some());
+    assert!(
+        response.output["providers"][0]["request"]
+            .get("image")
+            .is_some()
+    );
 }
 
 #[test]
@@ -615,9 +635,11 @@ fn run_speech_provider_mock(provider: &str) {
             let (mut stream, _) = listener.accept().expect("accept qwen");
             let request = read_request(&mut stream);
             assert!(request.contains("POST /qwen"));
-            assert!(request
-                .to_ascii_lowercase()
-                .contains("authorization: bearer test-qwen-key"));
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test-qwen-key")
+            );
             assert!(request.contains("\"instructions\""));
             write_json(
                 &mut stream,
@@ -629,9 +651,11 @@ fn run_speech_provider_mock(provider: &str) {
             let (mut stream, _) = listener.accept().expect("accept azure edge");
             let request = read_request(&mut stream);
             assert!(request.contains("POST /azure-edge/tts"));
-            assert!(!request
-                .to_ascii_lowercase()
-                .contains("ocp-apim-subscription-key"));
+            assert!(
+                !request
+                    .to_ascii_lowercase()
+                    .contains("ocp-apim-subscription-key")
+            );
             assert!(request.contains("\"voice\""));
             assert!(request.contains("\"rate\""));
             assert!(request.contains("\"volume\""));
@@ -641,9 +665,11 @@ fn run_speech_provider_mock(provider: &str) {
             let (mut token_stream, _) = listener.accept().expect("accept azure token");
             let token_request = read_request(&mut token_stream);
             assert!(token_request.contains("POST /azure/token"));
-            assert!(token_request
-                .to_ascii_lowercase()
-                .contains("ocp-apim-subscription-key: test-azure-key"));
+            assert!(
+                token_request
+                    .to_ascii_lowercase()
+                    .contains("ocp-apim-subscription-key: test-azure-key")
+            );
             write_status_content_type(&mut token_stream, 200, "text/plain", b"azure-token");
 
             let (mut speech_stream, _) = listener.accept().expect("accept azure speech");
@@ -657,9 +683,11 @@ fn run_speech_provider_mock(provider: &str) {
             let (mut create_stream, _) = listener.accept().expect("accept replicate create");
             let create_request = read_request(&mut create_stream);
             assert!(create_request.contains("POST /replicate"));
-            assert!(create_request
-                .to_ascii_lowercase()
-                .contains("authorization: bearer test-replicate-key"));
+            assert!(
+                create_request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test-replicate-key")
+            );
             assert!(create_request.contains("hello from speech"));
             let url = format!("http://{addr}/asset.wav");
             write_json(&mut create_stream, &json!({ "output": url }).to_string());

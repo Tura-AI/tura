@@ -1,13 +1,13 @@
-use super::connection::{init_workspace_db, with_connection};
-use super::helpers::{bounded_page, parse_json_field};
-use super::payload::{
-    index_session_from_row, load_workspace_session_payload, load_workspace_session_summary_payload,
-    IndexSessionRow,
-};
 use super::SessionLogStore;
+use super::connection::{init_workspace_db, with_connection};
+use super::helpers::{bounded_page, parse_json_field, row_u64, sqlite_u64};
+use super::payload::{
+    IndexSessionRow, index_session_from_row, load_workspace_session_payload,
+    load_workspace_session_summary_payload,
+};
 use crate::path::normalize_workspace;
 use anyhow::Result;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 use session_log_contract::{
     ContextSlice, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page,
     ReadContextSliceRequest, SessionContextRecord, SessionRecord, SessionSnapshot, SessionSummary,
@@ -29,13 +29,7 @@ impl SessionLogStore {
                     "SELECT next_context_sequence, retained_from_sequence, next_management_sequence
                  FROM sessions WHERE session_id = ?1",
                     params![request.session_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, u64>(0)?,
-                            row.get::<_, u64>(1)?,
-                            row.get::<_, u64>(2)?,
-                        ))
-                    },
+                    |row| Ok((row_u64(row, 0)?, row_u64(row, 1)?, row_u64(row, 2)?)),
                 )?;
             let mut statement = conn.prepare(
                 "SELECT sequence, record_json FROM session_context_records
@@ -45,8 +39,8 @@ impl SessionLogStore {
             let byte_budget = request.max_estimated_tokens.saturating_mul(4);
             let mut rows = statement.query(params![
                 request.session_id,
-                retained_from_sequence,
-                next_sequence
+                sqlite_u64(retained_from_sequence)?,
+                sqlite_u64(next_sequence)?
             ])?;
             let mut selected_bytes = 0_u64;
             let mut records = Vec::new();
@@ -59,7 +53,7 @@ impl SessionLogStore {
                 }
                 selected_bytes = selected_bytes.saturating_add(record_bytes);
                 records.push(SessionContextRecord {
-                    sequence: row.get(0)?,
+                    sequence: row_u64(row, 0)?,
                     raw_record,
                 });
             }

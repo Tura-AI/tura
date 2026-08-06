@@ -1,6 +1,6 @@
 use super::types::WebDiscoverArgs;
 use super::util::content_type_for_path;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

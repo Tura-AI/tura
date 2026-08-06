@@ -4,13 +4,13 @@ use crate::api::product::current_user_snapshot;
 use crate::contracts::*;
 use crate::mock::global_store;
 use crate::router_client::RouterClient;
-use crate::session::config::{load_config, merge_config, TuraSessionConfig};
-use crate::session::{session_store, MessageRole as SessionMessageRole};
+use crate::session::config::{TuraSessionConfig, load_config, merge_config};
+use crate::session::{MessageRole as SessionMessageRole, session_store};
 use axum::{
+    Json,
     extract::{Path, Query},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use std::fs;
 use std::path::PathBuf;

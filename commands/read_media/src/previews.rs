@@ -1,8 +1,8 @@
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use image::{
-    codecs::jpeg::JpegEncoder, imageops::FilterType, DynamicImage, GenericImageView, Rgb, RgbImage,
+    DynamicImage, GenericImageView, Rgb, RgbImage, codecs::jpeg::JpegEncoder, imageops::FilterType,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const CONTACT_SHEET_MAX_SIDE: u32 = 1024;
 
@@ -101,10 +101,12 @@ fn compact_result_visual_previews(result: &mut Value) -> Result<(), String> {
     }
     let sheets = contact_sheet_previews(&items)?;
     result["visual_previews"] = json!(sheets);
-    result["visual_preview_count"] = json!(result["visual_previews"]
-        .as_array()
-        .map(Vec::len)
-        .unwrap_or(0));
+    result["visual_preview_count"] = json!(
+        result["visual_previews"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or(0)
+    );
     result["visual_contact_sheet"] = json!(true);
     Ok(())
 }
@@ -289,7 +291,7 @@ mod tests {
         compact_visual_previews, draw_text, encode_preview_jpeg, image_from_data_url,
         preview_data_url, resize_dynamic_image,
     };
-    use base64::{engine::general_purpose, Engine as _};
+    use base64::{Engine as _, engine::general_purpose};
     use image::{DynamicImage, GenericImageView, ImageFormat, Rgb, RgbImage};
     use serde_json::json;
 

@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use crate::{file_queue, ipc, SessionLogStore};
+use crate::{SessionLogStore, file_queue, ipc};
 use session_log_contract::client::{call_service, service_is_running};
 use session_log_contract::{
     DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionRecordsRequest,

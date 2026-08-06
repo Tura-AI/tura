@@ -400,12 +400,16 @@ mod tests {
 
         assert_eq!(image_count, 24);
         assert_eq!(file_count, 8);
-        assert!(content
-            .iter()
-            .any(|item| item["image_url"] == "https://cdn.example.com/23.jpg"));
-        assert!(!content
-            .iter()
-            .any(|item| item["image_url"] == "https://cdn.example.com/24.jpg"));
+        assert!(
+            content
+                .iter()
+                .any(|item| item["image_url"] == "https://cdn.example.com/23.jpg")
+        );
+        assert!(
+            !content
+                .iter()
+                .any(|item| item["image_url"] == "https://cdn.example.com/24.jpg")
+        );
         assert!(content.iter().any(|item| item["filename"] == "file-7.txt"));
         assert!(!content.iter().any(|item| item["filename"] == "file-8.txt"));
     }

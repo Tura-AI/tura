@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn main() {
+    if let Err(error) = tura_llm_rust::install_rustls_crypto_provider() {
+        eprintln!("gateway failed to install the rustls crypto provider: {error}");
+        std::process::exit(1);
+    }
     tura_path::process_hardening::harden_current_process("gateway");
     configure_release_runtime_env();
 
@@ -409,18 +413,20 @@ fn start_router_front_heartbeat() {
     let front_id = format!("gateway-{}-{}", std::process::id(), uuid::Uuid::new_v4());
     let ttl = gateway_router_lease_ttl();
     let interval = ttl.div_f64(3.0).max(Duration::from_secs(1));
-    std::thread::spawn(move || loop {
-        if let Ok(router_process) = gateway::router_process::global_router_process() {
-            let _ = router_process.call(
-                "lifecycle.front_heartbeat",
-                json!({
-                    "front_id": front_id,
-                    "kind": "gateway",
-                    "ttl_ms": ttl.as_millis() as u64,
-                }),
-            );
+    std::thread::spawn(move || {
+        loop {
+            if let Ok(router_process) = gateway::router_process::global_router_process() {
+                let _ = router_process.call(
+                    "lifecycle.front_heartbeat",
+                    json!({
+                        "front_id": front_id,
+                        "kind": "gateway",
+                        "ttl_ms": ttl.as_millis() as u64,
+                    }),
+                );
+            }
+            std::thread::sleep(interval);
         }
-        std::thread::sleep(interval);
     });
 }
 
@@ -515,8 +521,8 @@ fn run_session_log_command() {
 #[cfg(test)]
 mod tests {
     use super::{
-        desired_port_for_exe, find_release_root_from, select_listen_port, PortDecision,
-        PortPreference,
+        PortDecision, PortPreference, desired_port_for_exe, find_release_root_from,
+        select_listen_port,
     };
     use std::net::TcpListener;
 
