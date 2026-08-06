@@ -6,9 +6,9 @@ use crate::runtime_dispatch::dispatch_run_agent;
 use crate::runtime_utils::tokio_runtime;
 use router_contract::ExecuteCommandRequest;
 use runtime_contract::RunAgentRequest;
+use tura_router::registry::Registry;
 use tura_router::registry::agent::UpsertAgentRequest;
 use tura_router::registry::persona::UpsertPersonaRequest;
-use tura_router::registry::Registry;
 
 pub(crate) fn run_router_command(command: &str) -> anyhow::Result<()> {
     match command {

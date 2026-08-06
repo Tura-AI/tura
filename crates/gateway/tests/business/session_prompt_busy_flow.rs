@@ -10,7 +10,7 @@ use gateway::contracts::{
 };
 use gateway::session_store;
 use lifecycle::{SessionCommand, SessionState};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use session_log::SessionLogStore;
 use session_log_contract::{SessionLogCommand, SessionLogResponse};
 use std::time::{Duration, Instant};
@@ -174,8 +174,8 @@ async fn busy_session_prompt_business_flow_queues_multiple_commands_fifo_and_pre
 }
 
 #[tokio::test]
-async fn busy_session_prompt_business_flow_runtime_status_requires_canonical_values_and_preserves_queue(
-) {
+async fn busy_session_prompt_business_flow_runtime_status_requires_canonical_values_and_preserves_queue()
+ {
     let _service = TestSessionDb::start();
     let directory = std::env::temp_dir()
         .join(format!(

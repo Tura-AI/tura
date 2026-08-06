@@ -257,9 +257,10 @@ mod tests {
         let two = temp_work_dir("read-media-test");
 
         assert_ne!(one, two);
-        assert!(one
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("read-media-test-")));
+        assert!(
+            one.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("read-media-test-"))
+        );
     }
 }

@@ -4,9 +4,9 @@ use crate::api::directory_picker::select_directory;
 use crate::contracts::*;
 use crate::mock::global_store;
 use axum::{
+    Json,
     extract::Query,
     http::{HeaderMap, StatusCode},
-    Json,
 };
 use std::{
     env, fs,

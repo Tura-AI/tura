@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use lifecycle::{SessionCommand, SessionManagement, TaskPlan};
 use session_log_contract::{
     CreateSessionRequest, GetSessionRequest, PersistSessionDeltaRequest, ReadContextSliceRequest,

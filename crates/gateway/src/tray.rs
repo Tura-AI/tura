@@ -1,7 +1,8 @@
 use crate::session_db_client::SessionDbClient;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use session_log_contract::{SessionSummary, WorkspaceSummary};
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use tao::event::Event;
@@ -610,11 +611,29 @@ fn snapshots_equal(left: &TraySnapshot, right: &TraySnapshot) -> bool {
 }
 
 fn load_tura_icon() -> Result<Icon> {
-    let image = image::load_from_memory(include_bytes!("../../../assets/tura/32x32.png"))
-        .context("failed to decode Tura tray icon")?
-        .into_rgba8();
-    let (width, height) = image.dimensions();
-    Icon::from_rgba(image.into_raw(), width, height).map_err(|error| anyhow!(error))
+    let mut decoder = png::Decoder::new(Cursor::new(include_bytes!(
+        "../../../assets/tura/32x32.png"
+    )));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder
+        .read_info()
+        .context("failed to decode Tura tray icon")?;
+    let mut rgba = vec![
+        0;
+        reader.output_buffer_size().ok_or_else(|| anyhow!(
+            "failed to decode Tura tray icon: image is too large"
+        ))?
+    ];
+    let output = reader
+        .next_frame(&mut rgba)
+        .context("failed to decode Tura tray icon")?;
+    if output.color_type != png::ColorType::Rgba || output.bit_depth != png::BitDepth::Eight {
+        return Err(anyhow!(
+            "failed to decode Tura tray icon: expected RGBA8 output"
+        ));
+    }
+    rgba.truncate(output.buffer_size());
+    Icon::from_rgba(rgba, output.width, output.height).map_err(|error| anyhow!(error))
 }
 
 fn open_gui(port: u16, workspace: Option<&str>, session_id: Option<&str>) -> Result<Child> {
@@ -622,9 +641,7 @@ fn open_gui(port: u16, workspace: Option<&str>, session_id: Option<&str>) -> Res
 }
 
 fn gui_command(port: u16, workspace: Option<&str>, session_id: Option<&str>) -> Result<Command> {
-    let binary = resolve_gui_binary().ok_or_else(|| {
-        anyhow!("tura_gui binary not found; set TURA_GUI_BIN to the desktop GUI executable")
-    })?;
+    let binary = resolve_gui_binary()?;
     let mut command = Command::new(binary);
     command.args(gui_args(port, workspace, session_id));
     Ok(command)
@@ -644,12 +661,9 @@ fn gui_args(port: u16, workspace: Option<&str>, session_id: Option<&str>) -> Vec
     args
 }
 
-fn resolve_gui_binary() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("TURA_GUI_BIN") {
-        let path = PathBuf::from(path);
-        if !path.as_os_str().is_empty() {
-            return Some(path);
-        }
+fn resolve_gui_binary() -> Result<PathBuf> {
+    if let Some(path) = non_empty_env_path("TURA_GUI_BIN") {
+        return require_executable_override("TURA_GUI_BIN", path);
     }
 
     let binary_name = if cfg!(windows) {
@@ -665,9 +679,33 @@ fn resolve_gui_binary() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
-    let parent = exe_dir.parent().unwrap_or(&exe_dir);
     let build_kind = tura_path::build_kind();
-    let candidates = [
+    let macos_applications = cfg!(target_os = "macos").then(|| Path::new("/Applications"));
+    gui_binary_candidates(
+        &exe_dir,
+        &root,
+        build_kind,
+        binary_name,
+        macos_applications,
+    )
+    .into_iter()
+    .find(|path| is_executable_file(path))
+    .ok_or_else(|| {
+        anyhow!(
+            "tura_gui executable not found; install /Applications/tura_gui.app or set TURA_GUI_BIN to the desktop GUI executable"
+        )
+    })
+}
+
+fn gui_binary_candidates(
+    exe_dir: &Path,
+    root: &Path,
+    build_kind: &str,
+    binary_name: &str,
+    macos_applications: Option<&Path>,
+) -> Vec<PathBuf> {
+    let parent = exe_dir.parent().unwrap_or(exe_dir);
+    let mut candidates = vec![
         exe_dir.join(binary_name),
         exe_dir.join("bin").join(binary_name),
         parent.join(binary_name),
@@ -676,8 +714,56 @@ fn resolve_gui_binary() -> Option<PathBuf> {
         root.join("target").join("debug").join(binary_name),
         root.join("target").join("release").join(binary_name),
     ];
+    if let Some(applications) = macos_applications {
+        candidates.push(
+            applications
+                .join("tura_gui.app")
+                .join("Contents")
+                .join("MacOS")
+                .join("tura_gui"),
+        );
+    }
+    let mut unique = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        if !unique.iter().any(|path| path == &candidate) {
+            unique.push(candidate);
+        }
+    }
+    unique
+}
 
-    candidates.into_iter().find(|path| path.exists())
+fn non_empty_env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+fn require_executable_override(name: &str, path: PathBuf) -> Result<PathBuf> {
+    if is_executable_file(&path) {
+        return Ok(path);
+    }
+    Err(anyhow!(
+        "{name} points to a missing or non-executable file: {}",
+        path.display()
+    ))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn spawn_detached(mut command: Command) -> Result<Child> {
@@ -723,7 +809,11 @@ fn stop_all_session_processes(session_directory: &Path) {
 
 fn terminate_gateway_clients_by_command_line(gateway_url: &str) {
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::everything(),
+    );
     let current_pid = std::process::id();
     let gateway_url = gateway_url.trim_end_matches('/');
     for process in system.processes().values() {
@@ -747,7 +837,7 @@ fn is_gateway_client_process(process: &sysinfo::Process, gateway_url: &str) -> b
         .cmd()
         .iter()
         .chain(process.environ().iter())
-        .map(ToString::to_string)
+        .map(|value| value.to_string_lossy().into_owned())
         .collect::<Vec<String>>();
     let has_gateway_url = fields.iter().any(|value| {
         value.trim_end_matches('/').contains(gateway_url)
@@ -769,13 +859,16 @@ fn is_gateway_client_process(process: &sysinfo::Process, gateway_url: &str) -> b
 #[cfg(test)]
 mod tests {
     use super::{
-        gui_args, is_active_session, load_tura_icon, menu_model, parse_tray_language,
-        same_menu_structure, session_label, tray_click_action, tray_enabled, tray_text,
-        ActiveSessionItem, TrayClickAction, TrayLanguage, TraySnapshot, TrayText,
+        ActiveSessionItem, TrayClickAction, TrayLanguage, TraySnapshot, TrayText, gui_args,
+        gui_binary_candidates, is_active_session, is_executable_file, load_tura_icon, menu_model,
+        parse_tray_language, require_executable_override, same_menu_structure, session_label,
+        tray_click_action, tray_enabled, tray_text,
     };
     use serde_json::json;
     use session_log_contract::SessionSummary;
     use std::ffi::OsString;
+    use std::fs;
+    use std::path::Path;
     use std::process::{Child, Command, Stdio};
     use std::sync::Mutex;
     use std::thread;
@@ -783,6 +876,7 @@ mod tests {
     use tray_icon::{MouseButton, MouseButtonState};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const RUNTIME_SHELL_PROCESS_COMMAND_MARKER: &str = "TURA_BACKGROUND_PROCESS_KIND=runtime_shell";
 
     fn summary(status: Option<&str>, state: Option<&str>) -> SessionSummary {
         SessionSummary {
@@ -931,9 +1025,11 @@ mod tests {
         assert!(!production_source.contains(&periodic_refresh_event));
         assert!(!production_source.contains(&background_thread));
         assert_eq!(production_source.matches("self.refresh();").count(), 1);
-        assert!(production_source
-            .replace("\r\n", "\n")
-            .contains("self.refresh();\n                self.tray_icon.show_menu();"));
+        assert!(
+            production_source
+                .replace("\r\n", "\n")
+                .contains("self.refresh();\n                self.tray_icon.show_menu();")
+        );
     }
 
     #[test]
@@ -1114,6 +1210,60 @@ mod tests {
     }
 
     #[test]
+    fn gui_binary_candidates_try_adjacent_source_and_macos_application_in_order() {
+        let candidates = gui_binary_candidates(
+            Path::new("/opt/tura/bin"),
+            Path::new("/work/tura"),
+            "release",
+            "tura_gui",
+            Some(Path::new("/Applications")),
+        );
+
+        assert_eq!(
+            candidates,
+            vec![
+                Path::new("/opt/tura/bin/tura_gui").to_path_buf(),
+                Path::new("/opt/tura/bin/bin/tura_gui").to_path_buf(),
+                Path::new("/opt/tura/tura_gui").to_path_buf(),
+                Path::new("/work/tura/target/release/tura_gui").to_path_buf(),
+                Path::new("/work/tura/target/debug/tura_gui").to_path_buf(),
+                Path::new("/Applications/tura_gui.app/Contents/MacOS/tura_gui").to_path_buf(),
+            ]
+        );
+    }
+
+    #[test]
+    fn gui_binary_resolution_requires_an_executable_file() {
+        let temp = tempfile::tempdir().expect("gui binary tempdir");
+        let binary = temp.path().join("tura_gui");
+        fs::write(&binary, b"binary").expect("write gui fixture");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o644))
+                .expect("set non-executable permissions");
+            assert!(!is_executable_file(&binary));
+            assert!(
+                require_executable_override("TURA_GUI_BIN", binary.clone())
+                    .expect_err("non-executable override must fail")
+                    .to_string()
+                    .contains("non-executable")
+            );
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
+                .expect("set executable permissions");
+        }
+
+        assert!(is_executable_file(&binary));
+        assert_eq!(
+            require_executable_override("TURA_GUI_BIN", binary.clone())
+                .expect("executable override"),
+            binary
+        );
+        assert!(!is_executable_file(temp.path()));
+    }
+
+    #[test]
     fn tray_menu_text_uses_configured_language_and_short_labels() {
         assert_eq!(parse_tray_language("zh-CN"), Some(TrayLanguage::ZhCN));
         assert_eq!(tray_text(TrayLanguage::ZhCN, TrayText::OpenGui), "打开 GUI");
@@ -1166,6 +1316,7 @@ mod tests {
         };
         if runtime_shell_process {
             command.env("TURA_BACKGROUND_PROCESS_KIND", "runtime_shell");
+            command.arg(RUNTIME_SHELL_PROCESS_COMMAND_MARKER);
         } else {
             command.env_remove("TURA_BACKGROUND_PROCESS_KIND");
         }

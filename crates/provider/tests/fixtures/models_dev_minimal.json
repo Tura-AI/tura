@@ -1,0 +1,213 @@
+{
+  "opencode": {
+    "id": "opencode",
+    "env": ["OPENCODE_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://opencode.ai/zen/v1",
+    "name": "OpenCode Zen",
+    "doc": "https://opencode.ai/docs/zen",
+    "models": {
+      "glm-5": {
+        "id": "glm-5",
+        "name": "GLM-5",
+        "description": "Chat-completions compatible model",
+        "family": "glm",
+        "attachment": false,
+        "reasoning": true,
+        "tool_call": true,
+        "temperature": true,
+        "release_date": "2026-02-11",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": true,
+        "limit": { "context": 204800, "output": 131072 }
+      },
+      "gpt-native": {
+        "id": "gpt-native",
+        "name": "Native Responses Model",
+        "description": "Requires a native protocol override",
+        "family": "gpt",
+        "attachment": true,
+        "reasoning": true,
+        "tool_call": true,
+        "temperature": false,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text", "image"], "output": ["text"] },
+        "open_weights": false,
+        "limit": { "context": 400000, "input": 272000, "output": 128000 },
+        "provider": { "npm": "@ai-sdk/openai", "shape": "responses" }
+      }
+    }
+  },
+  "opencode-go": {
+    "id": "opencode-go",
+    "env": ["OPENCODE_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://opencode.ai/zen/go/v1",
+    "name": "OpenCode Go",
+    "doc": "https://opencode.ai/docs/zen",
+    "models": {
+      "deepseek-v4-pro": {
+        "id": "deepseek-v4-pro",
+        "name": "DeepSeek V4 Pro",
+        "description": "OpenAI-compatible coding model",
+        "family": "deepseek",
+        "attachment": false,
+        "reasoning": true,
+        "tool_call": true,
+        "temperature": true,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": false,
+        "limit": { "context": 1000000, "output": 128000 }
+      }
+    }
+  },
+  "cline-pass": {
+    "id": "cline-pass",
+    "env": ["CLINE_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.cline.bot/api/v1",
+    "name": "ClinePass",
+    "doc": "https://docs.cline.bot/getting-started/clinepass",
+    "models": {
+      "cline-pass/deepseek-v4-flash": {
+        "id": "cline-pass/deepseek-v4-flash",
+        "name": "DeepSeek V4 Flash",
+        "description": "ClinePass-scoped chat model",
+        "family": "deepseek",
+        "attachment": false,
+        "reasoning": true,
+        "tool_call": true,
+        "structured_output": true,
+        "temperature": true,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": false,
+        "limit": { "context": 1000000, "output": 384000 }
+      }
+    }
+  },
+  "custom-compatible": {
+    "id": "custom-compatible",
+    "env": ["CUSTOM_PRIMARY_KEY", "CUSTOM_SECONDARY_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "http://127.0.0.1:9/v1",
+    "name": "Custom Compatible",
+    "doc": "https://example.test/models",
+    "models": {
+      "custom-chat": {
+        "id": "custom-chat",
+        "name": "Custom Chat",
+        "description": "Fixture-only compatible model",
+        "attachment": true,
+        "reasoning": false,
+        "tool_call": true,
+        "temperature": true,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text", "image"], "output": ["text"] },
+        "open_weights": false,
+        "limit": { "context": 32768, "input": 24576, "output": 8192 }
+      },
+      "audio-only-invalid": {
+        "id": "audio-only-invalid",
+        "name": "Audio Only",
+        "description": "Non-LLM fixture with zero token limits",
+        "attachment": false,
+        "reasoning": false,
+        "tool_call": false,
+        "temperature": false,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text"], "output": ["audio"] },
+        "open_weights": false,
+        "limit": { "context": 0, "output": 0 }
+      },
+      "transcription-only-invalid": {
+        "id": "transcription-only-invalid",
+        "name": "Transcription Only",
+        "description": "Non-LLM audio-to-text fixture with zero context",
+        "attachment": true,
+        "reasoning": false,
+        "tool_call": false,
+        "temperature": true,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["audio"], "output": ["text"] },
+        "open_weights": false,
+        "limit": { "context": 0, "output": 4096 }
+      },
+      "incomplete-chat-limits": {
+        "id": "incomplete-chat-limits",
+        "name": "Incomplete Chat Limits",
+        "description": "Chat-compatible record without usable token limits",
+        "attachment": false,
+        "reasoning": false,
+        "tool_call": true,
+        "temperature": true,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": false,
+        "limit": { "context": 32768, "output": 0 }
+      },
+      "embedding-only": {
+        "id": "embedding-only",
+        "name": "Embedding Only",
+        "description": "Embedding model for semantic search and retrieval",
+        "family": "text-embedding",
+        "attachment": false,
+        "reasoning": false,
+        "tool_call": false,
+        "temperature": false,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": true,
+        "limit": { "context": 32768, "input": 32768, "output": 1024 }
+      },
+      "nvidia/nv-embedcode-7b-v1": {
+        "id": "nvidia/nv-embedcode-7b-v1",
+        "name": "nv-embedcode-7b-v1",
+        "description": "Nemotron model for efficient reasoning, coding, and specialized AI agents",
+        "family": "nvidia",
+        "attachment": false,
+        "reasoning": true,
+        "tool_call": true,
+        "temperature": true,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": true,
+        "limit": { "context": 32768, "output": 2048 }
+      }
+    }
+  },
+  "native-provider": {
+    "id": "native-provider",
+    "env": ["NATIVE_API_KEY"],
+    "npm": "@ai-sdk/anthropic",
+    "name": "Native Provider",
+    "doc": "https://example.test/native",
+    "models": {
+      "native-model": {
+        "id": "native-model",
+        "name": "Native Model",
+        "description": "Must not be imported",
+        "attachment": false,
+        "reasoning": false,
+        "tool_call": true,
+        "temperature": true,
+        "release_date": "2026-04-01",
+        "last_updated": "2026-04-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": false,
+        "limit": { "context": 100000, "output": 8192 }
+      }
+    }
+  }
+}

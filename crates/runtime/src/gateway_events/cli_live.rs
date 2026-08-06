@@ -263,9 +263,11 @@ mod tests {
         assert_eq!(events[0]["type"], "item.completed");
         assert_eq!(events[0]["item"]["type"], "file_change");
         assert_eq!(events[0]["item"]["status"], "failed");
-        assert!(events[0]["item"]["aggregated_output"]
-            .as_str()
-            .is_some_and(|text| text.contains("ContextMismatch")));
+        assert!(
+            events[0]["item"]["aggregated_output"]
+                .as_str()
+                .is_some_and(|text| text.contains("ContextMismatch"))
+        );
     }
 
     #[test]

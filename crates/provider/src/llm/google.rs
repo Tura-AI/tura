@@ -1,8 +1,8 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::metrics::extract_google_metrics;
 use crate::streaming::send_provider_request_first_response;
-use crate::tura_llm::{default_client, CallOptions, ProviderResponse, TuraError};
+use crate::tura_llm::{CallOptions, ProviderResponse, TuraError, default_client};
 use crate::utils::{deep_merge_json, google_parts_from_canonical, text_from_content};
 
 pub async fn embed(
@@ -385,9 +385,11 @@ mod tests {
         sanitize_google_schema(&mut schema);
 
         assert!(schema.get("additionalProperties").is_none());
-        assert!(schema["properties"]["nested"]
-            .get("additionalProperties")
-            .is_none());
+        assert!(
+            schema["properties"]["nested"]
+                .get("additionalProperties")
+                .is_none()
+        );
     }
 
     #[test]

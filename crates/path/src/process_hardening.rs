@@ -237,9 +237,9 @@ fn apply_platform_attach_guard(_report: &mut OsHardeningReport) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        current_process_hardening_strategy, dangerous_env_key, remove_dangerous_env_vars,
         ProcessHardeningStrategy, WINDOWS_CREATE_NEW_PROCESS_GROUP, WINDOWS_CREATE_NO_WINDOW,
-        WINDOWS_DETACHED_PROCESS,
+        WINDOWS_DETACHED_PROCESS, current_process_hardening_strategy, dangerous_env_key,
+        remove_dangerous_env_vars,
     };
     use std::ffi::{OsStr, OsString};
 

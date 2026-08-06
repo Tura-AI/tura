@@ -1,20 +1,20 @@
-pub(crate) use anyhow::{anyhow, Context, Result};
+pub(crate) use anyhow::{Context, Result, anyhow};
 pub(crate) use axum::extract::{Json, Path};
 pub(crate) use axum::response::IntoResponse;
 pub(crate) use gateway::api::session::prompt_async;
 pub(crate) use gateway::contracts::SessionStatus;
-pub(crate) use gateway::session::config::{save_config, TuraSessionConfig};
 pub(crate) use gateway::session::MessageRole;
+pub(crate) use gateway::session::config::{TuraSessionConfig, save_config};
 pub(crate) use gateway::session_store;
 pub(crate) use lifecycle::SessionCommand;
-pub(crate) use serde_json::{json, Value};
+pub(crate) use serde_json::{Value, json};
 pub(crate) use session_log::SessionLogStore;
 pub(crate) use session_log_contract::SessionLogCommand;
 pub(crate) use std::collections::VecDeque;
 pub(crate) use std::io::{BufRead, BufReader, Write};
 pub(crate) use std::net::{TcpListener, TcpStream};
 pub(crate) use std::path::{Path as FsPath, PathBuf};
-pub(crate) use std::sync::{mpsc, Arc, Mutex as StdMutex};
+pub(crate) use std::sync::{Arc, Mutex as StdMutex, mpsc};
 pub(crate) use std::time::{Duration, Instant};
 pub(crate) use tokio::sync::Mutex;
 
@@ -300,7 +300,7 @@ impl Drop for FakeRouter {
 
 pub(crate) fn current_process_start_time(pid: u32) -> Option<u64> {
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     system
         .process(sysinfo::Pid::from_u32(pid))
         .map(sysinfo::Process::start_time)

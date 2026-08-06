@@ -1,5 +1,5 @@
 use std::sync::Once;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 static START: Once = Once::new();
 

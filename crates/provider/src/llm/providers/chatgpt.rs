@@ -38,7 +38,7 @@ pub async fn call_with_stream_events(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{parameter_policy, ProviderApiStyle};
+    use super::super::{ProviderApiStyle, parameter_policy};
 
     #[test]
     fn chatgpt_uses_responses_api_with_openapi_metrics() {

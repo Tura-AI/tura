@@ -3,18 +3,18 @@
 //! This client is for execution supervision only. Session DB data reads/writes
 //! must use `SessionDbClient`, never router calls.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use router_contract::{
     CancelRuntimeRequest, EnqueueTurnRequest, ExecuteCommandRequest, ExecuteCommandResponse,
     GetToolConfigResponse, GetToolResponse, ListCommandsRequest, ListCommandsResponse,
-    ListToolsResponse, PatchToolConfigRequest, PatchToolRequest, ProbeSessionsRequest,
-    ToolRegistryRequest, ToolRequest, METHOD_ENQUEUE_TURN, METHOD_EXECUTE_COMMAND, METHOD_GET_TOOL,
+    ListToolsResponse, METHOD_ENQUEUE_TURN, METHOD_EXECUTE_COMMAND, METHOD_GET_TOOL,
     METHOD_GET_TOOL_CONFIG, METHOD_LIST_COMMANDS, METHOD_LIST_TOOLS, METHOD_PATCH_TOOL,
-    METHOD_PATCH_TOOL_CONFIG,
+    METHOD_PATCH_TOOL_CONFIG, PatchToolConfigRequest, PatchToolRequest, ProbeSessionsRequest,
+    ToolRegistryRequest, ToolRequest,
 };
-use serde::de::DeserializeOwned;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]

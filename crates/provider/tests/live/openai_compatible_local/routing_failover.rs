@@ -329,8 +329,8 @@ async fn openai_compatible_route_business_flow_falls_back_after_provider_error()
 }
 
 #[tokio::test]
-async fn openai_compatible_route_business_flow_uses_first_healthy_provider_without_touching_fallback(
-) {
+async fn openai_compatible_route_business_flow_uses_first_healthy_provider_without_touching_fallback()
+ {
     let _env_guard = ENV_LOCK.lock().await;
     let primary_listener = TcpListener::bind("127.0.0.1:0").expect("bind primary provider");
     let primary_addr = primary_listener.local_addr().expect("primary addr");

@@ -93,12 +93,16 @@ fn pass_planning_command_routes_through_command_run() {
         "Inspect files"
     );
     assert_eq!(output["results"][0]["output"]["steps"][0]["step"], 1);
-    assert!(output["results"][0]["output"]["steps"][0]
-        .get("deliverable")
-        .is_none());
-    assert!(output["results"][0]["output"]["steps"][0]
-        .get("task_id")
-        .is_none());
+    assert!(
+        output["results"][0]["output"]["steps"][0]
+            .get("deliverable")
+            .is_none()
+    );
+    assert!(
+        output["results"][0]["output"]["steps"][0]
+            .get("task_id")
+            .is_none()
+    );
     assert_eq!(output["results"][0]["output"]["steps"][1]["step"], 2);
 }
 

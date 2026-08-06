@@ -23,9 +23,11 @@ fn pass_shell_command_output_matches_current_structured_code_mode() {
 
     let shell_output = &output["results"][0]["output"];
     assert_eq!(shell_output["exit_code"], 0);
-    assert!(shell_output["stdout"]
-        .as_str()
-        .is_some_and(|stdout| stdout.contains("current-backfill-ok")));
+    assert!(
+        shell_output["stdout"]
+            .as_str()
+            .is_some_and(|stdout| stdout.contains("current-backfill-ok"))
+    );
     assert_eq!(shell_output["stderr"], "");
     assert!(shell_output.get("metadata").is_none());
 }
@@ -168,10 +170,12 @@ fn fail_cli_sandbox_rejects_shell_workdir_outside_workspace() {
     );
 
     assert_eq!(output["results"][0]["success"], false, "{output}");
-    assert!(output["results"][0]["output"]["stderr"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("outside workspace"));
+    assert!(
+        output["results"][0]["output"]["stderr"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("outside workspace")
+    );
     restore_env_var("TURA_COMMAND_RUN_SANDBOX", previous_sandbox);
 }
 
@@ -304,9 +308,11 @@ fn pass_command_line_without_command_type_accepts_workdir_and_timeout() {
         output["results"][0]["command_type"],
         commands::active_shell_command_name()
     );
-    assert!(output["results"][0]["output"]["stdout"]
-        .as_str()
-        .is_some_and(|text| text.replace('\\', "/").contains("/subdir")));
+    assert!(
+        output["results"][0]["output"]["stdout"]
+            .as_str()
+            .is_some_and(|text| text.replace('\\', "/").contains("/subdir"))
+    );
 }
 
 #[test]

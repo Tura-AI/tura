@@ -206,11 +206,13 @@ fn session_snapshot_feed_event_shapes_are_stable() {
         serde_json::to_value(SessionFeedEvent::SessionDeleted {}).expect("deleted feed event"),
         json!({ "event": "session_deleted" })
     );
-    assert!(serde_json::from_value::<SessionFeedEvent>(json!({
-        "event": "session_deleted",
-        "snapshot": snapshot
-    }))
-    .is_err());
+    assert!(
+        serde_json::from_value::<SessionFeedEvent>(json!({
+            "event": "session_deleted",
+            "snapshot": snapshot
+        }))
+        .is_err()
+    );
 }
 
 #[test]

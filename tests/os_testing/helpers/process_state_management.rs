@@ -4,7 +4,7 @@
 //! package, so process lifecycle and state recovery run as mandatory local
 //! correctness coverage instead of optional performance or live scripts.
 
-pub(crate) use anyhow::{anyhow, bail, Context, Result};
+pub(crate) use anyhow::{Context, Result, anyhow, bail};
 pub(crate) use lifecycle::SessionManagement;
 pub(crate) use serde_json::json;
 pub(crate) use std::{
@@ -13,8 +13,8 @@ pub(crate) use std::{
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -1646,7 +1646,7 @@ pub(crate) fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
 
 pub(crate) fn process_alive(pid: u32) -> bool {
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     system
         .process(sysinfo::Pid::from_u32(pid))
         .is_some_and(|process| {
@@ -1693,7 +1693,7 @@ pub(crate) fn cleanup_target_backend_processes(repo: &Path, timeout: Duration) -
 pub(crate) fn target_backend_process_pids(repo: &Path) -> Result<Vec<u32>> {
     let target = canonical_or_self(&target_dir(repo));
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let mut pids = Vec::new();
     for (pid, process) in system.processes() {
         if ![
@@ -1720,7 +1720,7 @@ pub(crate) fn target_backend_process_pids(repo: &Path) -> Result<Vec<u32>> {
 
 pub(crate) fn terminate_process_quietly(pid: u32) {
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
         let _ = process.kill();
     }
@@ -1867,7 +1867,7 @@ fn is_transient_lock_read_error(error: &std::io::Error) -> bool {
 pub(crate) fn process_pids_by_name_and_cwd(binary: &str, cwd: &Path) -> Result<Vec<u32>> {
     let expected_cwd = canonical_or_self(cwd);
     let mut system = sysinfo::System::new_all();
-    system.refresh_processes();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let mut pids = Vec::new();
     for (pid, process) in system.processes() {
         if !process_name_matches(process.name(), binary) {

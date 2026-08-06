@@ -4,9 +4,9 @@ use crate::contracts::*;
 use crate::mock::global_store;
 use crate::session::session_store;
 use axum::{
+    Json,
     extract::Path as AxumPath,
     response::sse::{Event as SseEvent, KeepAlive, Sse},
-    Json,
 };
 use serde_json::Value;
 use std::convert::Infallible;
@@ -20,7 +20,7 @@ use std::time::Duration;
 pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         healthy: true,
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::api::about::release_version(),
         root: gateway_identity_root(),
         home: gateway_identity_home(),
         exe_dir: gateway_exe_dir(),
@@ -514,7 +514,7 @@ pub async fn dispose() -> Json<bool> {
 pub async fn upgrade(Json(_payload): Json<UpgradeRequest>) -> Json<UpgradeResponse> {
     Json(UpgradeResponse {
         success: false,
-        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        version: Some(crate::api::about::release_version()),
         error: Some("Self-upgrade is not implemented by this gateway build.".to_string()),
     })
 }
@@ -522,8 +522,8 @@ pub async fn upgrade(Json(_payload): Json<UpgradeRequest>) -> Json<UpgradeRespon
 #[cfg(test)]
 mod tests {
     use super::{
-        event_matches_session_filter, event_visible_to_frontend, read_json_config,
-        tura_config_tiers, update_tura_config_tier, TuraConfigUpdate,
+        TuraConfigUpdate, event_matches_session_filter, event_visible_to_frontend,
+        read_json_config, tura_config_tiers, update_tura_config_tier,
     };
     use crate::contracts::{
         GlobalEvent, Message, MessageRole, MessageUpdatedProperties, SessionStatusProperties,

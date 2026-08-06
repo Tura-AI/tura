@@ -6,15 +6,15 @@
 use crate::contracts::*;
 use crate::session::session_store;
 use axum::{
-    extract::{Path, Query},
     Json,
+    extract::{Path, Query},
 };
 use chrono::Utc;
-use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -218,9 +218,7 @@ impl ProductStore {
     }
 }
 
-lazy_static! {
-    static ref PRODUCT_STORE: ProductStore = ProductStore::new();
-}
+static PRODUCT_STORE: LazyLock<ProductStore> = LazyLock::new(ProductStore::new);
 
 pub async fn public_config() -> Json<PublicConfig> {
     Json(public_config_value())
@@ -231,7 +229,7 @@ pub fn public_config_value() -> PublicConfig {
         deployment_mode: "local".to_string(),
         signup_enabled: false,
         google_oauth_enabled: false,
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::api::about::release_version(),
     }
 }
 
@@ -445,7 +443,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{create_issue_record, filter_issues, IssueInput, IssueQuery, IssueStatus};
+    use super::{IssueInput, IssueQuery, IssueStatus, create_issue_record, filter_issues};
 
     #[test]
     fn issue_search_filters_title() {

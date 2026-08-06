@@ -15,7 +15,7 @@ pub async fn call(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{parameter_policy, ProviderApiStyle};
+    use super::super::{ProviderApiStyle, parameter_policy};
 
     #[test]
     fn bedrock_provider_has_explicit_unsupported_parameter_policy() {
