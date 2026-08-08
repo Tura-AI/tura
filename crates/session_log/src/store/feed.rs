@@ -95,15 +95,15 @@ impl SessionLogStore {
                 &event,
             )?;
             let feed_entry = SessionFeedEntry {
-                session_id: request.session_id,
+                session_id: request.session_id.clone(),
                 cursor,
                 runtime_id: None,
-                event_id: request.command_id,
+                event_id: request.command_id.clone(),
                 event,
             };
             tx.commit()?;
             Ok(UpdateSessionTodosOutcome {
-                todos: request.todos,
+                todos: request.todos.clone(),
                 feed_entry: Some(feed_entry),
                 cursor,
             })

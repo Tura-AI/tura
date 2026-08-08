@@ -268,8 +268,9 @@ impl From<SessionLogResponse> for CommandDispatchOutcome {
 }
 
 /// Bind the service socket, publish its address, and serve commands until the
-/// process exits. One thread per accepted connection; the store clone shares the
-/// underlying connection pool, so concurrent clients run in parallel.
+/// process exits. One thread handles each accepted connection; SQLite operations
+/// are coordinated per database path while clients for different workspaces can
+/// still make progress in parallel.
 pub fn serve_blocking(store: SessionLogStore) -> Result<()> {
     serve_blocking_with_feed_hub(store, SessionFeedHub::default())
 }
