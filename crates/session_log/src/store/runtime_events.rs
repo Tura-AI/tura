@@ -370,8 +370,8 @@ impl SessionLogStore {
             if events.is_empty() {
                 return Ok(None);
             }
-            let aggregate =
-                RuntimeAggregate::replay(request.runtime_id, events).map_err(anyhow::Error::msg)?;
+            let aggregate = RuntimeAggregate::replay(request.runtime_id.clone(), events)
+                .map_err(anyhow::Error::msg)?;
             Ok(Some(RuntimeReplay {
                 aggregate,
                 revision: row.revision,

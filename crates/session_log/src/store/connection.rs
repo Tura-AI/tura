@@ -1,20 +1,28 @@
 use super::SessionLogStore;
 use anyhow::{Context, Result};
 use fs2::FileExt;
-use rusqlite::Connection;
-use std::collections::BTreeSet;
+use rusqlite::{Connection, ffi::ErrorCode};
+use std::collections::{BTreeSet, HashMap};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 const SQLITE_INIT_LOCK_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 const SQLITE_INIT_LOCK_OPEN_RETRY_DELAY: Duration = Duration::from_millis(10);
+const SQLITE_OPERATION_RETRY_DELAYS: &[Duration] = &[
+    Duration::from_millis(10),
+    Duration::from_millis(25),
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+];
 
 impl SessionLogStore {
     pub(super) fn with_index_connection<T>(
         &self,
-        f: impl FnOnce(&mut Connection) -> Result<T>,
+        f: impl FnMut(&mut Connection) -> Result<T>,
     ) -> Result<T> {
         with_connection(&self.index_db_path, init_index_db, f)
     }
@@ -22,7 +30,7 @@ impl SessionLogStore {
     pub(super) fn with_workspace_connection<T>(
         &self,
         path: &Path,
-        f: impl FnOnce(&mut Connection) -> Result<T>,
+        f: impl FnMut(&mut Connection) -> Result<T>,
     ) -> Result<T> {
         with_connection(path, init_workspace_db, f)
     }
@@ -31,12 +39,61 @@ impl SessionLogStore {
 pub(super) fn with_connection<T>(
     path: &Path,
     init: fn(&Connection) -> Result<()>,
-    f: impl FnOnce(&mut Connection) -> Result<T>,
+    mut f: impl FnMut(&mut Connection) -> Result<T>,
 ) -> Result<T> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
+    let operation_lock = sqlite_operation_lock(path);
+    let _operation_guard = operation_lock
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+
+    let mut attempt = 1_usize;
+    loop {
+        match with_connection_once(path, init, &mut f) {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                let sqlite_error = sqlite_error_details(&error);
+                let retry_delay = SQLITE_OPERATION_RETRY_DELAYS.get(attempt - 1).copied();
+                if let (Some((code, extended_code)), Some(retry_delay)) =
+                    (sqlite_error, retry_delay)
+                    && sqlite_error_is_transient((code, extended_code))
+                {
+                    tracing::warn!(
+                        database_path = %path.display(),
+                        attempt,
+                        max_attempts = SQLITE_OPERATION_RETRY_DELAYS.len() + 1,
+                        sqlite_code = ?code,
+                        sqlite_extended_code = extended_code,
+                        retry_delay_ms = retry_delay.as_millis(),
+                        error = %error,
+                        "retrying transient SQLite operation failure"
+                    );
+                    std::thread::sleep(retry_delay);
+                    attempt += 1;
+                    continue;
+                }
+
+                let Some((code, extended_code)) = sqlite_error else {
+                    return Err(error);
+                };
+                let context = format!(
+                    "SQLite operation on {} failed after {attempt} attempt(s); SQLite code {code:?}, extended code {extended_code}: {error}",
+                    path.display()
+                );
+                return Err(error).context(context);
+            }
+        }
+    }
+}
+
+fn with_connection_once<T>(
+    path: &Path,
+    init: fn(&Connection) -> Result<()>,
+    f: &mut impl FnMut(&mut Connection) -> Result<T>,
+) -> Result<T> {
     let mut conn = {
         let _file_guard = sqlite_init_file_lock(path)?;
         let _guard = sqlite_init_lock()
@@ -45,13 +102,66 @@ pub(super) fn with_connection<T>(
         let conn =
             Connection::open(path).with_context(|| format!("failed to open {}", path.display()))?;
         conn.busy_timeout(Duration::from_secs(30))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        let journal_mode =
+            conn.pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0))?;
+        if !journal_mode.eq_ignore_ascii_case("wal") {
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+        }
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         init(&conn)?;
         conn
     };
     f(&mut conn)
+}
+
+fn sqlite_operation_lock(path: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = locks.lock().unwrap_or_else(|error| error.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    let key = sqlite_operation_lock_key(path);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
+}
+
+fn sqlite_operation_lock_key(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| {
+        let Some(parent) = path.parent() else {
+            return path.to_path_buf();
+        };
+        parent
+            .canonicalize()
+            .map(|parent| {
+                path.file_name()
+                    .map_or(parent.clone(), |name| parent.join(name))
+            })
+            .unwrap_or_else(|_| path.to_path_buf())
+    })
+}
+
+fn sqlite_error_details(error: &anyhow::Error) -> Option<(ErrorCode, i32)> {
+    error.chain().find_map(|cause| {
+        cause
+            .downcast_ref::<rusqlite::Error>()
+            .and_then(rusqlite::Error::sqlite_error)
+            .map(|error| (error.code, error.extended_code))
+    })
+}
+
+fn sqlite_error_is_transient((code, extended_code): (ErrorCode, i32)) -> bool {
+    match code {
+        ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => true,
+        ErrorCode::ReadOnly => !matches!(
+            extended_code,
+            rusqlite::ffi::SQLITE_READONLY_DBMOVED | rusqlite::ffi::SQLITE_READONLY_DIRECTORY
+        ),
+        _ => false,
+    }
 }
 
 fn sqlite_init_lock() -> &'static Mutex<()> {
@@ -452,7 +562,8 @@ const WORKSPACE_SCHEMA: &[(&str, &[&str])] = &[
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::sqlite_init_file_lock;
+    use super::{sqlite_error_is_transient, sqlite_init_file_lock, with_connection};
+    use anyhow::Result;
     use std::fs::OpenOptions;
     use std::os::windows::fs::OpenOptionsExt;
     use std::path::PathBuf;
@@ -480,5 +591,71 @@ mod tests {
         let result = sqlite_init_file_lock(&database_path);
         release.join().expect("release blocker");
         let _guard = result.expect("transient sharing violation should be retried");
+    }
+
+    #[test]
+    fn sqlite_connection_recovers_after_database_is_briefly_read_only() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let database_path = temp.path().join("session_log.sqlite3");
+        with_connection(
+            &database_path,
+            |conn| {
+                conn.execute_batch("CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY);")?;
+                Ok(())
+            },
+            |_| Ok(()),
+        )
+        .expect("initialize database");
+
+        let mut permissions = std::fs::metadata(&database_path)
+            .expect("database metadata")
+            .permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&database_path, permissions).expect("make database read-only");
+
+        let release_path = database_path.clone();
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            let mut permissions = std::fs::metadata(&release_path)
+                .expect("database metadata")
+                .permissions();
+            permissions.set_readonly(false);
+            std::fs::set_permissions(&release_path, permissions).expect("restore database writes");
+        });
+
+        let result = with_connection(
+            &database_path,
+            |_| Ok(()),
+            |conn| -> Result<()> {
+                conn.execute("INSERT INTO events DEFAULT VALUES", [])?;
+                Ok(())
+            },
+        );
+        release.join().expect("release read-only database");
+        result.expect("brief read-only window should be retried");
+    }
+
+    #[test]
+    fn sqlite_retry_classifier_excludes_permanent_readonly_failures() {
+        assert!(sqlite_error_is_transient((
+            rusqlite::ffi::ErrorCode::ReadOnly,
+            rusqlite::ffi::SQLITE_READONLY
+        )));
+        assert!(sqlite_error_is_transient((
+            rusqlite::ffi::ErrorCode::ReadOnly,
+            rusqlite::ffi::SQLITE_READONLY_CANTINIT
+        )));
+        assert!(sqlite_error_is_transient((
+            rusqlite::ffi::ErrorCode::DatabaseBusy,
+            rusqlite::ffi::SQLITE_BUSY
+        )));
+        assert!(!sqlite_error_is_transient((
+            rusqlite::ffi::ErrorCode::ReadOnly,
+            rusqlite::ffi::SQLITE_READONLY_DBMOVED
+        )));
+        assert!(!sqlite_error_is_transient((
+            rusqlite::ffi::ErrorCode::ReadOnly,
+            rusqlite::ffi::SQLITE_READONLY_DIRECTORY
+        )));
     }
 }

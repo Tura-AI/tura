@@ -81,7 +81,7 @@ impl SessionLogStore {
                     row.next_management_sequence
                 );
             } else {
-                management.apply_persistence_delta(management_delta);
+                management.apply_persistence_delta(management_delta.clone());
                 tx.execute(
                     "INSERT INTO management_deltas(session_id, sequence, delta_json)
                      VALUES (?1, ?2, ?3)",
@@ -122,9 +122,9 @@ impl SessionLogStore {
                     "historical management delta cannot append new context in session {session_id}"
                 );
             }
-            for entry in entries {
+            for entry in &entries {
                 let sequence = entry.context.sequence;
-                let raw_record = entry.context.raw_record;
+                let raw_record = entry.context.raw_record.clone();
                 let projection_json = serde_json::to_string(&entry.projection)?;
                 let inserted_context;
                 if entry.context.sequence < next_sequence {
@@ -172,7 +172,7 @@ impl SessionLogStore {
                     inserted_context = true;
                 }
                 if inserted_context
-                    && let Some(projection) = entry.projection {
+                    && let Some(projection) = entry.projection.clone() {
                         let (inserted, projection) =
                             upsert_delta_projection(&tx, &session_id, projection)?;
                         inserted_messages += inserted;
@@ -480,7 +480,7 @@ impl SessionLogStore {
                         event_id: snapshot_event_id,
                         event: snapshot_event,
                     });
-                    for record in fork_projection.records {
+                    for record in &fork_projection.records {
                         statement.execute(params![
                             &request.session_id,
                             &record.message_id,
@@ -491,7 +491,9 @@ impl SessionLogStore {
                         ])?;
                         let event_id =
                             format!("{}:fork-message:{}", request.session_id, record.message_id);
-                        let event = SessionFeedEvent::MessageUpserted { message: record };
+                        let event = SessionFeedEvent::MessageUpserted {
+                            message: record.clone(),
+                        };
                         let cursor = super::feed::append_session_feed_event_tx(
                             &tx,
                             &request.session_id,
@@ -650,7 +652,7 @@ impl SessionLogStore {
                 .with_context(|| format!("session {} not found", request.session_id))?;
             let mut aggregate = replay_session_events(&tx, &request.session_id)?;
             let previous_task_plan = aggregate.task_plan.clone();
-            let event = aggregate.execute(command)?;
+            let event = aggregate.execute(command.clone())?;
             let projection = aggregate.query(SessionQuery::Lifecycle);
             let task_plan_changed = projection.task_plan != previous_task_plan;
             let publish_task_projection = task_projection_requested || task_plan_changed;
@@ -668,6 +670,7 @@ impl SessionLogStore {
                 chrono::DateTime::<chrono::Utc>::from_timestamp_millis(now_ms)
                     .context("session command timestamp is outside the supported range")?;
             if let Some(name) = auto_name
+                .clone()
                 .filter(|_| task_plan_changed)
                 .filter(|_| management.auto_session_name)
             {

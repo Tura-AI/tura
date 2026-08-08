@@ -3,9 +3,13 @@ mod typed_session;
 
 use lifecycle::TaskPlan;
 use session_log::SessionLogStore;
-use session_log_contract::ListSessionsRequest;
+use session_log_contract::{
+    ActivateRuntimeLeaseRequest, AppendSessionFeedEventRequest, ListSessionsRequest,
+    ReadSessionFeedRequest, RegisterRuntimeRequest, SessionFeedAppendOutcome, SessionFeedEvent,
+};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus};
+use std::sync::{Arc, Barrier};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -170,6 +174,151 @@ fn concurrent_typed_writes_keep_pagination_consistent() {
         started.elapsed() < Duration::from_secs(60),
         "concurrent typed write smoke test took {:?}",
         started.elapsed()
+    );
+}
+
+#[test]
+fn high_frequency_runtime_feed_keeps_every_event_through_a_readonly_flicker() {
+    const WORKERS: usize = 12;
+    const EVENTS_PER_WORKER: usize = 100;
+    const EXPECTED_EVENTS: usize = WORKERS * EVENTS_PER_WORKER;
+
+    let test_started = Instant::now();
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let workspace = db.workspace(&format!("runtime-feed-{nonce}"));
+    let session_id = format!("runtime-feed-session-{nonce}");
+    let runtime_id = format!("runtime-feed-runtime-{nonce}");
+    let lease_id = format!("runtime-feed-lease-{nonce}");
+    typed_session::create_in_store(
+        &store,
+        &session_id,
+        &workspace,
+        "High-frequency runtime feed",
+        1,
+        TaskPlan::default(),
+    )
+    .expect("create feed session");
+    store
+        .register_runtime(RegisterRuntimeRequest {
+            runtime_id: runtime_id.clone(),
+            session_id: session_id.clone(),
+            fallback_from_id: None,
+        })
+        .expect("register runtime");
+    store
+        .activate_runtime_lease(ActivateRuntimeLeaseRequest {
+            runtime_id: runtime_id.clone(),
+            lease_id: lease_id.clone(),
+        })
+        .expect("activate runtime lease");
+
+    #[cfg(windows)]
+    let readonly_release = {
+        let database_path = Path::new(&workspace)
+            .join(".tura")
+            .join("session_log.sqlite3");
+        let mut permissions = std::fs::metadata(&database_path)
+            .expect("workspace database metadata")
+            .permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&database_path, permissions)
+            .expect("start brief read-only flicker");
+        Some(std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            let mut permissions = std::fs::metadata(&database_path)
+                .expect("workspace database metadata")
+                .permissions();
+            permissions.set_readonly(false);
+            std::fs::set_permissions(&database_path, permissions)
+                .expect("finish brief read-only flicker");
+        }))
+    };
+
+    let barrier = Arc::new(Barrier::new(WORKERS));
+    let mut workers = Vec::with_capacity(WORKERS);
+    for worker_index in 0..WORKERS {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        let session_id = session_id.clone();
+        let runtime_id = runtime_id.clone();
+        let lease_id = lease_id.clone();
+        workers.push(std::thread::spawn(move || {
+            barrier.wait();
+            for event_index in 0..EVENTS_PER_WORKER {
+                let sequence = worker_index * EVENTS_PER_WORKER + event_index;
+                let outcome = store
+                    .append_session_feed_event(AppendSessionFeedEventRequest {
+                        runtime_id: runtime_id.clone(),
+                        target_session_id: session_id.clone(),
+                        lease_id: lease_id.clone(),
+                        event_id: format!("{runtime_id}:pressure:{sequence}"),
+                        event: SessionFeedEvent::ToolCallUpdated {
+                            message_id: format!("{runtime_id}.message"),
+                            part_id: format!("{runtime_id}.tool.{sequence}"),
+                            tool_name: "pressure_probe".to_string(),
+                            call_id: format!("pressure-{sequence}"),
+                            state: serde_json::json!({
+                                "status": "completed",
+                                "sequence": sequence,
+                            }),
+                            metadata: None,
+                            runtime_status: None,
+                            context_tokens: None,
+                            usage: None,
+                            command_updates: Vec::new(),
+                            created_at: sequence as i64,
+                            updated_at: sequence as i64,
+                        },
+                    })
+                    .expect("append high-frequency runtime feed event");
+                assert!(
+                    matches!(outcome, SessionFeedAppendOutcome::Applied { .. }),
+                    "event {sequence} was not applied: {outcome:?}"
+                );
+            }
+        }));
+    }
+
+    for worker in workers {
+        join_thread_with_timeout(
+            worker,
+            remaining_timeout(test_started, TEST_TIMEOUT, "high-frequency runtime feed"),
+            "high-frequency runtime feed worker",
+        );
+    }
+    #[cfg(windows)]
+    if let Some(release) = readonly_release {
+        release.join().expect("release read-only flicker");
+    }
+
+    let mut cursor = 0_u64;
+    let mut runtime_events = 0_usize;
+    loop {
+        let (entries, next_cursor) = store
+            .read_session_feed(ReadSessionFeedRequest {
+                session_id: session_id.clone(),
+                after_cursor: cursor,
+                limit: 1_000,
+            })
+            .expect("read high-frequency runtime feed");
+        runtime_events += entries
+            .iter()
+            .filter(|entry| entry.runtime_id.as_deref() == Some(runtime_id.as_str()))
+            .filter(|entry| entry.event_id.contains(":pressure:"))
+            .count();
+        if entries.is_empty() {
+            break;
+        }
+        assert!(next_cursor > cursor, "feed cursor must advance");
+        cursor = next_cursor;
+    }
+    assert_eq!(runtime_events, EXPECTED_EVENTS);
+    assert!(
+        test_started.elapsed() < TEST_TIMEOUT,
+        "high-frequency runtime feed took {:?}",
+        test_started.elapsed()
     );
 }
 
