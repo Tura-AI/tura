@@ -1,7 +1,7 @@
 use super::SessionLogStore;
 use anyhow::{Context, Result};
 use fs2::FileExt;
-use rusqlite::{Connection, ffi::ErrorCode};
+use rusqlite::{ffi::ErrorCode, Connection};
 use std::collections::{BTreeSet, HashMap};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
