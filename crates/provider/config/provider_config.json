@@ -992,32 +992,6 @@
           "fast": [
             {
               "attachment": true,
-              "family": "gpt-5.6",
-              "id": "gpt-5.6-luna",
-              "limit": {
-                "context": 1050000,
-                "input": 1050000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "gpt-5.6-luna",
-              "options": {},
-              "reasoning": true,
-              "release_date": "2026-07-10",
-              "status": null,
-              "temperature": true,
-              "tool_call": true
-            },
-            {
-              "attachment": true,
               "family": "gpt-5.4",
               "id": "gpt-5.4-mini",
               "limit": {
@@ -1100,58 +1074,6 @@
           "thinking": [
             {
               "attachment": true,
-              "family": "gpt-5.6",
-              "id": "gpt-5.6-sol",
-              "limit": {
-                "context": 1050000,
-                "input": 1050000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "gpt-5.6-sol",
-              "options": {},
-              "reasoning": true,
-              "release_date": "2026-07-10",
-              "status": null,
-              "temperature": true,
-              "tool_call": true
-            },
-            {
-              "attachment": true,
-              "family": "gpt-5.6",
-              "id": "gpt-5.6-terra",
-              "limit": {
-                "context": 1050000,
-                "input": 1050000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "gpt-5.6-terra",
-              "options": {},
-              "reasoning": true,
-              "release_date": "2026-07-10",
-              "status": null,
-              "temperature": true,
-              "tool_call": true
-            },
-            {
-              "attachment": true,
               "family": "gpt-5.5",
               "id": "gpt-5.5",
               "limit": {
@@ -1172,6 +1094,81 @@
               "options": {},
               "reasoning": true,
               "release_date": "2026-04-23",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "gpt-5.6",
+              "id": "gpt-5.6-luna",
+              "limit": {
+                "context": 270000,
+                "input": 238000,
+                "output": 32000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.6-luna",
+              "reasoning": true,
+              "release_date": "2026-07-10",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "gpt-5.6",
+              "id": "gpt-5.6-sol",
+              "limit": {
+                "context": 270000,
+                "input": 142000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.6-sol",
+              "reasoning": true,
+              "release_date": "2026-07-10",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "gpt-5.6",
+              "id": "gpt-5.6-terra",
+              "limit": {
+                "context": 270000,
+                "input": 206000,
+                "output": 64000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.6-terra",
+              "reasoning": true,
+              "release_date": "2026-07-10",
               "status": null,
               "temperature": true,
               "tool_call": true
@@ -2435,32 +2432,6 @@
           "fast": [
             {
               "attachment": true,
-              "family": "gpt-5.6",
-              "id": "gpt-5.6-luna",
-              "limit": {
-                "context": 1050000,
-                "input": 1050000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "gpt-5.6-luna",
-              "options": {},
-              "reasoning": true,
-              "release_date": "2026-07-10",
-              "status": null,
-              "temperature": true,
-              "tool_call": true
-            },
-            {
-              "attachment": true,
               "family": "gpt-5.4",
               "id": "gpt-5.4-mini",
               "limit": {
@@ -2515,58 +2486,6 @@
           "thinking": [
             {
               "attachment": true,
-              "family": "gpt-5.6",
-              "id": "gpt-5.6-sol",
-              "limit": {
-                "context": 1050000,
-                "input": 1050000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "gpt-5.6-sol",
-              "options": {},
-              "reasoning": true,
-              "release_date": "2026-07-10",
-              "status": null,
-              "temperature": true,
-              "tool_call": true
-            },
-            {
-              "attachment": true,
-              "family": "gpt-5.6",
-              "id": "gpt-5.6-terra",
-              "limit": {
-                "context": 1050000,
-                "input": 1050000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "gpt-5.6-terra",
-              "options": {},
-              "reasoning": true,
-              "release_date": "2026-07-10",
-              "status": null,
-              "temperature": true,
-              "tool_call": true
-            },
-            {
-              "attachment": true,
               "family": "gpt-5.5",
               "id": "gpt-5.5-pro",
               "limit": {
@@ -2587,6 +2506,81 @@
               "options": {},
               "reasoning": true,
               "release_date": "2026-04-23",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "gpt-5.6",
+              "id": "gpt-5.6-luna",
+              "limit": {
+                "context": 270000,
+                "input": 238000,
+                "output": 32000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.6-luna",
+              "reasoning": true,
+              "release_date": "2026-07-10",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "gpt-5.6",
+              "id": "gpt-5.6-sol",
+              "limit": {
+                "context": 270000,
+                "input": 142000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.6-sol",
+              "reasoning": true,
+              "release_date": "2026-07-10",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "gpt-5.6",
+              "id": "gpt-5.6-terra",
+              "limit": {
+                "context": 270000,
+                "input": 206000,
+                "output": 64000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.6-terra",
+              "reasoning": true,
+              "release_date": "2026-07-10",
               "status": null,
               "temperature": true,
               "tool_call": true
@@ -4002,7 +3996,7 @@
     },
     "codex": {
       "account_env": "OPENAI_ACCOUNT_ID",
-      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=7KCNTRrii2Qr32tyw1r0W49A9jBMWKynUnlK95mSdYA&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=215426ab524d4c57b97e3847319f0ccc&originator=opencode",
+      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=QZDEwx-yChPoPjKTj25x-GHYdSDq1iBjkYp7bBQZVOU&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=83d22c3fefc44db49eacf77ec8c4c0d4&originator=opencode",
       "endpoint": "https://chatgpt.com/backend-api/codex/responses",
       "expires_env": "OPENAI_TOKEN_EXPIRES",
       "login": "oauth",
@@ -4012,7 +4006,7 @@
       "status": "connected",
       "token_env": "OPENAI_API_KEY",
       "type": "oauth",
-      "updated_at": "2026-08-09T08:12:00.488242+00:00"
+      "updated_at": "2026-08-09T08:42:40.260894+00:00"
     },
     "github": {
       "auth_url": null,
@@ -4371,14 +4365,6 @@
       "default_temperature": 0.2,
       "providers": [
         {
-          "model": "gpt-5.6-luna",
-          "provider": "codex"
-        },
-        {
-          "model": "gpt-5.6-luna",
-          "provider": "openai"
-        },
-        {
           "model": "gpt-5.3-codex-spark",
           "provider": "codex"
         },
@@ -4458,6 +4444,14 @@
         {
           "model": "gemini-3.1-pro-preview",
           "provider": "google"
+        },
+        {
+          "model": "gpt-5.6-luna",
+          "provider": "codex"
+        },
+        {
+          "model": "gpt-5.6-luna",
+          "provider": "openai"
         }
       ]
     }
