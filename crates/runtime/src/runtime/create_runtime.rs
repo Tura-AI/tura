@@ -168,7 +168,7 @@ pub async fn enqueue_runtime(queue_item: RuntimeQueueItem, redis_url: &str) -> R
     redis::cmd("RPUSH")
         .arg(&queue_key)
         .arg(&payload)
-        .query_async::<_, ()>(&mut con)
+        .query_async::<()>(&mut con)
         .await
         .map_err(|e| format!("failed to enqueue runtime: {e}"))?;
 

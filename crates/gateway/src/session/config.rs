@@ -1,7 +1,7 @@
 use runtime_contract::{
-    maximum_parallel_runtime_workers, maximum_runtime_llm_turns,
     DEFAULT_MAXIMUM_PARALLEL_RUNTIME_WORKERS, DEFAULT_MAXIMUM_RUNTIME_LLM_TURNS,
     MAXIMUM_PARALLEL_RUNTIME_WORKER_OPTIONS, MAXIMUM_RUNTIME_LLM_TURN_OPTIONS,
+    maximum_parallel_runtime_workers, maximum_runtime_llm_turns,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -13,7 +13,7 @@ const CONFIG_FILE: &str = "config.conf";
 pub const DEFAULT_SESSION_MODEL: &str = "codex/gpt-5.6-sol";
 pub const DEFAULT_SESSION_PROVIDER: &str = "codex";
 pub const DEFAULT_SESSION_MODEL_ID: &str = "gpt-5.6-sol";
-pub const DEFAULT_SESSION_AGENT: &str = "balanced";
+pub const DEFAULT_SESSION_AGENT: &str = "direct";
 pub const DEFAULT_SESSION_PERSONA: &str = "tura";
 pub const DEFAULT_SESSION_TYPE: &str = "coding";
 pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "high";
@@ -533,7 +533,7 @@ fn serialize_json_value(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_config, save_config, serialize_config, CommandRunStallGuardConfig, TuraSessionConfig,
+        CommandRunStallGuardConfig, TuraSessionConfig, parse_config, save_config, serialize_config,
     };
 
     #[test]

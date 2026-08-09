@@ -37,7 +37,7 @@ export class MockGatewayClient {
   private sessions: Session[];
   private messagesBySession = new Map<string, Message[]>();
   private sessionConfig: SessionConfig = {
-    active_agent: "balanced",
+    active_agent: "direct",
     active_provider: "codex",
     active_model: "gpt-5.5",
     model: "codex/gpt-5.5",

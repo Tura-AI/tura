@@ -1,8 +1,8 @@
 use super::helpers::*;
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_between_turns(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_between_turns()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");
@@ -111,8 +111,8 @@ async fn gateway_prompt_business_flow_recovers_cached_stale_router_endpoint_betw
 }
 
 #[tokio::test]
-async fn gateway_prompt_business_flow_cancel_after_router_enqueue_preserves_user_message_without_success_fallback(
-) -> Result<()> {
+async fn gateway_prompt_business_flow_cancel_after_router_enqueue_preserves_user_message_without_success_fallback()
+-> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");

@@ -1,6 +1,6 @@
 use super::char_budget::{
-    context_output_byte_budget, formatted_truncate_text, truncate_middle_with_char_budget,
-    COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS, CONTEXT_OUTPUT_MAX_CHARS,
+    COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS, CONTEXT_OUTPUT_MAX_CHARS, context_output_byte_budget,
+    formatted_truncate_text, truncate_middle_with_char_budget,
 };
 use lifecycle::SessionManagement;
 
@@ -689,7 +689,7 @@ mod tests {
         command_run_summary_for_context, immutable_tool_result_context_messages,
         tool_result_context_cache,
     };
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     fn parse_command_run_context(text: &str) -> Value {
         serde_json::from_str(text).expect("command_run context should be structured JSON")
@@ -997,9 +997,11 @@ mod tests {
             context["results"][0]["output"]["changes"][0]["line_count"],
             2
         );
-        assert!(context["results"][0]["output"]["changes"][0]
-            .get("hunks")
-            .is_none());
+        assert!(
+            context["results"][0]["output"]["changes"][0]
+                .get("hunks")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1056,9 +1058,11 @@ mod tests {
             context["results"][0]["output"]["output"]["failed_change"]["line_count"],
             3
         );
-        assert!(context["results"][0]["output"]["output"]["failed_change"]
-            .get("hunks")
-            .is_none());
+        assert!(
+            context["results"][0]["output"]["output"]["failed_change"]
+                .get("hunks")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1194,22 +1198,24 @@ mod tests {
         assert!(output["results"][0].get("command_type").is_none());
         assert!(output["results"][0].get("command_line").is_none());
         value["context_cache"] = tool_result_context_cache(&value);
-        assert!(command_run_function_output_for_context(&json!({
-            "tool_name": "command_run",
-            "output": {
-                "results": [{
-                    "step": 1,
-                    "success": true,
-                    "output": {
-                        "ok": true,
-                        "exit_code": 0,
-                        "stdout": "ok\n",
-                        "stderr": ""
-                    }
-                }]
-            }
-        }))
-        .contains("\"stdout\": \"ok\\n\""));
+        assert!(
+            command_run_function_output_for_context(&json!({
+                "tool_name": "command_run",
+                "output": {
+                    "results": [{
+                        "step": 1,
+                        "success": true,
+                        "output": {
+                            "ok": true,
+                            "exit_code": 0,
+                            "stdout": "ok\n",
+                            "stderr": ""
+                        }
+                    }]
+                }
+            }))
+            .contains("\"stdout\": \"ok\\n\"")
+        );
     }
 
     #[test]
@@ -1475,9 +1481,11 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "user");
         assert!(messages[0].get("type").is_none());
-        assert!(messages[0]["content"]
-            .as_str()
-            .is_some_and(|content| content.contains("\"stdout\": \"ok\\n\"")));
+        assert!(
+            messages[0]["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("\"stdout\": \"ok\\n\""))
+        );
     }
 
     #[test]

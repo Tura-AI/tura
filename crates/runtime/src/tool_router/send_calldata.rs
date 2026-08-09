@@ -42,7 +42,7 @@ pub async fn send_calldata(call_data: CallData, redis_url: &str) -> Result<(), S
     redis::cmd("RPUSH")
         .arg(&queue_key)
         .arg(&payload)
-        .query_async::<_, ()>(&mut con)
+        .query_async::<()>(&mut con)
         .await
         .map_err(|e| format!("failed to enqueue calldata: {e}"))?;
 
@@ -70,7 +70,7 @@ pub async fn send_callback(callback_data: CallbackData, redis_url: &str) -> Resu
     redis::cmd("RPUSH")
         .arg(&queue_key)
         .arg(&payload)
-        .query_async::<_, ()>(&mut con)
+        .query_async::<()>(&mut con)
         .await
         .map_err(|e| format!("failed to enqueue callback: {e}"))?;
 
@@ -254,12 +254,16 @@ mod tests {
 
     #[test]
     fn deserializers_report_payload_shape_errors_with_operation_context() {
-        assert!(deserialize_calldata("{not-json}")
-            .expect_err("bad calldata")
-            .starts_with("failed to deserialize calldata:"));
-        assert!(deserialize_callback_data("{not-json}")
-            .expect_err("bad callback")
-            .starts_with("failed to deserialize callback:"));
+        assert!(
+            deserialize_calldata("{not-json}")
+                .expect_err("bad calldata")
+                .starts_with("failed to deserialize calldata:")
+        );
+        assert!(
+            deserialize_callback_data("{not-json}")
+                .expect_err("bad callback")
+                .starts_with("failed to deserialize callback:")
+        );
     }
 
     #[test]

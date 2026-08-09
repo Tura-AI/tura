@@ -55,50 +55,76 @@ authors = ["Tura"]
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
-anyhow = "1"
-arboard = "3"
-async-trait = "0.1"
-axum = { version = "0.8", features = ["ws"] }
-base64 = "0.22"
-chrono = { version = "0.4", features = ["serde"] }
-dotenvy = "0.15"
-futures = "0.3"
-futures-util = "0.3"
+reqwest = { version = "0.13.4", default-features = false, features = [
+  "charset",
+  "http2",
+  "system-proxy",
+  "form",
+  "json",
+  "query",
+  "stream",
+  "rustls-no-provider",
+] }
+image = { version = "0.25.10", default-features = false, features = [
+  "bmp",
+  "jpeg",
+  "png",
+  "webp",
+] }
+anyhow = "1.0.104"
+arboard = "3.6.1"
+async-trait = "0.1.91"
 filetime = "0.2"
 fs2 = "0.4"
-image = { version = "0.25", features = ["jpeg", "png", "webp"] }
-lazy_static = "1.4"
+axum = { version = "0.8.9", features = ["ws"] }
+base64 = "0.23.0"
+chrono = { version = "0.4.45", features = ["serde"] }
+dotenvy = "0.15.7"
+futures = "0.3.33"
+futures-util = "0.3.33"
 lifecycle = { path = "crates/lifecycle" }
-once_cell = "1"
-parking_lot = "0.12"
-pdfium-render = { version = "0.8", features = ["image"] }
-redis = { version = "0.25", features = ["tokio-comp"] }
-regex = "1"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+parking_lot = "0.12.5"
+pdfium-render = { version = "0.9.3", features = ["image_025"] }
+png = "0.18.1"
+redis = { version = "1.4.1", features = ["tokio-comp"] }
+regex = "1.13.1"
+rustls = { version = "0.23.42", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
+] }
 quick_html2md = "0.2.1"
-rusqlite = { version = "0.32", features = ["bundled"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-semver = "1"
-sha2 = "0.10"
-sysinfo = "0.30"
-tauri = "2"
-tauri-build = "2"
-tauri-plugin-single-instance = "2.4.2"
-tao = "0.35.3"
-tempfile = "3"
-thiserror = "1"
-tokio = { version = "1", features = ["full"] }
-tokio-test = "0.4"
-toml = "0.8"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tray-icon = "0.23.1"
-url = "2"
-uuid = { version = "1", features = ["v4", "serde"] }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+semver = "1.0.28"
+sha2 = "0.11.0"
+sysinfo = "0.39.6"
+tauri = "2.11.5"
+tauri-build = "2.6.3"
+tauri-plugin-single-instance = "2.4.3"
+tao = { version = "0.35.3", default-features = false, features = [
+  "x11",
+  "dbus",
+] }
+tempfile = "3.27.0"
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["full"] }
+toml = "1.1.3"
+tower = "0.5.3"
+tower-http = { version = "0.7.0", features = ["cors", "fs"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tray-icon = { version = "0.24.2", default-features = false, features = ["gtk"] }
+url = "2.5.8"
+uuid = { version = "1.24.0", features = ["v4", "serde"] }
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
 
 agents = { path = "agents" }
 provider = { path = "crates/provider" }

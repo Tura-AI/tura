@@ -27,6 +27,7 @@ interface GatewayIdentity {
   version?: string;
   pid?: number;
   processStartTime?: number;
+  oauthCallbackReady?: boolean;
 }
 
 interface GatewayLaunchRequest {
@@ -99,6 +100,13 @@ export async function ensureGatewayAvailable(
 
   if (connectedUrl) {
     writeActiveGatewayUrl(connectedUrl, instanceHome, connectedIdentity);
+    if (connectedIdentity && connectedIdentity.oauthCallbackReady === false) {
+      process.stderr.write(
+        `\n  ⚠️  Gateway is healthy but the OAuth callback server (port 1455) is not running.\n  ` +
+          `OAuth login will hang. Kill stale gateway processes and restart:\n  ` +
+          `  pkill -f tura_gateway && tura provider login codex\n\n`,
+      );
+    }
     return connectedUrl;
   }
 
@@ -236,6 +244,7 @@ async function gatewayIdentityWithProbeTimeout(
         version: typeof body.version === "string" ? body.version : undefined,
         pid: numberField(body.pid),
         processStartTime: numberField(body.process_start_time),
+        oauthCallbackReady: body.oauth_callback_ready !== false,
       };
     } finally {
       clearTimeout(timer);
@@ -252,10 +261,23 @@ async function waitForSameHomeGateway(
   timeoutMs: number,
 ): Promise<GatewayIdentity | null> {
   const deadline = Date.now() + timeoutMs;
+  let sawForeignGateway = false;
   while (Date.now() < deadline) {
     const identity = await gatewayIdentityWithProbeTimeout(gatewayUrl);
-    if (identity && gatewayMatchesInstance(identity, instanceHome, projectRoot, false)) {
-      return identity;
+    if (identity) {
+      if (gatewayMatchesInstance(identity, instanceHome, projectRoot, false)) {
+        return identity;
+      }
+      // Gateway is alive but belongs to a different TURA_HOME/project — don't
+      // loop silently for 20s. Tell the user what's happening so they know to
+      // kill the stale process instead of staring at a spinner.
+      if (!sawForeignGateway) {
+        sawForeignGateway = true;
+        const owner = identity.home || identity.root || "unknown";
+        process.stderr.write(
+          `\n  Found gateway at ${gatewayUrl} belonging to ${owner}, not this workspace.\n  Waiting for it to exit (or kill it with: pkill -f tura_gateway)\n`,
+        );
+      }
     }
     await delay(HEALTH_POLL_INTERVAL_MS);
   }

@@ -6,8 +6,8 @@ use lifecycle::{SessionInput, SessionManagement};
 use runtime::context::{
     accumulate_tool_result_with_provider_metadata, build_messages_from_session,
 };
-use runtime::runtime::call_runtime::{call_runtime, CallRuntimeInput};
-use serde_json::{json, Value};
+use runtime::runtime::call_runtime::{CallRuntimeInput, call_runtime};
+use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
@@ -303,9 +303,11 @@ async fn runtime_openai_business_flow_replays_final_command_run_once_and_records
     assert_eq!(requests.len(), 1);
     let captured = &requests[0];
     assert_eq!(captured.path, "/chat/completions");
-    assert!(captured
-        .headers
-        .contains("authorization: bearer runtime-openai-key"));
+    assert!(
+        captured
+            .headers
+            .contains("authorization: bearer runtime-openai-key")
+    );
     assert_eq!(captured.body["stream"], false);
     assert_eq!(captured.body["parallel_tool_calls"], true);
     assert_eq!(captured.body["max_tokens"], 65);
@@ -526,10 +528,12 @@ async fn runtime_http_auth_failure_is_not_retryable() {
     assert_eq!(runtime_error.error_code.as_deref(), Some("CALL_FAILED"));
     assert!(!runtime_error.retry_allowed);
     assert!(!runtime_error.fallback_allowed);
-    assert!(runtime_error
-        .error_text
-        .as_deref()
-        .is_some_and(|text| text.contains("http status 401")));
+    assert!(
+        runtime_error
+            .error_text
+            .as_deref()
+            .is_some_and(|text| text.contains("http status 401"))
+    );
     assert_eq!(provider.requests().len(), 1);
 }
 

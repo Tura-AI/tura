@@ -24,6 +24,12 @@ pub struct HealthResponse {
     /// Provider LLM call log directory when dev logging is enabled; absent in production.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dev_log_path: Option<String>,
+    /// OAuth callback server status. When false, OAuth login flows (e.g.
+    /// `tura provider login codex`) will hang because the callback listener on
+    /// port 1455 failed to bind. Frontends should warn the user to kill stale
+    /// gateway processes holding the port.
+    #[serde(default)]
+    pub oauth_callback_ready: bool,
 }
 
 impl Default for HealthResponse {
@@ -37,6 +43,7 @@ impl Default for HealthResponse {
             pid: None,
             process_start_time: None,
             dev_log_path: None,
+            oauth_callback_ready: true,
         }
     }
 }

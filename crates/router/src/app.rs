@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{Arc, atomic::AtomicBool};
 
 use crate::front_lifecycle::FrontLifecycle;
 use crate::services::manager::ServiceManager;

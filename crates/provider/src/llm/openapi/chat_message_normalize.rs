@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::super::common::message_content_text;
 use crate::utils::{openai_chat_content_from_canonical, openai_chat_media_content_from_canonical};
@@ -366,12 +366,14 @@ mod tests {
 
     #[test]
     fn non_response_items_are_not_translated_as_tool_items() {
-        assert!(normalize_responses_tool_item_for_chat(&json!({
-            "type": "message",
-            "role": "user",
-            "content": "hello"
-        }))
-        .is_empty());
+        assert!(
+            normalize_responses_tool_item_for_chat(&json!({
+                "type": "message",
+                "role": "user",
+                "content": "hello"
+            }))
+            .is_empty()
+        );
         assert!(normalize_responses_tool_item_for_chat(&json!({})).is_empty());
     }
 }

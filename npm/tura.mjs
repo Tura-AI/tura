@@ -81,18 +81,27 @@ if (!releaseBin || !existsSync(releaseBin)) {
 }
 
 const providerConfig = firstExistingPath([
-  path.join(packageRoot, "crates", "provider", "config", "provider_config.json"),
+  path.join(
+    packageRoot,
+    "crates",
+    "provider",
+    "config",
+    "provider_config.json",
+  ),
   path.join(releaseDir, "config", "provider_config.json"),
 ]);
 
 const result = spawnSync(releaseBin, process.argv.slice(2), {
   env: {
     ...process.env,
-    TURA_RELEASE_BIN_DIR:
-      process.env.TURA_RELEASE_BIN_DIR || path.dirname(releaseBin),
+    TURA_RELEASE_BIN_DIR: process.env.TURA_RELEASE_BIN_DIR ||
+      path.dirname(releaseBin),
     TURA_PROJECT_ROOT: process.env.TURA_PROJECT_ROOT || packageRoot,
     ...(providerConfig
-      ? { TURA_PROVIDER_CONFIG: process.env.TURA_PROVIDER_CONFIG || providerConfig }
+      ? {
+        TURA_PROVIDER_CONFIG: process.env.TURA_PROVIDER_CONFIG ||
+          providerConfig,
+      }
       : {}),
   },
   stdio: "inherit",

@@ -128,12 +128,16 @@ fn failed_middle_file_reports_successes_and_failures_separately() {
         result.output["failed_changes"][0]["failed_change"]["path"],
         json!("second.txt")
     );
-    assert!(result.output["failed_changes"][0]["message"]
-        .as_str()
-        .is_some_and(|text| text.contains("patch context not found")));
-    assert!(result.output["failed_changes"][0]["guidance"]
-        .as_str()
-        .is_some_and(|text| text.contains("after earlier changes were applied")));
+    assert!(
+        result.output["failed_changes"][0]["message"]
+            .as_str()
+            .is_some_and(|text| text.contains("patch context not found"))
+    );
+    assert!(
+        result.output["failed_changes"][0]["guidance"]
+            .as_str()
+            .is_some_and(|text| text.contains("after earlier changes were applied"))
+    );
     assert_eq!(
         fs::read_to_string(root.join("first.txt")).expect("first"),
         "new\n"
@@ -206,9 +210,11 @@ fn parser_rejects_patch_without_begin_marker() {
 
     assert!(!result.success);
     assert_eq!(result.output["error_type"], json!("ParseError"));
-    assert!(result.output["message"]
-        .as_str()
-        .is_some_and(|text| text.contains("Begin Patch")));
+    assert!(
+        result.output["message"]
+            .as_str()
+            .is_some_and(|text| text.contains("Begin Patch"))
+    );
     assert!(!root.join("app.txt").exists());
     let _ = fs::remove_dir_all(root);
 }
@@ -312,9 +318,11 @@ fn parser_rejects_patch_without_end_marker() {
 
     assert!(!result.success);
     assert_eq!(result.output["error_type"], json!("ParseError"));
-    assert!(result.output["message"]
-        .as_str()
-        .is_some_and(|text| text.contains("End Patch")));
+    assert!(
+        result.output["message"]
+            .as_str()
+            .is_some_and(|text| text.contains("End Patch"))
+    );
     assert!(!root.join("app.txt").exists());
     let _ = fs::remove_dir_all(root);
 }

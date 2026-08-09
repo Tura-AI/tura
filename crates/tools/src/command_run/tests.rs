@@ -5,8 +5,8 @@ use super::{
     normalize_command_steps, normalize_json_or_cli_command_arguments,
     normalize_shell_command_arguments, parse_args,
 };
-use serde_json::json;
 use serde_json::Value;
+use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -611,12 +611,16 @@ fn parse_command_item_uses_shell_when_only_payload_field_is_present() {
 
 #[test]
 fn parse_command_item_rejects_non_object_non_string_and_missing_command() {
-    assert!(parse_command_item(&json!(null))
-        .expect_err("null command item")
-        .contains("expected object"));
-    assert!(parse_command_item(&json!({"step": 1}))
-        .expect_err("missing command")
-        .contains("missing field `command_type`"));
+    assert!(
+        parse_command_item(&json!(null))
+            .expect_err("null command item")
+            .contains("expected object")
+    );
+    assert!(
+        parse_command_item(&json!({"step": 1}))
+            .expect_err("missing command")
+            .contains("missing field `command_type`")
+    );
 }
 
 #[test]

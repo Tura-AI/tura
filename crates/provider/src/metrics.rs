@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::tura_llm::{record_context_utilization, CallMetrics, CostDetails, UsageDetails};
+use crate::tura_llm::{CallMetrics, CostDetails, UsageDetails, record_context_utilization};
 
 pub(crate) fn extract_openapi_metrics(data: &Value, context_window: Option<u64>) -> CallMetrics {
     let usage = data.get("usage").cloned().unwrap_or(Value::Null);

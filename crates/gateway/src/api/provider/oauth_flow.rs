@@ -322,11 +322,11 @@ async fn complete_oauth_callback(
         && pending.state.as_deref() != Some(state)
     {
         return oauth_callback_response(
-                    &provider_id,
-                    false,
-                    "provider.oauth.state_mismatch",
-                    "OAuth state does not match the pending authorization request. Start login again and paste the newest code.",
-                );
+            &provider_id,
+            false,
+            "provider.oauth.state_mismatch",
+            "OAuth state does not match the pending authorization request. Start login again and paste the newest code.",
+        );
     }
     let tokens = if matches!(pending.method.as_str(), "oauth_pkce" | "device_code") {
         match exchange_oauth_code(&provider_id, &normalized_code, &pending).await {
@@ -793,24 +793,30 @@ mod tests {
 
     #[test]
     fn redirect_callback_payload_presence_ignores_whitespace() {
-        assert!(!OAuthRedirectCallbackParams {
-            code: Some(" ".to_string()),
-            state: None,
-            error: None,
-        }
-        .has_callback_payload());
-        assert!(OAuthRedirectCallbackParams {
-            code: None,
-            state: Some("state".to_string()),
-            error: None,
-        }
-        .has_callback_payload());
-        assert!(OAuthRedirectCallbackParams {
-            code: None,
-            state: None,
-            error: Some("access_denied".to_string()),
-        }
-        .has_callback_payload());
+        assert!(
+            !OAuthRedirectCallbackParams {
+                code: Some(" ".to_string()),
+                state: None,
+                error: None,
+            }
+            .has_callback_payload()
+        );
+        assert!(
+            OAuthRedirectCallbackParams {
+                code: None,
+                state: Some("state".to_string()),
+                error: None,
+            }
+            .has_callback_payload()
+        );
+        assert!(
+            OAuthRedirectCallbackParams {
+                code: None,
+                state: None,
+                error: Some("access_denied".to_string()),
+            }
+            .has_callback_payload()
+        );
     }
 
     #[test]
@@ -982,9 +988,11 @@ mod tests {
             None,
         )
         .await;
-        assert!(unknown_state
-            .0
-            .contains("OAuth state expired or was not found"));
+        assert!(
+            unknown_state
+                .0
+                .contains("OAuth state expired or was not found")
+        );
 
         let provider_id = "flow-redirect-provider";
         set_pending(
@@ -1003,9 +1011,11 @@ mod tests {
             Some("other-provider".to_string()),
         )
         .await;
-        assert!(wrong_provider
-            .0
-            .contains("OAuth callback provider did not match the pending login"));
+        assert!(
+            wrong_provider
+                .0
+                .contains("OAuth callback provider did not match the pending login")
+        );
         assert!(global_store().peek_oauth_state(provider_id).is_none());
 
         let provider_id = "flow-redirect-non-pkce";
@@ -1025,9 +1035,11 @@ mod tests {
             None,
         )
         .await;
-        assert!(non_pkce
-            .0
-            .contains("OAuth callback did not match a PKCE login"));
+        assert!(
+            non_pkce
+                .0
+                .contains("OAuth callback did not match a PKCE login")
+        );
         assert!(global_store().peek_oauth_state(provider_id).is_none());
     }
 }

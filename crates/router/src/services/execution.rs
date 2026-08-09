@@ -3,15 +3,15 @@
 //! This module owns runtime worker lifecycle decisions. Gateway may enqueue or
 //! cancel turns, but must not spawn runtime workers directly.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use lifecycle::RuntimeId;
 use parking_lot::Mutex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Notify;
 
-use crate::services::runtime_workers::{runtime_worker_limit, MAX_QUEUED_RUNTIME_TURNS};
-use crate::{dispatch_run_agent_with_runtime_slot, AppState};
+use crate::services::runtime_workers::{MAX_QUEUED_RUNTIME_TURNS, runtime_worker_limit};
+use crate::{AppState, dispatch_run_agent_with_runtime_slot};
 use router_contract::{CancelRuntimeRequest, EnqueueTurnRequest, ProbeSessionsRequest};
 use runtime_contract::RunAgentRequest;
 use session_log_contract::{
@@ -480,7 +480,7 @@ fn debug_runtime_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{payload_to_run_agent_request, EnqueueTurnRequest, ExecutionService};
+    use super::{EnqueueTurnRequest, ExecutionService, payload_to_run_agent_request};
     use crate::{build_state, services::manager::ServiceManager};
     use serde_json::json;
     use std::sync::Arc;

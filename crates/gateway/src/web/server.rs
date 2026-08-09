@@ -2,15 +2,44 @@
 
 use crate::api;
 use axum::{
-    routing::{get, patch, post, put},
     Router,
+    routing::{get, patch, post, put},
 };
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber;
+
+// ============================================================================
+// OAuth Callback Status
+// ============================================================================
+
+/// Global flag set by `start_openai_oauth_callback_server`. When false, the
+/// OAuth callback listener on port 1455 failed to bind (usually because a
+/// stale gateway is holding it). The health endpoint reads this so frontends
+/// can warn the user instead of silently hanging on `tura provider login`.
+static OAUTH_CALLBACK_READY: OnceLock<AtomicBool> = OnceLock::new();
+
+fn oauth_callback_ready() -> bool {
+    OAUTH_CALLBACK_READY
+        .get_or_init(|| AtomicBool::new(false))
+        .load(Ordering::Relaxed)
+}
+
+fn set_oauth_callback_ready(value: bool) {
+    OAUTH_CALLBACK_READY
+        .get_or_init(|| AtomicBool::new(false))
+        .store(value, Ordering::Relaxed);
+}
+
+/// Public accessor for the health endpoint.
+pub fn oauth_callback_status() -> bool {
+    oauth_callback_ready()
+}
 
 // ============================================================================
 // App State
@@ -332,14 +361,21 @@ pub async fn run_server_until_shutdown(
 async fn start_openai_oauth_callback_server(main_port: u16) {
     const OAUTH_CALLBACK_PORT: u16 = 1455;
     if main_port == OAUTH_CALLBACK_PORT {
+        set_oauth_callback_ready(true);
         return;
     }
 
     let addr = local_bind_addr(OAUTH_CALLBACK_PORT);
     let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(listener) => listener,
+        Ok(listener) => {
+            set_oauth_callback_ready(true);
+            listener
+        }
         Err(error) => {
+            set_oauth_callback_ready(false);
             eprintln!("⚠️ OpenAI OAuth callback server not started on http://{addr}: {error}");
+            eprintln!("   OAuth login (tura provider login) will hang until the stale process");
+            eprintln!("   holding port {OAUTH_CALLBACK_PORT} is killed:  pkill -f tura_gateway");
             return;
         }
     };

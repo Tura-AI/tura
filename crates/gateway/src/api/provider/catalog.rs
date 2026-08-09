@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use axum::extract::Json;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 use crate::contracts::*;
 use crate::mock::global_store;
@@ -450,11 +450,11 @@ pub(super) fn insert_option(
 }
 
 pub(super) fn normalize_model_id(provider_id: &str, model_id: &str) -> String {
-    let prefix = format!("{}/", provider_runtime_id(provider_id));
-    model_id
-        .strip_prefix(&prefix)
-        .unwrap_or(model_id)
-        .to_string()
+    let normalized = tura_llm_rust::Settings::normalize_model_name(provider_id, model_id);
+    if normalized != model_id || provider_runtime_id(provider_id) == provider_id {
+        return normalized;
+    }
+    tura_llm_rust::Settings::normalize_model_name(provider_runtime_id(provider_id), model_id)
 }
 
 pub(super) fn default_model_for_provider(provider_id: &str) -> SdkProviderModel {
@@ -646,11 +646,13 @@ pub(super) fn enrich_provider_list(
                 .or_insert_with(|| serde_json::json!(["llm.chat", "llm.tool_call", "oauth.login"]));
             provider.options.insert(
                 "auth_methods".to_string(),
-                serde_json::json!(entry
-                    .auth_methods
-                    .iter()
-                    .map(|method| format!("{:?}", method.kind))
-                    .collect::<Vec<_>>()),
+                serde_json::json!(
+                    entry
+                        .auth_methods
+                        .iter()
+                        .map(|method| format!("{:?}", method.kind))
+                        .collect::<Vec<_>>()
+                ),
             );
         }
         let fallback_env_key = provider_env_key(&provider.id);
@@ -682,8 +684,9 @@ pub(super) fn provider_base_url(
     settings: &tura_llm_rust::Settings,
     provider_id: &str,
 ) -> Option<String> {
-    let provider_id = provider_runtime_id(provider_id);
-    settings.provider_base_url(provider_id)
+    settings
+        .provider_base_url(provider_id)
+        .or_else(|| settings.provider_base_url(provider_runtime_id(provider_id)))
 }
 
 pub async fn validate_model(
@@ -752,15 +755,16 @@ pub async fn validate_model(
     // claude-code uses the subscription OAuth token against the native Anthropic
     // Messages API, so it must keep its own provider id (the runtime maps it to
     // "anthropic", which would resolve ANTHROPIC_API_KEY and the wrong call path).
-    let runtime_call_provider = if provider_id == "claude-code" {
-        provider_id
-    } else {
-        runtime_provider_id
-    };
+    let runtime_call_provider =
+        if provider_id == "claude-code" || runtime_provider_id == "openai-compatible" {
+            provider_id
+        } else {
+            runtime_provider_id
+        };
     let config = tura_llm_rust::ProviderConfig {
         provider: runtime_call_provider.to_string(),
         base_url,
-        model: tura_llm_rust::Settings::normalize_model_name(runtime_provider_id, model_id),
+        model: tura_llm_rust::Settings::normalize_model_name(provider_id, model_id),
         temperature: 0.0,
     };
     let options = tura_llm_rust::CallOptions {
@@ -931,6 +935,26 @@ mod tests {
     }
 
     #[test]
+    fn catalog_prefers_exact_provider_base_url_before_runtime_adapter_alias() {
+        let mut settings = catalog_settings();
+        settings.provider_base_url.extend([
+            (
+                "openai-compatible".to_string(),
+                "https://adapter.example/v1".to_string(),
+            ),
+            (
+                "opencode".to_string(),
+                "https://opencode.example/v1".to_string(),
+            ),
+        ]);
+
+        assert_eq!(
+            provider_base_url(&settings, "opencode").as_deref(),
+            Some("https://opencode.example/v1")
+        );
+    }
+
+    #[test]
     fn catalog_model_detail_lookup_and_sdk_model_projection_are_canonical() {
         let settings = catalog_settings();
 
@@ -1004,10 +1028,12 @@ mod tests {
             .expect("local provider");
 
         assert_eq!(response.default["local"], "model-a");
-        assert!(!response
-            .connected
-            .iter()
-            .any(|provider| provider == "local"));
+        assert!(
+            !response
+                .connected
+                .iter()
+                .any(|provider| provider == "local")
+        );
         assert_eq!(local.name, "Local Provider");
         assert_eq!(local.env, vec!["LOCAL_TOKEN", "LOCAL_FALLBACK"]);
         assert_eq!(local.api.as_deref(), Some("https://local.example/v1"));

@@ -22,7 +22,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::streaming::{next_provider_stream_chunk, read_provider_response_body};
 use crate::tura_llm::{
@@ -67,6 +67,9 @@ pub async fn call_with_stream_events(
         payload["stream"] = Value::Bool(true);
     }
 
+    crate::install_rustls_crypto_provider().map_err(|error| TuraError::Network {
+        message: error.to_string(),
+    })?;
     let client = reqwest::Client::builder()
         .build()
         .map_err(|err| TuraError::Network {

@@ -633,9 +633,11 @@ async fn oauth_business_redirect_flow_rejects_non_pkce_pending_without_network_e
         }),
     )
     .await;
-    assert!(non_pkce
-        .0
-        .contains("OAuth callback did not match a PKCE login"));
+    assert!(
+        non_pkce
+            .0
+            .contains("OAuth callback did not match a PKCE login")
+    );
     assert!(global_store().peek_oauth_state(provider_id).is_none());
 
     clear_provider(provider_id);

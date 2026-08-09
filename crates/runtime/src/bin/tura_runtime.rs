@@ -7,6 +7,8 @@
 //! dispatching work to it.
 
 fn main() -> std::io::Result<()> {
+    tura_llm_rust::install_rustls_crypto_provider()
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
     tura_path::process_hardening::harden_current_process("runtime_worker");
     // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
     #[allow(

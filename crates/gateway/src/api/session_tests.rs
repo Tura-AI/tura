@@ -1,18 +1,17 @@
 use super::{
-    api_message_from_store, apply_single_change, config_model_override, filter_list_sessions,
-    first_prompt_part_id, frontend_safe_reply_message, frontend_safe_value,
-    inactive_sessions_from_probe, prompt_command_run_shell, prompt_message_id,
+    SessionChangeRecord, SessionListParams, api_message_from_store, apply_single_change,
+    config_model_override, filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message,
+    frontend_safe_value, inactive_sessions_from_probe, prompt_command_run_shell, prompt_message_id,
     prompt_model_acceleration, prompt_model_variant, prompt_text, workspace_key,
-    SessionChangeRecord, SessionListParams,
 };
 use crate::contracts::{Session, SessionContextTokens, SessionStatus};
 use crate::session::config::TuraSessionConfig;
 use crate::session_store;
 use crate::test_support::SessionDbTestService;
 use axum::{
+    Json,
     extract::{Path, Query},
     http::HeaderMap,
-    Json,
 };
 use std::fs;
 

@@ -1,6 +1,7 @@
 use super::SessionLogStore;
+use super::helpers::{row_u64, sqlite_u64};
 use anyhow::{Context, Result};
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use session_log_contract::{
     AppendSessionFeedEventRequest, ReadSessionFeedRequest, SessionFeedAppendOutcome,
     SessionFeedEntry, SessionFeedEvent, UpdateSessionTodosRequest,
@@ -46,7 +47,7 @@ impl SessionLogStore {
                     params![request.command_id],
                     |row| {
                         Ok((
-                            row.get::<_, u64>(0)?,
+                            row_u64(row, 0)?,
                             row.get::<_, Option<String>>(1)?,
                             row.get::<_, String>(2)?,
                             row.get::<_, String>(3)?,
@@ -68,7 +69,7 @@ impl SessionLogStore {
                              FROM session_feed_events WHERE session_id = ?1)
                      FROM sessions WHERE session_id = ?1",
                     params![request.session_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?)),
+                    |row| Ok((row.get::<_, String>(0)?, row_u64(row, 1)?)),
                 )?;
                 tx.commit()?;
                 return Ok(UpdateSessionTodosOutcome {
@@ -156,7 +157,7 @@ impl SessionLogStore {
                     params![request.event_id],
                     |row| {
                         Ok((
-                            row.get::<_, u64>(0)?,
+                            row_u64(row, 0)?,
                             row.get::<_, String>(1)?,
                             row.get::<_, String>(2)?,
                             row.get::<_, String>(3)?,
@@ -234,7 +235,11 @@ impl SessionLogStore {
             )?;
             let entries = statement
                 .query_map(
-                    params![request.session_id, request.after_cursor, request.limit],
+                    params![
+                        request.session_id,
+                        sqlite_u64(request.after_cursor)?,
+                        sqlite_u64(request.limit)?
+                    ],
                     |row| {
                         let event_json = row.get::<_, String>(3)?;
                         let event = serde_json::from_str::<SessionFeedEvent>(&event_json).map_err(
@@ -248,7 +253,7 @@ impl SessionLogStore {
                         )?;
                         Ok(SessionFeedEntry {
                             session_id: request.session_id.clone(),
-                            cursor: row.get(0)?,
+                            cursor: row_u64(row, 0)?,
                             runtime_id: row.get(1)?,
                             event_id: row.get(2)?,
                             event,
@@ -289,7 +294,7 @@ impl SessionLogStore {
                         })?;
                     Ok(SessionFeedEntry {
                         session_id: row.get(0)?,
-                        cursor: row.get(1)?,
+                        cursor: row_u64(row, 1)?,
                         runtime_id: Some(row.get(2)?),
                         event_id: event_id.to_string(),
                         event,
@@ -313,14 +318,15 @@ pub(super) fn append_session_feed_event_tx(
         "SELECT COALESCE(MAX(cursor) + 1, 1) FROM session_feed_events
          WHERE session_id = ?1",
         params![session_id],
-        |row| row.get::<_, u64>(0),
+        |row| row_u64(row, 0),
     )?;
+    let cursor_sql = sqlite_u64(cursor)?;
     tx.execute(
         "INSERT INTO session_feed_events(session_id, cursor, runtime_id, event_id, event_json)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             session_id,
-            cursor,
+            cursor_sql,
             runtime_id,
             event_id,
             serde_json::to_string(event)?,

@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tura_command_web_discover::{access, execute};
 
 #[path = "helpers/web_discover_local.rs"]
@@ -144,9 +144,11 @@ fn web_discover_business_protocol_binary_accepts_json_arguments_and_errors() {
     assert_eq!(unsupported["ok"], true);
     assert_eq!(unsupported["success"], false);
     assert_eq!(unsupported["exit_code"], 1);
-    assert!(unsupported["stderr"]
-        .as_str()
-        .is_some_and(|stderr| stderr.contains("unsupported web_discover type")));
+    assert!(
+        unsupported["stderr"]
+            .as_str()
+            .is_some_and(|stderr| stderr.contains("unsupported web_discover type"))
+    );
 }
 
 #[test]
@@ -180,9 +182,11 @@ fn web_discover_business_protocol_health_capabilities_and_access_are_stable() {
         }
     }));
     assert_eq!(access["ok"], true);
-    assert!(access["output"]["read_paths"]
-        .as_array()
-        .is_some_and(|paths| paths.is_empty()));
+    assert!(
+        access["output"]["read_paths"]
+            .as_array()
+            .is_some_and(|paths| paths.is_empty())
+    );
     assert_eq!(access["output"]["workspace_write"], false);
     assert!(
         access["output"]["write_paths"][0].as_str().is_some_and(
@@ -311,15 +315,21 @@ fn web_discover_business_flow_downloads_multiple_direct_images_concurrently_and_
         .as_array()
         .expect("image records");
     assert_eq!(records.len(), 3);
-    assert!(records[0]["url"]
-        .as_str()
-        .is_some_and(|url| url.ends_with("/first.png")));
-    assert!(records[1]["url"]
-        .as_str()
-        .is_some_and(|url| url.ends_with("/second.jpg")));
-    assert!(records[2]["url"]
-        .as_str()
-        .is_some_and(|url| url.ends_with("/third.webp")));
+    assert!(
+        records[0]["url"]
+            .as_str()
+            .is_some_and(|url| url.ends_with("/first.png"))
+    );
+    assert!(
+        records[1]["url"]
+            .as_str()
+            .is_some_and(|url| url.ends_with("/second.jpg"))
+    );
+    assert!(
+        records[2]["url"]
+            .as_str()
+            .is_some_and(|url| url.ends_with("/third.webp"))
+    );
     assert_eq!(records[0]["source"], "direct_image_url");
     assert_eq!(records[1]["source"], "direct_image_url");
     assert_eq!(records[2]["source"], "direct_image_url");
@@ -357,30 +367,40 @@ fn web_discover_business_flow_downloads_multiple_direct_images_concurrently_and_
         std::fs::read(dir.path().join(&downloaded_paths[2])).expect("third image"),
         b"third image bytes"
     );
-    assert!(!downloaded_paths
-        .iter()
-        .any(|path| normalize_path(path).contains("missing")));
+    assert!(
+        !downloaded_paths
+            .iter()
+            .any(|path| normalize_path(path).contains("missing"))
+    );
     assert!(response.stdout.contains("downloaded:"));
 
     let requests = server.join();
     assert_eq!(requests.len(), 4);
-    assert!(requests
-        .iter()
-        .any(|request| request.starts_with("GET /first.png ")));
-    assert!(requests
-        .iter()
-        .any(|request| request.starts_with("GET /missing.png ")));
-    assert!(requests
-        .iter()
-        .any(|request| request.starts_with("GET /second.jpg ")));
-    assert!(requests
-        .iter()
-        .any(|request| request.starts_with("GET /third.webp ")));
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.starts_with("GET /first.png "))
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.starts_with("GET /missing.png "))
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.starts_with("GET /second.jpg "))
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.starts_with("GET /third.webp "))
+    );
 }
 
 #[test]
-fn web_discover_business_flow_invalid_filter_returns_structured_error_without_download_side_effects(
-) {
+fn web_discover_business_flow_invalid_filter_returns_structured_error_without_download_side_effects()
+ {
     let dir = tempfile::tempdir().expect("tempdir");
     let command_line = r#"{
         "type": "website",

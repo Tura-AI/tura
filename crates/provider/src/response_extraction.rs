@@ -185,23 +185,60 @@ pub fn prompt_cache_key_supported(provider: &str, base_url: &str) -> bool {
 
 /// Whether the provider supports OpenAI-compatible SSE `stream_options.include_usage`.
 pub fn openai_compatible_usage_stream_supported(provider: &str, base_url: &str) -> bool {
-    if provider.eq_ignore_ascii_case("openai")
-        || provider.eq_ignore_ascii_case("minimax")
-        || provider.eq_ignore_ascii_case("qwen")
-        || provider.eq_ignore_ascii_case("openrouter")
-    {
-        return true;
-    }
-    base_url.contains("api.openai.com")
-        || base_url.contains("api.minimax.io")
-        || base_url.contains("dashscope")
-        || base_url.contains("openrouter.ai")
+    let Some(host) = url::Url::parse(base_url.trim())
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+    else {
+        return false;
+    };
+
+    // `stream_options.include_usage` is an opt-in extension, not part of the
+    // generic OpenAI-compatible contract.  In particular, a route configured
+    // with runtime provider `openai` may point at a service that rejects the
+    // field (for example MiMo), so provider names alone are not sufficient.
+    matches!(
+        host.as_str(),
+        "api.openai.com"
+            | "api.minimax.io"
+            | "dashscope.aliyuncs.com"
+            | "dashscope-intl.aliyuncs.com"
+            | "coding.dashscope.aliyuncs.com"
+            | "openrouter.ai"
+    ) || (provider.eq_ignore_ascii_case("qwen") && host.ends_with(".dashscope.aliyuncs.com"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::extract_tool_calls;
+    use super::{extract_tool_calls, openai_compatible_usage_stream_supported};
     use serde_json::json;
+
+    #[test]
+    fn usage_stream_requires_a_known_endpoint_not_only_a_provider_alias() {
+        assert!(openai_compatible_usage_stream_supported(
+            "openai",
+            "https://api.openai.com/v1"
+        ));
+        assert!(!openai_compatible_usage_stream_supported(
+            "openai",
+            "https://api.xiaomimimo.com/v1"
+        ));
+        assert!(!openai_compatible_usage_stream_supported(
+            "openai",
+            "https://api.openai.com.attacker.example/v1"
+        ));
+        assert!(openai_compatible_usage_stream_supported(
+            "qwen",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        ));
+        assert!(openai_compatible_usage_stream_supported(
+            "qwen",
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        ));
+        assert!(!openai_compatible_usage_stream_supported(
+            "openrouter",
+            "http://127.0.0.1:9000/v1"
+        ));
+    }
 
     #[test]
     fn extract_tool_calls_preserves_provider_metadata() {

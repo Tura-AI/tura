@@ -42,6 +42,9 @@ Common LLM credential names are:
 | Gemini API         | `gemini`      | API key or supported OAuth login              | `GEMINI_API_KEY`                                                             |
 | OpenRouter         | `openrouter`  | API key                                       | `OPENROUTER_API_KEY`                                                         |
 | DeepSeek           | `deepseek`    | API key                                       | `DEEPSEEK_API_KEY`                                                           |
+| OpenCode Go        | `opencode-go` | API key/subscription                         | `OPENCODE_API_KEY`                                                           |
+| ClinePass          | `cline-pass`  | API key                                       | `CLINE_API_KEY`                                                              |
+| Synthetic          | `synthetic`   | API key                                       | `SYNTHETIC_API_KEY`                                                          |
 
 The provider list is broader than this table. Use the TUI or GUI provider detail
 to see the exact auth methods and credential variable for a provider. Catalog
@@ -201,7 +204,7 @@ The important fields are:
 
 | Field              | Meaning                                                                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `runtime_provider` | Runtime adapter used for calls. Examples: `openai`, `anthropic`, `google`, `openrouter`, `bedrock`, `brave_search`.                    |
+| `runtime_provider` | Runtime adapter used for calls. Examples: `openai`, `openai-compatible`, `anthropic`, `google`, `openrouter`, `bedrock`, `brave_search`.                    |
 | `api_style`        | Request protocol or service style. Examples: `openai`, `anthropic`, `google`, `bedrock`, `rest`, `openapi`, `aws`.                     |
 | `domains`          | Product category. Examples: `llm`, `search`, `media_generation`, `productivity`, `infrastructure`, `communication`.                    |
 | `capabilities`     | What the provider can do, such as `llm.chat`, `llm.tool_call`, `llm.embedding`, `search.web`, `media.generation`, or `storage.object`. |
@@ -414,8 +417,8 @@ Minimal custom OpenAI-compatible provider example:
     "providers": {
       "local_openai": {
         "display_name": "Local OpenAI Compatible",
-        "runtime_provider": "openai",
-        "api_style": "openai_compatible",
+        "runtime_provider": "openai-compatible",
+        "api_style": "openapi",
         "base_url": "http://127.0.0.1:11434/v1",
         "token_env": "LOCAL_OPENAI_API_KEY",
         "env": ["LOCAL_OPENAI_API_KEY"],

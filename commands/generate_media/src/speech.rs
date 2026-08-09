@@ -6,9 +6,9 @@ use super::files::{output_dir, relative_or_display, write_unique_download};
 use super::types::{
     GenerateMediaArgs, SpeechBytes, SpeechProvider, SpeechTone, TextLanguage, VoiceRole,
 };
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use reqwest::blocking::{Client, Response};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};

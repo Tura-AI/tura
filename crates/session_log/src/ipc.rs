@@ -15,7 +15,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use crate::SessionLogStore;
@@ -418,7 +418,6 @@ fn request_shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs2::FileExt;
     use lifecycle::{SessionCommand, TaskPlan};
     use session_log_contract::client::{call_service, service_is_running};
     use session_log_contract::{
@@ -704,9 +703,7 @@ mod tests {
             .write(true)
             .open(&owner_lock_path)
             .expect("owner lock file");
-        owner_lock
-            .lock_exclusive()
-            .expect("hold session_db owner lock");
+        owner_lock.lock().expect("hold session_db owner lock");
 
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind slow owned endpoint");
         let addr = listener.local_addr().expect("slow owned endpoint addr");
@@ -773,9 +770,7 @@ mod tests {
             .write(true)
             .open(&owner_lock_path)
             .expect("owner lock file");
-        owner_lock
-            .lock_exclusive()
-            .expect("hold session_db owner lock");
+        owner_lock.lock().expect("hold session_db owner lock");
 
         let listener =
             TcpListener::bind(("127.0.0.1", 0)).expect("bind unresponsive owned endpoint");
@@ -844,9 +839,7 @@ mod tests {
             .write(true)
             .open(&owner_lock_path)
             .expect("foreign owner lock file");
-        owner_lock
-            .lock_exclusive()
-            .expect("hold foreign owner lock");
+        owner_lock.lock().expect("hold foreign owner lock");
 
         let path = service_addr_path();
         std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
@@ -1449,10 +1442,12 @@ mod tests {
         write_response_command(&mut client, &command);
         assert!(matches!(read_response(&mut reader), SessionLogResponse::Ok));
         assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
-        assert!(store
-            .get_session(GetSessionRequest { session_id })
-            .expect("read deleted session")
-            .is_none());
+        assert!(
+            store
+                .get_session(GetSessionRequest { session_id })
+                .expect("read deleted session")
+                .is_none()
+        );
         drop(reader);
         drop(client);
         server
@@ -1504,10 +1499,12 @@ mod tests {
             SessionLogResponse::Error { error } if error.contains("session delete rejected")
         ));
         assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
-        assert!(store
-            .get_session(GetSessionRequest { session_id })
-            .expect("read rolled back session")
-            .is_some());
+        assert!(
+            store
+                .get_session(GetSessionRequest { session_id })
+                .expect("read rolled back session")
+                .is_some()
+        );
         drop(reader);
         drop(client);
         server

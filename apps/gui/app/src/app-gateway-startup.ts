@@ -58,19 +58,30 @@ async function tryConnectGatewayByHealth(
     const response = await fetch(`${baseUrl.replace(/\/+$/u, "")}/global/health`, {
       signal: controller.signal,
     }).finally(() => window.clearTimeout(timer));
-    if (!response.ok) return false;
+    if (!response.ok) {
+      if (response.status >= 500 && response.status <= 599) return false;
+      throw new GatewayHealthContractError(
+        `Gateway health endpoint returned HTTP ${response.status}.`,
+      );
+    }
     const body = (await response
       .clone()
       .json()
       .catch(() => undefined)) as { healthy?: unknown } | undefined;
-    if (body?.healthy !== true) return false;
+    if (body?.healthy === false) return false;
+    if (body?.healthy !== true) {
+      throw new GatewayHealthContractError(
+        "Gateway health response is incompatible: expected healthy=true.",
+      );
+    }
     setState((previous) => ({
       ...previous,
       settingsNotice: t("gatewayWaiting"),
       gatewayStartupNotice: t("gatewayWaiting"),
     }));
     return true;
-  } catch {
+  } catch (error) {
+    if (error instanceof GatewayHealthContractError) throw error;
     return false;
   }
 }
@@ -83,19 +94,22 @@ async function tryConnectGatewayFromTauri(
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const payload = (await invoke("start_gateway", { gatewayUrl: baseUrl, gatewayUrlExplicit })) as
-      | { status?: string; gatewayUrl?: string; gateway_url?: string }
+      | { ok?: boolean; status?: string; gatewayUrl?: string; gateway_url?: string }
       | undefined;
     const nextGatewayUrl = payload?.gatewayUrl ?? payload?.gateway_url;
-    const notice = payload?.status === "connected" ? t("gatewayWaiting") : t("gatewayWaiting");
+    if (payload?.ok !== true || payload.status !== "connected" || !nextGatewayUrl) {
+      throw new Error("Gateway startup returned an incompatible response.");
+    }
     setState((previous) => ({
       ...previous,
       gatewayUrl: nextGatewayUrl ?? previous.gatewayUrl,
-      settingsNotice: notice,
-      gatewayStartupNotice: notice,
+      settingsNotice: t("gatewayWaiting"),
+      gatewayStartupNotice: t("gatewayWaiting"),
     }));
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw new Error(String(error));
   }
 }
 
@@ -117,35 +131,55 @@ export async function waitForGatewayHealth(
       const response = await fetch(`${baseUrl.replace(/\/+$/u, "")}/global/health`, {
         signal: controller.signal,
       }).finally(() => window.clearTimeout(timer));
-      if (response.ok) {
-        const body = (await response
-          .clone()
-          .json()
-          .catch(() => undefined)) as { dev_log_path?: string; healthy?: unknown } | undefined;
-        if (body?.healthy !== true) {
+      if (!response.ok) {
+        if (response.status >= 500 && response.status <= 599) {
           await new Promise((resolve) => window.setTimeout(resolve, 500));
           continue;
         }
-        const devPath = body?.dev_log_path;
-        if (devPath) {
-          setState((previous) => ({
-            ...previous,
-            settingsNotice: `${t("devModeActive")}${devPath}`,
-            gatewayStartupNotice: `${t("devModeActive")}${devPath}`,
-          }));
-        } else {
-          setState((previous) => ({
-            ...previous,
-            settingsNotice: undefined,
-            gatewayStartupNotice: undefined,
-          }));
-        }
-        return;
+        throw new GatewayHealthContractError(
+          `Gateway health endpoint returned HTTP ${response.status}.`,
+        );
       }
-    } catch {
+      const body = (await response
+        .clone()
+        .json()
+        .catch(() => undefined)) as { dev_log_path?: string; healthy?: unknown } | undefined;
+      if (body?.healthy === false) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        continue;
+      }
+      if (body?.healthy !== true) {
+        throw new GatewayHealthContractError(
+          "Gateway health response is incompatible: expected healthy=true.",
+        );
+      }
+      const devPath = body?.dev_log_path;
+      if (devPath) {
+        setState((previous) => ({
+          ...previous,
+          settingsNotice: `${t("devModeActive")}${devPath}`,
+          gatewayStartupNotice: `${t("devModeActive")}${devPath}`,
+        }));
+      } else {
+        setState((previous) => ({
+          ...previous,
+          settingsNotice: undefined,
+          gatewayStartupNotice: undefined,
+        }));
+      }
+      return;
+    } catch (error) {
+      if (error instanceof GatewayHealthContractError) throw error;
       // Keep the loading overlay alive while waiting for Gateway to appear.
     }
     await new Promise((resolve) => window.setTimeout(resolve, 500));
   }
   throw new DOMException("Gateway did not become healthy within 20 seconds.", "TimeoutError");
+}
+
+export class GatewayHealthContractError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GatewayHealthContractError";
+  }
 }

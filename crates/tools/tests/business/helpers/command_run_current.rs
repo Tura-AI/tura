@@ -4,7 +4,7 @@ pub(crate) use code_tools::runtime::file_locks::{self, Access};
 pub(crate) use code_tools::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolPayload, ToolRouter, ToolRuntimeEvent,
 };
-pub(crate) use serde_json::{json, Value};
+pub(crate) use serde_json::{Value, json};
 pub(crate) use std::collections::BTreeSet;
 pub(crate) use std::ffi::OsString;
 pub(crate) use std::fs;
@@ -83,11 +83,7 @@ pub(crate) fn shell_cat(path: &str) -> String {
 }
 
 pub(crate) fn shell_pwd() -> &'static str {
-    if cfg!(windows) {
-        "Get-Location"
-    } else {
-        "pwd"
-    }
+    if cfg!(windows) { "Get-Location" } else { "pwd" }
 }
 
 pub(crate) fn find_ffmpeg() -> Option<String> {

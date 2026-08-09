@@ -1,5 +1,5 @@
 use super::config;
-use super::types::{ReadMediaArgs, MAX_VISUALS};
+use super::types::{MAX_VISUALS, ReadMediaArgs};
 use serde_json::Value;
 
 pub(super) fn parse_args_text(command_line: &str) -> Result<ReadMediaArgs, String> {

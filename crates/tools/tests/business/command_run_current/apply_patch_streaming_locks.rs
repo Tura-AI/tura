@@ -70,9 +70,11 @@ fn pass_apply_patch_add_delete_and_move_are_tracked_in_output() {
         .as_array()
         .expect("changes should be an array");
     assert!(changes.iter().any(|change| change["kind"] == "add"));
-    assert!(changes
-        .iter()
-        .any(|change| change["move_path"] == "moved.txt"));
+    assert!(
+        changes
+            .iter()
+            .any(|change| change["move_path"] == "moved.txt")
+    );
     assert!(changes.iter().any(|change| change["kind"] == "delete"));
 }
 
@@ -148,10 +150,12 @@ fn fail_apply_patch_rejects_path_outside_workspace_when_cli_sandboxed() {
     );
 
     assert_eq!(output["results"][0]["success"], false);
-    assert!(output["results"][0]["output"]["stderr"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("outside"));
+    assert!(
+        output["results"][0]["output"]["stderr"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("outside")
+    );
     assert!(!outside.exists());
     restore_env_var("TURA_COMMAND_RUN_SANDBOX", previous_sandbox);
 }
@@ -318,9 +322,11 @@ fn fail_later_batch_commands_stop_after_apply_patch_failure() {
     );
 
     assert_eq!(output["cancelled"], true);
-    assert!(output["cancel_reason"]
-        .as_str()
-        .is_some_and(|text| text.contains("apply_patch failed")));
+    assert!(
+        output["cancel_reason"]
+            .as_str()
+            .is_some_and(|text| text.contains("apply_patch failed"))
+    );
     assert_eq!(output["results"].as_array().expect("results").len(), 1);
     assert_eq!(output["results"][0]["success"], false);
     assert_eq!(
@@ -529,14 +535,18 @@ fn pass_mutating_commands_are_barriers_between_read_batches() {
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(output["results"][1]["success"], true);
     assert_eq!(output["results"][2]["success"], true);
-    assert!(output["results"][0]["output"]["stdout"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("before"));
-    assert!(output["results"][2]["output"]["stdout"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("after"));
+    assert!(
+        output["results"][0]["output"]["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("before")
+    );
+    assert!(
+        output["results"][2]["output"]["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("after")
+    );
 }
 
 #[test]

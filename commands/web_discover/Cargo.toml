@@ -29,7 +29,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 provider = { workspace = true }
 tura_path.workspace = true
-zip = "2"
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 tempfile.workspace = true

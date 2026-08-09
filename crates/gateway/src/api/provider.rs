@@ -4,7 +4,6 @@ use crate::contracts::*;
 use crate::mock::global_store;
 use axum::extract::{Json, Path, Query};
 use chrono::Utc;
-use fs2::FileExt;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -544,7 +543,7 @@ fn provider_auth_file_lock() -> io::Result<ProviderAuthFileLock> {
         .read(true)
         .write(true)
         .open(&lock_path)?;
-    file.lock_exclusive()?;
+    file.lock()?;
     Ok(ProviderAuthFileLock { file })
 }
 
@@ -601,7 +600,8 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
             entry
                 .and_then(|entry| entry.token_env)
                 .map(ToString::to_string)
-        });
+        })
+        .or_else(|| tura_llm_rust::configured_token_env(provider_id));
     let refresh_env = config_entry
         .as_ref()
         .and_then(|entry| entry.refresh_env.clone())
@@ -944,9 +944,36 @@ fn upsert_provider_auth_config(
 }
 
 fn provider_env_key(provider_id: &str) -> String {
-    tura_llm_rust::provider_token_env(provider_id)
-        .map(ToString::to_string)
+    provider_env_keys(provider_id)
+        .into_iter()
+        .next()
         .unwrap_or_else(|| format!("{}_API_KEY", provider_id.to_ascii_uppercase()))
+}
+
+fn provider_env_keys(provider_id: &str) -> Vec<String> {
+    provider_env_keys_from(
+        provider_id,
+        tura_llm_rust::configured_token_envs(provider_id),
+    )
+}
+
+fn provider_env_keys_from(
+    provider_id: &str,
+    configured_envs: impl IntoIterator<Item = String>,
+) -> Vec<String> {
+    let mut keys = Vec::new();
+    if let Some(key) = tura_llm_rust::provider_token_env(provider_id) {
+        keys.push(key.to_string());
+    }
+    for key in configured_envs {
+        if !keys.iter().any(|existing| existing == &key) {
+            keys.push(key);
+        }
+    }
+    if keys.is_empty() {
+        keys.push(format!("{}_API_KEY", provider_id.to_ascii_uppercase()));
+    }
+    keys
 }
 
 fn provider_login_key(provider_id: &str) -> String {
@@ -961,8 +988,9 @@ fn provider_key_exists(provider_id: &str) -> bool {
             .into_iter()
             .any(|key| provider_key_value_for_env(provider_id, key).is_some());
     }
-    let key = provider_env_key(provider_id);
-    provider_key_value_for_env(provider_id, &key).is_some()
+    provider_env_keys(provider_id)
+        .iter()
+        .any(|key| provider_key_value_for_env(provider_id, key).is_some())
 }
 
 fn provider_key_value_for_env(provider_id: &str, key: &str) -> Option<String> {

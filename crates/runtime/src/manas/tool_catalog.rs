@@ -1137,13 +1137,13 @@ mod tests {
             ],
         );
         assert_eq!(
-            schema["function"]["parameters"]["properties"]["commands"]["items"]["properties"]
-                ["command_line"]["type"],
+            schema["function"]["parameters"]["properties"]["commands"]["items"]["properties"]["command_line"]
+                ["type"],
             "string"
         );
         assert_eq!(
-            schema["function"]["parameters"]["properties"]["commands"]["items"]["properties"]
-                ["step"]["type"],
+            schema["function"]["parameters"]["properties"]["commands"]["items"]["properties"]["step"]
+                ["type"],
             "integer"
         );
 

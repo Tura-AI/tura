@@ -39,7 +39,7 @@ pub async fn call_with_stream_events(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{parameter_policy, ProviderApiStyle};
+    use super::super::{ProviderApiStyle, parameter_policy};
 
     #[test]
     fn openai_provider_uses_responses_policy_with_full_parameter_support() {

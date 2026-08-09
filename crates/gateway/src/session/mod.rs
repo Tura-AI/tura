@@ -13,4 +13,4 @@ pub mod process_snapshot;
 pub mod store;
 
 pub use manager::{SessionInfo, SessionManager};
-pub use store::{session_store, Message, MessagePart, MessageRole, SessionStore};
+pub use store::{Message, MessagePart, MessageRole, SessionStore, session_store};

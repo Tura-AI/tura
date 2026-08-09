@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use lifecycle::{SessionCommand, SessionInput, SessionManagement, TaskPlan};
 use session_log_contract::{
     CreateSessionRequest, ExecuteSessionCommandRequest, GetSessionRequest,

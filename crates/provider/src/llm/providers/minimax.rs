@@ -34,7 +34,7 @@ pub async fn call_with_stream_events(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{parameter_policy, ProviderApiStyle};
+    use super::super::{ProviderApiStyle, parameter_policy};
 
     #[test]
     fn minimax_provider_uses_openapi_policy_and_ignores_service_tier() {

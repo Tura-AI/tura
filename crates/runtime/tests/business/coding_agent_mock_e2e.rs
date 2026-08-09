@@ -73,16 +73,20 @@ fn coding_agent_can_call_command_run_tool_e2e() {
 
     let tool_results = tool_results(&result.session.session_log);
     assert_tool_success(&tool_results, "command_run");
-    assert!(!tool_results
-        .iter()
-        .any(|result| result.get("tool_name").and_then(Value::as_str)
-            == Some("send_message_to_user")));
-    assert!(result
-        .session
-        .session_log
-        .iter()
-        .map(|entry| entry.value())
-        .any(|entry| entry.get("role").and_then(Value::as_str) == Some("assistant")));
+    assert!(
+        !tool_results
+            .iter()
+            .any(|result| result.get("tool_name").and_then(Value::as_str)
+                == Some("send_message_to_user"))
+    );
+    assert!(
+        result
+            .session
+            .session_log
+            .iter()
+            .map(|entry| entry.value())
+            .any(|entry| entry.get("role").and_then(Value::as_str) == Some("assistant"))
+    );
 
     let run_output = tool_results
         .iter()
@@ -94,9 +98,11 @@ fn coding_agent_can_call_command_run_tool_e2e() {
         .pointer("/results/0/output")
         .expect("first command_run result should expose structured output");
     assert_eq!(first_command_output["exit_code"].as_i64(), Some(0));
-    assert!(first_command_output["stdout"]
-        .as_str()
-        .is_some_and(|stdout| !stdout.trim().is_empty()));
+    assert!(
+        first_command_output["stdout"]
+            .as_str()
+            .is_some_and(|stdout| !stdout.trim().is_empty())
+    );
     assert_eq!(first_command_output["stderr"].as_str(), Some(""));
     assert!(run_output.pointer("/results/0/exit_code").is_none());
     assert!(run_output.pointer("/results/0/display_command").is_none());
@@ -356,18 +362,20 @@ fn non_planning_agent_visible_reply_with_task_status_doing_is_backfilled_on_foll
         serialized.contains("call_task_status_doing") && serialized.contains("task_status"),
         "second provider request should replay the doing task_status output: {second_request:#?}"
     );
-    assert!(result
-        .session
-        .session_log
-        .iter()
-        .map(|entry| entry.value())
-        .any(
-            |entry| entry.get("role").and_then(Value::as_str) == Some("assistant")
-                && entry
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .is_some_and(|content| content.contains("Done."))
-        ));
+    assert!(
+        result
+            .session
+            .session_log
+            .iter()
+            .map(|entry| entry.value())
+            .any(
+                |entry| entry.get("role").and_then(Value::as_str) == Some("assistant")
+                    && entry
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .is_some_and(|content| content.contains("Done."))
+            )
+    );
     assert_eq!(
         requests.len(),
         2,
@@ -512,18 +520,20 @@ fn single_done_task_status_with_long_visible_reply_completes_without_backfill_tu
         "done task_status should still update task state; log={:#?}",
         result.session.session_log
     );
-    assert!(result
-        .session
-        .session_log
-        .iter()
-        .map(|entry| entry.value())
-        .any(
-            |entry| entry.get("role").and_then(Value::as_str) == Some("assistant")
-                && entry
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .is_some_and(|content| content.len() > 200)
-        ));
+    assert!(
+        result
+            .session
+            .session_log
+            .iter()
+            .map(|entry| entry.value())
+            .any(
+                |entry| entry.get("role").and_then(Value::as_str) == Some("assistant")
+                    && entry
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .is_some_and(|content| content.len() > 200)
+            )
+    );
     assert_eq!(
         provider
             .requests
@@ -735,9 +745,11 @@ fn coding_agent_provider_retry_exhaustion_preserves_provider_error() {
             }
         })
         .collect::<Vec<_>>();
-    assert!(runtimes
-        .iter()
-        .all(|runtime| runtime.state == RuntimeState::Failed));
+    assert!(
+        runtimes
+            .iter()
+            .all(|runtime| runtime.state == RuntimeState::Failed)
+    );
     assert_eq!(runtimes[0].fallback_from_id, None);
     for (index, runtime) in runtimes.iter().enumerate().skip(1) {
         assert_eq!(

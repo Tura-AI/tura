@@ -182,7 +182,6 @@ const ANTIGRAVITY_API_MODELS: &[&str] = &[
     "gemini-embedding-2",
 ];
 const DEEPSEEK_MODELS: &[&str] = &["deepseek-v4-pro", "deepseek-v4-flash"];
-const MINIMAX_MODELS: &[&str] = &["MiniMax-M3", "MiniMax-M2.7"];
 const MOONSHOT_MODELS: &[&str] = &["kimi-k2.6"];
 const QWEN_MODELS: &[&str] = &["qwen3.7-max", "qwen3.6-flash", "text-embedding-v4"];
 const XAI_MODELS: &[&str] = &["grok-4.3"];
@@ -477,19 +476,30 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         OPENROUTER_MODELS,
         "https://openrouter.ai/api/v1",
     ),
+    openai_compatible_catalog_provider(
+        "opencode",
+        "OpenCode Zen",
+        "OPENCODE_API_KEY",
+        "https://opencode.ai/zen/v1",
+    ),
+    openai_compatible_catalog_provider(
+        "opencode-go",
+        "OpenCode Go",
+        "OPENCODE_API_KEY",
+        "https://opencode.ai/zen/go/v1",
+    ),
+    openai_compatible_catalog_provider(
+        "cline-pass",
+        "ClinePass",
+        "CLINE_API_KEY",
+        "https://api.cline.bot/api/v1",
+    ),
     simple_openai_compatible(
         "deepseek",
         "DeepSeek",
         "DEEPSEEK_API_KEY",
         DEEPSEEK_MODELS,
         "https://api.deepseek.com",
-    ),
-    simple_openai_compatible(
-        "minimax",
-        "MiniMax",
-        "MINIMAX_API_KEY",
-        MINIMAX_MODELS,
-        "https://api.minimax.io/v1",
     ),
     simple_openai_compatible(
         "moonshotai",
@@ -661,6 +671,28 @@ const fn simple_openai_compatible(
     }
 }
 
+const fn openai_compatible_catalog_provider(
+    provider_id: &'static str,
+    display_name: &'static str,
+    token_env: &'static str,
+    default_base_url: &'static str,
+) -> ProviderAuthRegistryEntry {
+    ProviderAuthRegistryEntry {
+        runtime_provider_id: "openai-compatible",
+        capabilities: ProviderCapabilityFlags {
+            supports_model_validation: false,
+            ..openai_compatible_api_capabilities()
+        },
+        ..simple_openai_compatible(
+            provider_id,
+            display_name,
+            token_env,
+            EMPTY_MODELS,
+            default_base_url,
+        )
+    }
+}
+
 pub fn provider_auth_registry() -> &'static [ProviderAuthRegistryEntry] {
     PROVIDER_AUTH_REGISTRY
 }
@@ -723,8 +755,10 @@ mod tests {
             "antigravity",
             "antigravity-api",
             "openrouter",
+            "opencode",
+            "opencode-go",
+            "cline-pass",
             "deepseek",
-            "minimax",
             "moonshotai",
             "qwen",
             "qwen_cn",
@@ -744,26 +778,69 @@ mod tests {
     }
 
     #[test]
-    fn minimax_registry_exposes_api_key_models_and_openai_compatible_capabilities() {
-        let entry = provider_auth_registry_entry("minimax").expect("minimax registry entry");
-
-        assert_eq!(entry.runtime_provider_id, "minimax");
-        assert_eq!(entry.default_base_url, "https://api.minimax.io/v1");
-        assert_eq!(entry.token_env, Some("MINIMAX_API_KEY"));
-        assert_eq!(entry.supported_models, MINIMAX_MODELS);
-        assert_eq!(entry.auth_methods.len(), 1);
-        assert_eq!(entry.auth_methods[0].kind, AuthMethodKind::ApiKey);
-        assert_eq!(entry.auth_methods[0].login, "api");
-        assert!(entry.capabilities.supports_api_key);
-        assert!(entry.capabilities.supports_streaming);
-        assert!(entry.capabilities.supports_tool_call_streaming);
-        assert!(entry.capabilities.supports_model_validation);
-    }
-
-    #[test]
     fn compatibility_ids_keep_runtime_mapping() {
         assert_eq!(runtime_provider_id("anthropic-api"), "anthropic");
         assert_eq!(runtime_provider_id("google-api"), "google");
         assert_eq!(runtime_provider_id("gemini-api"), "google");
+    }
+
+    #[test]
+    fn catalog_openai_compatible_providers_use_chat_completions_runtime() {
+        for provider_id in ["opencode", "opencode-go", "cline-pass"] {
+            let entry =
+                provider_auth_registry_entry(provider_id).expect("provider entry must exist");
+            assert_eq!(entry.runtime_provider_id, "openai-compatible");
+            assert_eq!(runtime_provider_id(provider_id), "openai-compatible");
+            assert_eq!(entry.auth_methods.len(), 1);
+            assert_eq!(entry.auth_methods[0].kind, AuthMethodKind::ApiKey);
+            assert_eq!(
+                entry.auth_methods[0].login,
+                AuthMethodKind::ApiKey.login_value()
+            );
+            assert!(entry.capabilities.supports_api_key);
+            assert!(!entry.capabilities.supports_subscription);
+            assert!(!entry.capabilities.supports_oauth_refresh);
+            assert!(!entry.capabilities.supports_model_validation);
+            assert_eq!(entry.oauth_authorize_kind, None);
+            assert_eq!(entry.oauth_callback_kind, None);
+        }
+    }
+
+    #[test]
+    fn catalog_openai_compatible_providers_use_official_defaults() {
+        for (provider_id, base_url, token_env) in [
+            ("opencode", "https://opencode.ai/zen/v1", "OPENCODE_API_KEY"),
+            (
+                "opencode-go",
+                "https://opencode.ai/zen/go/v1",
+                "OPENCODE_API_KEY",
+            ),
+            (
+                "cline-pass",
+                "https://api.cline.bot/api/v1",
+                "CLINE_API_KEY",
+            ),
+        ] {
+            let entry =
+                provider_auth_registry_entry(provider_id).expect("provider entry must exist");
+            assert_eq!(entry.default_base_url, base_url);
+            assert_eq!(entry.token_env, Some(token_env));
+            assert_eq!(provider_token_env(provider_id), Some(token_env));
+        }
+    }
+
+    #[test]
+    fn clinepass_uses_the_models_dev_canonical_env() {
+        assert_eq!(provider_token_env("cline-pass"), Some("CLINE_API_KEY"));
+    }
+
+    #[test]
+    fn catalog_openai_compatible_providers_defer_model_validation() {
+        for provider_id in ["opencode", "opencode-go", "cline-pass"] {
+            let entry =
+                provider_auth_registry_entry(provider_id).expect("provider entry must exist");
+            assert!(entry.supported_models.is_empty());
+            assert!(!entry.capabilities.supports_model_validation);
+        }
     }
 }
