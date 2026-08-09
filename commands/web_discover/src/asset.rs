@@ -980,10 +980,6 @@ mod zip_tests {
 
     #[test]
     fn failed_extraction_cleans_up_extract_directory() {
-        use std::fs::File as StdFile;
-        use std::io::{Seek, SeekFrom};
-        use zip::ZipArchive;
-
         // Build an archive with one valid entry followed by one that declares a
         // size far beyond the per-entry limit, so extraction fails partway.
         let mut builder = ZipWriter::new(Cursor::new(Vec::new()));
