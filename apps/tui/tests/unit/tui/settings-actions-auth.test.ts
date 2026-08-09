@@ -239,7 +239,7 @@ function providerAuthState(): AppState {
     selectedSettingOptionIndex: 0,
     sessionConfig: {
       active_provider: "mock",
-      active_agent: "balanced",
+      active_agent: "direct",
       active_model: "mock-fast",
       model: "mock/mock-fast",
       model_variant: "high",
