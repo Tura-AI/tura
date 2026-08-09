@@ -18,10 +18,13 @@ OFFLINE=0
 APT_UPDATED=0
 BUILD_FLAGS=""
 
-# Allow Ctrl+C / SIGTERM to kill the script and any child process immediately.
-# Without this trap, set -e causes the shell to swallow SIGINT when a child
-# process catches it, making the installer appear stuck and uninterruptible.
-trap 'echo ""; echo "Install interrupted by signal." >&2; kill 0 2>/dev/null; exit 130' INT TERM
+# Allow Ctrl+C / SIGTERM to abort the installer.  We use a simple exit
+# without kill 0 because kill 0 sends SIGTERM to the entire process group
+# (including the user's interactive shell), which can kill the terminal.
+# Child processes already receive SIGINT from the terminal's foreground
+# process group delivery, so they will exit on their own.
+trap 'echo ""; echo "Install interrupted." >&2; exit 130' INT
+trap 'echo ""; echo "Install terminated." >&2; exit 143' TERM
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -36,6 +39,7 @@ while [ "$#" -gt 0 ]; do
     --skip-tui) BUILD_FLAGS="$BUILD_FLAGS --skip-tui" ;;
     --skip-gui) BUILD_FLAGS="$BUILD_FLAGS --skip-gui" ;;
     --skip-tauri) BUILD_FLAGS="$BUILD_FLAGS --skip-tauri" ;;
+    --verbose) set -x ;;
     -h|--help)
       cat <<'EOF'
 Usage:
@@ -61,6 +65,7 @@ Options:
   --skip-tui       skip TUI compilation during release build
   --skip-gui       skip GUI dist build during release build
   --skip-tauri     skip Tauri desktop bundle during release build
+  --verbose        print every command (set -x) for debugging
   -h, --help       show this help
 EOF
       exit 0
@@ -885,19 +890,28 @@ echo "  Missing tools are installed automatically. This may take a few minutes"
 echo "  on first run. Press Ctrl+C to abort."
 ensure_windows_powershell
 ensure_shell_tool_coverage
+echo "  shells ok" >&2
 ensure_git
+echo "  git ok" >&2
 ensure_download_tool
 ensure_rust_toolchain
+echo "  rust ok" >&2
 ensure_uv
+echo "  uv ok" >&2
 ensure_command_python
+echo "  python ok" >&2
 ensure_bun
+echo "  bun ok" >&2
 run_command_installers
+echo "  command packages ok" >&2
 
 if [ "$SKIP_APPS" -eq 0 ]; then
+  echo "  installing JavaScript workspaces..." >&2
   install_js_workspace "$REPO_ROOT/scripts/packages/playwright_node"
   install_js_workspace "$REPO_ROOT/apps/tui"
   install_js_workspace "$REPO_ROOT/apps/gui"
   install_js_workspace "$REPO_ROOT/apps/tauri"
+  echo "  JavaScript workspaces ok" >&2
 fi
 
 step "Tura dependency install completed"
