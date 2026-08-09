@@ -27,6 +27,7 @@ pub async fn health() -> Json<HealthResponse> {
         pid: Some(std::process::id()),
         process_start_time: current_process_start_time(std::process::id()),
         dev_log_path: gateway_dev_log_path(),
+        oauth_callback_ready: crate::web::server::oauth_callback_status(),
     })
 }
 
