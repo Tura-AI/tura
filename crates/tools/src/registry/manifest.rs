@@ -218,8 +218,8 @@ fn read_manifest(path: &Path) -> Option<CommandManifest> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandExecution, FORCED_CAPABILITY_DIRECTORIES_ENV, command_registry_directories,
-        discover_manifests, forced_command_directory, forced_command_ids, manifest_for,
+        command_registry_directories, discover_manifests, forced_command_directory,
+        forced_command_ids, manifest_for, CommandExecution, FORCED_CAPABILITY_DIRECTORIES_ENV,
     };
     use std::collections::BTreeMap;
     use std::fs;

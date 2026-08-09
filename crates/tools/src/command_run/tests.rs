@@ -579,6 +579,7 @@ fn command_values_wraps_single_objects_and_strings_but_drops_scalars() {
 #[test]
 fn parse_command_item_recovers_inline_arguments_and_residual_fields() {
     let item = parse_command_item(&json!({
+        "id": "status_update",
         "command_type": "task_status",
         "command": "{\"status\":\"done\"}",
         "parameters": {"status": "done"},
@@ -594,6 +595,7 @@ fn parse_command_item_recovers_inline_arguments_and_residual_fields() {
     assert_eq!(item.workdir.as_deref(), Some("workspace"));
     assert_eq!(item.step, Some(3));
     assert_eq!(item.timeout_ms, Some(4000));
+    assert_eq!(item.binding_id.as_deref(), Some("status_update"));
 }
 
 #[test]
@@ -669,6 +671,107 @@ async fn streaming_executor_returns_safe_shell_result_before_finish() {
     );
 
     let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn batch_executor_passes_internal_json_projection_without_changing_output() {
+    let workspace = temporary_workspace("batch-output-binding");
+    let active_shell = crate::commands::active_shell_command_name();
+    let output = super::execute_async_value(
+        json!({
+            "commands": [
+                {
+                    "id": "producer",
+                    "command_type": active_shell,
+                    "command_line": json_producer_command(),
+                    "timeout_ms": 3000,
+                    "step": 1
+                },
+                {
+                    "command_type": active_shell,
+                    "command_line": binding_consumer_command("#@#${producer.filename}#@#$"),
+                    "timeout_ms": 3000,
+                    "step": 2
+                }
+            ]
+        }),
+        workspace.clone(),
+    )
+    .await;
+
+    assert_eq!(output["results"][0]["success"], true, "{output}");
+    assert!(output["results"][0]["output"].get("filename").is_none());
+    assert!(output["results"][0]["output"]
+        .get("parsed_stdout")
+        .is_none());
+    assert!(output["results"][0]["output"]["stdout"]
+        .as_str()
+        .is_some_and(|stdout| stdout.contains("\"filename\":\"created.txt\"")));
+    assert_eq!(output["results"][1]["success"], true, "{output}");
+    assert_eq!(
+        output["results"][1]["output"]["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .trim(),
+        "created.txt"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn streaming_executor_publishes_bindings_only_after_the_producer_step() {
+    let workspace = temporary_workspace("streaming-output-binding");
+    let active_shell = crate::commands::active_shell_command_name();
+    let mut executor = super::StreamingCommandRunExecutor::new(workspace.clone());
+
+    let producer = executor
+        .push_command_value(json!({
+            "id": "producer",
+            "command_type": active_shell,
+            "command_line": json_producer_command(),
+            "timeout_ms": 3000,
+            "step": 1
+        }))
+        .await;
+    assert!(producer[0]["output"].get("filename").is_none());
+    assert!(producer[0]["output"].get("parsed_stdout").is_none());
+
+    let consumer = executor
+        .push_command_value(json!({
+            "command_type": active_shell,
+            "command_line": binding_consumer_command("#@#${producer.filename}#@#$"),
+            "timeout_ms": 3000,
+            "step": 2
+        }))
+        .await;
+    assert_eq!(consumer[0]["success"], true, "{consumer:?}");
+    assert_eq!(
+        consumer[0]["output"]["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .trim(),
+        "created.txt"
+    );
+
+    let _ = executor.finish().await;
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+fn json_producer_command() -> &'static str {
+    if cfg!(windows) {
+        "Write-Output '{\"filename\":\"created.txt\"}'"
+    } else {
+        "printf '%s\\n' '{\"filename\":\"created.txt\"}'"
+    }
+}
+
+fn binding_consumer_command(placeholder: &str) -> String {
+    if cfg!(windows) {
+        format!("Write-Output '{placeholder}'")
+    } else {
+        format!("printf '%s\\n' '{placeholder}'")
+    }
 }
 
 fn temporary_workspace(prefix: &str) -> std::path::PathBuf {

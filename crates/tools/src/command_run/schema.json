@@ -10,7 +10,7 @@
         "type": "array",
         "minItems": 5,
         "maxItems": 20,
-        "description": "Executable command-line instructions. During task execution, complete all currently needed steps in one batch; prefer 5 or more commands. For simple, standalone user tasks such as quick information lookups (e.g., checking current time) or single-step queries, 1-2 commands are acceptable when that fully answers the request. Include only commands whose inputs are already known when this batch is created. Independent read/search/list commands with no output dependency must share one step. Do not create test/probe commands that depend on output from earlier commands in the same batch.",
+        "description": "Executable command-line instructions. During task execution, complete all currently needed steps in one batch; prefer 5 or more commands. For simple, standalone user tasks such as quick information lookups (e.g., checking current time) or single-step queries, 1-2 commands are acceptable when that fully answers the request. Independent read/search/list commands with no output dependency must share one step. A later step may consume an earlier step's JSON output through a command output placeholder.",
         "items": {
           "type": "object",
           "required": ["command_type", "command_line"],
@@ -23,6 +23,11 @@
             "command_line": {
               "type": "string",
               "description": "String payload for the target command. For JSON-schema commands, pass an escaped JSON object string such as {\"cmd\":\"rg -n query src\"}. For freeform commands such as apply_patch, pass the raw freeform body. For shell-like commands, plain text is also accepted and mapped to that tool's command field."
+            },
+            "id": {
+              "type": ["string", "null"],
+              "x-tura-optional": true,
+              "description": "Optional stable output binding name for this command. Later steps may reference this id; otherwise the resolved command_type is used."
             },
             "step": {
               "type": "integer",

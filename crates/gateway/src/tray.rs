@@ -1,5 +1,5 @@
 use crate::session_db_client::SessionDbClient;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use session_log_contract::{SessionSummary, WorkspaceSummary};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -795,9 +795,9 @@ fn is_gateway_client_process(process: &sysinfo::Process, gateway_url: &str) -> b
 #[cfg(test)]
 mod tests {
     use super::{
-        ActiveSessionItem, TrayClickEffects, TrayLanguage, TraySnapshot, TrayText,
         apply_tray_click, gui_args, is_active_session, load_tura_icon, menu_model,
         parse_tray_language, same_menu_structure, session_label, tray_enabled, tray_text,
+        ActiveSessionItem, TrayClickEffects, TrayLanguage, TraySnapshot, TrayText,
     };
     use serde_json::json;
     use session_log_contract::SessionSummary;

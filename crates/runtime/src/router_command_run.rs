@@ -4,7 +4,7 @@
 //! child process tree created by shell/tool commands.
 
 use router_contract::{IpcRequest, IpcResponse};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -131,6 +131,9 @@ pub struct RouterCommandRunExecutor {
     ctx: code_tools::runtime::tool::ToolContext,
     session_id: String,
     runtime_id: String,
+    active_step: Option<u64>,
+    output_bindings: code_tools::command_run::CommandRunOutputBindings,
+    pending_binding_results: Vec<Value>,
     halted: bool,
 }
 
@@ -152,15 +155,29 @@ impl RouterCommandRunExecutor {
             allowed_commands,
             session_id,
             runtime_id,
+            active_step: None,
+            output_bindings: code_tools::command_run::CommandRunOutputBindings::default(),
+            pending_binding_results: Vec::new(),
             halted: false,
         }
     }
 
-    pub async fn push_command_value(&mut self, command: Value) -> Vec<Value> {
+    pub async fn push_command_value(&mut self, mut command: Value) -> Vec<Value> {
         if self.halted {
             return Vec::new();
         }
-        let result = execute_command_value_results(
+        let step = command_step(&command);
+        if self.active_step.is_some_and(|active| active != step) {
+            self.publish_pending_bindings();
+        }
+        self.active_step = Some(step);
+        if let Err(error) = resolve_router_command_bindings(&mut command, &self.output_bindings) {
+            let result = command_failure_result(&command, &error);
+            self.pending_binding_results.push(result.clone());
+            return vec![result];
+        }
+        let command_metadata = command.clone();
+        let mut result = execute_command_value_results(
             command,
             self.session_directory.clone(),
             Some(&self.session_id),
@@ -168,10 +185,13 @@ impl RouterCommandRunExecutor {
             self.allowed_commands.clone(),
         )
         .await;
+        annotate_router_results_from_command(&mut result.results, &command_metadata);
         if result.halted {
             self.halted = true;
             self.ctx.cancellation.cancel();
         }
+        self.pending_binding_results
+            .extend(result.results.iter().cloned());
         result.results
     }
 
@@ -185,6 +205,82 @@ impl RouterCommandRunExecutor {
 
     pub fn event_context(&self) -> code_tools::runtime::tool::ToolContext {
         self.ctx.child()
+    }
+
+    fn publish_pending_bindings(&mut self) {
+        for result in self.pending_binding_results.drain(..) {
+            if result.get("success").and_then(Value::as_bool) != Some(true) {
+                continue;
+            }
+            let Some(command_type) = result.get("command_type").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(output) = result.get("output") else {
+                continue;
+            };
+            self.output_bindings.insert(
+                command_type,
+                result.get("id").and_then(Value::as_str),
+                output,
+            );
+        }
+    }
+}
+
+fn command_step(command: &Value) -> u64 {
+    command
+        .get("step")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .max(1)
+}
+
+pub(crate) fn resolve_router_command_bindings(
+    command: &mut Value,
+    bindings: &code_tools::command_run::CommandRunOutputBindings,
+) -> Result<(), String> {
+    if let Some(command_line) = command
+        .get("command_line")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    {
+        command["command_line"] = Value::String(bindings.interpolate_command_line(&command_line)?);
+    }
+    bindings.interpolate_value(command)
+}
+
+pub(crate) fn annotate_router_results_from_command(results: &mut [Value], command: &Value) {
+    let step = command_step(command);
+    let command_type = command
+        .get("command")
+        .and_then(Value::as_str)
+        .or_else(|| command.get("command_type").and_then(Value::as_str))
+        .unwrap_or("command_run");
+    let binding_id = command.get("id").and_then(Value::as_str);
+    annotate_router_results(results, step, command_type, binding_id);
+}
+
+fn annotate_router_results(
+    results: &mut [Value],
+    step: u64,
+    command_type: &str,
+    binding_id: Option<&str>,
+) {
+    for item in results {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        object
+            .entry("step".to_string())
+            .or_insert_with(|| Value::Number(step.into()));
+        object
+            .entry("command_type".to_string())
+            .or_insert_with(|| Value::String(command_type.to_string()));
+        if let Some(binding_id) = binding_id {
+            object
+                .entry("id".to_string())
+                .or_insert_with(|| Value::String(binding_id.to_string()));
+        }
     }
 }
 
@@ -247,22 +343,22 @@ fn is_failed_apply_patch_result(result: &Value) -> bool {
 }
 
 fn command_failure_result(command: &Value, error: &str) -> Value {
-    let step = command
-        .get("step")
-        .and_then(Value::as_u64)
-        .unwrap_or(1)
-        .max(1);
+    let step = command_step(command);
     let command_type = command
         .get("command")
         .and_then(Value::as_str)
         .or_else(|| command.get("command_type").and_then(Value::as_str))
         .unwrap_or("command_run");
-    json!({
+    let mut result = json!({
         "step": step,
         "command_type": command_type,
         "success": false,
         "error": error,
-    })
+    });
+    if let Some(id) = command.get("id").and_then(Value::as_str) {
+        result["id"] = Value::String(id.to_string());
+    }
+    result
 }
 
 pub fn command_run_error_payload(error: String) -> Value {
@@ -324,8 +420,8 @@ fn command_run_router_timeout() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::{
-        COMMAND_RUN_ENV_KEYS, RouterCommandRunExecutor, command_run_error_payload,
-        command_run_results,
+        annotate_router_results_from_command, command_run_error_payload, command_run_results,
+        resolve_router_command_bindings, RouterCommandRunExecutor, COMMAND_RUN_ENV_KEYS,
     };
     use serde_json::json;
 
@@ -362,6 +458,44 @@ mod tests {
         }));
         assert!(executor.is_halted());
         assert!(executor.finish().await.is_empty());
+    }
+
+    #[test]
+    fn router_executor_publishes_generic_previous_step_output_bindings() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let mut executor = RouterCommandRunExecutor::new_with_allowed(
+            workspace.path().to_path_buf(),
+            None,
+            "session-1".to_string(),
+            "runtime-1".to_string(),
+        );
+        let mut raw_results = vec![json!({
+            "success": true,
+            "output": {
+                "content": [{"type": "text", "text": "opened"}],
+                "structuredContent": {"document_id": "document-17"},
+                "isError": false
+            }
+        })];
+        annotate_router_results_from_command(
+            &mut raw_results,
+            &json!({"step": 1, "command_type": "mcp_workspace", "id": "open_doc"}),
+        );
+        executor.pending_binding_results.extend(raw_results);
+        executor.publish_pending_bindings();
+
+        let mut command = json!({
+            "step": 2,
+            "command_type": "mcp_workspace",
+            "command_line": "{\"name\":\"edit\",\"arguments\":{\"document_id\":\"#@#${open_doc.output.structuredContent.document_id}#@#$\"}}"
+        });
+        resolve_router_command_bindings(&mut command, &executor.output_bindings)
+            .expect("placeholder should resolve");
+
+        let arguments: serde_json::Value =
+            serde_json::from_str(command["command_line"].as_str().expect("command_line"))
+                .expect("resolved command JSON");
+        assert_eq!(arguments["arguments"]["document_id"], "document-17");
     }
 
     #[test]

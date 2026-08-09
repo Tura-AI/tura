@@ -499,13 +499,15 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
         "- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.",
         "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch; independent commands with no output dependency must share one step.",
         "- Do not run test/probe invocations before you have read the relevant code and determined the actual CLI command set.",
-        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; commands that depend on earlier output must use later unique ordered steps whose inputs are already known before the batch is created.",
+        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; later steps may consume earlier-step JSON output through placeholders.",
+        "- Cross-step output variable: wrap a generic binding path as `#@#${<command id or command_type>.<JSON path>}#@#$` inside a later step's input. Give repeated commands unique `id` values. Only previous-step outputs are visible; unresolved, same-step, and future-step references fail before dispatch.",
         "- Code repair loop: after discovery has produced enough facts, use one step for coordinated edits and later steps for already-known tests or focused validation.",
         "- Avoid embedding long generated source code or complex quoting directly in shell command lines; for complex logic, invoke a script/interpreter from the active shell rather than encoding the logic in shell syntax.",
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
         "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
         "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command and use `apply_patch` to write or modify the testing scripts, step 3 run multiple known test commands in the same step.",
+        "- Example output binding (all command ids, command types, and group ids are illustrative, not built-ins): step 1 `{\"id\":\"create_file\",\"command_type\":\"create_file\",\"command_line\":\"{\\\"path\\\":\\\"draft.txt\\\"}\",\"step\":1}` returns `{\"filename\":\"draft.txt\"}`; step 2 `{\"id\":\"edit_file\",\"command_type\":\"edit_file\",\"command_line\":\"{\\\"path\\\":\\\"#@#${create_file.filename}#@#$\\\",\\\"text\\\":\\\"updated\\\"}\",\"step\":2}` edits that file; step 3 `{\"id\":\"send_file\",\"command_type\":\"teams_send_file\",\"command_line\":\"{\\\"group_id\\\":\\\"project-team\\\",\\\"file\\\":\\\"#@#${create_file.filename}#@#$\\\"}\",\"step\":3}` sends the edited file to the example Teams group after the edit completes.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
         "- Example long-running database check: step 1 run `sleep 60` with `timeout_ms` comfortably above 60000, step 2 run the known database probe script, step 3 read the script output log such as `logs/db-check.log` and summarize the findings.",
     ];
@@ -1109,12 +1111,17 @@ max_timeout_ms = 2000
         assert_eq!(parameters["required"], serde_json::json!(["commands"]));
         assert_eq!(
             parameters["properties"]["commands"]["items"]["required"],
-            serde_json::json!(["command_type", "command_line", "step"])
+            serde_json::json!(["command_type", "command_line", "id", "step"])
         );
         assert!(parameters["properties"].get("sandbox").is_none());
         assert!(parameters["properties"].get("task_status").is_none());
         assert!(command_required.contains(&serde_json::json!("command_type")));
         assert!(command_required.contains(&serde_json::json!("step")));
+        assert!(command_required.contains(&serde_json::json!("id")));
+        assert_eq!(
+            parameters["properties"]["commands"]["items"]["properties"]["id"]["type"],
+            serde_json::json!(["string", "null"])
+        );
         // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
         #[allow(
             unsafe_code,

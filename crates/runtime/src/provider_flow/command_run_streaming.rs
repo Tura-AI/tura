@@ -18,7 +18,10 @@ use crate::provider_flow::streamed_command_run::{
     publish_streamed_command_run_update, streamed_command_event_record,
     streamed_command_result_record, StreamedCommandEvent, StreamedCommandRunUpdate,
 };
-use crate::router_command_run::execute_command_value_results;
+use crate::router_command_run::{
+    annotate_router_results_from_command, execute_command_value_results,
+    resolve_router_command_bindings,
+};
 use crate::runtime_event_writer::RuntimeFeedPublisher;
 use crate::tool_callback_sanitizer::sanitize_tool_callback_result;
 use lifecycle::RuntimeProjection;
@@ -155,6 +158,7 @@ struct QueuedStreamCommand {
 struct StreamCommandCompletion {
     order: usize,
     completed: Vec<Value>,
+    binding_results: Vec<Value>,
     halted: bool,
 }
 
@@ -192,11 +196,14 @@ pub(crate) fn spawn_streamed_command_run_task(
         let mut halted_before_finish = false;
         let mut next_order = 0usize;
         let mut step_normalizer = StreamStepNormalizer;
+        let mut output_bindings = code_tools::command_run::CommandRunOutputBindings::default();
+        let mut pending_binding_results = Vec::new();
         let (completion_tx, completion_rx) = mpsc::channel::<StreamCommandCompletion>();
 
         loop {
             while let Ok(completion) = completion_rx.try_recv() {
                 running = running.saturating_sub(1);
+                pending_binding_results.extend(completion.binding_results.iter().cloned());
                 append_ordered_results(&mut ordered_results, &completion);
                 emit_cli_live_command_run_results(&completion.completed, &mut live_item_index);
                 record_completed_results(
@@ -246,6 +253,8 @@ pub(crate) fn spawn_streamed_command_run_task(
                 &mut running,
                 &streamed_commands,
                 &results,
+                &mut output_bindings,
+                &mut pending_binding_results,
             );
 
             if !receiver_open && running == 0 && pending.is_empty() {
@@ -287,6 +296,7 @@ pub(crate) fn spawn_streamed_command_run_task(
                         &mut running,
                         &streamed_commands,
                         &results,
+                        &output_bindings,
                     );
                 }
                 StreamEventPoll::Closed => {
@@ -529,6 +539,7 @@ fn enqueue_or_start_stream_command(
     running: &mut usize,
     streamed_commands: &[Value],
     results: &[Value],
+    output_bindings: &code_tools::command_run::CommandRunOutputBindings,
 ) {
     match *active_step {
         Some(step) if command.step <= step => start_stream_command(
@@ -538,6 +549,7 @@ fn enqueue_or_start_stream_command(
             running,
             streamed_commands,
             results,
+            output_bindings,
         ),
         Some(_) => pending.push_back(command),
         None => {
@@ -549,11 +561,16 @@ fn enqueue_or_start_stream_command(
                 running,
                 streamed_commands,
                 results,
+                output_bindings,
             );
         }
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scheduler entrypoint passes queue and output-binding state explicitly"
+)]
 fn start_ready_stream_commands(
     input: &SpawnStreamedCommandRunTask,
     completion_tx: &mpsc::Sender<StreamCommandCompletion>,
@@ -562,6 +579,8 @@ fn start_ready_stream_commands(
     running: &mut usize,
     streamed_commands: &[Value],
     results: &[Value],
+    output_bindings: &mut code_tools::command_run::CommandRunOutputBindings,
+    pending_binding_results: &mut Vec<Value>,
 ) {
     if *running != 0 {
         return;
@@ -571,7 +590,10 @@ fn start_ready_stream_commands(
     };
     match *active_step {
         Some(step) if step >= next_pending_step => {}
-        _ => *active_step = Some(next_pending_step),
+        _ => {
+            publish_stream_output_bindings(output_bindings, pending_binding_results);
+            *active_step = Some(next_pending_step);
+        }
     }
     let Some(step) = *active_step else {
         return;
@@ -592,6 +614,29 @@ fn start_ready_stream_commands(
             running,
             streamed_commands,
             results,
+            output_bindings,
+        );
+    }
+}
+
+fn publish_stream_output_bindings(
+    output_bindings: &mut code_tools::command_run::CommandRunOutputBindings,
+    pending_binding_results: &mut Vec<Value>,
+) {
+    for result in pending_binding_results.drain(..) {
+        if result.get("success").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        let Some(command_type) = result.get("command_type").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(output) = result.get("output") else {
+            continue;
+        };
+        output_bindings.insert(
+            command_type,
+            result.get("id").and_then(Value::as_str),
+            output,
         );
     }
 }
@@ -617,6 +662,7 @@ fn start_stream_command(
     running: &mut usize,
     streamed_commands: &[Value],
     results: &[Value],
+    output_bindings: &code_tools::command_run::CommandRunOutputBindings,
 ) {
     let command_started_at = Utc::now();
     emit_cli_live_command_run_started(&queued.command, &queued.tool_call_id, queued.command_index);
@@ -638,7 +684,8 @@ fn start_stream_command(
     }
     let live_command = queued.command.clone();
     let completion_command = live_command.clone();
-    let command = queued.command;
+    let mut command = queued.command;
+    let resolution_error = resolve_router_command_bindings(&mut command, output_bindings).err();
     let session_directory = input.session_directory.clone();
     let allowed_commands = input.allowed_command_run_commands.clone();
     let session_id = input.session_id.clone();
@@ -647,27 +694,37 @@ fn start_stream_command(
     let completion_tx = completion_tx.clone();
     *running += 1;
     std::thread::spawn(move || {
-        let result = match tokio::runtime::Runtime::new() {
-            Ok(runtime) => runtime.block_on(execute_command_value_results(
-                command,
-                session_directory,
-                Some(&session_id),
-                Some(&runtime_id),
-                allowed_commands,
-            )),
-            Err(error) => crate::router_command_run::RouterCommandRunCommandResult {
+        let mut result = if let Some(error) = resolution_error {
+            crate::router_command_run::RouterCommandRunCommandResult {
                 results: vec![serde_json::json!({
-                    "step": 1,
-                    "command_type": "command_run",
                     "success": false,
-                    "error": format!("failed to create streamed command runtime: {error}"),
+                    "error": error,
                 })],
                 halted: false,
-            },
+            }
+        } else {
+            match tokio::runtime::Runtime::new() {
+                Ok(runtime) => runtime.block_on(execute_command_value_results(
+                    command,
+                    session_directory,
+                    Some(&session_id),
+                    Some(&runtime_id),
+                    allowed_commands,
+                )),
+                Err(error) => crate::router_command_run::RouterCommandRunCommandResult {
+                    results: vec![serde_json::json!({
+                        "success": false,
+                        "error": format!("failed to create streamed command runtime: {error}"),
+                    })],
+                    halted: false,
+                },
+            }
         };
-        let completed = result
-            .results
-            .into_iter()
+        annotate_router_results_from_command(&mut result.results, &completion_command);
+        let binding_results = result.results;
+        let completed = binding_results
+            .iter()
+            .cloned()
             .map(|mut item| {
                 attach_result_identity(&mut item, &completion_command);
                 sanitize_tool_callback_result(&item)
@@ -676,6 +733,7 @@ fn start_stream_command(
         let _ = completion_tx.send(StreamCommandCompletion {
             order,
             completed,
+            binding_results,
             halted: result.halted,
         });
     });
@@ -1215,6 +1273,68 @@ mod tests {
     }
 
     #[test]
+    fn streaming_queue_resolves_previous_step_output_placeholders_before_router_dispatch() {
+        let _guard = STREAMING_TEST_ENV
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let router = MockStreamingRouter::start();
+        let _router_env = EnvGuard::set("TURA_ROUTER_ADDR", &router.addr);
+        let _gateway_env = EnvGuard::set("TURA_GATEWAY_CALLBACKS", "off");
+        let (stream_tx, stream_rx) = mpsc::channel();
+        let state = StreamedCommandRunState::new();
+        let handle = spawn_streamed_command_run_task(SpawnStreamedCommandRunTask {
+            stream_rx,
+            session_directory: std::env::temp_dir(),
+            allowed_command_run_commands: None,
+            session_id: "stream-session-binding".to_string(),
+            runtime_id: "stream-runtime-binding".to_string(),
+            provider: json!({ "provider": "test" }),
+            call_id: "stream-call-binding".to_string(),
+            started_at: Utc::now(),
+            state,
+            runtime_status: runtime().lifecycle_projection(),
+            feed_publisher: None,
+            require_startup_task_state: false,
+        });
+
+        stream_tx
+            .send(stream_binding_command_event(
+                "binding-producer",
+                Some("producer"),
+                1,
+                0,
+                "{}",
+            ))
+            .expect("producer command event should send");
+        stream_tx
+            .send(stream_binding_command_event(
+                "binding-consumer",
+                None,
+                2,
+                1,
+                r##"{"document_id":"#@#${producer.output.structuredContent.document_id}#@#$"}"##,
+            ))
+            .expect("consumer command event should send");
+        drop(stream_tx);
+
+        let results = handle
+            .join()
+            .expect("streamed binding command task should not panic");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| result["success"] == true));
+        let consumer = router
+            .received("binding-consumer")
+            .expect("consumer should reach the router");
+        let resolved: Value = serde_json::from_str(
+            consumer["command_line"]
+                .as_str()
+                .expect("consumer command_line"),
+        )
+        .expect("resolved consumer command line JSON");
+        assert_eq!(resolved["document_id"], "document-17");
+    }
+
+    #[test]
     fn streaming_queue_runs_late_lower_step_with_current_active_step() {
         let _guard = STREAMING_TEST_ENV
             .lock()
@@ -1420,6 +1540,29 @@ mod tests {
         }
     }
 
+    fn stream_binding_command_event(
+        label: &str,
+        id: Option<&str>,
+        step: u64,
+        command_index: usize,
+        command_line: &str,
+    ) -> tura_llm_rust::ProviderStreamEvent {
+        let mut command = json!({
+            "step": step,
+            "label": label,
+            "command_type": "mcp_workspace",
+            "command_line": command_line,
+        });
+        if let Some(id) = id {
+            command["id"] = Value::String(id.to_string());
+        }
+        tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady {
+            tool_call_id: "stream-tool-call-binding".to_string(),
+            command_index,
+            command,
+        }
+    }
+
     struct MockStreamingRouter {
         addr: String,
         state: Arc<MockStreamingRouterState>,
@@ -1427,6 +1570,7 @@ mod tests {
 
     struct MockStreamingRouterState {
         started: Mutex<Vec<String>>,
+        received: Mutex<Vec<Value>>,
         release_step1: AtomicBool,
         release_step2: AtomicBool,
         active: AtomicUsize,
@@ -1447,6 +1591,7 @@ mod tests {
                 .to_string();
             let state = Arc::new(MockStreamingRouterState {
                 started: Mutex::new(Vec::new()),
+                received: Mutex::new(Vec::new()),
                 release_step1: AtomicBool::new(false),
                 release_step2: AtomicBool::new(false),
                 active: AtomicUsize::new(0),
@@ -1505,6 +1650,16 @@ mod tests {
             );
         }
 
+        fn received(&self, label: &str) -> Option<Value> {
+            self.state
+                .received
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .iter()
+                .find(|command| command.get("label").and_then(Value::as_str) == Some(label))
+                .cloned()
+        }
+
         fn release_step1(&self) {
             self.state.release_step1.store(true, Ordering::SeqCst);
             self.state.release_notify.notify_waiters();
@@ -1537,6 +1692,10 @@ mod tests {
                 .and_then(Value::as_str)
                 .unwrap_or("missing-label")
                 .to_string();
+            self.received
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(command.clone());
             self.record_started(label.clone());
             if label.starts_with("step1-") {
                 while !self.release_step1.load(Ordering::SeqCst) {
@@ -1549,6 +1708,15 @@ mod tests {
                 }
             }
             self.active.fetch_sub(1, Ordering::SeqCst);
+            let output = if label == "binding-producer" {
+                json!({
+                    "content": [{"type": "text", "text": "{\"document_id\":\"document-17\"}"}],
+                    "structuredContent": {"document_id": "document-17"},
+                    "isError": false
+                })
+            } else {
+                Value::String(label)
+            };
             json!({
                 "request_id": request_id,
                 "ok": true,
@@ -1557,14 +1725,8 @@ mod tests {
                     "owner": "mock-router",
                     "result": {
                         "results": [{
-                            "step": command.get("step").cloned().unwrap_or_else(|| json!(1)),
-                            "command_type": command
-                                .get("command_type")
-                                .or_else(|| command.get("command"))
-                                .cloned()
-                                .unwrap_or_else(|| json!("command_run")),
                             "success": true,
-                            "output": label
+                            "output": output
                         }]
                     }
                 }

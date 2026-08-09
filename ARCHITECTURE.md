@@ -635,9 +635,15 @@ Execution rules:
   request field `parallel_tool_calls` is a separate provider-side concept and
   keeps its upstream name.
 - Different steps run in ascending order.
+- A later step may reference a successful earlier-step result with
+  `#@#${<command id or command_type>.<JSON path>}#@#$`. Commands may set an
+  `id` to disambiguate repeated command types. Same-step and future-step
+  references fail before dispatch.
 - Mutating commands need compatible file locks.
 - Partial results may be emitted after each step group.
-- Outputs should be structured and display-ready when possible.
+- Agent-visible and persisted command outputs retain their original structure.
+  JSON text, fenced JSON, shell `stdout`, and MCP text content are parsed only
+  into an in-memory projection used to resolve later-step placeholders.
 
 Built-in command families:
 

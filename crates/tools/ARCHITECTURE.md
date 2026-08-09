@@ -256,6 +256,15 @@ Rules:
   that would move backwards are normalized to the next later step in input
   order.
 - Later steps wait for earlier steps.
+- Successful results are published after their step finishes. Later command
+  inputs can use `#@#${<command id or command_type>.<JSON path>}#@#$`; an
+  optional command `id` provides a stable alias when a command type repeats.
+  Same-step, future-step, missing, and invalid-path references fail before the
+  target command is dispatched.
+- An internal-only binding projection parses direct, fenced, or embedded JSON,
+  shell JSON `stdout`, and MCP `content[].text`. The original result is used
+  unchanged for agent callbacks, checkpoints, and command-run records; the
+  projection is never recorded or returned.
 - Mutating commands acquire file locks.
 - Partial results may be emitted after each step group.
 
