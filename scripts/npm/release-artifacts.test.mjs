@@ -11,8 +11,10 @@ import {
   executableNames,
   guiDistCandidates,
   missingNpmPlatformFiles,
+  missingReleaseRuntimeFiles,
   missingReleaseFiles,
-  mismatchedDesktopBundleAssets
+  mismatchedDesktopBundleAssets,
+  requiredReleaseRuntimeFiles
 } from "./release-artifacts.mjs";
 
 function writeFixtureFile(root, relativePath) {
@@ -68,6 +70,25 @@ test("npm platform validation does not require Tauri desktop artifacts", () => {
 
     assert.deepEqual(missingNpmPlatformFiles(root, "linux"), []);
     assert.notDeepEqual(missingReleaseFiles(root, "linux"), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime release validation reports the exact missing packaged resource", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "tura-runtime-files-"));
+  try {
+    const releaseDir = path.join(root, "target", "release");
+    for (const file of requiredReleaseRuntimeFiles) writeFixtureFile(releaseDir, file);
+    assert.deepEqual(missingReleaseRuntimeFiles(root), []);
+
+    const missing = requiredReleaseRuntimeFiles.find((file) => file.endsWith("debug/prompt.md"));
+    assert.ok(missing);
+    rmSync(path.join(releaseDir, missing));
+    assert.deepEqual(
+      missingReleaseRuntimeFiles(root).map((file) => path.relative(releaseDir, file).replaceAll("\\", "/")),
+      [missing],
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

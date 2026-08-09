@@ -1,7 +1,7 @@
 use super::client::{metadata_for, repo_root};
 use super::protocol::{ExternalCommandEnvelope, ExternalCommandResponse};
 use crate::runtime::tool::ToolError;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -37,6 +37,7 @@ pub async fn invoke_with_timeout(
     let command = if let Some(binary_path) = metadata.binary_path {
         let mut command = Command::new(binary_path);
         command.arg("--protocol");
+        command.envs(crate::registry::command_environment());
         command
     } else {
         let mut command = Command::new("cargo");
@@ -47,6 +48,7 @@ pub async fn invoke_with_timeout(
             .arg(&metadata.command_id)
             .arg("--")
             .arg("--protocol");
+        command.envs(crate::registry::command_environment());
         if let Some(root) = repo_root() {
             command.current_dir(root);
         }

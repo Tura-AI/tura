@@ -1680,6 +1680,7 @@ dependencies = [
  "tao",
  "tempfile",
  "tokio",
+ "toml 0.8.2",
  "tower",
  "tower-http",
  "tracing",

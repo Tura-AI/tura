@@ -3,14 +3,14 @@
 //! Runtime workers orchestrate turns, but shell/tool child processes are owned
 //! here so aborting a runtime worker does not orphan process-tree cleanup.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +23,8 @@ pub struct CommandRunRequest {
     pub arguments: Value,
     #[serde(default)]
     pub allowed_commands: Option<BTreeSet<String>>,
+    #[serde(default)]
+    pub command_env: BTreeMap<String, String>,
     #[serde(default)]
     pub sandbox: bool,
 }
@@ -46,19 +48,22 @@ impl CommandRunService {
         if request.session_directory.as_os_str().is_empty() {
             return Err(anyhow!("command_run session_directory is required"));
         }
-        let output =
+        let session_id = request.session_id.clone();
+        let output = code_tools::registry::with_command_environment(
+            request.command_env,
             code_tools::command_run::execute_async_value_with_allowed_lock_scope_and_sandbox(
                 request.arguments,
                 request.session_directory,
                 request.allowed_commands,
-                request.session_id.clone(),
+                session_id.clone(),
                 request.sandbox,
-            )
-            .await;
+            ),
+        )
+        .await;
         Ok(json!({
             "status": "finished",
             "owner": "router",
-            "session_id": request.session_id,
+            "session_id": session_id,
             "runtime_id": request.runtime_id,
             "result": output,
         }))
@@ -191,7 +196,29 @@ mod tests {
                 "task_status".to_string()
             ]))
         );
+        assert!(request.command_env.is_empty());
         assert!(!request.sandbox);
+    }
+
+    #[test]
+    fn command_run_payload_deserializes_task_scoped_command_environment() {
+        let request: CommandRunRequest = serde_json::from_value(json!({
+            "session_directory": ".",
+            "arguments": { "commands": [] },
+            "command_env": {
+                "TURA_FORCED_CAPABILITY_DIRECTORIES": "[\"C:/commands/mcp\"]",
+                "TURA_MCP_SERVER_NAME": "tura_filesystem"
+            }
+        }))
+        .expect("payload shape");
+
+        assert_eq!(
+            request
+                .command_env
+                .get("TURA_MCP_SERVER_NAME")
+                .map(String::as_str),
+            Some("tura_filesystem")
+        );
     }
 
     #[tokio::test]

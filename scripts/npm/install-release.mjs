@@ -83,11 +83,18 @@ function refreshRuntimePath() {
   ]);
 }
 
-function runtimeDependencyCheckSkipped() {
+export function runtimeDependencyCheckSkipped(env = process.env) {
   return (
-    process.env.TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK === "1" ||
-    process.env.TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK === "true"
+    env.TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK === "1" ||
+    env.TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK === "true"
   );
+}
+
+export function runtimeDependencyCommands(platform = process.platform) {
+  if (platform === "win32") return ["powershell"];
+  if (platform === "darwin") return ["sh", "tar", "zsh"];
+  if (platform === "linux") return ["sh", "tar", "bash"];
+  return ["sh", "tar"];
 }
 
 function commandExists(name) {
@@ -106,22 +113,29 @@ function requireRuntimeCommand(name, hint) {
   fail(`${name} was not found. ${hint}`);
 }
 
-function ensureRuntimeDependencies() {
-  if (runtimeDependencyCheckSkipped()) {
+export function ensureRuntimeDependencies({
+  platform = process.platform,
+  env = process.env,
+  exists = commandExists,
+  ensurePowerShell = ensurePowerShellCliPath,
+} = {}) {
+  if (runtimeDependencyCheckSkipped(env)) {
     log("runtime dependency check skipped by TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK");
     return;
   }
   refreshRuntimePath();
-  if (process.platform === "win32") {
-    ensurePowerShellCliPath();
+  if (platform === "win32") {
+    ensurePowerShell();
     return;
   }
-  requireRuntimeCommand("sh", "Install a POSIX shell and ensure it is on PATH.");
-  requireRuntimeCommand("tar", "Install tar and ensure it is on PATH.");
-  if (process.platform === "darwin") {
-    requireRuntimeCommand("zsh", "Install zsh or set up macOS command-line tools so zsh is available.");
-  } else if (process.platform === "linux") {
-    requireRuntimeCommand("bash", "Install bash and ensure it is on PATH.");
+  const hints = {
+    sh: "Install a POSIX shell and ensure it is on PATH.",
+    tar: "Install tar and ensure it is on PATH.",
+    zsh: "Install zsh or set up macOS command-line tools so zsh is available.",
+    bash: "Install bash and ensure it is on PATH.",
+  };
+  for (const command of runtimeDependencyCommands(platform)) {
+    if (!exists(command)) fail(`${command} was not found. ${hints[command]}`);
   }
 }
 
@@ -216,21 +230,25 @@ function installFromPlatformPackage() {
   return true;
 }
 
-ensureRuntimeDependencies();
+function main() {
+  ensureRuntimeDependencies();
 
-const existingMissing = missingNpmPlatformFiles(packageRoot);
-if (existingMissing.length === 0) {
-  verifyInstall();
-  registerCli();
-  log("release binaries already present");
-  process.exit(0);
+  const existingMissing = missingNpmPlatformFiles(packageRoot);
+  if (existingMissing.length === 0) {
+    verifyInstall();
+    registerCli();
+    log("release binaries already present");
+    return;
+  }
+
+  if (installFromPlatformPackage()) return;
+
+  const packageName = platformPackageName();
+  fail(
+    `platform package ${packageName} is unavailable; reinstall ${packageJson.name} with optional dependencies enabled after confirming ${packageName}@${packageJson.version} is published`,
+  );
 }
 
-if (installFromPlatformPackage()) {
-  process.exit(0);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
 }
-
-const packageName = platformPackageName();
-fail(
-  `platform package ${packageName} is unavailable; reinstall ${packageJson.name} with optional dependencies enabled after confirming ${packageName}@${packageJson.version} is published`,
-);

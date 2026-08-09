@@ -583,9 +583,6 @@ crates/tools/
         command_run_current_flow.rs
       live/
         web_discover_live_provider_check.rs
-    contracts/
-      compact_context_contract.mjs
-      planning_backend_contract.mjs
 ```
 
 Command files:

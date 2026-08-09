@@ -4,8 +4,8 @@
 //! child process tree created by shell/tool commands.
 
 use router_contract::{IpcRequest, IpcResponse};
-use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,6 +15,17 @@ use tokio::net::TcpStream;
 
 const ROUTER_ADDR_ENV: &str = "TURA_ROUTER_ADDR";
 const DEFAULT_COMMAND_RUN_TIMEOUT_SECS: u64 = 900;
+const COMMAND_RUN_ENV_KEYS: &[&str] = &[
+    "TURA_FORCED_CAPABILITY_DIRECTORIES",
+    "TURA_MCP_STDIO_BRIDGE_BIN",
+    "TURA_MCP_SERVER_COMMAND",
+    "TURA_MCP_SERVER_ARGS_JSON",
+    "TURA_MCP_SERVER_NAME",
+    "TURA_MCP_SERVER_TRANSPORT",
+    "TURA_MCP_COMMAND_ID",
+    "TURA_MCP_BROKER_ADDR",
+    "TURA_MCP_BROKER_TOKEN",
+];
 static REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
 
 pub async fn execute_command_run_value(
@@ -36,6 +47,7 @@ pub async fn execute_command_run_value(
         "session_directory": session_directory,
         "arguments": arguments,
         "allowed_commands": allowed_commands,
+        "command_env": command_run_environment(),
         "sandbox": command_run_sandbox_enabled(),
     });
     let request_id = format!(
@@ -64,6 +76,18 @@ pub async fn execute_command_run_value(
         .get("result")
         .cloned()
         .ok_or_else(|| "router command_run response did not contain payload.result".to_string())
+}
+
+fn command_run_environment() -> BTreeMap<String, String> {
+    COMMAND_RUN_ENV_KEYS
+        .iter()
+        .filter_map(|key| {
+            std::env::var(key)
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(|value| ((*key).to_string(), value))
+        })
+        .collect()
 }
 
 pub async fn execute_command_run_value_or_error(
@@ -299,7 +323,10 @@ fn command_run_router_timeout() -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_run_error_payload, command_run_results, RouterCommandRunExecutor};
+    use super::{
+        COMMAND_RUN_ENV_KEYS, RouterCommandRunExecutor, command_run_error_payload,
+        command_run_results,
+    };
     use serde_json::json;
 
     #[test]
@@ -346,6 +373,12 @@ mod tests {
             Some(vec![json!({"success": true})])
         );
         assert_eq!(command_run_results(&json!({"ok": false})), None);
+    }
+
+    #[test]
+    fn command_run_forwards_run_scoped_mcp_broker_environment() {
+        assert!(COMMAND_RUN_ENV_KEYS.contains(&"TURA_MCP_BROKER_ADDR"));
+        assert!(COMMAND_RUN_ENV_KEYS.contains(&"TURA_MCP_BROKER_TOKEN"));
     }
 
     struct EnvGuard {

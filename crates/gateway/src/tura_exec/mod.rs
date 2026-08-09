@@ -7,7 +7,7 @@ mod session;
 
 use std::io::{self, Write};
 
-use self::cli::{print_help, wants_help, CliConfig};
+use self::cli::{CliConfig, print_help, wants_help};
 use self::embedded::run_via_runtime_worker;
 use self::env::configure_runtime_env;
 use self::output::{
@@ -33,7 +33,7 @@ fn run() -> Result<i32, String> {
         return Ok(0);
     }
     let config = CliConfig::parse(args)?;
-    configure_runtime_env(&config);
+    configure_runtime_env(&config)?;
 
     let prompt = config.prompt()?;
     let session_id = config

@@ -50,7 +50,7 @@ pub fn resolve_binary_in_root(repo_root: &std::path::Path, binary_name: &str) ->
             .replace('-', "_")
             .to_ascii_uppercase()
     );
-    if let Ok(path) = std::env::var(override_var) {
+    if let Some(path) = registry::command_environment_value(&override_var) {
         let path = PathBuf::from(path);
         if path.exists() {
             return Some(path);
@@ -187,9 +187,11 @@ policy = "policy.toml"
 
         assert!(!candidates.is_empty());
         assert!(candidates.iter().any(|path| path.ends_with(exe_name)));
-        assert!(candidates
-            .iter()
-            .any(|path| path.to_string_lossy().contains("target")));
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.to_string_lossy().contains("target"))
+        );
     }
 
     #[test]

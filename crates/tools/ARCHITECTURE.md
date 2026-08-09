@@ -139,9 +139,6 @@ crates/tools/
       web_discover_live_provider_check.rs
     docker/
       Dockerfile
-    contracts/
-      compact_context_contract.mjs
-      planning_backend_contract.mjs
 ```
 
 The target command implementation layout is

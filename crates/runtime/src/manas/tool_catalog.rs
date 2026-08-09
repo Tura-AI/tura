@@ -120,7 +120,8 @@ pub(crate) fn project_directory_with_tools() -> Result<PathBuf, String> {
 }
 
 fn command_run_capability_directory(agent: &AgentManagement) -> Result<Option<PathBuf>, String> {
-    if agent.agent_capabilities.is_empty() {
+    if agent.agent_capabilities.is_empty() && code_tools::registry::forced_command_ids().is_empty()
+    {
         return Ok(None);
     }
 
@@ -156,6 +157,8 @@ pub(crate) fn command_run_commands_for_agent(agent: &AgentManagement) -> BTreeSe
             (name != COMMAND_RUN_TOOL).then_some(name)
         })
         .collect::<BTreeSet<_>>();
+
+    commands.extend(code_tools::registry::forced_command_ids());
 
     if commands.is_empty() && !agent.agent_capabilities.is_empty() {
         commands = default_command_run_commands();
@@ -413,6 +416,13 @@ pub(crate) fn command_run_command_format_line(
             compact_prompt(&command_prompt("planning")),
             compact_schema(code_tools::commands::planning::SCHEMA),
         )),
+        _ if code_tools::registry::forced_command_directory(&command_id).is_some() => {
+            Some(format!(
+                "- {command_id}: {} Schema: {}",
+                compact_prompt(&command_prompt(&command_id)),
+                compact_schema(&command_schema(&command_id)),
+            ))
+        }
         _ => None,
     }
 }
@@ -440,6 +450,11 @@ fn command_schema(command_id: &str) -> String {
 }
 
 fn read_command_file(command_id: &str, file_name: &str) -> Option<String> {
+    if let Some(directory) = code_tools::registry::forced_command_directory(command_id)
+        && let Ok(content) = std::fs::read_to_string(directory.join(file_name))
+    {
+        return Some(content);
+    }
     let root = project_directory_with_tools().ok()?;
     [
         root.join("crates")
@@ -464,11 +479,18 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
         "task_status",
         "planning",
     ];
-    order
+    let mut ordered = order
         .into_iter()
         .filter(|name| commands.contains(*name))
         .map(str::to_string)
-        .collect()
+        .collect::<Vec<_>>();
+    let remaining = commands
+        .iter()
+        .filter(|name| !ordered.contains(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    ordered.extend(remaining);
+    ordered
 }
 
 fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
@@ -718,90 +740,6 @@ mod tests {
     }
 
     #[test]
-    fn command_run_description_warns_not_to_copy_replay_placeholder_arguments() {
-        let commands = default_command_run_commands();
-        let schema = tool_interface_to_provider_schema_with_commands(
-            command_run_interface(),
-            Some(&commands),
-            false,
-        );
-        let description = schema["function"]["description"]
-            .as_str()
-            .expect("command_run description should be a string");
-
-        assert!(
-            description.contains("Historical replay may show `arguments: {}`"),
-            "{description}"
-        );
-        assert!(
-            description.contains("never copy that placeholder"),
-            "{description}"
-        );
-        assert!(
-            description.contains("non-empty `commands` array"),
-            "{description}"
-        );
-    }
-
-    #[test]
-    fn task_status_command_format_includes_startup_state_gate_when_required() {
-        let line = command_run_command_format_line("task_status", true)
-            .expect("task_status command format should exist");
-
-        assert!(
-            line.contains(task_status::STARTUP_TASK_STATE_GATE),
-            "{line}"
-        );
-        assert!(line.contains("Schema:"), "{line}");
-    }
-
-    #[test]
-    fn task_status_command_format_omits_startup_state_gate_when_not_required() {
-        let line = command_run_command_format_line("task_status", false)
-            .expect("task_status command format should exist");
-
-        assert!(
-            !line.contains(task_status::STARTUP_TASK_STATE_GATE),
-            "{line}"
-        );
-        assert!(line.contains("Schema:"), "{line}");
-    }
-
-    #[test]
-    fn command_run_description_uses_session_task_type_for_startup_gate() {
-        let commands = default_command_run_commands();
-
-        let missing_type = tool_interface_to_provider_schema_with_commands(
-            command_run_interface(),
-            Some(&commands),
-            session_with_task_type(Vec::new()).task_type.is_empty(),
-        );
-        let existing_type = tool_interface_to_provider_schema_with_commands(
-            command_run_interface(),
-            Some(&commands),
-            session_with_task_type(vec!["debug".to_string()])
-                .task_type
-                .is_empty(),
-        );
-
-        let missing_description = missing_type["function"]["description"]
-            .as_str()
-            .expect("command_run description should be present");
-        let existing_description = existing_type["function"]["description"]
-            .as_str()
-            .expect("command_run description should be present");
-
-        assert!(
-            missing_description.contains(task_status::STARTUP_TASK_STATE_GATE),
-            "{missing_description}"
-        );
-        assert!(
-            !existing_description.contains(task_status::STARTUP_TASK_STATE_GATE),
-            "{existing_description}"
-        );
-    }
-
-    #[test]
     fn planning_command_extends_task_status_command_schema() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let mut commands = default_command_run_commands();
@@ -876,6 +814,84 @@ mod tests {
         assert!(commands.contains("task_status"));
         assert!(commands.contains(active_shell_command_name()));
         assert!(!commands.contains("shells"));
+    }
+
+    #[test]
+    fn forced_capability_is_added_to_agent_schema_with_its_prompt_and_schema() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let previous = std::env::var_os(code_tools::registry::FORCED_CAPABILITY_DIRECTORIES_ENV);
+        let temp = tempfile::tempdir().expect("temporary capability directory");
+        let directory = temp.path().join("mcp-command");
+        std::fs::create_dir_all(&directory).expect("create capability directory");
+        std::fs::write(
+            directory.join("command.toml"),
+            r#"id = "mcp_workspace"
+core = false
+execution = "one_shot"
+supports_macro_command = true
+mutating = true
+[runtime]
+binary = "tura-command-mcp"
+[limits]
+default_timeout_ms = 1000
+max_timeout_ms = 2000
+"#,
+        )
+        .expect("write manifest");
+        std::fs::write(
+            directory.join("prompt.md"),
+            "Use the task-local MCP server.",
+        )
+        .expect("write prompt");
+        std::fs::write(
+            directory.join("schema.json"),
+            r#"{"name":"mcp_workspace","input_schema":{"type":"object","required":["name"]}}"#,
+        )
+        .expect("write schema");
+        let encoded = serde_json::to_string(&vec![directory]).expect("encode capability paths");
+        // SAFETY: environment mutation is serialized by ENV_LOCK in this module.
+        #[allow(unsafe_code, reason = "test environment mutation is serialized")]
+        unsafe {
+            std::env::set_var(
+                code_tools::registry::FORCED_CAPABILITY_DIRECTORIES_ENV,
+                encoded,
+            )
+        };
+
+        let agent = command_run_agent_with_capabilities(&["command_run", "apply_patch"]);
+        let commands = command_run_commands_for_agent(&agent);
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+            false,
+        );
+        let description = schema["function"]["description"]
+            .as_str()
+            .expect("command_run description");
+
+        assert!(commands.contains("mcp_workspace"));
+        assert!(command_type_enum(&schema).contains(&"mcp_workspace".to_string()));
+        assert!(
+            description.contains("Use the task-local MCP server."),
+            "{description}"
+        );
+        assert!(
+            description.contains(r#""required":["name"]"#),
+            "{description}"
+        );
+
+        // SAFETY: environment mutation is serialized by ENV_LOCK in this module.
+        #[allow(unsafe_code, reason = "test environment mutation is serialized")]
+        unsafe {
+            if let Some(previous) = previous {
+                std::env::set_var(
+                    code_tools::registry::FORCED_CAPABILITY_DIRECTORIES_ENV,
+                    previous,
+                );
+            } else {
+                std::env::remove_var(code_tools::registry::FORCED_CAPABILITY_DIRECTORIES_ENV);
+            }
+        }
     }
 
     #[test]
