@@ -4002,7 +4002,7 @@
     },
     "codex": {
       "account_env": "OPENAI_ACCOUNT_ID",
-      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=JecqB0PdhN-Iuli2mdfduBKhGXunV6PpfeiedCbQGvE&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=7659d05f23844eee921ce858a64057ee&originator=opencode",
+      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=7KCNTRrii2Qr32tyw1r0W49A9jBMWKynUnlK95mSdYA&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=215426ab524d4c57b97e3847319f0ccc&originator=opencode",
       "endpoint": "https://chatgpt.com/backend-api/codex/responses",
       "expires_env": "OPENAI_TOKEN_EXPIRES",
       "login": "oauth",
@@ -4012,7 +4012,7 @@
       "status": "connected",
       "token_env": "OPENAI_API_KEY",
       "type": "oauth",
-      "updated_at": "2026-07-20T07:15:51.246594400+00:00"
+      "updated_at": "2026-08-09T08:12:00.488242+00:00"
     },
     "github": {
       "auth_url": null,
@@ -4097,8 +4097,8 @@
     "lmstudio": "http://localhost:1234/v1",
     "mailgun": "https://api.mailgun.net/v3",
     "microsoft_graph": "https://graph.microsoft.com/v1.0",
-    "moonshotai": "https://api.moonshot.ai/v1",
     "mistral": "https://api.mistral.ai/v1",
+    "moonshotai": "https://api.moonshot.ai/v1",
     "notion": "https://api.notion.com/v1",
     "ollama": "http://localhost:11434",
     "openai": "https://api.openai.com/v1",
