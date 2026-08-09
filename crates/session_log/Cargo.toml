@@ -46,6 +46,7 @@ os-tests = []
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
+fs2.workspace = true
 lifecycle.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

@@ -204,7 +204,7 @@ fn sqlite_init_file_lock(path: &Path) -> Result<SqliteInitFileLock> {
             }
         }
     };
-    file.lock()
+    file.lock_exclusive()
         .with_context(|| format!("failed to lock SQLite init lock {}", lock_path.display()))?;
     Ok(SqliteInitFileLock { file })
 }
