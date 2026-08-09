@@ -18,13 +18,13 @@
     "default_model_tier": "thinking",
     "max_tokens": 0,
     "model_acceleration_enabled": true,
-    "model_reasoning_effort": "high",
+    "model_reasoning_effort": "medium",
     "service_tier": "priority",
     "stream": true,
     "temperature": 0.2,
     "time_out_ms": 120000,
     "tool_choice": "Auto",
-    "tura_llm_name": "fast"
+    "tura_llm_name": "thinking"
   },
   "agent_prompt": [
     {
