@@ -16,6 +16,12 @@ ENVIRONMENT_ONLY=0
 CHECK_ONLY=0
 OFFLINE=0
 APT_UPDATED=0
+BUILD_FLAGS=""
+
+# Allow Ctrl+C / SIGTERM to kill the script and any child process immediately.
+# Without this trap, set -e causes the shell to swallow SIGINT when a child
+# process catches it, making the installer appear stuck and uninterruptible.
+trap 'echo ""; echo "Install interrupted by signal." >&2; kill 0 2>/dev/null; exit 130' INT TERM
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -26,6 +32,10 @@ while [ "$#" -gt 0 ]; do
     --environment-only) ENVIRONMENT_ONLY=1 ;;
     --check-only) CHECK_ONLY=1 ;;
     --offline) OFFLINE=1 ;;
+    --backend-only) BUILD_FLAGS="$BUILD_FLAGS --backend-only" ;;
+    --skip-tui) BUILD_FLAGS="$BUILD_FLAGS --skip-tui" ;;
+    --skip-gui) BUILD_FLAGS="$BUILD_FLAGS --skip-gui" ;;
+    --skip-tauri) BUILD_FLAGS="$BUILD_FLAGS --skip-tauri" ;;
     -h|--help)
       cat <<'EOF'
 Usage:
@@ -47,6 +57,10 @@ Options:
                     install or verify dependencies only; do not build or register Tura
   --check-only     verify expected tools/environments without installing
   --offline        pass offline/cache-only flags where supported
+  --backend-only   build Rust backend binaries only (skip GUI, TUI, Tauri)
+  --skip-tui       skip TUI compilation during release build
+  --skip-gui       skip GUI dist build during release build
+  --skip-tauri     skip Tauri desktop bundle during release build
   -h, --help       show this help
 EOF
       exit 0
@@ -866,6 +880,9 @@ cd "$REPO_ROOT"
 verify_runtime_config_sources
 
 step "Checking root dependency installers"
+echo "  Verifying git, Rust/Cargo, shells, uv, bun, and command dependencies."
+echo "  Missing tools are installed automatically. This may take a few minutes"
+echo "  on first run. Press Ctrl+C to abort."
 ensure_windows_powershell
 ensure_shell_tool_coverage
 ensure_git
@@ -890,7 +907,11 @@ if [ "$ENVIRONMENT_ONLY" -eq 1 ]; then
 fi
 
 step "Building Tura release"
-sh "$SCRIPT_DIR/build-release.sh"
+echo "  This compiles all Rust binaries and (unless --backend-only or --skip-*"
+echo "  flags are passed) the GUI dist, TUI executable, and Tauri desktop bundle."
+echo "  This can take several minutes. Press Ctrl+C to abort."
+# shellcheck disable=SC2086
+sh "$SCRIPT_DIR/build-release.sh" $BUILD_FLAGS
 
 step "Registering Tura release commands"
 sh "$SCRIPT_DIR/register-cli.sh"
