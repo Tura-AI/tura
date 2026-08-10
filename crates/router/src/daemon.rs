@@ -1,4 +1,10 @@
 use serde_json::json;
+use session_log_contract::{
+    client::{
+        open_session_feed_subscription, SessionFeedSubscriptionCancellation,
+    },
+    SessionFeedEntry, SessionFeedEvent,
+};
 use std::sync::{atomic::Ordering, Arc};
 
 use crate::app::build_state;
@@ -166,8 +172,30 @@ async fn handle_socket_connection(
         let state_for_task = state.clone();
         let write_for_task = Arc::clone(&write);
         let active_sessions_for_task = Arc::clone(&active_sessions);
+        let feed_forwarder = if let Some((session_id, _)) = active_runtime.as_ref() {
+            match start_session_round_forwarder(
+                session_id.clone(),
+                parsed.request_id.clone(),
+                Arc::clone(&write),
+            )
+            .await
+            {
+                Ok(forwarder) => Some(forwarder),
+                Err(error) => {
+                    eprintln!(
+                        "router session round forwarding unavailable for {session_id}: {error:#}"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let handle = tokio::spawn(async move {
             let response = handle_ipc_request(&state_for_task, parsed).await;
+            if let Some(forwarder) = feed_forwarder {
+                forwarder.stop().await;
+            }
             if let Some((session_id, runtime_id)) = active_runtime.as_ref() {
                 let mut active = active_sessions_for_task.lock().await;
                 if active.get(session_id) == Some(runtime_id) {
@@ -208,6 +236,131 @@ async fn handle_socket_connection(
     }
     drop(connection_guard);
     Ok(())
+}
+
+type SocketWriter = Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>;
+
+struct SessionRoundForwarder {
+    cancellation: Option<SessionFeedSubscriptionCancellation>,
+    reader: Option<tokio::task::JoinHandle<()>>,
+    writer: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl SessionRoundForwarder {
+    async fn stop(mut self) {
+        if let Some(cancellation) = self.cancellation.take() {
+            let _ = cancellation.cancel();
+        }
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.await;
+        }
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.await;
+        }
+    }
+}
+
+impl Drop for SessionRoundForwarder {
+    fn drop(&mut self) {
+        if let Some(cancellation) = self.cancellation.take() {
+            let _ = cancellation.cancel();
+        }
+    }
+}
+
+async fn start_session_round_forwarder(
+    session_id: String,
+    request_id: String,
+    write: SocketWriter,
+) -> anyhow::Result<SessionRoundForwarder> {
+    let subscription = tokio::task::spawn_blocking(open_session_feed_subscription)
+        .await
+        .map_err(|error| anyhow::anyhow!("session feed subscriber task failed: {error}"))??;
+    let cancellation = subscription.cancellation_handle()?;
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let reader = tokio::task::spawn_blocking(move || {
+        let mut subscription = subscription;
+        while let Ok(Some(entry)) = subscription.next_entry() {
+            let Some(callback) = session_round_callback(entry, &session_id, &request_id) else {
+                continue;
+            };
+            if sender.send(callback).is_err() {
+                break;
+            }
+        }
+    });
+    let writer = tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+
+        while let Some(callback) = receiver.recv().await {
+            let Ok(encoded) = serde_json::to_string(&callback) else {
+                continue;
+            };
+            let mut writer = write.lock().await;
+            if writer
+                .write_all(format!("{encoded}\n").as_bytes())
+                .await
+                .is_err()
+            {
+                break;
+            }
+            if writer.flush().await.is_err() {
+                break;
+            }
+        }
+    });
+    Ok(SessionRoundForwarder {
+        cancellation: Some(cancellation),
+        reader: Some(reader),
+        writer: Some(writer),
+    })
+}
+
+fn session_round_callback(
+    entry: SessionFeedEntry,
+    session_id: &str,
+    request_id: &str,
+) -> Option<serde_json::Value> {
+    if entry.session_id != session_id {
+        return None;
+    }
+    let SessionFeedEvent::AgentMessage {
+        message_id,
+        reply_message,
+        runtime_status,
+        context_tokens,
+        usage,
+        created_at,
+        updated_at,
+        ..
+    } = entry.event
+    else {
+        return None;
+    };
+    Some(json!({
+        "request_id": request_id,
+        "kind": "gateway.callback",
+        "method": "session.agent_message",
+        "payload": {
+            "session_id": entry.session_id,
+            "runtime_id": entry.runtime_id,
+            "event_id": entry.event_id,
+            "body": {
+                "type": "item.completed",
+                "item": {
+                    "id": message_id,
+                    "type": "agent_message",
+                    "status": "completed",
+                    "text": reply_message,
+                    "runtime_status": runtime_status,
+                    "context_tokens": context_tokens,
+                    "usage": usage,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                }
+            }
+        }
+    }))
 }
 
 fn should_abort_request_on_connection_close(request: &IpcRequest) -> bool {
@@ -300,6 +453,77 @@ mod tests {
             ..request
         };
         assert!(should_abort_request_on_connection_close(&request));
+    }
+
+    #[test]
+    fn agent_message_feed_entry_becomes_round_callback() {
+        let callback = session_round_callback(
+            SessionFeedEntry {
+                session_id: "session-1".to_string(),
+                cursor: 7,
+                runtime_id: Some("runtime-round-2".to_string()),
+                event_id: "runtime-round-2:feed:3".to_string(),
+                event: SessionFeedEvent::AgentMessage {
+                    message_id: "runtime-round-2.message".to_string(),
+                    part_id: "runtime-round-2.message".to_string(),
+                    reply_message: "I found the failing boundary; next I will patch it.".to_string(),
+                    new_learning: String::new(),
+                    runtime_status: None,
+                    context_tokens: None,
+                    usage: None,
+                    created_at: 10,
+                    updated_at: 20,
+                },
+            },
+            "session-1",
+            "request-1",
+        )
+        .expect("matching agent message should become a callback");
+
+        assert_eq!(callback["request_id"], "request-1");
+        assert_eq!(callback["kind"], "gateway.callback");
+        assert_eq!(callback["method"], "session.agent_message");
+        assert_eq!(callback["payload"]["session_id"], "session-1");
+        assert_eq!(callback["payload"]["runtime_id"], "runtime-round-2");
+        assert_eq!(
+            callback["payload"]["body"]["item"]["text"],
+            "I found the failing boundary; next I will patch it."
+        );
+        assert_eq!(
+            callback["payload"]["body"]["item"]["type"],
+            "agent_message"
+        );
+    }
+
+    #[test]
+    fn round_callback_ignores_other_sessions_and_non_message_events() {
+        let entry = SessionFeedEntry {
+            session_id: "session-1".to_string(),
+            cursor: 1,
+            runtime_id: Some("runtime-1".to_string()),
+            event_id: "event-1".to_string(),
+            event: SessionFeedEvent::TodosUpdated {
+                todos: Vec::new(),
+                updated_at: 1,
+            },
+        };
+        assert!(session_round_callback(entry.clone(), "session-1", "request-1").is_none());
+
+        let agent_entry = SessionFeedEntry {
+            event: SessionFeedEvent::AgentMessage {
+                message_id: "message-1".to_string(),
+                part_id: "part-1".to_string(),
+                reply_message: "round text".to_string(),
+                new_learning: String::new(),
+                runtime_status: None,
+                context_tokens: None,
+                usage: None,
+                created_at: 1,
+                updated_at: 1,
+            },
+            ..entry
+        };
+        assert!(session_round_callback(agent_entry, "session-2", "request-1").is_none());
     }
 
     #[tokio::test]

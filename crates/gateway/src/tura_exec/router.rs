@@ -189,7 +189,10 @@ fn router_callback_direct_item_event(
     emitted_cli_items: &mut HashSet<String>,
 ) -> Option<Value> {
     let item_type = event.pointer("/item/type").and_then(Value::as_str)?;
-    if !matches!(item_type, "command_execution" | "file_change") {
+    if !matches!(
+        item_type,
+        "agent_message" | "command_execution" | "file_change"
+    ) {
         return None;
     }
     let event_type = event.get("type").and_then(Value::as_str)?;
@@ -1032,6 +1035,41 @@ mod tests {
 
         let duplicate = router_callback_cli_events(&notification, &mut emitted);
         assert!(duplicate.is_empty());
+    }
+
+    #[test]
+    fn router_callback_cli_events_emit_round_agent_message_once() {
+        let mut emitted = HashSet::new();
+        let notification = json!({
+            "request_id": "request-1",
+            "kind": "gateway.callback",
+            "method": "session.agent_message",
+            "payload": {
+                "session_id": "session-1",
+                "runtime_id": "runtime-round-2",
+                "body": {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "runtime-round-2.message",
+                        "type": "agent_message",
+                        "status": "completed",
+                        "text": "I found the failing boundary; next I will patch it."
+                    }
+                }
+            }
+        });
+
+        let events = router_callback_cli_events(&notification, &mut emitted);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["type"], "item.completed");
+        assert_eq!(events[0]["item"]["type"], "agent_message");
+        assert_eq!(events[0]["item"]["status"], "completed");
+        assert_eq!(
+            events[0]["item"]["text"],
+            "I found the failing boundary; next I will patch it."
+        );
+        assert!(router_callback_cli_events(&notification, &mut emitted).is_empty());
     }
 
     #[test]

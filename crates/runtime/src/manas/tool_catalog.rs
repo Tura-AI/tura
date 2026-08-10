@@ -494,23 +494,45 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
 }
 
 fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
+    let output_bindings_enabled = code_tools::registry::forced_command_ids()
+        .into_iter()
+        .any(|command_id| allowed_commands.contains(&command_id));
+    command_run_usage_patterns_for(allowed_commands, output_bindings_enabled)
+}
+
+fn command_run_usage_patterns_for(
+    allowed_commands: &BTreeSet<String>,
+    output_bindings_enabled: bool,
+) -> String {
     let mut patterns = vec![
         "- Current call schema is mandatory: call `command_run` with a non-empty `commands` array only. Every command object must include `command_type`, `command_line`, and `step`. Historical replay may show `arguments: {}` as a bookkeeping placeholder; never copy that placeholder into a new call.",
         "- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.",
         "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch; independent commands with no output dependency must share one step.",
         "- Do not run test/probe invocations before you have read the relevant code and determined the actual CLI command set.",
-        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; later steps may consume earlier-step JSON output through placeholders.",
-        "- Cross-step output variable: wrap a generic binding path as `#@#${<command id or command_type>.<JSON path>}#@#$` inside a later step's input. Give repeated commands unique `id` values. Only previous-step outputs are visible; unresolved, same-step, and future-step references fail before dispatch.",
+    ];
+    patterns.push(if output_bindings_enabled {
+        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; later steps may consume earlier-step JSON output through placeholders."
+    } else {
+        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; commands that depend on earlier output must use later unique ordered steps whose inputs are already known before the batch is created."
+    });
+    if output_bindings_enabled {
+        patterns.push("- Cross-step output variable: wrap a generic binding path as `#@#${<command id or command_type>.<JSON path>}#@#$` inside a later step's input. Give repeated commands unique `id` values. Only previous-step outputs are visible; unresolved, same-step, and future-step references fail before dispatch.");
+    }
+    patterns.extend([
         "- Code repair loop: after discovery has produced enough facts, use one step for coordinated edits and later steps for already-known tests or focused validation.",
         "- Avoid embedding long generated source code or complex quoting directly in shell command lines; for complex logic, invoke a script/interpreter from the active shell rather than encoding the logic in shell syntax.",
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
         "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
         "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command and use `apply_patch` to write or modify the testing scripts, step 3 run multiple known test commands in the same step.",
-        "- Example output binding (all command ids, command types, and group ids are illustrative, not built-ins): step 1 `{\"id\":\"create_file\",\"command_type\":\"create_file\",\"command_line\":\"{\\\"path\\\":\\\"draft.txt\\\"}\",\"step\":1}` returns `{\"filename\":\"draft.txt\"}`; step 2 `{\"id\":\"edit_file\",\"command_type\":\"edit_file\",\"command_line\":\"{\\\"path\\\":\\\"#@#${create_file.filename}#@#$\\\",\\\"text\\\":\\\"updated\\\"}\",\"step\":2}` edits that file; step 3 `{\"id\":\"send_file\",\"command_type\":\"teams_send_file\",\"command_line\":\"{\\\"group_id\\\":\\\"project-team\\\",\\\"file\\\":\\\"#@#${create_file.filename}#@#$\\\"}\",\"step\":3}` sends the edited file to the example Teams group after the edit completes.",
+    ]);
+    if output_bindings_enabled {
+        patterns.push("- Example output binding (all command ids, command types, and group ids are illustrative, not built-ins): step 1 `{\"id\":\"create_file\",\"command_type\":\"create_file\",\"command_line\":\"{\\\"path\\\":\\\"draft.txt\\\"}\",\"step\":1}` returns `{\"filename\":\"draft.txt\"}`; step 2 `{\"id\":\"edit_file\",\"command_type\":\"edit_file\",\"command_line\":\"{\\\"path\\\":\\\"#@#${create_file.filename}#@#$\\\",\\\"text\\\":\\\"updated\\\"}\",\"step\":2}` edits that file; step 3 `{\"id\":\"send_file\",\"command_type\":\"teams_send_file\",\"command_line\":\"{\\\"group_id\\\":\\\"project-team\\\",\\\"file\\\":\\\"#@#${create_file.filename}#@#$\\\"}\",\"step\":3}` sends the edited file to the example Teams group after the edit completes.");
+    }
+    patterns.extend([
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
         "- Example long-running database check: step 1 run `sleep 60` with `timeout_ms` comfortably above 60000, step 2 run the known database probe script, step 3 read the script output log such as `logs/db-check.log` and summarize the findings.",
-    ];
+    ]);
     if allowed_commands.contains("task_status") {
         patterns.push("- Context compaction: after a meaningful phase completes, or when context is near the active context limit and feels crowded, put the handoff summary in `task_status.compact_context` after the work it summarizes.");
     }
@@ -704,6 +726,29 @@ mod tests {
     }
 
     #[test]
+    fn command_run_prompt_without_cli_capability_matches_main_step_guidance() {
+        let description = command_run_usage_patterns_for(&default_command_run_commands(), false);
+
+        assert!(description.contains("commands that depend on earlier output must use later unique ordered steps whose inputs are already known before the batch is created."));
+        assert!(!description.contains("Cross-step output variable"));
+        assert!(!description.contains("Example output binding"));
+        assert!(!description.contains("#@#${"));
+    }
+
+    #[test]
+    fn command_run_prompt_with_cli_capability_explains_output_bindings() {
+        let description = command_run_usage_patterns_for(&default_command_run_commands(), true);
+
+        assert!(
+            description
+                .contains("later steps may consume earlier-step JSON output through placeholders.")
+        );
+        assert!(description.contains("Cross-step output variable"));
+        assert!(description.contains("Example output binding"));
+        assert!(description.contains("#@#${create_file.filename}#@#$"));
+    }
+
+    #[test]
     fn command_run_schema_injects_task_status_command_and_dynamic_schema() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let commands = default_command_run_commands();
@@ -879,6 +924,18 @@ max_timeout_ms = 2000
         );
         assert!(
             description.contains(r#""required":["name"]"#),
+            "{description}"
+        );
+        assert!(
+            description.contains("Cross-step output variable"),
+            "{description}"
+        );
+        assert!(
+            description.contains("Example output binding"),
+            "{description}"
+        );
+        assert!(
+            description.contains("#@#${create_file.filename}#@#$"),
             "{description}"
         );
 
