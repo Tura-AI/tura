@@ -533,8 +533,13 @@ fn call_router_addr(
         if line.trim().is_empty() {
             continue;
         }
-        let response: IpcResponse =
+        let value: serde_json::Value =
             serde_json::from_str(line.trim()).context("failed to decode router daemon response")?;
+        if value.get("kind").and_then(serde_json::Value::as_str) == Some("gateway.callback") {
+            continue;
+        }
+        let response: IpcResponse =
+            serde_json::from_value(value).context("failed to decode router daemon response")?;
         return serde_json::to_value(response).map_err(Into::into);
     }
 }
@@ -1467,6 +1472,48 @@ mod tests {
         error_server
             .join()
             .map_err(|_| anyhow!("error router server panicked"))??;
+        Ok(())
+    }
+
+    #[test]
+    fn router_socket_call_skips_callbacks_until_final_response() -> anyhow::Result<()> {
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let addr = listener.local_addr()?.to_string();
+        let server = thread::spawn(move || -> anyhow::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let mut request_line = String::new();
+            std::io::BufRead::read_line(
+                &mut BufReader::new(stream.try_clone()?),
+                &mut request_line,
+            )?;
+            let request: serde_json::Value = serde_json::from_str(request_line.trim())?;
+            assert_eq!(request["method"], "execution.enqueue_turn");
+            std::io::Write::write_all(
+                &mut stream,
+                b"{\"request_id\":\"callback-test\",\"kind\":\"gateway.callback\",\"method\":\"session.agent_message\",\"payload\":{}}\n",
+            )?;
+            let response =
+                serde_json::to_string(&IpcResponse::ok("callback-test", json!({"done": true})))?;
+            std::io::Write::write_all(&mut stream, response.as_bytes())?;
+            std::io::Write::write_all(&mut stream, b"\n")?;
+            std::io::Write::flush(&mut stream)?;
+            Ok(())
+        });
+
+        let response = call_router_addr(
+            &addr,
+            &IpcRequest::call(
+                "callback-test",
+                router_contract::METHOD_ENQUEUE_TURN,
+                json!({}),
+            ),
+            Some(Duration::from_secs(2)),
+        )?;
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["payload"]["done"], true);
+        server
+            .join()
+            .map_err(|_| anyhow!("callback router server panicked"))??;
         Ok(())
     }
 
