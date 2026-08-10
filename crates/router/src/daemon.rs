@@ -1,8 +1,6 @@
 use serde_json::json;
 use session_log_contract::{
-    client::{
-        open_session_feed_subscription, SessionFeedSubscriptionCancellation,
-    },
+    client::{open_session_feed_subscription, SessionFeedSubscriptionCancellation},
     SessionFeedEntry, SessionFeedEvent,
 };
 use std::sync::{atomic::Ordering, Arc};
@@ -466,7 +464,8 @@ mod tests {
                 event: SessionFeedEvent::AgentMessage {
                     message_id: "runtime-round-2.message".to_string(),
                     part_id: "runtime-round-2.message".to_string(),
-                    reply_message: "I found the failing boundary; next I will patch it.".to_string(),
+                    reply_message: "I found the failing boundary; next I will patch it."
+                        .to_string(),
                     new_learning: String::new(),
                     runtime_status: None,
                     context_tokens: None,
@@ -489,10 +488,7 @@ mod tests {
             callback["payload"]["body"]["item"]["text"],
             "I found the failing boundary; next I will patch it."
         );
-        assert_eq!(
-            callback["payload"]["body"]["item"]["type"],
-            "agent_message"
-        );
+        assert_eq!(callback["payload"]["body"]["item"]["type"], "agent_message");
     }
 
     #[test]

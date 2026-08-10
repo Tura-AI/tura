@@ -739,10 +739,8 @@ mod tests {
     fn command_run_prompt_with_cli_capability_explains_output_bindings() {
         let description = command_run_usage_patterns_for(&default_command_run_commands(), true);
 
-        assert!(
-            description
-                .contains("later steps may consume earlier-step JSON output through placeholders.")
-        );
+        assert!(description
+            .contains("later steps may consume earlier-step JSON output through placeholders."));
         assert!(description.contains("Cross-step output variable"));
         assert!(description.contains("Example output binding"));
         assert!(description.contains("#@#${create_file.filename}#@#$"));
