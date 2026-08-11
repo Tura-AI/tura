@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 #[path = "handler_parse.rs"]
 mod handler_parse;
+use super::output_binding::CommandRunOutputBindings;
 use handler_parse::{
     command_values, parse_arguments_value, parse_command_item, string_field, u64_field,
 };
@@ -35,6 +36,7 @@ struct CommandItem {
     workdir: Option<String>,
     step: Option<u64>,
     timeout_ms: Option<u64>,
+    binding_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -43,6 +45,8 @@ struct CommandRunItemResult {
     index: usize,
     step: u64,
     command_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
     success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     output: Option<Value>,
@@ -192,6 +196,8 @@ pub struct StreamingCommandRunExecutor {
     next_index: usize,
     macro_command_batch: FuturesUnordered<tokio::task::JoinHandle<CommandRunItemResult>>,
     results: Vec<CommandRunItemResult>,
+    output_bindings: CommandRunOutputBindings,
+    pending_binding_results: Vec<CommandRunItemResult>,
     halted: bool,
     halt_reason: Option<String>,
 }
@@ -223,6 +229,8 @@ impl StreamingCommandRunExecutor {
             next_index: 0,
             macro_command_batch: FuturesUnordered::new(),
             results: Vec::new(),
+            output_bindings: CommandRunOutputBindings::default(),
+            pending_binding_results: Vec::new(),
             halted: false,
             halt_reason: None,
         }
@@ -253,8 +261,19 @@ impl StreamingCommandRunExecutor {
         command.step = Some(step);
         if self.active_step.is_some_and(|current| step != current) {
             self.flush_macro_command_batch().await;
+            self.publish_pending_bindings();
         }
         self.active_step = Some(step);
+
+        if let Err(error) = resolve_command_bindings(&mut command, &self.output_bindings) {
+            self.accept_result(CommandRunItemResult::failed(
+                command.index,
+                command.effective_step(),
+                command.command,
+                error,
+            ));
+            return self.drain_finished_results();
+        }
 
         let macro_command_safe = command
             .is_macro_command_safe(&self.router, &self.ctx.child())
@@ -290,7 +309,7 @@ impl StreamingCommandRunExecutor {
         )
         .await;
         let should_halt = is_failed_apply_patch_result(&result);
-        self.results.push(result);
+        self.accept_result(result);
         if should_halt {
             self.halt_after_apply_patch_failure();
         }
@@ -332,13 +351,32 @@ impl StreamingCommandRunExecutor {
     async fn flush_macro_command_batch(&mut self) {
         while let Some(result) = self.macro_command_batch.next().await {
             match result {
-                Ok(result) => self.results.push(result),
-                Err(err) => self.results.push(CommandRunItemResult::failed(
-                    self.next_index,
-                    self.active_step.unwrap_or(1),
-                    "command_run".to_string(),
-                    format!("streamed command task failed: {err}"),
-                )),
+                Ok(result) => self.accept_result(result),
+                Err(err) => {
+                    let result = CommandRunItemResult::failed(
+                        self.next_index,
+                        self.active_step.unwrap_or(1),
+                        "command_run".to_string(),
+                        format!("streamed command task failed: {err}"),
+                    );
+                    self.accept_result(result);
+                }
+            }
+        }
+    }
+
+    fn accept_result(&mut self, result: CommandRunItemResult) {
+        self.pending_binding_results.push(result.clone());
+        self.results.push(result);
+    }
+
+    fn publish_pending_bindings(&mut self) {
+        for result in self.pending_binding_results.drain(..) {
+            if result.success
+                && let Some(output) = result.output.as_ref()
+            {
+                self.output_bindings
+                    .insert(&result.command_type, result.id.as_deref(), output);
             }
         }
     }
@@ -422,7 +460,22 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
     let mut results = Vec::new();
     let mut cancelled = false;
     let mut cancel_reason = None;
-    for commands in by_step.into_values() {
+    let mut output_bindings = CommandRunOutputBindings::default();
+    for mut commands in by_step.into_values() {
+        let mut binding_errors = Vec::new();
+        commands.retain_mut(|command| {
+            if let Err(error) = resolve_command_bindings(command, &output_bindings) {
+                binding_errors.push(CommandRunItemResult::failed(
+                    command.index,
+                    command.effective_step(),
+                    command.command.clone(),
+                    error,
+                ));
+                false
+            } else {
+                true
+            }
+        });
         let step_output = run_command_run_step(
             &router,
             commands,
@@ -431,7 +484,17 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
             sandbox,
         )
         .await;
-        results.extend(step_output.results);
+        let mut step_results = binding_errors;
+        step_results.extend(step_output.results);
+        step_results.sort_by_key(|result| (result.step, result.index));
+        for result in &step_results {
+            if result.success
+                && let Some(output) = result.output.as_ref()
+            {
+                output_bindings.insert(&result.command_type, result.id.as_deref(), output);
+            }
+        }
+        results.extend(step_results);
         if step_output.cancelled {
             cancelled = true;
             cancel_reason = step_output.cancel_reason;
@@ -445,6 +508,22 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
         cancelled: cancelled.then_some(true),
         cancel_reason,
     }
+}
+
+fn resolve_command_bindings(
+    command: &mut CommandItem,
+    bindings: &CommandRunOutputBindings,
+) -> Result<(), String> {
+    command.command_line = bindings.interpolate_command_line(&command.command_line)?;
+    if let Some(arguments) = command.inline_arguments.as_mut() {
+        bindings.interpolate_value(arguments)?;
+    }
+    if let Some(workdir) = command.workdir.as_mut()
+        && workdir.contains("#@#${")
+    {
+        *workdir = bindings.interpolate_command_line(workdir)?;
+    }
+    Ok(())
 }
 
 fn normalize_command_steps(commands: &mut [CommandItem]) {
@@ -583,6 +662,7 @@ async fn run_command_run_item(
             index: command.index,
             step: command.effective_step(),
             command_type: "planning".to_string(),
+            id: command.binding_id,
             success: response.success,
             output: Some(response.output),
             error: (!response.success).then_some(response.stderr),
@@ -625,6 +705,7 @@ async fn run_command_run_item(
             index: command.index,
             step: command.effective_step(),
             command_type: command_name.clone(),
+            id: command.binding_id,
             success: result.result.success_for_logging(),
             output: Some(result.result.code_mode_result()),
             error: None,
@@ -760,6 +841,7 @@ fn command_run_task_status_result(command: CommandItem) -> CommandRunItemResult 
             index: command.index,
             step: command.effective_step(),
             command_type: "task_status".to_string(),
+            id: command.binding_id,
             success: true,
             output: Some(output),
             error: None,
@@ -1213,6 +1295,7 @@ impl CommandRunItemResult {
             index,
             step,
             command_type: command,
+            id: None,
             success: false,
             output: Some(crate::shell_executor::json_like_output(
                 126,
@@ -1233,6 +1316,7 @@ impl CommandRunItemResult {
             index,
             step,
             command_type: command,
+            id: None,
             success: false,
             output: None,
             error: Some(error),

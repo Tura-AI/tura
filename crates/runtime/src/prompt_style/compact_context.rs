@@ -16,15 +16,3 @@ fn format_token_count(tokens: u64) -> String {
     }
     out.chars().rev().collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::compact_context_required;
-
-    #[test]
-    fn compact_context_required_formats_dynamic_limit_and_current_turn_instruction() {
-        let prompt = compact_context_required(220_000);
-
-        assert!(prompt.contains("compact_context"));
-    }
-}

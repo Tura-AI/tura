@@ -33,7 +33,7 @@ fn run() -> Result<i32, String> {
         return Ok(0);
     }
     let config = CliConfig::parse(args)?;
-    configure_runtime_env(&config);
+    configure_runtime_env(&config)?;
 
     let prompt = config.prompt()?;
     let session_id = config

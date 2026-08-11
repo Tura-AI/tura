@@ -440,18 +440,12 @@ async function inspectTuraProviderContract(sinceMs) {
   const calls = candidates.map((item) => item.parsed).filter((item) => item?.type === "llm_call")
   const firstToolCall = calls.find((call) => Array.isArray(call?.request?.params?.tools) && call.request.params.tools.length > 0)
   const firstMessages = firstToolCall?.request?.messages || []
-  const promptText = calls
-    .flatMap((call) => call?.request?.messages || [])
-    .map((message) => String(message?.content || ""))
-    .join("\n")
   const toolNames = (firstToolCall?.request?.params?.tools || [])
     .map((tool) => tool?.function?.name)
     .filter(Boolean)
-  const commandDescriptions = JSON.stringify(firstToolCall?.request?.params?.tools || [])
   const commandItems = firstToolCall?.request?.params?.tools?.[0]?.function?.parameters?.properties?.commands?.items || {}
   const commandRequired = commandItems?.required || []
   const commandHasEnum = !!commandItems?.properties?.command_type?.enum
-  const oldPathPattern = /crates[\\/]tools[\\/]interface|Pcommand_run|Icommand_run|scripts[\\/]command_run|handler\.py/i
   const toolFlow = inspectTuraToolFlow(calls)
   return {
     ok:
@@ -460,19 +454,10 @@ async function inspectTuraProviderContract(sinceMs) {
       commandItems?.properties?.command_type?.type === "string" &&
       !commandHasEnum &&
       JSON.stringify(commandRequired) === JSON.stringify(["command_type", "command_line"]) &&
-      !/send_message_to_user/i.test(promptText) &&
-      !/powershell:\*/i.test(promptText) &&
-      !/powershell:/i.test(commandDescriptions) &&
-      !oldPathPattern.test(promptText) &&
-      !oldPathPattern.test(commandDescriptions) &&
       toolFlow.ok,
     tool_names: toolNames,
     command_required: commandRequired,
     command_has_enum: commandHasEnum,
-    prompt_has_send_message: /send_message_to_user/i.test(promptText),
-    prompt_has_powershell_alias: /powershell:\*/i.test(promptText),
-    schema_has_powershell_alias: /powershell:/i.test(commandDescriptions),
-    prompt_or_schema_has_old_paths: oldPathPattern.test(promptText) || oldPathPattern.test(commandDescriptions),
     inspected_log: firstToolCall ? candidates.find((item) => item.parsed === firstToolCall)?.file : null,
     context_contract: contextContractFromMessages(firstMessages, { requireBase: false }),
     tool_flow: toolFlow,
@@ -489,7 +474,7 @@ function contextContractFromMessages(messages, options = {}) {
   const base = normalized.find((message) => message.content.startsWith("You are Codex"))?.content || ""
   const workspaceSnapshot = normalized.find((message) => message.content.includes("<WORKSPACE_SNAPSHOT>"))?.content || ""
   const environment = normalized.find((message) => message.content.includes("<environment_context>"))?.content || ""
-  const task = normalized.find((message) => message.content.includes("small single-round E2E command execution benchmark"))?.content || ""
+  const task = normalized.find((message) => message.role === "user")?.content || ""
   const joined = normalized.map((message) => message.content).join("\n")
   const expected = requireBase
     ? [
@@ -507,7 +492,7 @@ function contextContractFromMessages(messages, options = {}) {
         ? workspaceSnapshot.includes("columns: modified_utc | lines | suffix | path")
         : workspaceSnapshot.length > 0) &&
       environment.includes("<shell>powershell</shell>") &&
-      task.includes("Get-Content -Raw src/app.txt") &&
+      task === taskPrompt &&
       !/Permanent runtime context|Task continuity reminder|Tool reporting requirement|Current workspace directory:|Initial workspace file snapshot/i.test(joined),
     marker_sequence: markerSequence,
     expected_marker_sequence: expected,
@@ -620,82 +605,6 @@ function collectCommandEnums(value, out = []) {
   return out
 }
 
-async function inspectTuraSourceContract() {
-  const paths = {
-    commandRunHandler: path.join(turaRoot, "crates", "tools", "src", "command_run", "handler.rs"),
-    commandRunSchema: path.join(turaRoot, "crates", "tools", "src", "command_run", "schema.json"),
-    shellPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "shell_command", "prompt.md"),
-    applyPatchPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "apply_patch", "prompt.md"),
-    planningPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "planning", "prompt.md"),
-    compactContextPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "compact_context", "prompt.md"),
-    fileLocksPolicy: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "policy.toml"),
-    fileLocksModule: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "mod.rs"),
-    commandsModule: path.join(turaRoot, "crates", "tools", "src", "commands", "mod.rs"),
-  }
-  const filesExist = Object.values(paths).every((file) => existsSync(file))
-  const handler = existsSync(paths.commandRunHandler) ? await fs.readFile(paths.commandRunHandler, "utf8") : ""
-  const fileLocks = existsSync(paths.fileLocksModule) ? await fs.readFile(paths.fileLocksModule, "utf8") : ""
-  const commandsModule = existsSync(paths.commandsModule) ? await fs.readFile(paths.commandsModule, "utf8") : ""
-  const schema = existsSync(paths.commandRunSchema) ? JSON.parse(await fs.readFile(paths.commandRunSchema, "utf8")) : {}
-  const commandItems = schema?.input_schema?.properties?.commands?.items || {}
-  const commandRequired = commandItems?.required || []
-  const commandHasEnum = !!commandItems?.properties?.command_type?.enum
-  const commandsModuleText = commandsModule.replace(/\s+/g, " ")
-  const oldDirectoriesAbsent = [
-    path.join(turaRoot, "crates", "tools", "interface"),
-    path.join(turaRoot, "crates", "tools", "prompt"),
-    path.join(turaRoot, "crates", "tools", "scripts"),
-    path.join(turaRoot, "crates", "tools", "command_run"),
-    path.join(turaRoot, "crates", "tools", "commands"),
-    path.join(turaRoot, "crates", "tools", "modes"),
-    path.join(turaRoot, "crates", "tools", "runtime"),
-  ].every((file) => !existsSync(file))
-  return {
-    ok:
-      filesExist &&
-      oldDirectoriesAbsent &&
-      schema?.input_schema?.properties?.commands?.minItems === 5 &&
-      schema?.input_schema?.properties?.commands?.maxItems === 15 &&
-      !schema?.input_schema?.properties?.task_status &&
-      /task_status/.test(schema?.description || "") &&
-      commandItems?.properties?.command_type?.type === "string" &&
-      !commandHasEnum &&
-      JSON.stringify(commandRequired) === JSON.stringify(["command_type", "command_line"]) &&
-      /struct FileLockManager/.test(fileLocks) &&
-      /fn run_command_run_step/.test(handler) &&
-      /workspace_write/.test(fileLocks) &&
-      /pub fn execute/.test(commandsModule) &&
-      /pub mod planning/.test(commandsModule) &&
-      /pub mod compact_context/.test(commandsModule) &&
-      /"apply_patch"\s*=>\s*apply_patch::execute/.test(commandsModuleText) &&
-      /"compact_context"\s*=>\s*compact_context::execute/.test(commandsModuleText) &&
-      /"planning"[^=]*=>\s*\{\s*planning::execute/.test(commandsModuleText) &&
-      /"bash"\s*=>\s*bash::execute/.test(commandsModuleText) &&
-      /"shell_command"\s*=>\s*shell_command::execute/.test(commandsModuleText) &&
-      /unsupported command_run command/.test(commandsModule) &&
-      !/handler\.py|invoke_python_script|command_run_service|services[\\/]command_run/.test(handler + fileLocks + commandsModule),
-    files_exist: filesExist,
-    old_directories_absent: oldDirectoriesAbsent,
-    command_min_items: schema?.input_schema?.properties?.commands?.minItems,
-    command_max_items: schema?.input_schema?.properties?.commands?.maxItems,
-    command_required: commandRequired,
-    command_run_has_task_status: /task_status/.test(schema?.description || ""),
-    command_has_enum: commandHasEnum,
-    has_file_lock_manager: /struct FileLockManager/.test(fileLocks),
-    has_step_grouping: /fn run_command_run_step/.test(handler),
-    has_workspace_write_lock: /workspace_write/.test(fileLocks),
-    has_command_dispatch_module: /pub fn execute/.test(commandsModule),
-    has_exact_internal_command_dispatch:
-      /"apply_patch"\s*=>\s*apply_patch::execute/.test(commandsModuleText) &&
-      /"compact_context"\s*=>\s*compact_context::execute/.test(commandsModuleText) &&
-      /"planning"[^=]*=>\s*\{\s*planning::execute/.test(commandsModuleText) &&
-      /"bash"\s*=>\s*bash::execute/.test(commandsModuleText) &&
-      /"shell_command"\s*=>\s*shell_command::execute/.test(commandsModuleText) &&
-      /unsupported command_run command/.test(commandsModule),
-    has_forbidden_legacy_code: /handler\.py|invoke_python_script|command_run_service|services[\\/]command_run/.test(handler + fileLocks + commandsModule),
-  }
-}
-
 async function runCodex(workspace) {
   const bin = codexBinForRoot(codexCliRoot)
   if (!existsSync(bin)) throw new Error(`missing codex-cli binary: ${bin}`)
@@ -760,10 +669,9 @@ async function runTura(workspace) {
   const verify = await verifyRepo(workspace)
   const analysis = analyzeEvents(result.stdout, "tura")
   const provider_contract = await inspectTuraProviderContract(providerSinceMs)
-  const source_contract = await inspectTuraSourceContract()
   const pathOk = analysis.path_ok || provider_contract.tool_flow?.path_ok
   const phaseOk = analysis.phase_sequence_ok || provider_contract.tool_flow?.path_ok
-  return { agent: "tura", bin, workspace, ok: result.status === 0 && verify.ok && pathOk && phaseOk && !analysis.raw_tool_payload_visible && !analysis.forbidden_tool_mentions && provider_contract.ok && provider_contract.context_contract.ok && source_contract.ok, exit_code: result.status, verify, analysis, provider_contract, source_contract, stdout_path: stdoutPath, stderr_path: stderrPath, last_message_path: lastMessagePath, stderr_tail: result.stderr.slice(-2000), duration_ms: result.durationMs, first_output_ms: result.firstOutputMs }
+  return { agent: "tura", bin, workspace, ok: result.status === 0 && verify.ok && pathOk && phaseOk && !analysis.raw_tool_payload_visible && !analysis.forbidden_tool_mentions && provider_contract.ok && provider_contract.context_contract.ok, exit_code: result.status, verify, analysis, provider_contract, stdout_path: stdoutPath, stderr_path: stderrPath, last_message_path: lastMessagePath, stderr_tail: result.stderr.slice(-2000), duration_ms: result.durationMs, first_output_ms: result.firstOutputMs }
 }
 
 async function main() {

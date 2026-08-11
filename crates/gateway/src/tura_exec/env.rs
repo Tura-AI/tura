@@ -1,8 +1,27 @@
+use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::cli::CliConfig;
 
-pub(crate) fn configure_runtime_env(config: &CliConfig) {
+const FORCED_CAPABILITY_DIRECTORIES_ENV: &str = "TURA_FORCED_CAPABILITY_DIRECTORIES";
+
+#[derive(Deserialize)]
+struct CapabilityManifest {
+    id: String,
+    #[serde(default)]
+    core: bool,
+    execution: String,
+    runtime: CapabilityRuntime,
+}
+
+#[derive(Deserialize)]
+struct CapabilityRuntime {
+    binary: String,
+}
+
+pub(crate) fn configure_runtime_env(config: &CliConfig) -> Result<(), String> {
+    configure_capability_directories(config)?;
     // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
     #[allow(
         unsafe_code,
@@ -120,6 +139,137 @@ pub(crate) fn configure_runtime_env(config: &CliConfig) {
     }
     configure_release_runtime_env();
     configure_progress_env(config);
+    Ok(())
+}
+
+fn configure_capability_directories(config: &CliConfig) -> Result<(), String> {
+    let directories = validate_capability_directories(config)?;
+    if directories.is_empty() {
+        // SAFETY: CLI startup performs process-environment mutation before worker threads exist.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at CLI startup"
+        )]
+        unsafe {
+            std::env::remove_var(FORCED_CAPABILITY_DIRECTORIES_ENV)
+        };
+        return Ok(());
+    }
+    let encoded = serde_json::to_string(&directories)
+        .map_err(|err| format!("failed to encode --capability directories: {err}"))?;
+    // SAFETY: CLI startup performs process-environment mutation before worker threads exist.
+    #[allow(
+        unsafe_code,
+        reason = "Rust 2024 process-environment mutation audited at CLI startup"
+    )]
+    unsafe {
+        std::env::set_var(FORCED_CAPABILITY_DIRECTORIES_ENV, encoded)
+    };
+    Ok(())
+}
+
+fn validate_capability_directories(config: &CliConfig) -> Result<Vec<PathBuf>, String> {
+    let process_cwd = std::env::current_dir()
+        .map_err(|err| format!("failed to resolve current directory: {err}"))?;
+    let session_cwd = if config.cwd.is_absolute() {
+        config.cwd.clone()
+    } else {
+        process_cwd.join(&config.cwd)
+    };
+    let mut command_ids = BTreeMap::<String, PathBuf>::new();
+    let mut directories = Vec::new();
+    for requested in &config.capability_directories {
+        let candidate = if requested.is_absolute() {
+            requested.clone()
+        } else {
+            session_cwd.join(requested)
+        };
+        let directory = candidate.canonicalize().map_err(|err| {
+            format!(
+                "invalid --capability directory {}: {err}",
+                candidate.display()
+            )
+        })?;
+        if !directory.is_dir() {
+            return Err(format!(
+                "invalid --capability directory {}: expected a directory",
+                directory.display()
+            ));
+        }
+        let manifest_path = directory.join("command.toml");
+        let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|err| {
+            format!(
+                "invalid --capability directory {}: failed to read command.toml: {err}",
+                directory.display()
+            )
+        })?;
+        let manifest: CapabilityManifest = toml::from_str(&manifest_text).map_err(|err| {
+            format!(
+                "invalid command manifest {}: {err}",
+                manifest_path.display()
+            )
+        })?;
+        let command_id = manifest.id.trim();
+        if command_id.is_empty() {
+            return Err(format!(
+                "command id is empty in {}",
+                manifest_path.display()
+            ));
+        }
+        if manifest.core
+            || manifest.execution.trim() != "one_shot"
+            || manifest.runtime.binary.trim().is_empty()
+        {
+            return Err(format!(
+                "forced capability {command_id} must be a non-core one_shot command with runtime.binary"
+            ));
+        }
+        if let Some(previous) = command_ids.insert(command_id.to_string(), directory.clone()) {
+            return Err(format!(
+                "duplicate --capability command id {command_id}: {} and {}",
+                previous.display(),
+                directory.display()
+            ));
+        }
+        validate_capability_files(&directory, command_id)?;
+        if !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    Ok(directories)
+}
+
+fn validate_capability_files(directory: &Path, command_id: &str) -> Result<(), String> {
+    for file_name in ["prompt.md", "policy.toml"] {
+        let path = directory.join(file_name);
+        if !path.is_file() {
+            return Err(format!(
+                "invalid --capability directory {}: missing {file_name}",
+                directory.display()
+            ));
+        }
+    }
+    let policy_path = directory.join("policy.toml");
+    let policy = std::fs::read_to_string(&policy_path)
+        .map_err(|err| format!("failed to read {}: {err}", policy_path.display()))?;
+    policy
+        .parse::<toml::Value>()
+        .map_err(|err| format!("invalid policy {}: {err}", policy_path.display()))?;
+
+    let schema_path = directory.join("schema.json");
+    let schema_text = std::fs::read_to_string(&schema_path)
+        .map_err(|err| format!("failed to read {}: {err}", schema_path.display()))?;
+    let schema: serde_json::Value = serde_json::from_str(&schema_text)
+        .map_err(|err| format!("invalid command schema {}: {err}", schema_path.display()))?;
+    let schema_name = schema.get("name").and_then(serde_json::Value::as_str);
+    if schema_name != Some(command_id) || !schema.get("input_schema").is_some_and(|v| v.is_object())
+    {
+        return Err(format!(
+            "invalid command schema {}: name must equal {command_id:?} and input_schema must be an object",
+            schema_path.display()
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn normalize_model(model: &str) -> String {

@@ -29,6 +29,7 @@ pub(super) fn parse_command_item(value: &Value) -> Result<CommandItem, String> {
             workdir: None,
             step: None,
             timeout_ms: None,
+            binding_id: None,
         });
     }
     let Some(object) = value.as_object() else {
@@ -104,6 +105,7 @@ pub(super) fn parse_command_item(value: &Value) -> Result<CommandItem, String> {
         workdir: string_field(object, &["workdir", "cwd"]),
         step: u64_field(object, &["step"]),
         timeout_ms: u64_field(object, &["timeout_ms", "timeoutMs"]),
+        binding_id: string_field(object, &["id", "command_id", "commandId", "result_id"]),
     })
 }
 
@@ -172,6 +174,10 @@ fn inline_command_arguments(object: &serde_json::Map<String, Value>) -> Option<V
         "step",
         "timeout_ms",
         "timeoutMs",
+        "id",
+        "command_id",
+        "commandId",
+        "result_id",
     ] {
         arguments.remove(name);
     }

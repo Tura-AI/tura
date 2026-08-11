@@ -28,6 +28,12 @@ enum TrayClickAction {
     RefreshMenu,
 }
 
+trait TrayClickEffects {
+    fn open_gui(&mut self);
+    fn refresh_menu(&mut self);
+    fn show_menu(&mut self);
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum TrayLanguage {
     ZhCN,
@@ -179,16 +185,7 @@ impl GatewayTrayState {
         else {
             return;
         };
-        match tray_click_action(button, button_state) {
-            Some(TrayClickAction::OpenGui) => {
-                self.launch_gui(self.snapshot.last_workspace.clone(), None)
-            }
-            Some(TrayClickAction::RefreshMenu) => {
-                self.refresh();
-                self.tray_icon.show_menu();
-            }
-            None => {}
-        }
+        apply_tray_click(self, button, button_state);
     }
 
     fn refresh(&mut self) {
@@ -253,6 +250,20 @@ impl GatewayTrayState {
         let gateway_url = format!("http://127.0.0.1:{}", self.port);
         terminate_tracked_clients(&mut self.launched_clients);
         terminate_gateway_clients_by_command_line(&gateway_url);
+    }
+}
+
+impl TrayClickEffects for GatewayTrayState {
+    fn open_gui(&mut self) {
+        self.launch_gui(self.snapshot.last_workspace.clone(), None);
+    }
+
+    fn refresh_menu(&mut self) {
+        self.refresh();
+    }
+
+    fn show_menu(&mut self) {
+        self.tray_icon.show_menu();
     }
 }
 
@@ -592,6 +603,21 @@ fn tray_click_action(
     }
 }
 
+fn apply_tray_click(
+    effects: &mut impl TrayClickEffects,
+    button: MouseButton,
+    button_state: MouseButtonState,
+) {
+    match tray_click_action(button, button_state) {
+        Some(TrayClickAction::OpenGui) => effects.open_gui(),
+        Some(TrayClickAction::RefreshMenu) => {
+            effects.refresh_menu();
+            effects.show_menu();
+        }
+        None => {}
+    }
+}
+
 fn snapshots_equal(left: &TraySnapshot, right: &TraySnapshot) -> bool {
     left.last_workspace == right.last_workspace
         && left.session_process_directory == right.session_process_directory
@@ -769,9 +795,9 @@ fn is_gateway_client_process(process: &sysinfo::Process, gateway_url: &str) -> b
 #[cfg(test)]
 mod tests {
     use super::{
-        gui_args, is_active_session, load_tura_icon, menu_model, parse_tray_language,
-        same_menu_structure, session_label, tray_click_action, tray_enabled, tray_text,
-        ActiveSessionItem, TrayClickAction, TrayLanguage, TraySnapshot, TrayText,
+        apply_tray_click, gui_args, is_active_session, load_tura_icon, menu_model,
+        parse_tray_language, same_menu_structure, session_label, tray_enabled, tray_text,
+        ActiveSessionItem, TrayClickEffects, TrayLanguage, TraySnapshot, TrayText,
     };
     use serde_json::json;
     use session_log_contract::SessionSummary;
@@ -783,6 +809,23 @@ mod tests {
     use tray_icon::{MouseButton, MouseButtonState};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[derive(Default)]
+    struct RecordedTrayEffects(Vec<&'static str>);
+
+    impl TrayClickEffects for RecordedTrayEffects {
+        fn open_gui(&mut self) {
+            self.0.push("open_gui");
+        }
+
+        fn refresh_menu(&mut self) {
+            self.0.push("refresh_menu");
+        }
+
+        fn show_menu(&mut self) {
+            self.0.push("show_menu");
+        }
+    }
 
     fn summary(status: Option<&str>, state: Option<&str>) -> SessionSummary {
         SessionSummary {
@@ -908,32 +951,17 @@ mod tests {
 
     #[test]
     fn tray_refreshes_menu_only_on_right_click_release() {
-        assert_eq!(
-            tray_click_action(MouseButton::Right, MouseButtonState::Up),
-            Some(TrayClickAction::RefreshMenu)
-        );
-        assert_eq!(
-            tray_click_action(MouseButton::Right, MouseButtonState::Down),
-            None
-        );
-        assert_eq!(
-            tray_click_action(MouseButton::Left, MouseButtonState::Up),
-            Some(TrayClickAction::OpenGui)
-        );
+        let mut effects = RecordedTrayEffects::default();
 
-        let source = include_str!("tray.rs");
-        let production_source = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("tray production source");
-        let periodic_refresh_event = ["TrayUserEvent", "::", "Refresh"].concat();
-        let background_thread = ["std::thread", "::", "spawn"].concat();
-        assert!(!production_source.contains(&periodic_refresh_event));
-        assert!(!production_source.contains(&background_thread));
-        assert_eq!(production_source.matches("self.refresh();").count(), 1);
-        assert!(production_source
-            .replace("\r\n", "\n")
-            .contains("self.refresh();\n                self.tray_icon.show_menu();"));
+        apply_tray_click(&mut effects, MouseButton::Right, MouseButtonState::Down);
+        assert!(effects.0.is_empty());
+
+        apply_tray_click(&mut effects, MouseButton::Right, MouseButtonState::Up);
+        assert_eq!(effects.0, ["refresh_menu", "show_menu"]);
+
+        effects.0.clear();
+        apply_tray_click(&mut effects, MouseButton::Left, MouseButtonState::Up);
+        assert_eq!(effects.0, ["open_gui"]);
     }
 
     #[test]

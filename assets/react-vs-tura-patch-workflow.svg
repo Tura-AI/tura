@@ -1,0 +1,493 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="970" viewBox="0 0 1600 970" role="img" aria-labelledby="title desc">
+  <title id="title">Animated ReAct versus Tura patch workflow</title>
+  <desc id="desc">A black terminal-style animated comparison. ReAct runs search, patch, build, test and lint through repeated model turns on the left. Tura runs the same dependency-aware process inside one command_run call on the right. Benchmark input tokens, output tokens, rounds and modeled cost appear at the end.</desc>
+
+  <defs>
+    <clipPath id="screen">
+      <rect x="0" y="0" width="1600" height="970"/>
+    </clipPath>
+    <style><![CDATA[
+      :root {
+        --terminal: #0b0d0e;
+        --chrome: #272822;
+        --panel: #141718;
+        --panel-2: #181b1c;
+        --primary: #f4f7eb;
+        --agent: #d9decd;
+        --secondary: #97a099;
+        --aux: #67746f;
+        --line: #3d4644;
+        --highlight: #40e0d0;
+        --running: #f4bf75;
+        --success: #a6e22e;
+        --error: #ef5f73;
+      }
+
+      * { box-sizing: border-box; }
+      svg {
+        background: var(--terminal);
+        font-family: "Cascadia Mono", "Cascadia Code", Consolas, "DejaVu Sans Mono", monospace;
+      }
+      text { dominant-baseline: text-before-edge; white-space: pre; }
+      .primary { fill: var(--primary); font-weight: 650; }
+      .agent { fill: var(--agent); font-weight: 620; }
+      .secondary { fill: var(--secondary); font-weight: 620; }
+      .aux { fill: var(--aux); font-weight: 620; }
+      .highlight { fill: var(--highlight); font-weight: 700; }
+      .running { fill: var(--running); font-weight: 700; }
+      .success { fill: var(--success); font-weight: 700; }
+      .error { fill: var(--error); font-weight: 700; }
+      .small { font-size: 16px; }
+      .body { font-size: 19px; }
+      .large { font-size: 23px; }
+      .heading { font-size: 30px; font-weight: 750; }
+      .metric { font-size: 24px; font-weight: 750; }
+      .line { stroke: var(--line); }
+
+      .cursor { animation: cursor-blink 1.05s steps(1, end) infinite; }
+      .pulse { animation: pulse 800ms ease-in-out infinite; }
+      .anim {
+        opacity: 0;
+        animation-duration: 30000ms;
+        animation-timing-function: steps(1, end);
+        animation-iteration-count: infinite;
+      }
+      .r04 { animation-name: reveal-04; }
+      .r08 { animation-name: reveal-08; }
+      .r12 { animation-name: reveal-12; }
+      .r16 { animation-name: reveal-16; }
+      .r18 { animation-name: reveal-18; }
+      .r20 { animation-name: reveal-20; }
+      .r24 { animation-name: reveal-24; }
+      .r28 { animation-name: reveal-28; }
+      .r30 { animation-name: reveal-30; }
+      .r32 { animation-name: reveal-32; }
+      .r34 { animation-name: reveal-34; }
+      .r36 { animation-name: reveal-36; }
+      .r40 { animation-name: reveal-40; }
+      .r42 { animation-name: reveal-42; }
+      .r44 { animation-name: reveal-44; }
+      .r46 { animation-name: reveal-46; }
+      .r52 { animation-name: reveal-52; }
+      .r56 { animation-name: reveal-56; }
+      .r58 { animation-name: reveal-58; }
+      .r60 { animation-name: reveal-60; }
+      .r64 { animation-name: reveal-64; }
+      .r70 { animation-name: reveal-70; }
+      .r76 { animation-name: reveal-76; }
+      .r84 { animation-name: reveal-84; }
+
+      .react-progress {
+        animation: react-progress 30000ms steps(20, end) infinite;
+      }
+      .tura-progress {
+        animation: tura-progress 30000ms steps(20, end) infinite;
+      }
+      @keyframes cursor-blink { 0%, 47% { opacity: 1; } 48%, 100% { opacity: 0; } }
+      @keyframes pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+      @keyframes reveal-04 { 0%, 2.6666%, 100% { opacity: 0; } 2.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-08 { 0%, 5.3332%, 100% { opacity: 0; } 5.3333%, 99.999% { opacity: 1; } }
+      @keyframes reveal-12 { 0%, 7.9999%, 100% { opacity: 0; } 8%, 99.999% { opacity: 1; } }
+      @keyframes reveal-16 { 0%, 10.6666%, 100% { opacity: 0; } 10.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-18 { 0%, 11.9999%, 100% { opacity: 0; } 12%, 99.999% { opacity: 1; } }
+      @keyframes reveal-20 { 0%, 13.3332%, 100% { opacity: 0; } 13.3333%, 99.999% { opacity: 1; } }
+      @keyframes reveal-24 { 0%, 15.9999%, 100% { opacity: 0; } 16%, 99.999% { opacity: 1; } }
+      @keyframes reveal-28 { 0%, 18.6666%, 100% { opacity: 0; } 18.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-30 { 0%, 19.9999%, 100% { opacity: 0; } 20%, 99.999% { opacity: 1; } }
+      @keyframes reveal-32 { 0%, 21.3332%, 100% { opacity: 0; } 21.3333%, 99.999% { opacity: 1; } }
+      @keyframes reveal-34 { 0%, 22.6666%, 100% { opacity: 0; } 22.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-36 { 0%, 23.9999%, 100% { opacity: 0; } 24%, 99.999% { opacity: 1; } }
+      @keyframes reveal-40 { 0%, 26.6666%, 100% { opacity: 0; } 26.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-42 { 0%, 27.9999%, 100% { opacity: 0; } 28%, 99.999% { opacity: 1; } }
+      @keyframes reveal-44 { 0%, 29.3332%, 100% { opacity: 0; } 29.3333%, 99.999% { opacity: 1; } }
+      @keyframes reveal-46 { 0%, 30.6666%, 100% { opacity: 0; } 30.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-52 { 0%, 34.6666%, 100% { opacity: 0; } 34.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-56 { 0%, 37.3332%, 100% { opacity: 0; } 37.3333%, 99.999% { opacity: 1; } }
+      @keyframes reveal-58 { 0%, 38.6666%, 100% { opacity: 0; } 38.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-60 { 0%, 39.9999%, 100% { opacity: 0; } 40%, 99.999% { opacity: 1; } }
+      @keyframes reveal-64 { 0%, 42.6666%, 100% { opacity: 0; } 42.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-70 { 0%, 46.6666%, 100% { opacity: 0; } 46.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-76 { 0%, 50.6666%, 100% { opacity: 0; } 50.6667%, 99.999% { opacity: 1; } }
+      @keyframes reveal-84 { 0%, 55.9999%, 100% { opacity: 0; } 56%, 99.999% { opacity: 1; } }
+      @keyframes react-progress {
+        0% { width: 0; }
+        50.6667%, 99.999% { width: 740px; }
+        100% { width: 0; }
+       }
+      @keyframes tura-progress {
+        0% { width: 0; }
+        40%, 99.999% { width: 740px; }
+        100% { width: 0; }
+       }
+      @media (prefers-reduced-motion: reduce) {
+        .anim { animation: none !important; opacity: 1 !important; }
+        .react-progress, .tura-progress { animation: none !important; width: 740px; }
+        .cursor, .pulse { animation: none !important; opacity: 1; }
+      }
+    ]]></style>
+  </defs>
+
+  <g clip-path="url(#screen)">
+    <rect width="1600" height="970" fill="var(--terminal)"/>
+
+    <!-- Terminal chrome -->
+    <rect x="0" y="0" width="1600" height="44" fill="var(--chrome)"/>
+    <circle cx="24" cy="22" r="7" fill="#f92672"/>
+    <circle cx="44" cy="22" r="7" fill="#f4bf75"/>
+    <circle cx="64" cy="22" r="7" fill="#a6e22e"/>
+    <text x="610" y="12" class="secondary small">same-patch-task — react-vs-tura</text>
+    <text x="1508" y="12" class="aux small">30s loop</text>
+    <path d="M0 43.5 H1600" class="line" stroke-width="1"/>
+
+    <!-- Shared task -->
+    <text x="24" y="60" class="aux small">TASK</text>
+    <text x="92" y="56" class="primary large">Patch command_run handler and complete CI verification</text>
+    <text x="92" y="88" class="secondary body">search → apply_patch → cargo build → cargo test → cargo clippy</text>
+    <path d="M0 119.5 H1600" class="line" stroke-width="1"/>
+
+    <!-- Split -->
+    <path d="M800 120 V760" class="line" stroke-width="1"/>
+
+    <!-- Left header -->
+    <rect x="0" y="120" width="800" height="66" fill="var(--panel)"/>
+    <text x="24" y="134" class="primary heading">REACT LOOP</text>
+    <text x="584" y="142" class="secondary body">model re-entry: </text>
+    <text x="748" y="142" class="error body">5</text>
+    <rect x="24" y="176" width="740" height="3" fill="#242a29"/>
+    <rect x="24" y="176" width="0" height="3" fill="var(--error)" class="react-progress"/>
+
+    <!-- Left execution: every tool result returns to the model -->
+    <g class="anim r04">
+      <text x="24" y="204" class="error body">[LLM 01]</text>
+      <text x="128" y="204" class="agent body">REASON</text>
+      <text x="220" y="204" class="primary body">find handler implementation and related files</text>
+    </g>
+    <g class="anim r08">
+      <text x="24" y="236" class="aux body">[TOOL]</text>
+      <text x="128" y="236" class="agent body">RUN</text>
+      <text x="220" y="236" class="secondary body">rg -n "TODO|command_run|handler" crates/</text>
+      <g opacity="0">
+        <text x="712" y="236" class="running body">[~]</text>
+        <circle cx="756" cy="248" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.053333;0.08;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="236" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.08;1"/>
+      </g>
+    </g>
+    <g class="anim r12">
+      <text x="24" y="268" class="aux body">[OUTPUT]</text>
+      <text x="128" y="268" class="success body">OK</text>
+      <text x="220" y="268" class="secondary body">found crates/tools/src/command_run/handler.rs</text>
+    </g>
+
+    <path d="M24 305 H764" class="line anim r16" stroke-width="1"/>
+    <g class="anim r16">
+      <text x="24" y="316" class="error body">[LLM 02]</text>
+      <text x="128" y="316" class="agent body">REASON</text>
+      <text x="220" y="316" class="primary body">read output, prepare minimal patch</text>
+    </g>
+    <g class="anim r20">
+      <text x="24" y="348" class="aux body">[TOOL]</text>
+      <text x="128" y="348" class="agent body">PATCH</text>
+      <text x="220" y="348" class="secondary body">apply_patch handler.rs</text>
+      <g opacity="0">
+        <text x="712" y="348" class="running body">[~]</text>
+        <circle cx="756" cy="360" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.133333;0.16;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="348" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.16;1"/>
+      </g>
+    </g>
+    <g class="anim r24">
+      <text x="24" y="380" class="aux body">[OUTPUT]</text>
+      <text x="128" y="380" class="success body">OK</text>
+      <text x="220" y="380" class="secondary body">patch applied</text>
+    </g>
+
+    <path d="M24 417 H764" class="line anim r28" stroke-width="1"/>
+    <g class="anim r28">
+      <text x="24" y="428" class="error body">[LLM 03]</text>
+      <text x="128" y="428" class="agent body">REASON</text>
+      <text x="220" y="428" class="primary body">read output, verify compilation</text>
+    </g>
+    <g class="anim r32">
+      <text x="24" y="460" class="aux body">[TOOL]</text>
+      <text x="128" y="460" class="agent body">RUN</text>
+      <text x="220" y="460" class="secondary body">cargo build -p runtime</text>
+      <g opacity="0">
+        <text x="712" y="460" class="running body">[~]</text>
+        <circle cx="756" cy="472" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.213333;0.24;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="460" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.24;1"/>
+      </g>
+    </g>
+    <g class="anim r36">
+      <text x="24" y="492" class="aux body">[OUTPUT]</text>
+      <text x="128" y="492" class="success body">OK</text>
+      <text x="220" y="492" class="secondary body">build finished</text>
+    </g>
+
+    <path d="M24 529 H764" class="line anim r42" stroke-width="1"/>
+    <g class="anim r42">
+      <text x="24" y="540" class="error body">[LLM 04]</text>
+      <text x="128" y="540" class="agent body">REASON</text>
+      <text x="220" y="540" class="primary body">read output, run unit tests</text>
+    </g>
+    <g class="anim r46">
+      <text x="24" y="572" class="aux body">[TOOL]</text>
+      <text x="128" y="572" class="agent body">RUN</text>
+      <text x="220" y="572" class="secondary body">cargo test -p runtime --lib</text>
+      <g opacity="0">
+        <text x="712" y="572" class="running body">[~]</text>
+        <circle cx="756" cy="584" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.306667;0.346667;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="572" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.346667;1"/>
+      </g>
+    </g>
+    <g class="anim r52">
+      <text x="24" y="604" class="aux body">[OUTPUT]</text>
+      <text x="128" y="604" class="success body">OK</text>
+      <text x="220" y="604" class="secondary body">tests passed</text>
+    </g>
+
+    <path d="M24 641 H764" class="line anim r58" stroke-width="1"/>
+    <g class="anim r58">
+      <text x="24" y="652" class="error body">[LLM 05]</text>
+      <text x="128" y="652" class="agent body">REASON</text>
+      <text x="220" y="652" class="primary body">read output, run final lint</text>
+    </g>
+    <g class="anim r64">
+      <text x="24" y="684" class="aux body">[TOOL]</text>
+      <text x="128" y="684" class="agent body">RUN</text>
+      <text x="220" y="684" class="secondary body">cargo clippy -p runtime --all-targets</text>
+      <g opacity="0">
+        <text x="712" y="684" class="running body">[~]</text>
+        <circle cx="756" cy="696" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.426667;0.466667;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="684" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.466667;1"/>
+      </g>
+    </g>
+    <g class="anim r70">
+      <text x="24" y="716" class="aux body">[OUTPUT]</text>
+      <text x="128" y="716" class="success body">OK</text>
+      <text x="220" y="716" class="secondary body">clippy clean</text>
+    </g>
+    <g class="anim r76">
+      <rect x="24" y="742" width="740" height="2" fill="var(--error)"/>
+      <text x="24" y="748" class="primary body">DONE — 5 model turns, 5 tool boundaries</text>
+    </g>
+
+    <!-- Right header -->
+    <rect x="800" y="120" width="800" height="66" fill="var(--panel)"/>
+    <text x="824" y="134" class="highlight heading">TURA LOOP</text>
+    <text x="1384" y="142" class="secondary body">model re-entry: </text>
+    <text x="1548" y="142" class="highlight body">1</text>
+    <rect x="824" y="176" width="740" height="3" fill="#242a29"/>
+    <rect x="824" y="176" width="0" height="3" fill="var(--highlight)" class="tura-progress"/>
+
+    <!-- Right execution: one LLM turn, runtime continues the graph -->
+    <g class="anim r04">
+      <text x="824" y="204" class="highlight body">[LLM 01]</text>
+      <text x="928" y="204" class="agent body">REASON</text>
+      <text x="1020" y="204" class="primary body">build one dependency-aware execution plan</text>
+    </g>
+    <g class="anim r08">
+      <text x="824" y="236" class="highlight body">[LLM 01]</text>
+      <text x="928" y="236" class="agent body">CALL</text>
+      <text x="1020" y="236" class="highlight body">command_run</text>
+      <text x="1168" y="236" class="secondary body">{ 6 commands / 4 steps }</text>
+    </g>
+
+    <rect x="824" y="278" width="740" height="436" fill="var(--panel-2)" stroke="var(--line)"/>
+    <text x="844" y="292" class="aux small">command_run / execution graph</text>
+    <path d="M844 320 H1544" class="line" stroke-width="1"/>
+
+    <g class="anim r12">
+      <text x="844" y="334" class="highlight body">STEP 1</text>
+      <text x="940" y="334" class="agent body">RUN</text>
+      <text x="1000" y="334" class="primary body">rg -n "TODO|command_run|handler" crates/</text>
+      <g opacity="0">
+        <text x="1492" y="334" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.08;0.12;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="334" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.12;1"/>
+      </g>
+      <text x="844" y="366" class="highlight body">STEP 1</text>
+      <text x="940" y="366" class="agent body">RUN</text>
+      <text x="1000" y="368" class="primary small">rg --files crates/runtime/src crates/tools/src</text>
+      <g opacity="0">
+        <text x="1492" y="366" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.08;0.12;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="366" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.12;1"/>
+      </g>
+    </g>
+    <g class="anim r18">
+      <text x="844" y="398" class="aux body">RESULT</text>
+      <text x="940" y="398" class="success body">OK</text>
+      <text x="1000" y="398" class="secondary body">handler.rs + related runtime files found</text>
+    </g>
+
+    <g class="anim r24">
+      <text x="844" y="438" class="highlight body">STEP 2</text>
+      <text x="940" y="438" class="agent body">PATCH</text>
+      <text x="1000" y="438" class="primary body">apply_patch handler.rs</text>
+      <g opacity="0">
+        <text x="1492" y="438" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.16;0.20;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="438" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.20;1"/>
+      </g>
+    </g>
+    <g class="anim r30">
+      <text x="844" y="470" class="aux body">RESULT</text>
+      <text x="940" y="470" class="success body">OK</text>
+      <text x="1000" y="470" class="secondary body">patch applied; dependent steps released</text>
+    </g>
+
+    <g class="anim r34">
+      <text x="844" y="510" class="highlight body">STEP 3</text>
+      <text x="940" y="510" class="agent body">RUN</text>
+      <text x="1000" y="510" class="primary body">cargo build -p runtime</text>
+      <g opacity="0">
+        <text x="1492" y="510" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.226667;0.266667;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="510" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.266667;1"/>
+      </g>
+    </g>
+    <g class="anim r40">
+      <text x="844" y="542" class="aux body">RESULT</text>
+      <text x="940" y="542" class="success body">OK</text>
+      <text x="1000" y="542" class="secondary body">build finished; verification released</text>
+    </g>
+
+    <g class="anim r44">
+      <text x="844" y="582" class="highlight body">STEP 4</text>
+      <text x="940" y="582" class="agent body">RUN</text>
+      <text x="1000" y="582" class="primary body">cargo test -p runtime --lib</text>
+      <g opacity="0">
+        <text x="1492" y="582" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.293333;0.373333;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="582" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.373333;1"/>
+      </g>
+      <text x="844" y="614" class="highlight body">STEP 4</text>
+      <text x="940" y="614" class="agent body">RUN</text>
+      <text x="1000" y="614" class="primary body">cargo clippy -p runtime --all-targets</text>
+      <g opacity="0">
+        <text x="1492" y="614" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.293333;0.373333;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="614" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.373333;1"/>
+      </g>
+    </g>
+    <g class="anim r56">
+      <path d="M844 654 H1544" class="line" stroke-width="1"/>
+      <text x="844" y="664" class="aux body">DISTILLED</text>
+      <text x="966" y="664" class="success body">PATCHED · BUILD OK · TESTS OK · LINT OK</text>
+    </g>
+    <g class="anim r60">
+      <rect x="824" y="742" width="740" height="2" fill="var(--highlight)"/>
+      <text x="824" y="748" class="primary body">DONE — 1 model turn, runtime executed the full graph</text>
+    </g>
+
+    <!-- Live task counters stay visible and change only when the model is entered -->
+    <g>
+      <rect x="0" y="780" width="1600" height="190" fill="var(--panel)"/>
+      <path d="M0 780 H1600" stroke="var(--highlight)" stroke-width="2"/>
+      <path d="M800 800 V938" class="line" stroke-width="1"/>
+      <text x="24" y="798" class="primary large">LIVE TASK USAGE</text>
+      <text x="264" y="802" class="aux small">includes fixed 2.4K system prompt per model entry · $5/M input + $30/M output</text>
+
+      <text x="24" y="842" class="primary metric">REACT — CURRENT TASK</text>
+      <text x="24" y="884" class="secondary body">INPUT</text>
+      <text x="112" y="880" class="primary metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-1" opacity="0">3.2K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.106667;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-2" opacity="0">7.8K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.106667;0.186667;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-3" opacity="0">13.6K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.186667;0.28;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-4" opacity="0">20.5K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.28;0.386667;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-5" opacity="1">28.6K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.386667;1"/></text>
+      <text x="260" y="884" class="secondary body">OUTPUT</text>
+      <text x="370" y="880" class="primary metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-04-08" opacity="0">90<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.053333;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-08-16" opacity="0">210<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.053333;0.106667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-16-20" opacity="0">290<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.106667;0.133333;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-20-28" opacity="0">390<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.133333;0.186667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-28-32" opacity="0">445<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.186667;0.213333;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-32-42" opacity="0">510<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.213333;0.28;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-42-46" opacity="0">555<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.28;0.306667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-46-58" opacity="0">610<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.306667;0.386667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-58-64" opacity="0">650<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.386667;0.426667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-64-end" opacity="1">700<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.426667;1"/></text>
+      <text x="500" y="884" class="secondary body">ROUNDS</text>
+      <text x="610" y="880" class="primary metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-1" opacity="0">1<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.106667;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-2" opacity="0">2<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.106667;0.186667;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-3" opacity="0">3<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.186667;0.28;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-4" opacity="0">4<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.28;0.386667;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-5" opacity="1">5<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.386667;1"/></text>
+      <text x="24" y="920" class="secondary body">MODELED COST</text>
+      <text x="184" y="916" class="primary metric counter stat0" opacity="0">$0.000<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-04-08" opacity="0">$0.019<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.053333;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-08-16" opacity="0">$0.022<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.053333;0.106667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-16-20" opacity="0">$0.048<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.106667;0.133333;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-20-28" opacity="0">$0.051<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.133333;0.186667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-28-32" opacity="0">$0.081<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.186667;0.213333;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-32-42" opacity="0">$0.083<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.213333;0.28;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-42-46" opacity="0">$0.119<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.28;0.306667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-46-58" opacity="0">$0.121<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.306667;0.386667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-58-64" opacity="0">$0.163<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.386667;0.426667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-64-end" opacity="1">$0.164<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.426667;1"/></text>
+
+      <text x="824" y="842" class="highlight metric">TURA — CURRENT TASK</text>
+      <text x="824" y="884" class="secondary body">INPUT</text>
+      <text x="912" y="880" class="highlight metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="912" y="880" class="highlight metric counter tura-stat-1" opacity="1">3.8K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.026667;1"/></text>
+      <text x="1054" y="884" class="secondary body">OUTPUT</text>
+      <text x="1164" y="880" class="highlight metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="1164" y="880" class="highlight metric counter phase-04-08" opacity="0">260<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.053333;1"/></text>
+      <text x="1164" y="880" class="highlight metric counter phase-08-end" opacity="1">620<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.053333;1"/></text>
+      <text x="1294" y="884" class="secondary body">ROUNDS</text>
+      <text x="1404" y="880" class="highlight metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="1404" y="880" class="highlight metric counter tura-stat-1" opacity="1">1<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.026667;1"/></text>
+      <text x="824" y="920" class="secondary body">MODELED COST</text>
+      <text x="984" y="916" class="highlight metric counter stat0" opacity="0">$0.000<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="984" y="916" class="highlight metric counter phase-04-08" opacity="0">$0.027<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.053333;1"/></text>
+      <text x="984" y="916" class="highlight metric counter phase-08-end" opacity="1">$0.038<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.053333;1"/></text>
+      <text x="1160" y="920" class="secondary body">TOKEN SAVING</text>
+      <text x="1328" y="916" class="highlight metric counter stat0" opacity="0">—<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="1328" y="916" class="highlight metric counter phase-04-64" opacity="0">calculating<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.426667;1"/></text>
+      <text x="1328" y="916" class="highlight metric counter phase-64-end" opacity="1">−84.9%<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.426667;1"/></text>
+    </g>
+
+    <rect x="0" y="948" width="1600" height="22" fill="#080a0b"/>
+    <text x="12" y="950" class="aux small">same engineering work · fewer model round trips · animation restarts automatically</text>
+    <text x="1568" y="950" class="highlight small cursor">█</text>
+  </g>
+</svg>

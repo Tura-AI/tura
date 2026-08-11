@@ -7,8 +7,57 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { platformPackageName } from "./release-artifacts.mjs";
+import {
+  ensureRuntimeDependencies,
+  runtimeDependencyCheckSkipped,
+  runtimeDependencyCommands,
+} from "./install-release.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+test("postinstall probes only runtime commands for each supported platform", () => {
+  const observed = [];
+  ensureRuntimeDependencies({
+    platform: "linux",
+    env: {},
+    exists: (command) => {
+      observed.push(command);
+      return true;
+    },
+  });
+  assert.deepEqual(observed, runtimeDependencyCommands("linux"));
+  assert.deepEqual(observed, ["sh", "tar", "bash"]);
+  assert.equal(observed.some((command) => ["cargo", "rustc", "bun", "uv"].includes(command)), false);
+});
+
+test("postinstall skip flag bypasses runtime command probes", () => {
+  let probes = 0;
+  ensureRuntimeDependencies({
+    platform: "linux",
+    env: { TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK: "true" },
+    exists: () => {
+      probes += 1;
+      return false;
+    },
+  });
+  assert.equal(probes, 0);
+  assert.equal(runtimeDependencyCheckSkipped({ TURA_NPM_SKIP_RUNTIME_DEPENDENCY_CHECK: "1" }), true);
+});
+
+test("Windows postinstall delegates to the PowerShell runtime check", () => {
+  let powershellChecks = 0;
+  ensureRuntimeDependencies({
+    platform: "win32",
+    env: {},
+    exists: () => {
+      throw new Error("Windows must not use POSIX command probes");
+    },
+    ensurePowerShell: () => {
+      powershellChecks += 1;
+    },
+  });
+  assert.equal(powershellChecks, 1);
+});
 
 test("postinstall fails directly when the platform package is unavailable", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "tura-postinstall-missing-platform-"));

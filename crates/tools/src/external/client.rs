@@ -50,7 +50,7 @@ pub fn resolve_binary_in_root(repo_root: &std::path::Path, binary_name: &str) ->
             .replace('-', "_")
             .to_ascii_uppercase()
     );
-    if let Ok(path) = std::env::var(override_var) {
+    if let Some(path) = registry::command_environment_value(&override_var) {
         let path = PathBuf::from(path);
         if path.exists() {
             return Some(path);

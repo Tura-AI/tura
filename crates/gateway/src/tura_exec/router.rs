@@ -189,7 +189,10 @@ fn router_callback_direct_item_event(
     emitted_cli_items: &mut HashSet<String>,
 ) -> Option<Value> {
     let item_type = event.pointer("/item/type").and_then(Value::as_str)?;
-    if !matches!(item_type, "command_execution" | "file_change") {
+    if !matches!(
+        item_type,
+        "agent_message" | "command_execution" | "file_change"
+    ) {
         return None;
     }
     let event_type = event.get("type").and_then(Value::as_str)?;
@@ -508,6 +511,15 @@ pub(crate) fn worker_env_from_current_process() -> serde_json::Map<String, Value
         "TURA_COMMAND_RUN_SANDBOX",
         "TURA_COMMAND_RUN_STRICT_JSON",
         "TURA_COMMAND_RUN_DISABLE_STRICT_JSON",
+        "TURA_FORCED_CAPABILITY_DIRECTORIES",
+        "TURA_MCP_STDIO_BRIDGE_BIN",
+        "TURA_MCP_SERVER_COMMAND",
+        "TURA_MCP_SERVER_ARGS_JSON",
+        "TURA_MCP_SERVER_NAME",
+        "TURA_MCP_SERVER_TRANSPORT",
+        "TURA_MCP_COMMAND_ID",
+        "TURA_MCP_BROKER_ADDR",
+        "TURA_MCP_BROKER_TOKEN",
         "TURA_RUNTIME_ERRORS_FATAL",
         "TURA_RUNTIME_WORKER_STDERR_LOG",
         "TURA_DEBUG_RUNTIME",
@@ -745,6 +757,8 @@ mod tests {
         let previous_model = std::env::var_os("TURA_SESSION_MAX_TOKENS");
         let previous_goal = std::env::var_os("TURA_GOAL_MODE");
         let previous_no_op = std::env::var_os("TURA_NO_OP_MANUAL");
+        let previous_capabilities = std::env::var_os("TURA_FORCED_CAPABILITY_DIRECTORIES");
+        let previous_broker = std::env::var_os("TURA_MCP_BROKER_ADDR");
         let previous_empty = std::env::var_os("TURA_SESSION_LANGUAGE");
         let previous_other = std::env::var_os("TURA_UNRELATED_ENV_FOR_TEST");
         let legacy_timeout_key = ["TURA_WORKER", "INVOKE_TIMEOUT_SECS"].join("_");
@@ -780,6 +794,25 @@ mod tests {
             reason = "Rust 2024 process-environment mutation audited at the caller"
         )]
         unsafe {
+            std::env::set_var(
+                "TURA_FORCED_CAPABILITY_DIRECTORIES",
+                r#"["C:\\commands\\mcp"]"#,
+            )
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
+            std::env::set_var("TURA_MCP_BROKER_ADDR", "127.0.0.1:41234")
+        };
+        // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
+        #[allow(
+            unsafe_code,
+            reason = "Rust 2024 process-environment mutation audited at the caller"
+        )]
+        unsafe {
             std::env::set_var("TURA_SESSION_LANGUAGE", "")
         };
         // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
@@ -804,6 +837,14 @@ mod tests {
         assert_eq!(env.get("TURA_SESSION_MAX_TOKENS"), Some(&json!("4096")));
         assert_eq!(env.get("TURA_GOAL_MODE"), Some(&json!("1")));
         assert_eq!(env.get("TURA_NO_OP_MANUAL"), Some(&json!("1")));
+        assert_eq!(
+            env.get("TURA_FORCED_CAPABILITY_DIRECTORIES"),
+            Some(&json!(r#"["C:\\commands\\mcp"]"#))
+        );
+        assert_eq!(
+            env.get("TURA_MCP_BROKER_ADDR"),
+            Some(&json!("127.0.0.1:41234"))
+        );
         assert!(!env.contains_key("TURA_SESSION_LANGUAGE"));
         assert!(!env.contains_key("TURA_UNRELATED_ENV_FOR_TEST"));
         assert!(
@@ -815,6 +856,8 @@ mod tests {
         restore_env("TURA_SESSION_MAX_TOKENS", previous_model);
         restore_env("TURA_GOAL_MODE", previous_goal);
         restore_env("TURA_NO_OP_MANUAL", previous_no_op);
+        restore_env("TURA_FORCED_CAPABILITY_DIRECTORIES", previous_capabilities);
+        restore_env("TURA_MCP_BROKER_ADDR", previous_broker);
         restore_env("TURA_SESSION_LANGUAGE", previous_empty);
         restore_env("TURA_UNRELATED_ENV_FOR_TEST", previous_other);
         restore_env(&legacy_timeout_key, previous_timeout);
@@ -992,6 +1035,41 @@ mod tests {
 
         let duplicate = router_callback_cli_events(&notification, &mut emitted);
         assert!(duplicate.is_empty());
+    }
+
+    #[test]
+    fn router_callback_cli_events_emit_round_agent_message_once() {
+        let mut emitted = HashSet::new();
+        let notification = json!({
+            "request_id": "request-1",
+            "kind": "gateway.callback",
+            "method": "session.agent_message",
+            "payload": {
+                "session_id": "session-1",
+                "runtime_id": "runtime-round-2",
+                "body": {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "runtime-round-2.message",
+                        "type": "agent_message",
+                        "status": "completed",
+                        "text": "I found the failing boundary; next I will patch it."
+                    }
+                }
+            }
+        });
+
+        let events = router_callback_cli_events(&notification, &mut emitted);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["type"], "item.completed");
+        assert_eq!(events[0]["item"]["type"], "agent_message");
+        assert_eq!(events[0]["item"]["status"], "completed");
+        assert_eq!(
+            events[0]["item"]["text"],
+            "I found the failing boundary; next I will patch it."
+        );
+        assert!(router_callback_cli_events(&notification, &mut emitted).is_empty());
     }
 
     #[test]

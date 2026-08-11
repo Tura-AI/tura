@@ -1,6 +1,9 @@
 pub const TOOL_NAME: &str = "command_run";
 
 mod handler;
+mod output_binding;
+
+pub use output_binding::CommandRunOutputBindings;
 
 pub use handler::{
     execute, execute_async_value, execute_async_value_with_allowed,

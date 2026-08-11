@@ -1,0 +1,35 @@
+{
+  "schema": "tura.behavior-test-replacements.v1",
+  "replacements": [
+    {
+      "removed": "tests/english_agent_output_punctuation.rs",
+      "boundary": "rendered assistant text normalization",
+      "command": "bun test apps/gui/tests/unit/conversation/message-punctuation.test.ts"
+    },
+    {
+      "removed": "crates/tools/tests/contracts/compact_context_contract.mjs",
+      "boundary": "task_status parsing and runtime context replacement",
+      "command": "cargo test --quiet -p tools compact_context && cargo test --quiet -p runtime extract_compact_context_results_accepts_task_status_handoff_and_keeps_status"
+    },
+    {
+      "removed": "crates/tools/tests/contracts/planning_backend_contract.mjs",
+      "boundary": "planning parser, command routing, and task-plan replacement",
+      "command": "cargo test --quiet -p tools planning && cargo test --quiet -p runtime planning_replaces_active_task_and_preserves_queued_tail"
+    },
+    {
+      "removed": "crates/gateway/src/tray.rs source inspection",
+      "boundary": "tray click side effects",
+      "command": "cargo test --quiet -p gateway tray_refreshes_menu_only_on_right_click_release"
+    },
+    {
+      "removed": "default-agent constant equality tests",
+      "boundary": "session API default resolves through the agent registry",
+      "command": "cargo test --quiet -p gateway --features business-tests --test default_session_agent_test"
+    },
+    {
+      "removed": "installer and npm source-text contracts",
+      "boundary": "installer execution and release artifact validation",
+      "command": "node --test scripts/npm/install-release.test.mjs scripts/npm/release-artifacts.test.mjs"
+    }
+  ]
+}

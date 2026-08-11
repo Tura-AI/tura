@@ -39,6 +39,7 @@ Options:
                                   reasoning effort override
       --planning MODE       planning override: auto, on, or off
                                   (default: auto, follows selected agent config)
+      --capability DIR[,DIR...]  force-enable command package directories (repeatable)
       --bash, --zsh, --shll       force the command-run shell surface for this turn
       --sandbox                   restrict command_run writes/workdirs to the workspace
   -c, --config KEY=VALUE          runtime override:
@@ -87,6 +88,7 @@ pub(crate) struct CliConfig {
     pub(crate) command_run_shell: Option<String>,
     pub(crate) command_run_sandbox: bool,
     pub(crate) agent: Option<String>,
+    pub(crate) capability_directories: Vec<PathBuf>,
     pub(crate) session_id: Option<String>,
     pub(crate) last_message_path: Option<PathBuf>,
     /// `--embedded`: run the runtime in-process (codex-style in-process transport),
@@ -117,6 +119,7 @@ impl CliConfig {
             command_run_shell: None,
             command_run_sandbox: false,
             agent: None,
+            capability_directories: Vec::new(),
             session_id: None,
             last_message_path: None,
             embedded: false,
@@ -153,6 +156,11 @@ impl CliConfig {
             }
             if let Some(value) = arg.strip_prefix("--planning=") {
                 config.planning_mode = parse_planning_mode(value)?;
+                index += 1;
+                continue;
+            }
+            if let Some(value) = arg.strip_prefix("--capability=") {
+                extend_capability_directories(&mut config.capability_directories, value)?;
                 index += 1;
                 continue;
             }
@@ -225,6 +233,11 @@ impl CliConfig {
                     config.session_id = Some(take_value(&args, index)?);
                     index += 2;
                 }
+                "--capability" => {
+                    let value = take_value(&args, index)?;
+                    extend_capability_directories(&mut config.capability_directories, &value)?;
+                    index += 2;
+                }
                 "-c" | "--config" => {
                     apply_config_arg(&mut config, &take_value(&args, index)?);
                     index += 2;
@@ -257,6 +270,28 @@ impl CliConfig {
         }
         Ok(stdin)
     }
+}
+
+fn extend_capability_directories(
+    directories: &mut Vec<PathBuf>,
+    value: &str,
+) -> Result<(), String> {
+    let mut found = false;
+    for item in value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        found = true;
+        let path = PathBuf::from(item);
+        if !directories.contains(&path) {
+            directories.push(path);
+        }
+    }
+    if !found {
+        return Err("--capability requires at least one directory".to_string());
+    }
+    Ok(())
 }
 
 fn take_value(args: &[String], index: usize) -> Result<String, String> {
@@ -588,5 +623,38 @@ mod tests {
 
         assert!(config.command_run_sandbox);
         assert!(!compat.command_run_sandbox);
+    }
+
+    #[test]
+    fn capability_accepts_comma_separated_and_repeated_directories() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--capability".to_string(),
+            "first, second".to_string(),
+            "--capability=third,first".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse capability directories");
+
+        assert_eq!(
+            config.capability_directories,
+            vec![
+                PathBuf::from("first"),
+                PathBuf::from("second"),
+                PathBuf::from("third")
+            ]
+        );
+    }
+
+    #[test]
+    fn capability_rejects_an_empty_directory_list() {
+        let error = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--capability=, ,".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect_err("empty capability list should fail");
+
+        assert!(error.contains("at least one directory"), "{error}");
     }
 }

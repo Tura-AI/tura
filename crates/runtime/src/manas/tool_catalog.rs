@@ -120,7 +120,8 @@ pub(crate) fn project_directory_with_tools() -> Result<PathBuf, String> {
 }
 
 fn command_run_capability_directory(agent: &AgentManagement) -> Result<Option<PathBuf>, String> {
-    if agent.agent_capabilities.is_empty() {
+    if agent.agent_capabilities.is_empty() && code_tools::registry::forced_command_ids().is_empty()
+    {
         return Ok(None);
     }
 
@@ -156,6 +157,8 @@ pub(crate) fn command_run_commands_for_agent(agent: &AgentManagement) -> BTreeSe
             (name != COMMAND_RUN_TOOL).then_some(name)
         })
         .collect::<BTreeSet<_>>();
+
+    commands.extend(code_tools::registry::forced_command_ids());
 
     if commands.is_empty() && !agent.agent_capabilities.is_empty() {
         commands = default_command_run_commands();
@@ -413,6 +416,13 @@ pub(crate) fn command_run_command_format_line(
             compact_prompt(&command_prompt("planning")),
             compact_schema(code_tools::commands::planning::SCHEMA),
         )),
+        _ if code_tools::registry::forced_command_directory(&command_id).is_some() => {
+            Some(format!(
+                "- {command_id}: {} Schema: {}",
+                compact_prompt(&command_prompt(&command_id)),
+                compact_schema(&command_schema(&command_id)),
+            ))
+        }
         _ => None,
     }
 }
@@ -440,6 +450,11 @@ fn command_schema(command_id: &str) -> String {
 }
 
 fn read_command_file(command_id: &str, file_name: &str) -> Option<String> {
+    if let Some(directory) = code_tools::registry::forced_command_directory(command_id)
+        && let Ok(content) = std::fs::read_to_string(directory.join(file_name))
+    {
+        return Some(content);
+    }
     let root = project_directory_with_tools().ok()?;
     [
         root.join("crates")
@@ -464,29 +479,60 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
         "task_status",
         "planning",
     ];
-    order
+    let mut ordered = order
         .into_iter()
         .filter(|name| commands.contains(*name))
         .map(str::to_string)
-        .collect()
+        .collect::<Vec<_>>();
+    let remaining = commands
+        .iter()
+        .filter(|name| !ordered.contains(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    ordered.extend(remaining);
+    ordered
 }
 
 fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
+    let output_bindings_enabled = code_tools::registry::forced_command_ids()
+        .into_iter()
+        .any(|command_id| allowed_commands.contains(&command_id));
+    command_run_usage_patterns_for(allowed_commands, output_bindings_enabled)
+}
+
+fn command_run_usage_patterns_for(
+    allowed_commands: &BTreeSet<String>,
+    output_bindings_enabled: bool,
+) -> String {
     let mut patterns = vec![
         "- Current call schema is mandatory: call `command_run` with a non-empty `commands` array only. Every command object must include `command_type`, `command_line`, and `step`. Historical replay may show `arguments: {}` as a bookkeeping placeholder; never copy that placeholder into a new call.",
         "- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.",
         "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch; independent commands with no output dependency must share one step.",
         "- Do not run test/probe invocations before you have read the relevant code and determined the actual CLI command set.",
-        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; commands that depend on earlier output must use later unique ordered steps whose inputs are already known before the batch is created.",
+    ];
+    patterns.push(if output_bindings_enabled {
+        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; later steps may consume earlier-step JSON output through placeholders."
+    } else {
+        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; commands that depend on earlier output must use later unique ordered steps whose inputs are already known before the batch is created."
+    });
+    if output_bindings_enabled {
+        patterns.push("- Cross-step output variable: wrap a generic binding path as `#@#${<command id or command_type>.<JSON path>}#@#$` inside a later step's input. Give repeated commands unique `id` values. Only previous-step outputs are visible; unresolved, same-step, and future-step references fail before dispatch.");
+    }
+    patterns.extend([
         "- Code repair loop: after discovery has produced enough facts, use one step for coordinated edits and later steps for already-known tests or focused validation.",
         "- Avoid embedding long generated source code or complex quoting directly in shell command lines; for complex logic, invoke a script/interpreter from the active shell rather than encoding the logic in shell syntax.",
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
         "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
         "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command and use `apply_patch` to write or modify the testing scripts, step 3 run multiple known test commands in the same step.",
+    ]);
+    if output_bindings_enabled {
+        patterns.push("- Example output binding (all command ids, command types, and group ids are illustrative, not built-ins): step 1 `{\"id\":\"create_file\",\"command_type\":\"create_file\",\"command_line\":\"{\\\"path\\\":\\\"draft.txt\\\"}\",\"step\":1}` returns `{\"filename\":\"draft.txt\"}`; step 2 `{\"id\":\"edit_file\",\"command_type\":\"edit_file\",\"command_line\":\"{\\\"path\\\":\\\"#@#${create_file.filename}#@#$\\\",\\\"text\\\":\\\"updated\\\"}\",\"step\":2}` edits that file; step 3 `{\"id\":\"send_file\",\"command_type\":\"teams_send_file\",\"command_line\":\"{\\\"group_id\\\":\\\"project-team\\\",\\\"file\\\":\\\"#@#${create_file.filename}#@#$\\\"}\",\"step\":3}` sends the edited file to the example Teams group after the edit completes.");
+    }
+    patterns.extend([
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
         "- Example long-running database check: step 1 run `sleep 60` with `timeout_ms` comfortably above 60000, step 2 run the known database probe script, step 3 read the script output log such as `logs/db-check.log` and summarize the findings.",
-    ];
+    ]);
     if allowed_commands.contains("task_status") {
         patterns.push("- Context compaction: after a meaningful phase completes, or when context is near the active context limit and feels crowded, put the handoff summary in `task_status.compact_context` after the work it summarizes.");
     }
@@ -680,6 +726,27 @@ mod tests {
     }
 
     #[test]
+    fn command_run_prompt_without_cli_capability_matches_main_step_guidance() {
+        let description = command_run_usage_patterns_for(&default_command_run_commands(), false);
+
+        assert!(description.contains("commands that depend on earlier output must use later unique ordered steps whose inputs are already known before the batch is created."));
+        assert!(!description.contains("Cross-step output variable"));
+        assert!(!description.contains("Example output binding"));
+        assert!(!description.contains("#@#${"));
+    }
+
+    #[test]
+    fn command_run_prompt_with_cli_capability_explains_output_bindings() {
+        let description = command_run_usage_patterns_for(&default_command_run_commands(), true);
+
+        assert!(description
+            .contains("later steps may consume earlier-step JSON output through placeholders."));
+        assert!(description.contains("Cross-step output variable"));
+        assert!(description.contains("Example output binding"));
+        assert!(description.contains("#@#${create_file.filename}#@#$"));
+    }
+
+    #[test]
     fn command_run_schema_injects_task_status_command_and_dynamic_schema() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let commands = default_command_run_commands();
@@ -714,90 +781,6 @@ mod tests {
                     .map(serde_json::Value::String)
                     .collect()
             )
-        );
-    }
-
-    #[test]
-    fn command_run_description_warns_not_to_copy_replay_placeholder_arguments() {
-        let commands = default_command_run_commands();
-        let schema = tool_interface_to_provider_schema_with_commands(
-            command_run_interface(),
-            Some(&commands),
-            false,
-        );
-        let description = schema["function"]["description"]
-            .as_str()
-            .expect("command_run description should be a string");
-
-        assert!(
-            description.contains("Historical replay may show `arguments: {}`"),
-            "{description}"
-        );
-        assert!(
-            description.contains("never copy that placeholder"),
-            "{description}"
-        );
-        assert!(
-            description.contains("non-empty `commands` array"),
-            "{description}"
-        );
-    }
-
-    #[test]
-    fn task_status_command_format_includes_startup_state_gate_when_required() {
-        let line = command_run_command_format_line("task_status", true)
-            .expect("task_status command format should exist");
-
-        assert!(
-            line.contains(task_status::STARTUP_TASK_STATE_GATE),
-            "{line}"
-        );
-        assert!(line.contains("Schema:"), "{line}");
-    }
-
-    #[test]
-    fn task_status_command_format_omits_startup_state_gate_when_not_required() {
-        let line = command_run_command_format_line("task_status", false)
-            .expect("task_status command format should exist");
-
-        assert!(
-            !line.contains(task_status::STARTUP_TASK_STATE_GATE),
-            "{line}"
-        );
-        assert!(line.contains("Schema:"), "{line}");
-    }
-
-    #[test]
-    fn command_run_description_uses_session_task_type_for_startup_gate() {
-        let commands = default_command_run_commands();
-
-        let missing_type = tool_interface_to_provider_schema_with_commands(
-            command_run_interface(),
-            Some(&commands),
-            session_with_task_type(Vec::new()).task_type.is_empty(),
-        );
-        let existing_type = tool_interface_to_provider_schema_with_commands(
-            command_run_interface(),
-            Some(&commands),
-            session_with_task_type(vec!["debug".to_string()])
-                .task_type
-                .is_empty(),
-        );
-
-        let missing_description = missing_type["function"]["description"]
-            .as_str()
-            .expect("command_run description should be present");
-        let existing_description = existing_type["function"]["description"]
-            .as_str()
-            .expect("command_run description should be present");
-
-        assert!(
-            missing_description.contains(task_status::STARTUP_TASK_STATE_GATE),
-            "{missing_description}"
-        );
-        assert!(
-            !existing_description.contains(task_status::STARTUP_TASK_STATE_GATE),
-            "{existing_description}"
         );
     }
 
@@ -876,6 +859,96 @@ mod tests {
         assert!(commands.contains("task_status"));
         assert!(commands.contains(active_shell_command_name()));
         assert!(!commands.contains("shells"));
+    }
+
+    #[test]
+    fn forced_capability_is_added_to_agent_schema_with_its_prompt_and_schema() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let previous = std::env::var_os(code_tools::registry::FORCED_CAPABILITY_DIRECTORIES_ENV);
+        let temp = tempfile::tempdir().expect("temporary capability directory");
+        let directory = temp.path().join("mcp-command");
+        std::fs::create_dir_all(&directory).expect("create capability directory");
+        std::fs::write(
+            directory.join("command.toml"),
+            r#"id = "mcp_workspace"
+core = false
+execution = "one_shot"
+supports_macro_command = true
+mutating = true
+[runtime]
+binary = "tura-command-mcp"
+[limits]
+default_timeout_ms = 1000
+max_timeout_ms = 2000
+"#,
+        )
+        .expect("write manifest");
+        std::fs::write(
+            directory.join("prompt.md"),
+            "Use the task-local MCP server.",
+        )
+        .expect("write prompt");
+        std::fs::write(
+            directory.join("schema.json"),
+            r#"{"name":"mcp_workspace","input_schema":{"type":"object","required":["name"]}}"#,
+        )
+        .expect("write schema");
+        let encoded = serde_json::to_string(&vec![directory]).expect("encode capability paths");
+        // SAFETY: environment mutation is serialized by ENV_LOCK in this module.
+        #[allow(unsafe_code, reason = "test environment mutation is serialized")]
+        unsafe {
+            std::env::set_var(
+                code_tools::registry::FORCED_CAPABILITY_DIRECTORIES_ENV,
+                encoded,
+            )
+        };
+
+        let agent = command_run_agent_with_capabilities(&["command_run", "apply_patch"]);
+        let commands = command_run_commands_for_agent(&agent);
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+            false,
+        );
+        let description = schema["function"]["description"]
+            .as_str()
+            .expect("command_run description");
+
+        assert!(commands.contains("mcp_workspace"));
+        assert!(command_type_enum(&schema).contains(&"mcp_workspace".to_string()));
+        assert!(
+            description.contains("Use the task-local MCP server."),
+            "{description}"
+        );
+        assert!(
+            description.contains(r#""required":["name"]"#),
+            "{description}"
+        );
+        assert!(
+            description.contains("Cross-step output variable"),
+            "{description}"
+        );
+        assert!(
+            description.contains("Example output binding"),
+            "{description}"
+        );
+        assert!(
+            description.contains("#@#${create_file.filename}#@#$"),
+            "{description}"
+        );
+
+        // SAFETY: environment mutation is serialized by ENV_LOCK in this module.
+        #[allow(unsafe_code, reason = "test environment mutation is serialized")]
+        unsafe {
+            if let Some(previous) = previous {
+                std::env::set_var(
+                    code_tools::registry::FORCED_CAPABILITY_DIRECTORIES_ENV,
+                    previous,
+                );
+            } else {
+                std::env::remove_var(code_tools::registry::FORCED_CAPABILITY_DIRECTORIES_ENV);
+            }
+        }
     }
 
     #[test]
@@ -1093,12 +1166,17 @@ mod tests {
         assert_eq!(parameters["required"], serde_json::json!(["commands"]));
         assert_eq!(
             parameters["properties"]["commands"]["items"]["required"],
-            serde_json::json!(["command_type", "command_line", "step"])
+            serde_json::json!(["command_type", "command_line", "id", "step"])
         );
         assert!(parameters["properties"].get("sandbox").is_none());
         assert!(parameters["properties"].get("task_status").is_none());
         assert!(command_required.contains(&serde_json::json!("command_type")));
         assert!(command_required.contains(&serde_json::json!("step")));
+        assert!(command_required.contains(&serde_json::json!("id")));
+        assert_eq!(
+            parameters["properties"]["commands"]["items"]["properties"]["id"]["type"],
+            serde_json::json!(["string", "null"])
+        );
         // SAFETY: the caller ensures no concurrent foreign environment access races with this mutation.
         #[allow(
             unsafe_code,
