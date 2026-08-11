@@ -19,6 +19,7 @@
         --line: #3d4644;
         --highlight: #40e0d0;
         --running: #f4bf75;
+        --success: #a6e22e;
         --error: #ef5f73;
       }
 
@@ -34,6 +35,7 @@
       .aux { fill: var(--aux); font-weight: 620; }
       .highlight { fill: var(--highlight); font-weight: 700; }
       .running { fill: var(--running); font-weight: 700; }
+      .success { fill: var(--success); font-weight: 700; }
       .error { fill: var(--error); font-weight: 700; }
       .small { font-size: 16px; }
       .body { font-size: 19px; }
@@ -81,32 +83,6 @@
       .tura-progress {
         animation: tura-progress 30000ms steps(20, end) infinite;
       }
-      .counter {
-        opacity: 0;
-        animation-duration: 30000ms;
-        animation-timing-function: steps(1, end);
-        animation-iteration-count: infinite;
-      }
-      .stat0 { animation-name: stat-0; }
-      .react-stat-1 { animation-name: react-stat-1; }
-      .react-stat-2 { animation-name: react-stat-2; }
-      .react-stat-3 { animation-name: react-stat-3; }
-      .react-stat-4 { animation-name: react-stat-4; }
-      .react-stat-5 { animation-name: react-stat-5; }
-      .tura-stat-1 { animation-name: tura-stat-1; }
-      .phase-04-08 { animation-name: phase-04-08; }
-      .phase-08-16 { animation-name: phase-08-16; }
-      .phase-16-20 { animation-name: phase-16-20; }
-      .phase-20-28 { animation-name: phase-20-28; }
-      .phase-28-32 { animation-name: phase-28-32; }
-      .phase-32-42 { animation-name: phase-32-42; }
-      .phase-42-46 { animation-name: phase-42-46; }
-      .phase-46-58 { animation-name: phase-46-58; }
-      .phase-58-64 { animation-name: phase-58-64; }
-      .phase-64-end { animation-name: phase-64-end; }
-      .phase-08-end { animation-name: phase-08-end; }
-      .phase-04-64 { animation-name: phase-04-64; }
-
       @keyframes cursor-blink { 0%, 47% { opacity: 1; } 48%, 100% { opacity: 0; } }
       @keyframes pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
       @keyframes reveal-04 { 0%, 2.6666%, 100% { opacity: 0; } 2.6667%, 99.999% { opacity: 1; } }
@@ -143,32 +119,9 @@
         40%, 99.999% { width: 740px; }
         100% { width: 0; }
        }
-      @keyframes stat-0 { 0%, 2.6666% { opacity: 1; } 2.6667%, 100% { opacity: 0; } }
-      @keyframes react-stat-1 { 0%, 2.6666%, 10.6667%, 100% { opacity: 0; } 2.6667%, 10.6666% { opacity: 1; } }
-      @keyframes react-stat-2 { 0%, 10.6666%, 18.6667%, 100% { opacity: 0; } 10.6667%, 18.6666% { opacity: 1; } }
-      @keyframes react-stat-3 { 0%, 18.6666%, 28%, 100% { opacity: 0; } 18.6667%, 27.9999% { opacity: 1; } }
-      @keyframes react-stat-4 { 0%, 27.9999%, 38.6667%, 100% { opacity: 0; } 28%, 38.6666% { opacity: 1; } }
-      @keyframes react-stat-5 { 0%, 38.6666% { opacity: 0; } 38.6667%, 100% { opacity: 1; } }
-      @keyframes tura-stat-1 { 0%, 2.6666% { opacity: 0; } 2.6667%, 100% { opacity: 1; } }
-      @keyframes phase-04-08 { 0%, 2.6666%, 5.3333%, 100% { opacity: 0; } 2.6667%, 5.3332% { opacity: 1; } }
-      @keyframes phase-08-16 { 0%, 5.3332%, 10.6667%, 100% { opacity: 0; } 5.3333%, 10.6666% { opacity: 1; } }
-      @keyframes phase-16-20 { 0%, 10.6666%, 13.3333%, 100% { opacity: 0; } 10.6667%, 13.3332% { opacity: 1; } }
-      @keyframes phase-20-28 { 0%, 13.3332%, 18.6667%, 100% { opacity: 0; } 13.3333%, 18.6666% { opacity: 1; } }
-      @keyframes phase-28-32 { 0%, 18.6666%, 21.3333%, 100% { opacity: 0; } 18.6667%, 21.3332% { opacity: 1; } }
-      @keyframes phase-32-42 { 0%, 21.3332%, 28%, 100% { opacity: 0; } 21.3333%, 27.9999% { opacity: 1; } }
-      @keyframes phase-42-46 { 0%, 27.9999%, 30.6667%, 100% { opacity: 0; } 28%, 30.6666% { opacity: 1; } }
-      @keyframes phase-46-58 { 0%, 30.6666%, 38.6667%, 100% { opacity: 0; } 30.6667%, 38.6666% { opacity: 1; } }
-      @keyframes phase-58-64 { 0%, 38.6666%, 42.6667%, 100% { opacity: 0; } 38.6667%, 42.6666% { opacity: 1; } }
-      @keyframes phase-64-end { 0%, 42.6666% { opacity: 0; } 42.6667%, 100% { opacity: 1; } }
-      @keyframes phase-08-end { 0%, 5.3332% { opacity: 0; } 5.3333%, 100% { opacity: 1; } }
-      @keyframes phase-04-64 { 0%, 2.6666%, 42.6667%, 100% { opacity: 0; } 2.6667%, 42.6666% { opacity: 1; } }
-
       @media (prefers-reduced-motion: reduce) {
         .anim { animation: none !important; opacity: 1 !important; }
         .react-progress, .tura-progress { animation: none !important; width: 740px; }
-        .counter { animation: none !important; opacity: 0 !important; }
-        .counter.react-stat-5, .counter.tura-stat-1,
-        .counter.phase-64-end, .counter.phase-08-end { opacity: 1 !important; }
         .cursor, .pulse { animation: none !important; opacity: 1; }
       }
     ]]></style>
@@ -210,14 +163,22 @@
       <text x="220" y="204" class="primary body">find handler implementation and related files</text>
     </g>
     <g class="anim r08">
-      <text x="24" y="236" class="running body">[TOOL]</text>
+      <text x="24" y="236" class="aux body">[TOOL]</text>
       <text x="128" y="236" class="agent body">RUN</text>
       <text x="220" y="236" class="secondary body">rg -n "TODO|command_run|handler" crates/</text>
-      <circle cx="748" cy="248" r="5" fill="var(--running)" class="pulse"/>
+      <g opacity="0">
+        <text x="712" y="236" class="running body">[~]</text>
+        <circle cx="756" cy="248" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.053333;0.08;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="236" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.08;1"/>
+      </g>
     </g>
     <g class="anim r12">
       <text x="24" y="268" class="aux body">[OUTPUT]</text>
-      <text x="128" y="268" class="highlight body">OK</text>
+      <text x="128" y="268" class="success body">OK</text>
       <text x="220" y="268" class="secondary body">found crates/tools/src/command_run/handler.rs</text>
     </g>
 
@@ -228,14 +189,22 @@
       <text x="220" y="316" class="primary body">read output, prepare minimal patch</text>
     </g>
     <g class="anim r20">
-      <text x="24" y="348" class="running body">[TOOL]</text>
+      <text x="24" y="348" class="aux body">[TOOL]</text>
       <text x="128" y="348" class="agent body">PATCH</text>
       <text x="220" y="348" class="secondary body">apply_patch handler.rs</text>
-      <circle cx="748" cy="360" r="5" fill="var(--running)" class="pulse"/>
+      <g opacity="0">
+        <text x="712" y="348" class="running body">[~]</text>
+        <circle cx="756" cy="360" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.133333;0.16;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="348" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.16;1"/>
+      </g>
     </g>
     <g class="anim r24">
       <text x="24" y="380" class="aux body">[OUTPUT]</text>
-      <text x="128" y="380" class="highlight body">OK</text>
+      <text x="128" y="380" class="success body">OK</text>
       <text x="220" y="380" class="secondary body">patch applied</text>
     </g>
 
@@ -246,14 +215,22 @@
       <text x="220" y="428" class="primary body">read output, verify compilation</text>
     </g>
     <g class="anim r32">
-      <text x="24" y="460" class="running body">[TOOL]</text>
+      <text x="24" y="460" class="aux body">[TOOL]</text>
       <text x="128" y="460" class="agent body">RUN</text>
       <text x="220" y="460" class="secondary body">cargo build -p runtime</text>
-      <circle cx="748" cy="472" r="5" fill="var(--running)" class="pulse"/>
+      <g opacity="0">
+        <text x="712" y="460" class="running body">[~]</text>
+        <circle cx="756" cy="472" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.213333;0.24;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="460" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.24;1"/>
+      </g>
     </g>
     <g class="anim r36">
       <text x="24" y="492" class="aux body">[OUTPUT]</text>
-      <text x="128" y="492" class="highlight body">OK</text>
+      <text x="128" y="492" class="success body">OK</text>
       <text x="220" y="492" class="secondary body">build finished</text>
     </g>
 
@@ -264,14 +241,22 @@
       <text x="220" y="540" class="primary body">read output, run unit tests</text>
     </g>
     <g class="anim r46">
-      <text x="24" y="572" class="running body">[TOOL]</text>
+      <text x="24" y="572" class="aux body">[TOOL]</text>
       <text x="128" y="572" class="agent body">RUN</text>
       <text x="220" y="572" class="secondary body">cargo test -p runtime --lib</text>
-      <circle cx="748" cy="584" r="5" fill="var(--running)" class="pulse"/>
+      <g opacity="0">
+        <text x="712" y="572" class="running body">[~]</text>
+        <circle cx="756" cy="584" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.306667;0.346667;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="572" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.346667;1"/>
+      </g>
     </g>
     <g class="anim r52">
       <text x="24" y="604" class="aux body">[OUTPUT]</text>
-      <text x="128" y="604" class="highlight body">OK</text>
+      <text x="128" y="604" class="success body">OK</text>
       <text x="220" y="604" class="secondary body">tests passed</text>
     </g>
 
@@ -282,14 +267,22 @@
       <text x="220" y="652" class="primary body">read output, run final lint</text>
     </g>
     <g class="anim r64">
-      <text x="24" y="684" class="running body">[TOOL]</text>
+      <text x="24" y="684" class="aux body">[TOOL]</text>
       <text x="128" y="684" class="agent body">RUN</text>
       <text x="220" y="684" class="secondary body">cargo clippy -p runtime --all-targets</text>
-      <circle cx="748" cy="696" r="5" fill="var(--running)" class="pulse"/>
+      <g opacity="0">
+        <text x="712" y="684" class="running body">[~]</text>
+        <circle cx="756" cy="696" r="5" fill="var(--running)" class="pulse"/>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.426667;0.466667;1"/>
+      </g>
+      <g opacity="1">
+        <text x="724" y="684" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.466667;1"/>
+      </g>
     </g>
     <g class="anim r70">
       <text x="24" y="716" class="aux body">[OUTPUT]</text>
-      <text x="128" y="716" class="highlight body">OK</text>
+      <text x="128" y="716" class="success body">OK</text>
       <text x="220" y="716" class="secondary body">clippy clean</text>
     </g>
     <g class="anim r76">
@@ -324,58 +317,100 @@
 
     <g class="anim r12">
       <text x="844" y="334" class="highlight body">STEP 1</text>
-      <text x="940" y="334" class="running body">RUN</text>
+      <text x="940" y="334" class="agent body">RUN</text>
       <text x="1000" y="334" class="primary body">rg -n "TODO|command_run|handler" crates/</text>
-      <text x="1492" y="334" class="running body">[~]</text>
+      <g opacity="0">
+        <text x="1492" y="334" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.08;0.12;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="334" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.12;1"/>
+      </g>
       <text x="844" y="366" class="highlight body">STEP 1</text>
-      <text x="940" y="366" class="running body">RUN</text>
+      <text x="940" y="366" class="agent body">RUN</text>
       <text x="1000" y="368" class="primary small">rg --files crates/runtime/src crates/tools/src</text>
-      <text x="1492" y="366" class="running body">[~]</text>
+      <g opacity="0">
+        <text x="1492" y="366" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.08;0.12;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="366" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.12;1"/>
+      </g>
     </g>
     <g class="anim r18">
       <text x="844" y="398" class="aux body">RESULT</text>
-      <text x="940" y="398" class="highlight body">OK</text>
+      <text x="940" y="398" class="success body">OK</text>
       <text x="1000" y="398" class="secondary body">handler.rs + related runtime files found</text>
     </g>
 
     <g class="anim r24">
       <text x="844" y="438" class="highlight body">STEP 2</text>
-      <text x="940" y="438" class="running body">PATCH</text>
+      <text x="940" y="438" class="agent body">PATCH</text>
       <text x="1000" y="438" class="primary body">apply_patch handler.rs</text>
-      <text x="1492" y="438" class="running body">[~]</text>
+      <g opacity="0">
+        <text x="1492" y="438" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.16;0.20;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="438" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.20;1"/>
+      </g>
     </g>
     <g class="anim r30">
       <text x="844" y="470" class="aux body">RESULT</text>
-      <text x="940" y="470" class="highlight body">OK</text>
+      <text x="940" y="470" class="success body">OK</text>
       <text x="1000" y="470" class="secondary body">patch applied; dependent steps released</text>
     </g>
 
     <g class="anim r34">
       <text x="844" y="510" class="highlight body">STEP 3</text>
-      <text x="940" y="510" class="running body">RUN</text>
+      <text x="940" y="510" class="agent body">RUN</text>
       <text x="1000" y="510" class="primary body">cargo build -p runtime</text>
-      <text x="1492" y="510" class="running body">[~]</text>
+      <g opacity="0">
+        <text x="1492" y="510" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.226667;0.266667;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="510" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.266667;1"/>
+      </g>
     </g>
     <g class="anim r40">
       <text x="844" y="542" class="aux body">RESULT</text>
-      <text x="940" y="542" class="highlight body">OK</text>
+      <text x="940" y="542" class="success body">OK</text>
       <text x="1000" y="542" class="secondary body">build finished; verification released</text>
     </g>
 
     <g class="anim r44">
       <text x="844" y="582" class="highlight body">STEP 4</text>
-      <text x="940" y="582" class="running body">RUN</text>
+      <text x="940" y="582" class="agent body">RUN</text>
       <text x="1000" y="582" class="primary body">cargo test -p runtime --lib</text>
-      <text x="1492" y="582" class="running body">[~]</text>
+      <g opacity="0">
+        <text x="1492" y="582" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.293333;0.373333;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="582" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.373333;1"/>
+      </g>
       <text x="844" y="614" class="highlight body">STEP 4</text>
-      <text x="940" y="614" class="running body">RUN</text>
+      <text x="940" y="614" class="agent body">RUN</text>
       <text x="1000" y="614" class="primary body">cargo clippy -p runtime --all-targets</text>
-      <text x="1492" y="614" class="running body">[~]</text>
+      <g opacity="0">
+        <text x="1492" y="614" class="running body">[~]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.293333;0.373333;1"/>
+      </g>
+      <g opacity="1">
+        <text x="1492" y="614" class="success body">[✓]</text>
+        <animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.373333;1"/>
+      </g>
     </g>
     <g class="anim r56">
       <path d="M844 654 H1544" class="line" stroke-width="1"/>
       <text x="844" y="664" class="aux body">DISTILLED</text>
-      <text x="966" y="664" class="highlight body">PATCHED · BUILD OK · TESTS OK · LINT OK</text>
+      <text x="966" y="664" class="success body">PATCHED · BUILD OK · TESTS OK · LINT OK</text>
     </g>
     <g class="anim r60">
       <rect x="824" y="742" width="740" height="2" fill="var(--highlight)"/>
@@ -392,63 +427,63 @@
 
       <text x="24" y="842" class="primary metric">REACT — CURRENT TASK</text>
       <text x="24" y="884" class="secondary body">INPUT</text>
-      <text x="112" y="880" class="primary metric counter stat0">0</text>
-      <text x="112" y="880" class="primary metric counter react-stat-1">3.2K</text>
-      <text x="112" y="880" class="primary metric counter react-stat-2">7.8K</text>
-      <text x="112" y="880" class="primary metric counter react-stat-3">13.6K</text>
-      <text x="112" y="880" class="primary metric counter react-stat-4">20.5K</text>
-      <text x="112" y="880" class="primary metric counter react-stat-5">28.6K</text>
+      <text x="112" y="880" class="primary metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-1" opacity="0">3.2K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.106667;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-2" opacity="0">7.8K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.106667;0.186667;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-3" opacity="0">13.6K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.186667;0.28;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-4" opacity="0">20.5K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.28;0.386667;1"/></text>
+      <text x="112" y="880" class="primary metric counter react-stat-5" opacity="1">28.6K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.386667;1"/></text>
       <text x="260" y="884" class="secondary body">OUTPUT</text>
-      <text x="370" y="880" class="primary metric counter stat0">0</text>
-      <text x="370" y="880" class="primary metric counter phase-04-08">90</text>
-      <text x="370" y="880" class="primary metric counter phase-08-16">210</text>
-      <text x="370" y="880" class="primary metric counter phase-16-20">290</text>
-      <text x="370" y="880" class="primary metric counter phase-20-28">390</text>
-      <text x="370" y="880" class="primary metric counter phase-28-32">445</text>
-      <text x="370" y="880" class="primary metric counter phase-32-42">510</text>
-      <text x="370" y="880" class="primary metric counter phase-42-46">555</text>
-      <text x="370" y="880" class="primary metric counter phase-46-58">610</text>
-      <text x="370" y="880" class="primary metric counter phase-58-64">650</text>
-      <text x="370" y="880" class="primary metric counter phase-64-end">700</text>
+      <text x="370" y="880" class="primary metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-04-08" opacity="0">90<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.053333;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-08-16" opacity="0">210<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.053333;0.106667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-16-20" opacity="0">290<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.106667;0.133333;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-20-28" opacity="0">390<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.133333;0.186667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-28-32" opacity="0">445<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.186667;0.213333;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-32-42" opacity="0">510<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.213333;0.28;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-42-46" opacity="0">555<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.28;0.306667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-46-58" opacity="0">610<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.306667;0.386667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-58-64" opacity="0">650<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.386667;0.426667;1"/></text>
+      <text x="370" y="880" class="primary metric counter phase-64-end" opacity="1">700<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.426667;1"/></text>
       <text x="500" y="884" class="secondary body">ROUNDS</text>
-      <text x="610" y="880" class="primary metric counter stat0">0</text>
-      <text x="610" y="880" class="primary metric counter react-stat-1">1</text>
-      <text x="610" y="880" class="primary metric counter react-stat-2">2</text>
-      <text x="610" y="880" class="primary metric counter react-stat-3">3</text>
-      <text x="610" y="880" class="primary metric counter react-stat-4">4</text>
-      <text x="610" y="880" class="primary metric counter react-stat-5">5</text>
+      <text x="610" y="880" class="primary metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-1" opacity="0">1<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.106667;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-2" opacity="0">2<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.106667;0.186667;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-3" opacity="0">3<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.186667;0.28;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-4" opacity="0">4<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.28;0.386667;1"/></text>
+      <text x="610" y="880" class="primary metric counter react-stat-5" opacity="1">5<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.386667;1"/></text>
       <text x="24" y="920" class="secondary body">MODELED COST</text>
-      <text x="184" y="916" class="primary metric counter stat0">$0.000</text>
-      <text x="184" y="916" class="primary metric counter phase-04-08">$0.019</text>
-      <text x="184" y="916" class="primary metric counter phase-08-16">$0.022</text>
-      <text x="184" y="916" class="primary metric counter phase-16-20">$0.048</text>
-      <text x="184" y="916" class="primary metric counter phase-20-28">$0.051</text>
-      <text x="184" y="916" class="primary metric counter phase-28-32">$0.081</text>
-      <text x="184" y="916" class="primary metric counter phase-32-42">$0.083</text>
-      <text x="184" y="916" class="primary metric counter phase-42-46">$0.119</text>
-      <text x="184" y="916" class="primary metric counter phase-46-58">$0.121</text>
-      <text x="184" y="916" class="primary metric counter phase-58-64">$0.163</text>
-      <text x="184" y="916" class="primary metric counter phase-64-end">$0.164</text>
+      <text x="184" y="916" class="primary metric counter stat0" opacity="0">$0.000<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-04-08" opacity="0">$0.019<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.053333;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-08-16" opacity="0">$0.022<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.053333;0.106667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-16-20" opacity="0">$0.048<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.106667;0.133333;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-20-28" opacity="0">$0.051<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.133333;0.186667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-28-32" opacity="0">$0.081<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.186667;0.213333;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-32-42" opacity="0">$0.083<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.213333;0.28;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-42-46" opacity="0">$0.119<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.28;0.306667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-46-58" opacity="0">$0.121<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.306667;0.386667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-58-64" opacity="0">$0.163<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.386667;0.426667;1"/></text>
+      <text x="184" y="916" class="primary metric counter phase-64-end" opacity="1">$0.164<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.426667;1"/></text>
 
       <text x="824" y="842" class="highlight metric">TURA — CURRENT TASK</text>
       <text x="824" y="884" class="secondary body">INPUT</text>
-      <text x="912" y="880" class="highlight metric counter stat0">0</text>
-      <text x="912" y="880" class="highlight metric counter tura-stat-1">3.8K</text>
+      <text x="912" y="880" class="highlight metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="912" y="880" class="highlight metric counter tura-stat-1" opacity="1">3.8K<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.026667;1"/></text>
       <text x="1054" y="884" class="secondary body">OUTPUT</text>
-      <text x="1164" y="880" class="highlight metric counter stat0">0</text>
-      <text x="1164" y="880" class="highlight metric counter phase-04-08">260</text>
-      <text x="1164" y="880" class="highlight metric counter phase-08-end">620</text>
+      <text x="1164" y="880" class="highlight metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="1164" y="880" class="highlight metric counter phase-04-08" opacity="0">260<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.053333;1"/></text>
+      <text x="1164" y="880" class="highlight metric counter phase-08-end" opacity="1">620<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.053333;1"/></text>
       <text x="1294" y="884" class="secondary body">ROUNDS</text>
-      <text x="1404" y="880" class="highlight metric counter stat0">0</text>
-      <text x="1404" y="880" class="highlight metric counter tura-stat-1">1</text>
+      <text x="1404" y="880" class="highlight metric counter stat0" opacity="0">0<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="1404" y="880" class="highlight metric counter tura-stat-1" opacity="1">1<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.026667;1"/></text>
       <text x="824" y="920" class="secondary body">MODELED COST</text>
-      <text x="984" y="916" class="highlight metric counter stat0">$0.000</text>
-      <text x="984" y="916" class="highlight metric counter phase-04-08">$0.027</text>
-      <text x="984" y="916" class="highlight metric counter phase-08-end">$0.038</text>
+      <text x="984" y="916" class="highlight metric counter stat0" opacity="0">$0.000<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="984" y="916" class="highlight metric counter phase-04-08" opacity="0">$0.027<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.053333;1"/></text>
+      <text x="984" y="916" class="highlight metric counter phase-08-end" opacity="1">$0.038<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.053333;1"/></text>
       <text x="1160" y="920" class="secondary body">TOKEN SAVING</text>
-      <text x="1328" y="916" class="highlight metric counter stat0">—</text>
-      <text x="1328" y="916" class="highlight metric counter phase-04-64">calculating</text>
-      <text x="1328" y="916" class="highlight metric counter phase-64-end">−84.9%</text>
+      <text x="1328" y="916" class="highlight metric counter stat0" opacity="0">—<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="1;0;0" keyTimes="0;0.026667;1"/></text>
+      <text x="1328" y="916" class="highlight metric counter phase-04-64" opacity="0">calculating<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;0;0" keyTimes="0;0.026667;0.426667;1"/></text>
+      <text x="1328" y="916" class="highlight metric counter phase-64-end" opacity="1">−84.9%<animate attributeName="opacity" dur="30s" repeatCount="indefinite" calcMode="discrete" values="0;1;1" keyTimes="0;0.426667;1"/></text>
     </g>
 
     <rect x="0" y="948" width="1600" height="22" fill="#080a0b"/>
