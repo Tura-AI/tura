@@ -22,6 +22,8 @@ In a ReAct session, the model must re-enter after every tool result, repeatedly 
   <img src="assets/react-vs-tura-patch-workflow.svg" alt="Animated comparison of the ReAct and Tura runtime execution loops" width="1200">
 </p>
 
+<p align="center"><em>Tura executes in one turn the same workflow that a ReAct architecture needs five turns to complete.</em></p>
+
 Across 20 DeepSWE v1.1 tasks, each run three times per agent, Tura creates a substantial token-budget advantage by reducing repeated context and model round trips. You can spend that advantage in two ways. Direct turns most of it into lower cost: 77.5% fewer aggregate tokens than Codex CLI, with a comparable verifier success rate of 65.0% versus 63.3%. Balanced puts more of the saved budget back into reasoning, investigation, and verification. It reached an 80.0% success rate: 16.7 percentage points higher than Codex CLI: while still using 31.1% fewer tokens.[^debug-figure][^debug-manifests]
 
 ### Benchmark
