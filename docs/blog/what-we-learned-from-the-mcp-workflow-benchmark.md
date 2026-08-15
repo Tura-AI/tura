@@ -39,6 +39,31 @@ Direct completed every run. Balanced missed one event-promotion workflow. Codex 
 
 The token total is not simply input plus cache input plus output. Cache input is already a subset of input, and reasoning is already a subset of output. The estimated cost applies the published GPT-5.6 SOL API rates to the recorded request-level usage; it is not a claim about a Codex subscription bill.
 
+## One workflow, two execution shapes
+
+The ecommerce ad task makes the difference easier to see. Both the [Codex CLI run](https://turaai.net/benchmark-run?run=workflow-ecommerce-ad-package-codex-cli-r01) and the [Tura Direct run](https://turaai.net/benchmark-run?run=workflow-ecommerce-ad-package-direct-r02) found the same assets, built the same Premiere project and Photoshop thumbnail, exported both artifacts, posted them to Slack, and passed all five checks.
+
+| Recorded metric | Codex CLI | Tura Direct | Direct change |
+| --------------- | --------: | ----------: | ------------: |
+| Checks passed   |       5/5 |         5/5 |   Same result |
+| Model requests  |        11 |           3 |   72.7% fewer |
+| Commands        |        10 |          14 |    40.0% more |
+| MCP tool calls  |         9 |          11 |    22.2% more |
+| Input tokens    |   261,508 |      55,047 |   79.0% fewer |
+| Total tokens    |   262,915 |      56,372 |   78.6% fewer |
+| Estimated cost  |    $0.344 |      $0.130 |   62.4% lower |
+| Duration        |     49.0s |       50.2s |   2.5% longer |
+
+The Codex run spread setup, discovery, and execution across ten working requests, then used an eleventh request for the final answer. In the execution phase it generally waited for one tool result, returned that result to the model, and asked the model to form the next call. That is a natural agent loop, but every loop is another provider request with prompt, tool schemas, and accumulated history attached.
+
+Direct gave names to earlier results such as `project`, `thumbnail_doc`, and `media_import`. Later steps could use values such as `project.project_id` and `thumbnail_doc.document_id` inside the same runtime batch. Calls in one step ran together; a later step waited for its dependencies. The runtime resolved the variables, so the model did not need a new turn just to read an ID and copy it into the next call.
+
+The trace is useful because the first batch was not perfect. It expected the media import to return a `clips` array, while the tool actually returned `video_clip_id` and `audio_clip_id`. The trim and audio calls therefore did not run, and the premature export and Slack calls were rejected by workflow preconditions. On the next model request, Direct reused the completed project, import, and thumbnail work, applied the two returned clip IDs, then finished the export and post. The third request produced the final answer.
+
+This is why the cost result is more interesting than a simple tool-count comparison. Direct issued 14 commands and 11 MCP calls, versus 10 and 9 for Codex, and its output was almost the same size: 1,325 versus 1,407 tokens. It did not save money by doing less work. It saved repeated model context. Input fell from 261,508 to 55,047 tokens, while uncached input fell from 38,020 to 13,831. Prompt caching discounted much of the repeated context, but it did not make those extra requests free, so the 78.6% token reduction became a 62.4% estimated cost reduction.
+
+Fewer model round trips did not make this particular run faster. Direct took 50.2 seconds against 49.0 seconds for Codex, partly because it had to recover from the wrong variable path. This pair supports a token and cost explanation; it is not, by itself, evidence of a latency win.
+
 ## What I think this shows
 
 First, MCP connectivity is a weak success criterion. All six failed runs connected and discovered the tool schemas. The failures happened in the workflow.
