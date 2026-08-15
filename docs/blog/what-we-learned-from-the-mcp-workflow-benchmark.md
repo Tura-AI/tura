@@ -56,7 +56,31 @@ The ecommerce ad task makes the difference easier to see. Both the [Codex CLI ru
 
 The Codex run spread setup, discovery, and execution across ten working requests, then used an eleventh request for the final answer. In the execution phase it generally waited for one tool result, returned that result to the model, and asked the model to form the next call. That is a natural agent loop, but every loop is another provider request with prompt, tool schemas, and accumulated history attached.
 
-Direct gave names to earlier results such as `project`, `thumbnail_doc`, and `media_import`. Later steps could use values such as `project.project_id` and `thumbnail_doc.document_id` inside the same runtime batch. Calls in one step ran together; a later step waited for its dependencies. The runtime resolved the variables, so the model did not need a new turn just to read an ID and copy it into the next call.
+Direct used `command_run` as a Macro. Each command could have an `id`, and a later step could inherit a value from that command's successful output. The essential part of the run looked like this, shortened for readability:
+
+```json
+[
+  {
+    "id": "project",
+    "step": 1,
+    "returns": { "project_id": "premiere-project-009" }
+  },
+  {
+    "id": "media_import",
+    "step": 2,
+    "project_id": "#@#${project.project_id}#@#$"
+  },
+  {
+    "id": "video_trim",
+    "step": 3,
+    "clip_id": "#@#${media_import.video_clip_id}#@#$"
+  }
+]
+```
+
+When step 1 finished, the Macro published the `project` result to its later steps. Before dispatching step 2, the runtime replaced `#@#${project.project_id}#@#$` with the actual project ID. Step 3 could do the same with the import result. The same mechanism carried `thumbnail_doc.document_id` into the image export. Commands in one step ran together; later steps waited for their dependencies. The model did not need a new turn just to read an ID and copy it into the next call.
+
+This variable inheritance is deliberately local to one Macro: only successful results from earlier steps are visible. Same-step, future-step, missing, or invalid paths fail before that command is dispatched. It is not a global variable store or automatic memory across model requests.
 
 The trace is useful because the first batch was not perfect. It expected the media import to return a `clips` array, while the tool actually returned `video_clip_id` and `audio_clip_id`. The trim and audio calls therefore did not run, and the premature export and Slack calls were rejected by workflow preconditions. On the next model request, Direct reused the completed project, import, and thumbnail work, applied the two returned clip IDs, then finished the export and post. The third request produced the final answer.
 
