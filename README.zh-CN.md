@@ -1,70 +1,80 @@
 <p align="center">
   <a href="https://turaai.net/">
-    <img src="assets/tura/icon.svg" alt="Tura icon" width="96">
+    <img src="assets/tura/icon.svg" alt="Tura 图标" width="96">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://turaai.net/"><img alt="Website" title="Tura 官方网站" src="https://img.shields.io/badge/Website-turaai.net-40e0d0?style=flat-square&amp;labelColor=555555"></a>
-  <a href="https://turaai.net/benchmark"><img alt="Benchmark: 348 sessions" title="Tura benchmark: 348 会话" src="https://img.shields.io/badge/Benchmark-348_sessions-9b59b6?style=flat-square&amp;labelColor=555555"></a>
-  <a href="https://www.npmjs.com/package/tura-ai"><img alt="npm package" title="Tura npm 包" src="https://img.shields.io/npm/v/tura-ai?style=flat-square&amp;logo=npm&amp;label=npm&amp;labelColor=555555&amp;color=cb3837"></a>
+  <a href="https://turaai.net/"><img alt="官网" title="Tura 官网" src="https://img.shields.io/badge/Website-turaai.net-40e0d0?style=flat-square&amp;labelColor=555555"></a>
+  <a href="https://turaai.net/benchmark"><img alt="基准测试：8,243 轮" title="Tura 基准测试：8,243 轮智能体交互" src="https://img.shields.io/badge/Benchmark-8%2C243_turns-9b59b6?style=flat-square&amp;labelColor=555555"></a>
+  <a href="https://www.npmjs.com/package/tura-ai"><img alt="npm 包" title="Tura npm 包" src="https://img.shields.io/npm/v/tura-ai?style=flat-square&amp;logo=npm&amp;label=npm&amp;labelColor=555555&amp;color=cb3837"></a>
 </p>
 
 <p align="center"><a href="README.md">English</a> | <strong>简体中文</strong></p>
 
-<h1 align="center">Tura：少 83.1% 的交互轮次，高 16.7 个百分点的成功率</h1>
+<h1 align="center">Tura：成功率高 16.7 个百分点，Token 少 77.5%</h1>
 
-Tura 是智能体运行时架构，可以以更低的Token使用成本，提高任务成功率。
+Tura 是一个开源的智能体运行时框架：用更少的 Token，把事情做得更好。
 
-在 20 个 DeepSWE v1.1 任务中，使用 GPT-5.6 SOL 高推理强度进行了 60 轮会话测试，Tura 通过减少重复上下文和模型往返，创造了显著的 token 预算优势。你可以通过两种方式利用这一优势：**Direct** 模式将大部分节省转化为更低的成本——比官方 Codex CLI High 配置少 83.5% 的总 token 量，验证器成功率为 65.0%，对比 Codex 的 60.0%；**Balanced** 模式则将更多节省的预算投入到推理、调查和验证中，达到了 80.0% 的成功率——比 Codex CLI High 高出 20 个百分点——同时仍使用少 49.6% 的 token。[^test-set-record][^debug-manifests]
+在传统 ReAct 会话里，每返回一次工具结果，模型都要重新进入一轮推理，带着系统提示和越来越长的上下文再走一遍。Tura 把同一个任务组织成由运行时管理的命令图；只要后续步骤是确定的，就继续执行，不必每一步都再找模型来回确认。
+
+<p align="center">
+  <img src="assets/react-vs-tura-patch-workflow.svg" alt="ReAct 与 Tura 运行时执行循环的动态对比" width="1200">
+</p>
+
+<p align="center"><em>同一套工作流，ReAct 架构需要五轮，Tura 一轮即可完成。</em></p>
+
+我们选取了 20 个 DeepSWE v1.1 任务，让每个智能体分别运行三次。Tura 减少了重复携带的上下文和模型往返，因此省下了一笔可观的 Token 预算。这笔预算有两种花法：Direct 尽可能把它变成更低的成本——总 Token 比 Codex CLI 少 77.5%，验证器成功率则相近，分别为 65.0% 和 63.3%；Balanced 会把更多预算重新投入调查、推理和验证，最终做到 80.0% 的成功率，比 Codex CLI 高 16.7 个百分点，同时仍少用 31.1% 的 Token。[^debug-figure][^debug-manifests]
 
 ### 基准测试
 
-长周期任务[基准测试](https://turaai.net/benchmark)是看透精心打磨的孤立提示，了解代理如何处理真实工作的一种方式。已发布的对比使用基于测试框架的开发任务，包含存档的提示、每轮工具调用、token 用量、补丁和验证器结果。
+一个精心打磨的单轮提示很适合演示，却很难说明智能体能不能扛住真正的长任务。[长周期任务基准测试](https://turaai.net/benchmark)提供了另一种观察方式。我们发布的对比采用基于测试框架的开发任务，并保留了提示、每轮工具调用、Token 用量、补丁和验证器结果。
 
-> 以下主要对比固定了模型和推理标签：Tura Balanced High、Tura Direct High 和官方 Codex CLI High 配置在 20 个 DeepSWE 任务和 5 个重构任务上的表现。证据记录也保留了 Codex CLI Medium 作为单独的第二配置；基准测试方法将 2 个单独评审的设计任务排除在测试框架评分群体之外。[^test-set-record]
+> 已发布的材料比较了 Tura Balanced、Tura Direct 和 Codex CLI 三种指定配置在 20 个 DeepSWE 任务、5 个代码重写任务和 2 个单独评审的设计任务中的表现。对比范围见[图表说明](assets/data/benchmark-agent-comparison.svg)，完整记录见[当前测试集证据记录](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)。[^debug-figure][^test-set-record]
 
-[GitHub 完整报告](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
-
-已发布的结果并不代表每个配置的提供者都具有同等质量或性能。更广泛的 Anthropic/Claude、Google/Gemini、OpenAI 兼容、本地提供者、UI 延迟、运行时/会话解析以及跨操作系统测量仍在[路线图](ROADMAP.md)和[已知证据缺口](docs/KNOWN_ISSUES.md)的规划范围内。
+这些结果只说明被测试的配置，并不意味着所有提供商、模型和环境都能得到同样的质量或性能。Anthropic/Claude、Google/Gemini、OpenAI 兼容接口、本地模型提供商、UI 延迟、运行时与会话解析，以及跨操作系统测试，都仍在[路线图](ROADMAP.md)和[已知问题与证据缺口](docs/KNOWN_ISSUES.md)中。
 
 <details>
 <summary><strong>完整基准测试报告</strong></summary>
 
-<img src="assets/data/benchmark-agent-comparison.svg" alt="High-to-High 基准对比" width="800">
+<p align="center">
+  <img src="assets/data/benchmark-agent-comparison.svg" alt="DeepSWE Debug 与 Rewrite Repo 基准测试对比" width="800">
+</p>
+
+<p align="center"><em>25 个高难度任务、6 种智能体与模型配置、270 个会话的验证器成功率与总 Token 用量。数据来源和计算说明见下文链接。</em></p>
 </details>
 
-### 截图
+### 界面截图
 
 <p align="center">
   <img src="assets/screenshot/gui-ci-quality-demo.svg" alt="Tura GUI" width="800">
 </p>
 
-<p align="center"><em>GUI 页面，支持多会话并发工作和 HTML 富文本渲染。</em></p>
+<p align="center"><em>GUI 支持多会话并行工作和 HTML 富文本。</em></p>
 
 <p align="center">
   <img src="assets/screenshot/tui-ci-quality-demo.svg" alt="Tura TUI" width="800">
 </p>
 
-<p align="center"><em>TUI 页面，支持多会话并发工作和 HTML 富文本渲染。</em></p>
+<p align="center"><em>TUI 同样支持多会话并行工作和 HTML 富文本。</em></p>
 
-以下结果来自已发布的基准测试工件，而非未经引用的聚合数据。三项核心系统承担了大部分工作：
+下面谈到的结果都来自已经公开的基准测试材料，不是一个没有出处的汇总数字。Tura 的主要工作方式可以归结为三个部分。
 
-## 宏 CLI 命令运行
+## 用一条宏命令跑完整个 CLI 工作流
 
-大多数编程助手仍然依赖重复的工具调用循环：检查、等待、打补丁、等待、构建、等待、测试、等待。
+今天的大多数编程智能体，仍在重复同一种工具调用循环：检查，等；打补丁，等；构建，等；测试，再等。
 
-_**传统工具调用型编程助手：**_
+_**传统工具调用型编程智能体：**_
 
 ```bash
-# 第 1 轮 — 检查环境
+# 第 1 轮：检查环境
 
 rg -n "TODO|command_run|handler" crates/
 rg --files crates/runtime/src crates/tools/src
 ```
 
 ```bash
-# 第 2 轮 — 应用补丁
+# 第 2 轮：应用补丁
 
 *** Begin Patch
 *** Update File: crates/tools/src/command_run/handler.rs
@@ -75,28 +85,28 @@ rg --files crates/runtime/src crates/tools/src
 ```
 
 ```bash
-# 第 3 轮 — 构建
+# 第 3 轮：构建
 
 cargo build -p runtime
 ```
 
 ```bash
-# 第 4 轮 — 运行测试
+# 第 4 轮：运行测试
 
 cargo test -p runtime --lib
 ```
 
 ```bash
-# 第 5 轮 — 运行 lint 验证
+# 第 5 轮：运行 lint 检查
 
 cargo clippy -p runtime --all-targets
 ```
 
-Tura 走了一条不同的路。它不是向模型暴露几十个小工具，而是暴露一个宏工具：`command_run`。这样，代理可以构建一个多步执行树，在一轮 LLM 调用中完成相关操作。
+Tura 走的是另一条路。它不把几十个零碎的小工具全都暴露给模型，而是提供一个宏工具：`command_run`。智能体可以据此搭出一棵多步骤执行树，在一轮 LLM 交互里把相关操作一起跑完。
 
-在下面的例子中，两个代理运行相同的命令。传统工具调用型代理需要五轮 LLM 交互；Tura 将整个序列作为一个结构化的宏工作流处理。节省的是对话开销，而非工程纪律。
+下面这个例子里，两边实际执行的命令完全相同。普通工具调用型智能体需要五轮 LLM 交互，Tura 则把整段流程作为一个结构化的宏工作流来处理。省掉的是对话往返，不是必要的工程步骤。
 
-_**Tura 宏 CLI 命令：**_
+_**Tura 的 CLI 宏命令：**_
 
 ```json
 {
@@ -138,64 +148,64 @@ _**Tura 宏 CLI 命令：**_
 }
 ```
 
-目前没有消融实验证明仅凭 `command_run` 就能带来 Tura 更低的轮次和 token 用量。但在匹配 High 配置的 DeepSWE 对比中，Balanced 比 Codex CLI High 少用了 66.8% 的模型轮次和 49.6% 的 token，而 Direct 则少用了 84.0% 的轮次和 83.5% 的 token。[^test-set-record][^debug-manifests]
+目前还没有消融实验能够证明，单凭 `command_run` 就足以让 Tura 减少交互轮数和 Token 用量。不过在完整的 DeepSWE 对比中，Balanced 比 Codex CLI 少 35.8% 的交互轮数和 31.1% 的 Token；Direct 则分别少 69.1% 和 77.5%。[^debug-figure][^debug-manifests]
 
 ## 反向推理
 
-无论 LLM 多么令人印象深刻，其核心仍然是一个基于文本 token 概率的统计归纳模型。
+LLM 再让人惊叹，归根结底仍是一个根据文本 Token 概率进行统计归纳的模型。
 
-例如，让 LLM 在石头、剪刀、布中做选择并不能保证均匀随机的结果。如果真正三分之一的分布很重要，则需要外部随机数源，而不是对模型输出概率的未经引证的假设。
+比如让 LLM 在石头、剪刀、布中随便选一个，并不能保证三个结果真正等概率。如果你在意严格的三分之一概率，就应该调用外部随机数源，而不是想当然地认为模型输出会均匀分布。
 
-在编程任务中，这往往是致命的。
+放到编程任务里，这个问题经常会带来致命后果。
 
-代理更倾向于执行和生成统计上更常见的代码和逻辑。但常见的代码和逻辑往往平庸且欠考虑。
+智能体更容易执行和生成统计上常见的代码与逻辑，可“常见”并不等于“经过充分推敲”，很多时候只是平庸的默认答案。
 
-Tura 采用了一种不同的策略。
+Tura 换了一种推理方式。
 
-在推理过程中，普通代理从当前状态推理到提示目标。即，$s_1$ 是当前状态，$s_n$ 是用户提示给出的目标。
+普通智能体往往从当前状态一路向提示中的目标推演。这里，$s_1$ 是当前状态，$s_n$ 是用户给出的目标。
 
 $$
 s_1 \rightarrow s_2 \rightarrow s_3 \rightarrow \cdots \rightarrow s_n
 $$
 
-相反，Tura 引导 LLM 先统计估计 $s_{n-1}$，然后从 $s_{n-1}$ 的状态反向推理到 $s_{n-2}$。
+Tura 会引导 LLM 先估计目标达成前的状态 $s_{n-1}$，再从 $s_{n-1}$ 反向推到 $s_{n-2}$。
 
-在下面的例子中，LLM 能够正确推导出玩石头-剪刀-布的最优策略。
+还是以石头、剪刀、布为例，LLM 可以由此得出正确的实现策略：
 
 ```
-> 为了让石头-剪刀-布公平且具有挑战性，
-> 我们需要无偏的游戏。
-> 每一步必须拥有真正的三分之一概率。
-> LLM 仅凭文本概率无法保证这一点。
-> 使用随机数生成器脚本生成 randint(1, 3)
-> 然后将石头、剪刀、布映射到数字。
+> 要让石头、剪刀、布既公平又有挑战性，
+> 出招必须没有偏差。
+> 每种选择都要有真正的三分之一概率。
+> 只靠文本概率，LLM 无法保证这一点。
+> 应该用随机数脚本生成 randint(1, 3)，
+> 再把石头、剪刀、布分别映射到对应数字。
 ```
 
-在编程任务中，这意味着当代理看到一个目标（如修复前端 bug）时，它被引导去推理完整的执行路径，重构失败状态，并在编写代码之前识别根本原因。在匹配 High 配置的 DeepSWE 对比中，Tura Balanced 比 Codex CLI High 多通过了 60 个二元任务验证器中的 12 个。
+放到编程任务中，这意味着：当智能体收到“修复一个前端 Bug”这样的目标时，它会先梳理完整执行路径、还原故障状态、找到根因，然后才开始写代码。在已发布的 DeepSWE 对比中，Tura Balanced 在 60 个二元任务验证器里比 Codex CLI 多通过 10 个。
 
-该对比中的两种配置都使用 GPT-5.6 SOL 和 High 推理标签，因此 High 与 Medium 的推理强度差异无法解释这 20 个百分点的通过率差异。该结果仍然是一个系统层面的关联，而不是对反向推理或任何其他个体特征的因果估计。[^test-set-record][^debug-manifests]
+在同一组 20 个任务上，DeepSWE 官方 mini-swe-agent 的结果显示，GPT-5.6 SOL High 与 Medium 推理强度之间相差 8%；而 Tura Balanced 领先 Codex CLI 16.7 个百分点。这说明，更高的推理强度本身不足以解释 Tura 的优势。[^debug-manifests][^rewrite-manifest]
 
-## 运行时上下文与提示管理器
+## 运行时上下文与提示管理
 
-所谓技能，往往只是加载到上下文中的较弱提示。
+很多所谓的 Skill，本质上只是被塞进上下文的一段提示，而且往往还不如主提示有力。
 
-在许多代理框架中，长期运行的会话会不断累积技能文件、工具输出和陈旧的任务历史。当上下文变得过大时，代理会进入一个单独的压缩轮次，但这种压缩通常只保留一个压缩摘要。重要的执行细节可能会变得模糊或丢失。
+许多智能体框架会让一个会话一直运行，Skill 文件、工具输出和过期的任务历史越积越多。上下文装不下了，就单独开一轮压缩；可压缩后通常只剩一份摘要，真正影响执行的细节很容易变模糊，甚至直接丢失。
 
-Tura 将上下文视为运行时状态机的一部分。
+Tura 把上下文本身当作运行时状态机的一部分。
 
-Tura 不依赖用户手动重置会话或让 Markdown 技能堆积，而是使用 `task_status`、运行时提示和递归执行手册将活动上下文限定在当前任务范围内。
+它不要求用户反复手动重置会话，也不让 Markdown Skill 无止境地堆在上下文里，而是通过 `task_status`、运行时提示和递归执行手册，把当前上下文限制在手头任务真正需要的范围内。
 
-传统基于技能的代理通常保持一个会话运行直到用户启动另一个会话，将宽泛的 Markdown 技能加载到该会话中，并使其保持激活直到重置或压缩。Tura 则将运行时提示绑定到显式的任务状态：会话可以被重命名、刷新和自动管理；任务特定的手册和 CLI 命令通过递归任务树加载；不相关的上下文可以被移除、替换或通过 CLI 压缩。检查点可以保留代码位置、补丁、测试和任务状态，而不仅仅是松散摘要。在实践中，这意味着更少的过期上下文、更低的任务范围 token 成本，以及更少的旧技能或模糊摘要误导当前工作的机会。
+传统的 Skill 型智能体通常会维持同一个会话，把宽泛的 Markdown 指令加载进去，直到用户重置会话或触发压缩。Tura 则把运行时提示绑定到明确的任务状态：会话可以自动重命名、刷新和管理；特定任务需要的操作手册与 CLI 命令通过递归任务树加载；无关上下文可以从 CLI 中移除、替换或压缩。检查点保留的不只是泛泛的摘要，还可以包括代码位置、补丁、测试和任务状态。这样一来，过期信息更少，单个任务的 Token 成本更低，旧 Skill 或含糊摘要把当前工作带偏的机会也更少。
 
-由于压缩是一个 CLI 操作，Tura 可以在 `task_status.compact_context` 中保留精确的执行状态。在已发布的基准测试会话中，Tura 超越了只读检查，在压缩后平均恢复了 2.6 轮执行，而 Codex 估计需要 5.4 轮。[^compact-dynamodb][^compact-wasmi-r1][^compact-wasmi-r2][^compact-wasmi-r3][^compact-eza]
+由于上下文压缩是一个 CLI 操作，Tura 可以在 `task_status.compact_context` 中保留精确的执行状态。在已发布的基准测试会话里，Tura 在压缩后平均 2.6 轮就能走出只读检查、恢复实际执行；Codex 的估算值则是 5.4 轮。[^compact-dynamodb][^compact-wasmi-r1][^compact-wasmi-r2][^compact-wasmi-r3][^compact-eza]
 
-Tura 的 2.6 轮结果是根据其存档的轮次合约中的显式 `compact_context` 事件计算的。Codex 不暴露等效的压缩事件，因此其 5.4 轮结果是通过输入 token 用量急剧下降的点（排除可识别的媒体读取边界）估算得出的。
+Tura 的 2.6 轮来自存档轮次合约中明确记录的 `compact_context` 事件。Codex 没有暴露等价的压缩事件，因此 5.4 轮是根据输入 Token 用量骤降的位置估算出来的，并排除了可以识别的媒体读取边界。
 
 ## 安装与运行
 
-### NPM 发布版
+### 通过 NPM 安装
 
-Mac 和 Linux：
+macOS 和 Linux：
 
 ```bash
 npm install tura-ai
@@ -209,11 +219,11 @@ npm install -g tura-ai
 tura
 ```
 
-相同的主包也发布到 GitHub Packages 作为 `@tura-ai/tura`。为 `https://npm.pkg.github.com` 配置 `@tura-ai` 范围，使用具有 `read:packages` 权限的 token 进行身份验证，然后安装 `@tura-ai/tura`。npm 上的无范围 `tura-ai` 包仍然是最简单的公开安装方式。
+同一个主包也以 `@tura-ai/tura` 的名称发布在 GitHub Packages。你需要把 `@tura-ai` 作用域指向 `https://npm.pkg.github.com`，使用拥有 `read:packages` 权限的 Token 完成认证，然后安装 `@tura-ai/tura`。对大多数人来说，直接安装 npm 上不带作用域的 `tura-ai` 仍然是最省事的方式。
 
-Tura 不捆绑提供者凭证。首次启动时，在发送提示前配置一个 LLM 提供者并选择其模型。详见[提供者设置](docs/start/providers.md#first-run-configure-an-llm-provider)中的 CLI、TUI 和 GUI 流程。
+Tura 不会内置任何模型提供商凭证。第一次启动时，请先配置 LLM 提供商并选择模型，再发送提示。CLI、TUI 和 GUI 的具体流程见[提供商设置](docs/start/providers.md#first-run-configure-an-llm-provider)。
 
-### 源码安装
+### 从源码安装
 
 Windows PowerShell：
 
@@ -233,64 +243,66 @@ cd tura
 tura
 ```
 
-源码安装程序会执行完整的环境设置、发布构建和用户 PATH 注册流程。当你只想安装依赖而不构建或注册 Tura 时，在 PowerShell 上传 `-EnvironmentOnly` 或在 macOS/Linux 上传 `--environment-only`。
+源码安装脚本会完成环境配置、Release 构建，并把 Tura 注册到当前用户的 PATH。只有在你明确只想安装依赖、不想构建或注册 Tura 时，才需要在 PowerShell 中传入 `-EnvironmentOnly`，或在 macOS/Linux 中传入 `--environment-only`。
 
-### 常用入口点
+### 常用入口
 
-| 入口                                | 用途                                                 |
-| ----------------------------------- | ---------------------------------------------------- |
-| `tura`                               | 交互式终端 UI。                                      |
-| `tura "提示"`                         | 使用初始提示打开 TUI。                                |
-| `tura exec "提示"`                    | 直接 Rust CLI 提示运行器。                            |
-| `tura run "提示"`                     | 支持流式传输/历史的网关提示。                          |
-| `tura bash`、`tura zsh`、`tura shel` | 使用选定命令运行 shell 界面的提示。                    |
-| `tura_gateway`                       | 本地 HTTP/SSE 网关及可选的 Web GUI 服务。             |
-| `tura_gui`                           | 桌面 GUI 工作区客户端。                               |
+| 命令 | 用途 |
+| --- | --- |
+| `tura` | 打开交互式终端 UI。 |
+| `tura "提示"` | 带着一条初始提示打开 TUI。 |
+| `tura exec "提示"` | 直接使用 Rust CLI 运行提示。 |
+| `tura run "提示"` | 通过网关运行提示，支持流式输出和历史记录。 |
+| `tura bash`、`tura zsh`、`tura shel` | 选择对应的命令执行 Shell 后发送提示。 |
+| `tura_gateway` | 启动本地 HTTP/SSE 网关，也可以提供 Web GUI。 |
+| `tura_gui` | 打开桌面 GUI 工作区客户端。 |
 
-有关操作系统特定的 PATH 要求、执行器安装以及如何在可执行文件不在 PATH 上时注册 CLI，请阅读[如何开始](docs/start/how-to-start.md)。有关命令标志和模式，请阅读[CLI 参数](docs/start/cli-parameters.md)。
+不同操作系统的 PATH 要求、执行器安装方式，以及可执行文件不在 PATH 时如何注册 CLI，请阅读[如何启动](docs/start/how-to-start.md)。命令参数和运行模式见 [CLI 参数](docs/start/cli-parameters.md)。
 
 ## 文档
 
-GitBook 风格的文档索引位于 [docs/SUMMARY.md](docs/SUMMARY.md)。完整导航页面位于 [docs/start/navigation.md](docs/start/navigation.md)。
+GitBook 风格的文档索引在 [docs/SUMMARY.md](docs/SUMMARY.md)，完整导航页在 [docs/start/navigation.md](docs/start/navigation.md)。
 
-### 开始
+### 入门
 
 - [概览](docs/start/overview.md)
 - [安装](docs/start/install.md)
-- [如何开始](docs/start/how-to-start.md)
+- [如何启动](docs/start/how-to-start.md)
 - [CLI 参数](docs/start/cli-parameters.md)
 - [设置](docs/start/settings.md)
-- [提供者](docs/start/providers.md)
+- [模型提供商](docs/start/providers.md)
 - [会话](docs/start/sessions.md)
 - [导航](docs/start/navigation.md)
 
-### 核心
+### 核心概念
 
 - [任务状态](docs/core/task-status.md)
 - [上下文管理](docs/core/context-management.md)
 - [运行时提示](docs/core/runtime-prompt.md)
-- [命令运行](docs/core/command-run.md)
+- [命令执行](docs/core/command-run.md)
 - [命令](docs/core/commands.md)
-- [代理](docs/core/agents.md)
-- [人格](docs/core/personas.md)
+- [智能体](docs/core/agents.md)
+- [角色](docs/core/personas.md)
 - [富文本](docs/core/html-rich-text.md)
 - [动态提示注入](docs/core/prompt-style.md)
 
 ### 架构
 
-- [Session DB](crates/session_log/ARCHITECTURE.md)
-- [Gateway](crates/gateway/ARCHITECTURE.md)
-- [Router](crates/router/ARCHITECTURE.md)
-- [Runtime](crates/runtime/ARCHITECTURE.md)
-- [Tool](crates/tools/ARCHITECTURE.md)
+- [系统架构](ARCHITECTURE.md)
+- [运行时 / 会话等价性门禁](tests/equivalence/runtime_session/README.md)
+- [会话数据库](crates/session_log/ARCHITECTURE.md)
+- [网关](crates/gateway/ARCHITECTURE.md)
+- [路由器](crates/router/ARCHITECTURE.md)
+- [运行时](crates/runtime/ARCHITECTURE.md)
+- [工具](crates/tools/ARCHITECTURE.md)
 - [终端用户界面](apps/tui/ARCHITECTURE.md)
 - [图形用户界面](apps/gui/ARCHITECTURE.md)
 
 ### 自定义
 
-- [自定义提供者](docs/customization/custom-providers.md)
-- [自定义人格](docs/customization/custom-personas.md)
-- [自定义代理](docs/customization/custom-agents.md)
+- [自定义模型提供商](docs/customization/custom-providers.md)
+- [自定义角色](docs/customization/custom-personas.md)
+- [自定义智能体](docs/customization/custom-agents.md)
 - [自定义运行时提示](docs/customization/custom-runtime-prompt.md)
 - [自定义命令](docs/customization/custom-commands.md)
 
@@ -298,46 +310,48 @@ GitBook 风格的文档索引位于 [docs/SUMMARY.md](docs/SUMMARY.md)。完整�
 
 - [脚本](scripts/ARCHITECTURE.md)
 - [测试](scripts/ARCHITECTURE.md#xtask-test-collection-scripts)
-- [环境](docs/start/settings.md)
-- [架构](ARCHITECTURE.md)
+- [环境配置](docs/start/settings.md)
+- [系统架构](ARCHITECTURE.md)
 - [基准测试方法](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md)
 - [当前测试集证据记录](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
-- [基准测试工件](https://github.com/Tura-AI/benchmark/tree/main/results)
+- [基准测试材料](https://github.com/Tura-AI/benchmark/tree/main/results)
 
-## 贡献与项目治理
+## 参与贡献与项目治理
 
-贡献应该是有节制、可审查且有证据支持的，在负责受影响行为的测试层提供。选择匹配的问题和拉取请求类型，而不是为每次更改应用同一个清单。
+我们希望每一次贡献都足够聚焦、方便审查，并在真正负责这项行为的测试层提供证据。请根据改动类型选择对应的 Issue 和 Pull Request 模板，不必拿同一张检查清单套所有情况。
 
-- [贡献指南](.github/CONTRIBUTING.md) — 从这里开始了解贡献类型、开发环境设置、测试选择和拉取请求步骤。
-- [贡献说明](docs/contributing-guide.md) — 测试所有权、影响矩阵、性能证据和工件清理规则。
-- [路线图](ROADMAP.md) — 当前的 0.1.x 稳定化优先级和计划中的 0.2 任务规划工作区。
-- [已知问题和证据缺口](docs/KNOWN_ISSUES.md) — 开放的架构、提供者、基准测试、性能和跨操作系统工作。
-- [行为准则](.github/CODE_OF_CONDUCT.md) — 社区标准和开放代理测试框架原则。
-- [安全策略](.github/SECURITY.md) — 受支持的版本和私有漏洞报告。
-- [支持](.github/SUPPORT.md) — 报告 bug、请求功能或提出设置和使用问题的地方。
+- [参与贡献](.github/CONTRIBUTING.md) — 从这里开始：改动类型、开发环境、测试选择和 Pull Request 流程。
+- [贡献指南](docs/contributing-guide.md) — 测试归属、受影响矩阵、性能证据和材料脱敏规则。
+- [路线图](ROADMAP.md) — 当前 0.1.x 稳定化重点，以及计划中的 0.2 任务规划工作区。
+- [已知问题与证据缺口](docs/KNOWN_ISSUES.md) — 尚未完成的架构、模型提供商、基准测试、性能和跨操作系统工作。
+- [行为准则](.github/CODE_OF_CONDUCT.md) — 社区规范与开放智能体框架原则。
+- [安全政策](.github/SECURITY.md) — 受支持版本与漏洞私下报告方式。
+- [支持](.github/SUPPORT.md) — 报告 Bug、提出功能需求或咨询安装与使用问题。
 
-## 许可协议
+## 开源协议
 
-Tura 采用 AGPL-3.0-or-later 许可。详见 [LICENSE](LICENSE)。
+Tura 使用 AGPL-3.0-or-later 许可证，详见 [LICENSE](LICENSE)。
 
-## 基准测试注释与来源
+## 基准测试说明与数据来源
 
 - [基准测试方法](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md)
 - [当前测试集证据记录](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)
-- [基准测试工件](https://github.com/Tura-AI/benchmark/tree/main/results)
+- [基准测试材料](https://github.com/Tura-AI/benchmark/tree/main/results)
 
-[^test-set-record]: [`tura-benchmark` 当前测试集证据记录](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)，定义了 280 次运行的已发布群体、278 次运行的关系分析群体、配置来源、聚合公式、排除规则和识别限制。README 的主要 High-to-High 表格从该已发布群体中选择了 210 次 Tura Balanced High、Tura Direct High 和 Codex CLI High 会话。
+[^debug-figure]: [DeepSWE 与 Rewrite Repo 对比图](assets/data/benchmark-agent-comparison.svg)。图中注明了 README 所采用的任务、会话、验证器、交互轮数、Token 和汇总范围。
 
-[^debug-manifests]: Tura 的 DeepSWE 观测数据位于 [`tura-benchmark` 复现 1](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/manifest.json)、[复现 2](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/manifest.json) 和[复现 3](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/manifest.json)。匹配的 Codex CLI High 观测数据位于 [High 复现 1](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-codex-cli-high-r01/manifest.json)、[High 复现 2](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-codex-cli-high-r02/manifest.json) 和 [High 复现 3](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-codex-cli-high-r03/manifest.json)。每个配置在相同的 20 个任务 ID 上贡献了 60 次会话。
+[^test-set-record]: [`tura-benchmark` 当前测试集证据记录](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md)，其中包括全部 8 份已发布设计任务 HTML 材料及其运行合约的直接链接。
 
-[^rewrite-manifest]: Tura 的重构观测数据位于 [`tura-benchmark` GPT-5.6 Rewrite Repo 规范清单](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/canonical-manifest.json)；官方 Codex CLI High 观测数据位于 [Codex High 规范清单](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260714-codex-cli-0.144.1-gpt56-sol-high/canonical-manifest.json)。每个 High 配置贡献了 10 次会话和 472 个测试框架检查项。
+[^debug-manifests]: `tura-benchmark` DeepSWE 的[第 1 次重复实验](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/manifest.json)、[第 2 次重复实验](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/manifest.json)和[第 3 次重复实验](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/manifest.json)。每份清单都包含同一组 3 种智能体配置在 20 个任务上的结果，合计 180 个会话。
 
-[^compact-dynamodb]: [`tura-benchmark` DynamoDB 第 107 轮压缩](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/dynamodb-toolbox-conditional-attribute-requirements/tura-balanced/dynamodb-toolbox-conditional-attribute-requirements-tura-balanced-run-01/metadata/contracts/rounds/round-0107.json)和[第 114 轮首次后续补丁](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/dynamodb-toolbox-conditional-attribute-requirements/tura-balanced/dynamodb-toolbox-conditional-attribute-requirements-tura-balanced-run-01/metadata/contracts/rounds/round-0114.json)。
+[^rewrite-manifest]: [`tura-benchmark` GPT-5.6 Rewrite Repo 标准清单](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/canonical-manifest.json)。两种配置各运行 10 个会话，文中引用的总计结果为：Tura Balanced 通过 389/472 项，Codex CLI 通过 351/472 项。
 
-[^compact-wasmi-r1]: [`tura-benchmark` Wasmi 复现 1 第 43 轮压缩](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-01/metadata/contracts/rounds/round-0043.json)和[第 44 轮首次非读取操作](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-01/metadata/contracts/rounds/round-0044.json)。该运行在第 46 轮结束，无后续补丁或测试操作。
+[^compact-dynamodb]: `tura-benchmark` DynamoDB 任务的[第 107 轮上下文压缩](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/dynamodb-toolbox-conditional-attribute-requirements/tura-balanced/dynamodb-toolbox-conditional-attribute-requirements-tura-balanced-run-01/metadata/contracts/rounds/round-0107.json)，以及之后[第 114 轮首次应用补丁](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/dynamodb-toolbox-conditional-attribute-requirements/tura-balanced/dynamodb-toolbox-conditional-attribute-requirements-tura-balanced-run-01/metadata/contracts/rounds/round-0114.json)。
 
-[^compact-wasmi-r2]: [`tura-benchmark` Wasmi 复现 2 第 26 轮压缩](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-02/metadata/contracts/rounds/round-0026.json)、[第 28 轮首次非读取操作](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-02/metadata/contracts/rounds/round-0028.json)和[第 39 轮首次后续补丁/测试](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-02/metadata/contracts/rounds/round-0039.json)。
+[^compact-wasmi-r1]: `tura-benchmark` Wasmi 第 1 次重复实验的[第 43 轮上下文压缩](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-01/metadata/contracts/rounds/round-0043.json)，以及[第 44 轮首次非只读操作](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r01/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-01/metadata/contracts/rounds/round-0044.json)。该次运行在第 46 轮结束，之后没有再应用补丁或运行测试。
 
-[^compact-wasmi-r3]: [`tura-benchmark` Wasmi 复现 3 第 39 轮压缩](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-03/metadata/contracts/rounds/round-0039.json)和[第 41 轮首次后续补丁/测试](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-03/metadata/contracts/rounds/round-0041.json)。
+[^compact-wasmi-r2]: `tura-benchmark` Wasmi 第 2 次重复实验的[第 26 轮上下文压缩](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-02/metadata/contracts/rounds/round-0026.json)、[第 28 轮首次非只读操作](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-02/metadata/contracts/rounds/round-0028.json)，以及[第 39 轮首次应用补丁或运行测试](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r02/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-02/metadata/contracts/rounds/round-0039.json)。
 
-[^compact-eza]: [`tura-benchmark` eza 第 23 轮压缩](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/eza/tura-balanced/eza-tura-balanced-gpt56-sol-run-02/metadata/contracts/rounds/round-0023.json)和[第 24 轮首次后续测试](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/eza/tura-balanced/eza-tura-balanced-gpt56-sol-run-02/metadata/contracts/rounds/round-0024.json)。
+[^compact-wasmi-r3]: `tura-benchmark` Wasmi 第 3 次重复实验的[第 39 轮上下文压缩](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-03/metadata/contracts/rounds/round-0039.json)，以及[第 41 轮首次应用补丁或运行测试](https://github.com/Tura-AI/benchmark/blob/main/results/debug/report-deepswe-v1.1-gpt56-sol-local-r03/wasmi-trap-coredumps/tura-balanced/wasmi-trap-coredumps-tura-balanced-run-03/metadata/contracts/rounds/round-0041.json)。
+
+[^compact-eza]: `tura-benchmark` eza 任务的[第 23 轮上下文压缩](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/eza/tura-balanced/eza-tura-balanced-gpt56-sol-run-02/metadata/contracts/rounds/round-0023.json)，以及[第 24 轮首次运行后续测试](https://github.com/Tura-AI/benchmark/blob/main/results/rewrite/report-20260710-gpt56-sol/eza/tura-balanced/eza-tura-balanced-gpt56-sol-run-02/metadata/contracts/rounds/round-0024.json)。
