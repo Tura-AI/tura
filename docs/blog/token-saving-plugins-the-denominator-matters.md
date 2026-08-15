@@ -15,21 +15,23 @@ After comparing our own small experiment with larger independent tests, I think 
 
 [Full benchmark](https://turaai.net/benchmark)
 
-Our first experiment was a demanding one: rewrite the Rust `eza` repository as a behavior-compatible Python implementation and face 52 harness assertions. We tested two plugins on that task.
+Our first experiment was a demanding one: rewrite the Rust `eza` repository as a behavior-compatible Python implementation and face 52 harness assertions. We have now tested three plugin approaches on that task.
 
 Every published run used GPT-5.6-sol, High reasoning, and Codex CLI 0.144.1. The comparison contains two runs per arm:
 
 - Ponytail r2/r3, with full hook and skill activation;
-- RTK r2/r3, with isolated RTK activation; and
+- RTK r2/r3, with isolated RTK activation;
+- Caveman r1/r2, with its 20-skill Codex package installed in separate isolated homes and its exact primary skill body loaded through global `AGENTS.md`; and
 - two previously published no-plugin runs using the same task, model, reasoning level, and CLI version.
 
-| Arm                         |   n | Harness score | Total tokens | Modeled cost | Rounds | Duration |
-| --------------------------- | --: | ------------: | -----------: | -----------: | -----: | -------: |
-| No plugin                   |   2 |        78.85% |       6.660M |    $5.281946 |   62.5 |     895s |
-| Ponytail, full hook + skill |   2 |        80.77% |       -7.56% |       -8.87% | -9.60% |  +13.51% |
+| Arm                         |   n | Harness score | Total tokens | Modeled cost |  Rounds | Duration |
+| --------------------------- | --: | ------------: | -----------: | -----------: | ------: | -------: |
+| No plugin                   |   2 |        78.85% |       6.660M |    $5.281946 |    62.5 |     895s |
+| Ponytail, full hook + skill |   2 |        80.77% |       -7.56% |       -8.87% |  -9.60% |  +13.51% |
 | RTK                         |   2 |        76.92% |      +13.20% |       +7.18% | +44.00% |  +40.69% |
+| Caveman skill package       |   2 |        86.54% |       -4.03% |       -3.90% |  -8.80% |   +2.29% |
 
-The sanitized [per-run data](https://github.com/Tura-AI/benchmark/blob/main/blog_data/token-saving-plugin-eza/runs.json), [computed summary](https://github.com/Tura-AI/benchmark/blob/main/blog_data/token-saving-plugin-eza/summary.json), [methodology](https://github.com/Tura-AI/benchmark/blob/main/blog_data/token-saving-plugin-eza/methodology.json), and [293-round activation audit](https://github.com/Tura-AI/benchmark/blob/main/blog_data/token-saving-plugin-eza/round-activation-audit.jsonl) are public. All six processes exited successfully and produced complete usage and evaluator data. A run could still miss harness assertions; that is reflected in its score.
+The sanitized [per-run data](https://github.com/Tura-AI/benchmark/blob/main/blog_data/token-saving-plugin-eza/runs.json), [computed summary](https://github.com/Tura-AI/benchmark/blob/main/blog_data/token-saving-plugin-eza/summary.json), [methodology](https://github.com/Tura-AI/benchmark/blob/main/blog_data/token-saving-plugin-eza/methodology.json), and [407-round activation audit](https://github.com/Tura-AI/benchmark/blob/main/blog_data/token-saving-plugin-eza/round-activation-audit.jsonl) are public. All eight processes exited successfully and produced complete usage and evaluator data. A run could still miss harness assertions; that is reflected in its score.
 
 The numbers are interesting, but they are descriptive, not causal estimates. With only two runs per arm, they are not enough to identify a plugin effect.
 
@@ -37,17 +39,20 @@ The numbers are interesting, but they are descriptive, not causal estimates. Wit
 
 The same agent, model, task, and configuration produced materially different bills across the two repetitions:
 
-| Arm       | Cost in the two runs  | Cost range / mean | Token range / mean | Round range / mean |
+| Arm       |  Cost in the two runs | Cost range / mean | Token range / mean | Round range / mean |
 | --------- | --------------------: | ----------------: | -----------------: | -----------------: |
 | No plugin | $4.139647 - $6.424245 |            43.25% |             53.02% |             40.00% |
 | Ponytail  | $3.569452 - $6.057281 |            51.69% |             57.36% |             47.79% |
 | RTK       | $4.789893 - $6.532388 |            30.78% |             39.75% |             26.67% |
+| Caveman   | $5.029889 - $5.122335 |             1.82% |              2.92% |             17.54% |
 
 “Range / mean” is the difference between the two runs divided by their mean. It is not a confidence interval.
 
-Ponytail's observed 8.87% lower mean cost sits inside a 51.69% within-arm swing. RTK's observed 7.18% higher mean cost sits inside a 30.78% swing. Even the no-plugin pair moved 43.25% without a treatment change.
+Ponytail's observed 8.87% lower mean cost sits inside a 51.69% within-arm swing. RTK's observed 7.18% higher mean cost sits inside a 30.78% swing. Even the no-plugin pair moved 43.25% without a treatment change. Caveman's two costs were much closer together, but two observations do not establish a stable variance or causal effect; its comparison also uses the historical matched baseline rather than a same-day randomized pair.
 
-So I would not use these six runs to declare a winner or a loser. What they told us was narrower: the local saving claims did not reliably predict the end-to-end result, and we needed more repeated, paired evidence.
+So I would not use these eight runs to declare a winner or a loser. What they told us was narrower: the local saving claims did not reliably predict the end-to-end result, and we needed more repeated, paired evidence.
+
+Caveman's current documentation separates its output-style skill from its proxy. For Codex using a ChatGPT login, the upstream proxy path is currently metering-only, so this arm measures the installed skill package and its behavioral guidance, not proxy input compression. The original eza task prompt remained byte-identical; forced global loading ensured the treatment was active rather than merely installed.
 
 ## This is where independent testing helped
 
@@ -83,7 +88,7 @@ Our broader repository dataset contains 140 Codex CLI Medium and High runs: 10,3
 
 The calculation is published in the [140-run summary](https://github.com/Tura-AI/benchmark/blob/main/assets/plugin-token-savings/summary.json). Under the repository's pricing model, uncached input costs $5/M, cached input $0.50/M, and output $30/M.
 
-This is why I keep coming back to the denominator. Cached input accounted for 96.74% of Ponytail tokens and 97.27% of RTK tokens in the four plugin runs. A tool can substantially shorten one newly returned command result while leaving the accumulated history and the number of times it is reread largely unchanged.
+This is why I keep coming back to the denominator. Cached input accounted for 96.74% of Ponytail tokens, 97.27% of RTK tokens, and 96.52% of Caveman tokens in the six plugin runs. A tool can substantially shorten one newly returned command result while leaving the accumulated history and the number of times it is reread largely unchanged.
 
 The broader conclusion is also consistent with [Bai et al., _How Do AI Agents Spend Your Money?_](https://arxiv.org/abs/2604.22750), which reports that agentic coding is dominated by input consumption and that trajectories for the same task can vary substantially. This is another reason to use repeated, paired task-level measurements rather than extrapolating from one transformed fragment.
 
@@ -113,7 +118,7 @@ A credible token-saving evaluation should report at least:
 
 ## Conclusion
 
-Token-saving plugins are not one category with one verdict. RTK-style command-output compression can be useful for readability and may help on workloads dominated by supported shell output, but the task-level tests available today have not shown the advertised end-to-end savings. Ponytail-style guidance can reduce unnecessary work and has produced a statistically supported, workload-dependent cost reduction in an independent test.
+Token-saving plugins are not one category with one verdict. RTK-style command-output compression can be useful for readability and may help on workloads dominated by supported shell output, but the task-level tests available today have not shown the advertised end-to-end savings. Ponytail-style guidance can reduce unnecessary work and has produced a statistically supported, workload-dependent cost reduction in an independent test. Caveman's skill package produced a modest 3.90% lower mean cost and higher harness score in our two-run observation, but that sample and its historical baseline do not support a causal claim, and it must not be presented as a test of Caveman proxy compression.
 
 For large savings on long-horizon tasks, the strongest mechanism is usually a change in the complete execution trajectory: fewer model round trips, less repeated context, less unnecessary generation, or fewer recovery steps. If none of those quantities changes, a large local compression percentage is unlikely to become a large reduction in the final bill.
 
