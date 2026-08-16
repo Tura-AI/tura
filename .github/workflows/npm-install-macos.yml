@@ -2,6 +2,9 @@ name: NPM Install macOS
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "ci/branch"
 
 permissions:
   contents: read
@@ -22,7 +25,7 @@ jobs:
       - name: Node setup
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24.18.0"
           package-manager-cache: false
 
       - name: Record environment
