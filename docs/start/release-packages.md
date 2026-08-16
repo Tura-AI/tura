@@ -6,7 +6,7 @@ one package type; you normally do not need to download all of them.
 ## Release notes
 
 The current release is
-[Tura 0.1.35](https://github.com/Tura-AI/tura/blob/v0.1.35/docs/changelog/0.1.35.md).
+[Tura 0.1.36](https://github.com/Tura-AI/tura/blob/v0.1.36/docs/changelog/0.1.36.md).
 The repository [changelog](../../CHANGELOG.md) links to notes for every
 published version.
 
