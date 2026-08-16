@@ -19,6 +19,9 @@ jobs:
           - local
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Node setup
         uses: actions/setup-node@v6
         with:
@@ -37,40 +40,14 @@ jobs:
           sw_vers
           node --version
           npm --version
-          npm view tura-ai version --registry https://registry.npmjs.org/
 
-      - name: Test npm install tura-ai -g
-        if: matrix.install-mode == 'global'
+      - name: Test simulated npm release install
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p "$RUNNER_TEMP/tura-global/npm-prefix"
-          export npm_config_prefix="$RUNNER_TEMP/tura-global/npm-prefix"
-          export PATH="$npm_config_prefix/bin:$PATH"
-          npm install tura-ai -g 2>&1 | tee "$RUNNER_TEMP/npm-install-global.log"
-          command -v tura
-          tura --help
-          if ! tura doctor-cli-path; then
-            echo "::warning::Native release directory was not added to the shell PATH; the npm wrapper remains usable."
-          fi
-          npm list -g tura-ai --depth=1
-
-      - name: Test npm install tura-ai
-        if: matrix.install-mode == 'local'
-        shell: bash
-        run: |
-          set -o pipefail
-          install_dir="$RUNNER_TEMP/tura-local"
-          mkdir -p "$install_dir"
-          cd "$install_dir"
-          npm init -y >/dev/null
-          npm install tura-ai 2>&1 | tee "$RUNNER_TEMP/npm-install-local.log"
-          test -x ./node_modules/.bin/tura
-          ./node_modules/.bin/tura --help
-          if ! ./node_modules/.bin/tura doctor-cli-path; then
-            echo "::warning::Native release directory was not added to the shell PATH; the npm wrapper remains usable."
-          fi
-          npm list tura-ai --depth=1
+          node scripts/npm/verify-npm-install-fixture.mjs \
+            --install-mode=${{ matrix.install-mode }} \
+            2>&1 | tee "$RUNNER_TEMP/npm-install-${{ matrix.install-mode }}.log"
 
       - name: Upload npm install log
         if: always()

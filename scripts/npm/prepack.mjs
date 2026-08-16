@@ -68,8 +68,13 @@ if (!packageJson.bin?.tura) {
   process.exit(1);
 }
 
-if (!packageJson.scripts?.postinstall || !packageJson.scripts?.prepack || !packageJson.scripts?.postpack) {
-  console.error("npm package check failed; postinstall, prepack, and postpack scripts are required.");
+if (packageJson.scripts?.postinstall) {
+  console.error("npm package check failed; postinstall must not be defined.");
+  process.exit(1);
+}
+
+if (!packageJson.scripts?.prepack || !packageJson.scripts?.postpack) {
+  console.error("npm package check failed; prepack and postpack scripts are required.");
   process.exit(1);
 }
 

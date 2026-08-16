@@ -114,7 +114,6 @@
     "xtask/src/**"
   ],
   "scripts": {
-    "postinstall": "node ./scripts/npm/install-release.mjs",
     "install:deps": "node ./scripts/npm/run-install.mjs --environment-only",
     "build:release": "node ./scripts/npm/run-build-release.mjs",
     "package:release": "node ./scripts/npm/package-release.mjs",

@@ -209,19 +209,22 @@ Tura's 2.6-round result is calculated from explicit `compact_context` events in 
 
 ### NPM release
 
-Mac and Linux:
+Global install (macOS, Linux, and Windows):
 
 ```bash
-npm install tura-ai
-tura
-```
-
-Windows:
-
-```powershell
 npm install -g tura-ai
 tura
 ```
+
+Local project install:
+
+```bash
+npm install tura-ai
+npx --no-install tura
+```
+
+The npm package does not run a `postinstall` lifecycle script. The `tura`
+wrapper resolves and launches the installed platform package directly.
 
 The same main package is also published to GitHub Packages as `@tura-ai/tura`.
 Configure the `@tura-ai` scope for `https://npm.pkg.github.com`, authenticate

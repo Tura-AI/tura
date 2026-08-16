@@ -45,12 +45,8 @@ const runtimePackage = {
     "README.zh-CN.md",
     "npm/tura.mjs",
     "scripts/npm/cli-path.mjs",
-    "scripts/npm/install-release.mjs",
     "scripts/npm/release-artifacts.mjs",
   ],
-  scripts: {
-    postinstall: "node ./scripts/npm/install-release.mjs",
-  },
   optionalDependencies: rootPackage.optionalDependencies,
   publishConfig: rootPackage.publishConfig,
 };
