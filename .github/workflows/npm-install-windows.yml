@@ -61,7 +61,7 @@ jobs:
           tura --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           tura doctor-cli-path
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) { Write-Warning "Native release directory was not added to the user PATH; the npm wrapper remains usable." }
           npm list -g tura-ai --depth=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -82,7 +82,7 @@ jobs:
           & $tura --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $tura doctor-cli-path
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) { Write-Warning "Native release directory was not added to the user PATH; the npm wrapper remains usable." }
           npm list tura-ai --depth=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

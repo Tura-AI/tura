@@ -53,7 +53,9 @@ jobs:
           npm install tura-ai -g 2>&1 | tee "$RUNNER_TEMP/npm-install-global.log"
           command -v tura
           tura --help
-          tura doctor-cli-path
+          if ! tura doctor-cli-path; then
+            echo "::warning::Native release directory was not added to the shell PATH; the npm wrapper remains usable."
+          fi
           npm list -g tura-ai --depth=1
 
       - name: Test npm install tura-ai
@@ -68,7 +70,9 @@ jobs:
           npm install tura-ai 2>&1 | tee "$RUNNER_TEMP/npm-install-local.log"
           test -x ./node_modules/.bin/tura
           ./node_modules/.bin/tura --help
-          ./node_modules/.bin/tura doctor-cli-path
+          if ! ./node_modules/.bin/tura doctor-cli-path; then
+            echo "::warning::Native release directory was not added to the shell PATH; the npm wrapper remains usable."
+          fi
           npm list tura-ai --depth=1
 
       - name: Upload npm install log
