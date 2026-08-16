@@ -46,12 +46,23 @@ jobs:
           npm --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Test npm launcher environment
+        run: node --test scripts/npm/launcher-env.test.mjs
+
       - name: Test simulated npm release install
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           node scripts/npm/verify-npm-install-fixture.mjs --install-mode=${{ matrix.install-mode }} 2>&1 |
             Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP "npm-install-${{ matrix.install-mode }}.log")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test published npm package and runtime resources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          node scripts/npm/install-and-verify-published.mjs --install-mode=${{ matrix.install-mode }} 2>&1 |
+            Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP "npm-install-${{ matrix.install-mode }}.log") -Append
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload npm install log

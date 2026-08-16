@@ -45,6 +45,7 @@ const runtimePackage = {
     "README.zh-CN.md",
     "npm/tura.mjs",
     "scripts/npm/cli-path.mjs",
+    "scripts/npm/launcher-env.mjs",
     "scripts/npm/release-artifacts.mjs",
   ],
   optionalDependencies: rootPackage.optionalDependencies,

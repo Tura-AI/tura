@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { platformPackageName } from "./release-artifacts.mjs";
+import { verifyInstalledRuntime } from "./verify-installed-runtime.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const releaseDir = path.join(repoRoot, "release");
@@ -109,6 +110,7 @@ function verifyPackedMainPackage(tarball, packInfo) {
     "npm/tura.mjs",
     "package.json",
     "scripts/npm/cli-path.mjs",
+    "scripts/npm/launcher-env.mjs",
     "scripts/npm/release-artifacts.mjs"
   ]);
   const packedFiles = (packInfo?.files ?? []).map((file) => file.path.replaceAll("\\", "/")).sort();
@@ -129,6 +131,15 @@ function verifyPackedMainPackage(tarball, packInfo) {
   const scriptNames = Object.keys(scripts).sort();
   if (scriptNames.length !== 0) {
     fail(`packed main package contains unexpected npm scripts: ${scriptNames.join(", ") || "(none)"}`);
+  }
+
+  const packedWrapper = readTarEntry(tarball, "package/npm/tura.mjs") ?? "";
+  const packedLauncher = readTarEntry(tarball, "package/scripts/npm/launcher-env.mjs") ?? "";
+  if (!/launchEnvironment\(\{\s*providerConfig,\s*releaseBin,\s*releaseDir\s*\}\)/mu.test(packedWrapper)) {
+    fail("packed npm wrapper does not use the platform release runtime environment.");
+  }
+  if (!/TURA_PROJECT_ROOT:\s*baseEnv\.TURA_PROJECT_ROOT\s*\|\|\s*releaseDir/mu.test(packedLauncher)) {
+    fail("packed npm launcher does not resolve TURA_PROJECT_ROOT to the platform release directory.");
   }
 }
 
@@ -185,4 +196,9 @@ if (existsSync(path.join(mainPackageDir, "target", "release"))) {
 
 const binPath = path.join(installDir, "node_modules", ".bin", binName);
 run(binPath, ["--help"], { cwd: installDir });
-console.log(`[tura verify-platform-install] postinstall-free wrapper and platform package verified in ${installedReleaseDir}`);
+await verifyInstalledRuntime({
+  installRoot: path.join(installDir, "node_modules"),
+  binPath
+});
+
+console.log(`[tura verify-platform-install] postinstall-free wrapper and complete packaged runtime verified in ${installedReleaseDir}`);

@@ -43,6 +43,9 @@ jobs:
           node --version
           npm --version
 
+      - name: Test npm launcher environment
+        run: node --test scripts/npm/launcher-env.test.mjs
+
       - name: Test simulated npm release install
         shell: bash
         run: |
@@ -50,6 +53,14 @@ jobs:
           node scripts/npm/verify-npm-install-fixture.mjs \
             --install-mode=${{ matrix.install-mode }} \
             2>&1 | tee "$RUNNER_TEMP/npm-install-${{ matrix.install-mode }}.log"
+
+      - name: Test published npm package and runtime resources
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/npm/install-and-verify-published.mjs \
+            --install-mode=${{ matrix.install-mode }} \
+            2>&1 | tee -a "$RUNNER_TEMP/npm-install-${{ matrix.install-mode }}.log"
 
       - name: Upload npm install log
         if: always()

@@ -90,6 +90,13 @@ export const releaseRuntimeExcludedDirs = [
   ".pytest_cache"
 ];
 
+export const npmPlatformRuntimeExcludedFiles = [
+  "scripts/register-cli.ps1",
+  "scripts/register-cli.sh",
+  "scripts/unregister-cli.ps1",
+  "scripts/unregister-cli.sh"
+];
+
 export const supportedPlatformPackages = [
   ["win32", "x64"],
   ["linux", "x64"],
