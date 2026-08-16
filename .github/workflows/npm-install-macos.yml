@@ -1,0 +1,60 @@
+name: NPM Install macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-install:
+    name: npm install macOS (${{ matrix.install-mode }})
+    runs-on: macos-15
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        install-mode:
+          - global
+          - local
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Node setup
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.18.0"
+          package-manager-cache: false
+
+      - name: npm 12 setup
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/npm12" npm@12.0.2 --no-audit --no-fund
+          echo "$RUNNER_TEMP/npm12/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Record environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          uname -a
+          sw_vers
+          node --version
+          npm --version
+
+      - name: Test simulated npm release install
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/npm/verify-npm-install-fixture.mjs \
+            --install-mode=${{ matrix.install-mode }} \
+            2>&1 | tee "$RUNNER_TEMP/npm-install-${{ matrix.install-mode }}.log"
+
+      - name: Upload npm install log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: npm-install-macos-${{ matrix.install-mode }}-log
+          path: ${{ runner.temp }}/npm-install-${{ matrix.install-mode }}.log
+          if-no-files-found: warn

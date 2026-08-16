@@ -13,6 +13,7 @@ on:
 permissions:
   actions: read
   contents: write
+  id-token: write
   packages: write
 
 concurrency:
@@ -20,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NPM_CLI_VERSION: "10.9.2"
+  NPM_CLI_VERSION: "12.0.2"
 
 jobs:
   validate-release:
@@ -43,34 +44,34 @@ jobs:
             throw "Release tag $env:GITHUB_REF_NAME must match package version $version`: $($allowedTags -join ', ')."
           }
       - name: Node setup
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Install pinned npm
-        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
-      - name: Validate npm token before platform builds
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
+        shell: pwsh
+        run: |
+          $npmCliRoot = Join-Path $env:RUNNER_TEMP "npm-cli"
+          npm install --prefix $npmCliRoot "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $npmCliRoot "node_modules/.bin") | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Validate npm trusted publishing before platform builds
         shell: bash
         run: |
           set -o pipefail
           mkdir -p .release-logs
-          exec > >(tee .release-logs/npm-token-validation.log) 2>&1
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error title=NPM token missing::Configure NPM_TOKEN, NODE_AUTH_TOKEN, or NPM_AUTH_TOKEN before publishing."
+          exec > >(tee .release-logs/npm-trusted-publishing-validation.log) 2>&1
+          npm --version
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error title=OIDC unavailable::GitHub did not provide an OIDC identity token request endpoint."
             exit 1
           fi
-          if ! npm whoami --registry=https://registry.npmjs.org/; then
-            echo "::error title=NPM token rejected::The configured npm token was rejected before platform builds started."
-            exit 1
-          fi
-      - name: Upload npm token validation failure log
+      - name: Upload npm trusted publishing validation failure log
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: npm-token-validation-failure-${{ github.run_id }}
-          path: .release-logs/npm-token-validation.log
+          name: npm-trusted-publishing-validation-failure-${{ github.run_id }}
+          path: .release-logs/npm-trusted-publishing-validation.log
           if-no-files-found: ignore
 
   build-platform:
@@ -115,13 +116,18 @@ jobs:
           cache-on-failure: true
 
       - name: Node setup
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
       - name: Install pinned npm
-        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+        shell: pwsh
+        run: |
+          $npmCliRoot = Join-Path $env:RUNNER_TEMP "npm-cli"
+          npm install --prefix $npmCliRoot "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $npmCliRoot "node_modules/.bin") | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Bun setup
         uses: oven-sh/setup-bun@v2
@@ -217,12 +223,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Node setup
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Install pinned npm
-        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+        shell: pwsh
+        run: |
+          $npmCliRoot = Join-Path $env:RUNNER_TEMP "npm-cli"
+          npm install --prefix $npmCliRoot "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $npmCliRoot "node_modules/.bin") | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Download verified platform packages
         uses: actions/download-artifact@v4
         with:
@@ -231,19 +242,10 @@ jobs:
           merge-multiple: true
       - name: Publish platform npm packages
         shell: pwsh
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
           if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
-          }
-          if (-not $env:NODE_AUTH_TOKEN) {
-            throw "No npm publish token is configured."
-          }
-          npm whoami --registry=https://registry.npmjs.org/
-          if ($LASTEXITCODE -ne 0) {
-            throw "The configured npm token was rejected with exit $LASTEXITCODE."
           }
           $version = node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version"
           $packageNames = @("tura-linux-x64", "tura-darwin-x64", "tura-darwin-arm64", "tura-win32-x64")
@@ -262,7 +264,7 @@ jobs:
               Write-Host "$packageName@$version already exists on npm; skipping publish."
               continue
             }
-            npm publish (Resolve-Path -LiteralPath $tarball).Path --access public --provenance=false
+            npm publish (Resolve-Path -LiteralPath $tarball).Path --access public
             if ($LASTEXITCODE -ne 0) {
               throw "Publishing $packageName@$version failed with exit $LASTEXITCODE."
             }
@@ -343,21 +345,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Node setup
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Install pinned npm
-        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
-      - name: Verify and publish main package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
+        shell: pwsh
         run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error title=NPM token missing::No npm publish token is configured."
-            exit 1
-          fi
-          npm whoami --registry=https://registry.npmjs.org/
+          $npmCliRoot = Join-Path $env:RUNNER_TEMP "npm-cli"
+          npm install --prefix $npmCliRoot "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $npmCliRoot "node_modules/.bin") | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Verify and publish main package
+        run: |
           node scripts/npm/prepack.mjs
           package_name="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).name")"
           version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
@@ -367,8 +367,8 @@ jobs:
           fi
           mkdir -p release/npm-main
           pack_json="$(npm pack --json --pack-destination release/npm-main)"
-          package_file="$(PACK_JSON="$pack_json" node -e "const info = JSON.parse(process.env.PACK_JSON); console.log('release/npm-main/' + info[0].filename)")"
-          npm publish "./$package_file" --access public --provenance=false
+          package_file="$(PACK_JSON="$pack_json" node -e "const parsed = JSON.parse(process.env.PACK_JSON); const info = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]; console.log('release/npm-main/' + info.filename)")"
+          npm publish "./$package_file" --access public
 
   publish-github-package:
     name: Publish GitHub npm package
@@ -378,13 +378,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Node setup
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://npm.pkg.github.com"
           scope: "@tura-ai"
       - name: Install npm
-        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+        shell: pwsh
+        run: |
+          $npmCliRoot = Join-Path $env:RUNNER_TEMP "npm-cli"
+          npm install --prefix $npmCliRoot "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $npmCliRoot "node_modules/.bin") | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Verify npmjs main package exists
         run: |
           version="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
@@ -398,7 +403,7 @@ jobs:
           trap 'node scripts/npm/restore-main-package.mjs' EXIT
           mkdir -p release/npm-github
           pack_json="$(npm pack --ignore-scripts --json --pack-destination release/npm-github)"
-          PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); if (info?.name !== process.env.TURA_NPM_PACKAGE_NAME) throw new Error('GitHub package name mismatch')"
+          PACK_JSON="$pack_json" node -e "const parsed = JSON.parse(process.env.PACK_JSON); const info = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]; if (info?.name !== process.env.TURA_NPM_PACKAGE_NAME) throw new Error('GitHub package name mismatch')"
       - name: Publish GitHub package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -499,25 +504,41 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Validated recovery source run $run_id for $tag at $tag_sha."
       - name: Node setup
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Install pinned npm
-        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
-      - name: Validate npm token before artifact download
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
+        shell: pwsh
+        run: |
+          $npmCliRoot = Join-Path $env:RUNNER_TEMP "npm-cli"
+          npm install --prefix $npmCliRoot "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $npmCliRoot "node_modules/.bin") | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Report npm OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --silent --show-error --fail \
+            --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm%3Aregistry.npmjs.org")"
+          id_token="$(jq -er '.value' <<<"$response")"
+          OIDC_TOKEN="$id_token" node <<'NODE'
+          const payload = process.env.OIDC_TOKEN.split('.')[1]
+          const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+          const keys = ['aud', 'sub', 'repository', 'repository_owner', 'ref', 'sha', 'workflow', 'job_workflow_ref', 'environment']
+          for (const key of keys) {
+            if (claims[key] !== undefined) console.log(`${key}=${claims[key]}`)
+          }
+          NODE
+      - name: Validate npm trusted publishing before artifact download
         shell: bash
         run: |
           set -o pipefail
           exec > >(tee -a .release-logs/recovery-validation.log) 2>&1
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error title=NPM token missing::Configure NPM_TOKEN, NODE_AUTH_TOKEN, or NPM_AUTH_TOKEN before recovery."
-            exit 1
-          fi
-          if ! npm whoami --registry=https://registry.npmjs.org/; then
-            echo "::error title=NPM token rejected::The configured npm token was rejected before artifact download."
+          npm --version
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error title=OIDC unavailable::GitHub did not provide an OIDC identity token request endpoint."
             exit 1
           fi
       - name: Upload recovery validation failure log
@@ -539,12 +560,17 @@ jobs:
         with:
           ref: ${{ needs.validate-recovery.outputs.tag }}
       - name: Node setup for npmjs
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Install pinned npm
-        run: npm install --global "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+        shell: pwsh
+        run: |
+          $npmCliRoot = Join-Path $env:RUNNER_TEMP "npm-cli"
+          npm install --prefix $npmCliRoot "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $npmCliRoot "node_modules/.bin") | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Download verified source-run artifacts
         uses: actions/download-artifact@v4
         with:
@@ -583,7 +609,6 @@ jobs:
           }
       - name: Publish platform npm packages
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
           RELEASE_VERSION: ${{ needs.validate-recovery.outputs.version }}
         shell: bash
         run: |
@@ -627,14 +652,13 @@ jobs:
             return 1
           }
 
-          npm whoami --registry=https://registry.npmjs.org/
           packages=(tura-linux-x64 tura-darwin-x64 tura-darwin-arm64 tura-win32-x64)
           for package in "${packages[@]}"; do
             tarball="release-assets/$package-$RELEASE_VERSION.tgz"
             status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/$package/$RELEASE_VERSION")"
             case "$status" in
               200) echo "$package@$RELEASE_VERSION already exists on npm; skipping publish." ;;
-              404) npm publish "./$tarball" --access public --provenance=false ;;
+              404) npm publish "./$tarball" --access public --loglevel verbose ;;
               *) echo "Unexpected npm registry status $status for $package@$RELEASE_VERSION."; exit 1 ;;
             esac
             wait_for_public_package "$package"
@@ -644,7 +668,6 @@ jobs:
           done
       - name: Pack and publish main npm package
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN || secrets.NPM_AUTH_TOKEN }}
           RELEASE_VERSION: ${{ needs.validate-recovery.outputs.version }}
         shell: bash
         run: |
@@ -685,15 +708,14 @@ jobs:
             return 1
           }
 
-          npm whoami --registry=https://registry.npmjs.org/
           node scripts/npm/prepack.mjs
           mkdir -p release/npm-main
           pack_json="$(npm pack --json --pack-destination release/npm-main)"
-          package_file="$(PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); console.log('release/npm-main/' + info.filename)")"
+          package_file="$(PACK_JSON="$pack_json" node -e "const parsed = JSON.parse(process.env.PACK_JSON); const info = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]; console.log('release/npm-main/' + info.filename)")"
           status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/tura-ai/$RELEASE_VERSION")"
           case "$status" in
             200) echo "tura-ai@$RELEASE_VERSION already exists on npm; skipping publish." ;;
-            404) npm publish "./$package_file" --access public --provenance=false ;;
+            404) npm publish "./$package_file" --access public --loglevel verbose ;;
             *) echo "Unexpected npm registry status $status for tura-ai@$RELEASE_VERSION."; exit 1 ;;
           esac
           wait_for_public_package
@@ -723,7 +745,7 @@ jobs:
           test "${#assets[@]}" -gt 0
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
       - name: Node setup for GitHub Packages
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://npm.pkg.github.com"
@@ -759,8 +781,8 @@ jobs:
           node scripts/npm/stage-main-package.mjs
           mkdir -p release/npm-github
           pack_json="$(npm pack --ignore-scripts --json --pack-destination release/npm-github)"
-          PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); if (info?.name !== process.env.TURA_NPM_PACKAGE_NAME) throw new Error('GitHub package name mismatch')"
-          package_file="$(PACK_JSON="$pack_json" node -e "const [info] = JSON.parse(process.env.PACK_JSON); console.log('release/npm-github/' + info.filename)")"
+          PACK_JSON="$pack_json" node -e "const parsed = JSON.parse(process.env.PACK_JSON); const info = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]; if (info?.name !== process.env.TURA_NPM_PACKAGE_NAME) throw new Error('GitHub package name mismatch')"
+          package_file="$(PACK_JSON="$pack_json" node -e "const parsed = JSON.parse(process.env.PACK_JSON); const info = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]; console.log('release/npm-github/' + info.filename)")"
           if npm view "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
             echo "${TURA_NPM_PACKAGE_NAME}@$RELEASE_VERSION already exists in GitHub Packages; skipping publish."
           else

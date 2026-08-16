@@ -205,19 +205,21 @@ Tura 的 2.6 轮来自存档轮次合约中明确记录的 `compact_context` 事
 
 ### 通过 NPM 安装
 
-macOS 和 Linux：
+全局安装（macOS、Linux 和 Windows）：
 
 ```bash
-npm install tura-ai
-tura
-```
-
-Windows：
-
-```powershell
 npm install -g tura-ai
 tura
 ```
+
+项目内安装：
+
+```bash
+npm install tura-ai
+npx --no-install tura
+```
+
+npm 包不会运行 `postinstall` 生命周期脚本；`tura` wrapper 会直接解析并启动已安装的平台包。
 
 同一个主包也以 `@tura-ai/tura` 的名称发布在 GitHub Packages。你需要把 `@tura-ai` 作用域指向 `https://npm.pkg.github.com`，使用拥有 `read:packages` 权限的 Token 完成认证，然后安装 `@tura-ai/tura`。对大多数人来说，直接安装 npm 上不带作用域的 `tura-ai` 仍然是最省事的方式。
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
-import { isCliPathRegistered, unregisterCliPath } from "./cli-path.mjs";
+import { platformPackageName } from "./release-artifacts.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const releaseDir = path.join(repoRoot, "release");
@@ -59,15 +59,6 @@ function platformTarball(root, version) {
   return matches.length === 1 ? path.join(root, matches[0]) : null;
 }
 
-function firstPlatformPackageDir(root) {
-  const nodeModules = path.join(root, "node_modules");
-  if (!existsSync(nodeModules)) return null;
-  const packageNames = readdirSync(nodeModules)
-    .filter((entry) => entry.startsWith("tura-"))
-    .sort();
-  return packageNames.length > 0 ? path.join(nodeModules, packageNames[0]) : null;
-}
-
 function packageMain() {
   mkdirSync(mainOutDir, { recursive: true });
   const output = run(npmCommand(), ["pack", "--json", "--pack-destination", mainOutDir], {
@@ -79,12 +70,14 @@ function packageMain() {
   } catch {
     fail(`npm pack did not return JSON: ${output.slice(0, 500)}`);
   }
-  const filename = parsed?.[0]?.filename;
+  const packEntries = Array.isArray(parsed) ? parsed : Object.values(parsed ?? {});
+  const packInfo = packEntries[0];
+  const filename = packInfo?.filename;
   if (!filename) {
     fail("npm pack output did not include a tarball filename.");
   }
   const tarball = path.join(mainOutDir, filename);
-  verifyPackedMainPackage(tarball, parsed?.[0]);
+  verifyPackedMainPackage(tarball, packInfo);
   return tarball;
 }
 
@@ -116,7 +109,6 @@ function verifyPackedMainPackage(tarball, packInfo) {
     "npm/tura.mjs",
     "package.json",
     "scripts/npm/cli-path.mjs",
-    "scripts/npm/install-release.mjs",
     "scripts/npm/release-artifacts.mjs"
   ]);
   const packedFiles = (packInfo?.files ?? []).map((file) => file.path.replaceAll("\\", "/")).sort();
@@ -135,7 +127,7 @@ function verifyPackedMainPackage(tarball, packInfo) {
   const packedPackageJson = JSON.parse(packedPackageJsonText);
   const scripts = packedPackageJson.scripts ?? {};
   const scriptNames = Object.keys(scripts).sort();
-  if (scriptNames.length !== 1 || scripts.postinstall !== "node ./scripts/npm/install-release.mjs") {
+  if (scriptNames.length !== 0) {
     fail(`packed main package contains unexpected npm scripts: ${scriptNames.join(", ") || "(none)"}`);
   }
 }
@@ -151,38 +143,19 @@ if (!existsSync(mainPackage)) {
 }
 
 const suffix = packageJson.version.replaceAll(/[^a-zA-Z0-9_.-]/g, "-");
-const platformInstallDir = safeTempDir(`tura-platform-package-check-${suffix}`);
 const installDir = safeTempDir(`tura-npm-install-check-${suffix}`);
-const registrationHome = path.join(installDir, "home");
-mkdirSync(registrationHome, { recursive: true });
-
-run(npmCommand(), ["init", "-y", "--silent"], { cwd: platformInstallDir });
-run(npmCommand(), ["install", "--omit=optional", platformPackage], {
-  cwd: platformInstallDir
-});
-const platformPackageDir = firstPlatformPackageDir(platformInstallDir);
-if (!platformPackageDir) {
-  fail("installed platform package directory was not found.");
-}
 
 run(npmCommand(), ["init", "-y", "--silent"], { cwd: installDir });
-const installEnv = {
-  ...process.env,
-  TURA_NPM_PLATFORM_PACKAGE_DIR: platformPackageDir
-};
-if (process.platform !== "win32") {
-  installEnv.HOME = registrationHome;
-}
-run(npmCommand(), ["install", "--foreground-scripts", "--omit=optional", mainPackage], {
-  cwd: installDir,
-  env: installEnv
+run(npmCommand(), ["install", "--omit=optional", platformPackage], {
+  cwd: installDir
 });
-if (process.platform !== "win32") {
-  process.env.HOME = registrationHome;
-}
+run(npmCommand(), ["install", "--omit=optional", mainPackage], {
+  cwd: installDir
+});
 
 const mainPackageDir = path.join(installDir, "node_modules", packageJson.name);
-const installedReleaseDir = path.join(mainPackageDir, "target", "release");
+const platformPackageDir = path.join(installDir, "node_modules", platformPackageName());
+const installedReleaseDir = path.join(platformPackageDir, "target", "release");
 const executableExtension = process.platform === "win32" ? ".exe" : "";
 const binName = process.platform === "win32" ? "tura.cmd" : "tura";
 const requiredPaths = [
@@ -206,28 +179,10 @@ const missing = requiredPaths.filter((requiredPath) => !existsSync(requiredPath)
 if (missing.length > 0) {
   fail(`installed package is missing required release files:\n${missing.join("\n")}`);
 }
-function verifyCliRegistration() {
-  if (!isCliPathRegistered({ packageRoot: mainPackageDir, releaseDir: installedReleaseDir })) {
-    fail(`CLI registration did not add release directory to the user CLI path: ${installedReleaseDir}`);
-  }
+if (existsSync(path.join(mainPackageDir, "target", "release"))) {
+  fail("main package unexpectedly contains copied release files; wrapper must use the platform package directly.");
 }
 
-function cleanupCliRegistration() {
-  unregisterCliPath({ packageRoot: mainPackageDir, releaseDir: installedReleaseDir, quiet: true });
-}
-
-function verifyCliUnregistration() {
-  const binPath = path.join(installDir, "node_modules", ".bin", binName);
-  run(binPath, ["unregister-cli"], {
-    cwd: installDir,
-    env: process.platform === "win32" ? process.env : { ...process.env, HOME: registrationHome }
-  });
-  if (isCliPathRegistered({ packageRoot: mainPackageDir, releaseDir: installedReleaseDir })) {
-    cleanupCliRegistration();
-    fail(`CLI unregistration did not remove release directory from the user CLI path: ${installedReleaseDir}`);
-  }
-}
-
-verifyCliRegistration();
-verifyCliUnregistration();
-console.log(`[tura verify-platform-install] installed release files verified in ${installedReleaseDir}`);
+const binPath = path.join(installDir, "node_modules", ".bin", binName);
+run(binPath, ["--help"], { cwd: installDir });
+console.log(`[tura verify-platform-install] postinstall-free wrapper and platform package verified in ${installedReleaseDir}`);
