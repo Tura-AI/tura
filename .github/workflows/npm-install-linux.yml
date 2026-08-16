@@ -2,9 +2,6 @@ name: NPM Install Linux
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - "ci/branch"
 
 permissions:
   contents: read
