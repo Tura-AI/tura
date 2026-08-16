@@ -2,6 +2,9 @@ name: NPM Install macOS
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "ci/branch"
 
 permissions:
   contents: read
@@ -49,6 +52,7 @@ jobs:
           export PATH="$npm_config_prefix/bin:$PATH"
           npm install tura-ai -g 2>&1 | tee "$RUNNER_TEMP/npm-install-global.log"
           command -v tura
+          tura --help
           tura doctor-cli-path
           npm list -g tura-ai --depth=1
 
@@ -63,6 +67,7 @@ jobs:
           npm init -y >/dev/null
           npm install tura-ai 2>&1 | tee "$RUNNER_TEMP/npm-install-local.log"
           test -x ./node_modules/.bin/tura
+          ./node_modules/.bin/tura --help
           ./node_modules/.bin/tura doctor-cli-path
           npm list tura-ai --depth=1
 

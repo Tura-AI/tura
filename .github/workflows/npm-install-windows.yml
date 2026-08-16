@@ -2,6 +2,9 @@ name: NPM Install Windows
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "ci/branch"
 
 permissions:
   contents: read
@@ -24,6 +27,12 @@ jobs:
         with:
           node-version: "22"
           package-manager-cache: false
+
+      - name: npm 12 setup
+        shell: pwsh
+        run: |
+          npm install --global npm@12.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Record environment
         shell: pwsh
@@ -49,6 +58,8 @@ jobs:
           npm install tura-ai -g 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP "npm-install-global.log")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-Command tura
+          tura --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           tura doctor-cli-path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm list -g tura-ai --depth=1
@@ -68,6 +79,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $tura = Join-Path $installDir "node_modules\.bin\tura.cmd"
           if (-not (Test-Path -LiteralPath $tura)) { throw "Local tura command was not installed: $tura" }
+          & $tura --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $tura doctor-cli-path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm list tura-ai --depth=1
