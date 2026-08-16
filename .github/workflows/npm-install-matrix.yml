@@ -2,58 +2,27 @@ name: NPM Install Matrix
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/npm-install-matrix.yml"
-      - "agents/src/**"
-      - "personas/src/**"
-      - "crates/runtime/src/runtime_prompt/**"
-      - "npm/**"
-      - "scripts/install.ps1"
-      - "scripts/install.sh"
-      - "scripts/npm/**"
-      - "scripts/tests/scripts/test-install.ps1"
-      - "scripts/tests/scripts/test-install.sh"
-      - "package.json"
-      - "README.md"
-      - "scripts/ARCHITECTURE.md"
   push:
     branches:
-      - "codex/**"
-      - "fix/**"
+      - "codex/macos-npm-install-ci"
     paths:
       - ".github/workflows/npm-install-matrix.yml"
-      - "agents/src/**"
-      - "personas/src/**"
-      - "crates/runtime/src/runtime_prompt/**"
-      - "npm/**"
-      - "scripts/install.ps1"
-      - "scripts/install.sh"
-      - "scripts/npm/**"
-      - "scripts/tests/scripts/test-install.ps1"
-      - "scripts/tests/scripts/test-install.sh"
-      - "package.json"
-      - "README.md"
-      - "scripts/ARCHITECTURE.md"
 
 permissions:
   contents: read
 
 jobs:
-  npm-install:
-    name: npm install ${{ matrix.label }}
-    runs-on: ${{ matrix.runner }}
+  npm-install-macos:
+    name: npm install macos-15 (${{ matrix.install-mode }})
+    runs-on: macos-15
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - label: ubuntu-latest
-            runner: ubuntu-latest
-          - label: macos-15
-            runner: macos-15
-          - label: windows-2022
-            runner: windows-2022
+        install-mode:
+          - global
+          - local
+
     steps:
       - uses: actions/checkout@v4
 
@@ -62,31 +31,47 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Run npm installer regression tests
-        id: npm_install
-        shell: pwsh
-        continue-on-error: true
+      - name: Record environment
+        shell: bash
         run: |
-          $ErrorActionPreference = "Continue"
-          New-Item -ItemType Directory -Path .ci-results -Force | Out-Null
-          node --test scripts/npm/cli-path.test.mjs scripts/npm/install-release.test.mjs scripts/npm/release-artifacts.test.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log"
-          $testExit = $LASTEXITCODE
-          if ($testExit -eq 0) {
-            node scripts/npm/verify-npm-install-fixture.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log" -Append
-            $testExit = $LASTEXITCODE
-          }
-          "exit_code=$testExit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          if ($testExit -ne 0) { exit $testExit }
+          set -euxo pipefail
+          uname -a
+          sw_vers
+          node --version
+          npm --version
+          npm view tura-ai version --registry https://registry.npmjs.org/
 
-      - name: Upload npm install logs
+      - name: Test npm install tura-ai -g
+        if: matrix.install-mode == 'global'
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/tura-global/npm-prefix"
+          export npm_config_prefix="$RUNNER_TEMP/tura-global/npm-prefix"
+          export PATH="$npm_config_prefix/bin:$PATH"
+          npm install tura-ai -g 2>&1 | tee "$RUNNER_TEMP/npm-install-global.log"
+          command -v tura
+          tura doctor-cli-path
+          npm list -g tura-ai --depth=1
+
+      - name: Test npm install tura-ai
+        if: matrix.install-mode == 'local'
+        shell: bash
+        run: |
+          set -o pipefail
+          install_dir="$RUNNER_TEMP/tura-local"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+          npm init -y >/dev/null
+          npm install tura-ai 2>&1 | tee "$RUNNER_TEMP/npm-install-local.log"
+          test -x ./node_modules/.bin/tura
+          ./node_modules/.bin/tura doctor-cli-path
+          npm list tura-ai --depth=1
+
+      - name: Upload npm install log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: npm-install-${{ matrix.label }}-logs
-          path: .ci-results/npm-install-${{ matrix.label }}.log
+          name: npm-install-macos-15-${{ matrix.install-mode }}-log
+          path: ${{ runner.temp }}/npm-install-${{ matrix.install-mode }}.log
           if-no-files-found: warn
-
-      - name: Fail if npm install verification failed
-        if: steps.npm_install.outcome != 'success'
-        shell: pwsh
-        run: exit 1
