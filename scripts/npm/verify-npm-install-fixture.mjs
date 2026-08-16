@@ -112,6 +112,13 @@ function createFixturePlatformPackage() {
   for (const configFile of requiredReleaseRuntimeFiles.filter((file) => file.endsWith(".json"))) {
     writeFixtureFile(configFile, "{}\n");
   }
+  for (const runtimeResource of [
+    "crates/tools/src/command_run/schema.json",
+    "crates/tools/src/commands/apply_patch/command.toml",
+    "commands/web_discover/command.toml",
+  ]) {
+    writeFixtureFile(runtimeResource, readFileSync(path.join(repoRoot, runtimeResource), "utf8"));
+  }
   writeFileSync(
     path.join(platformRoot, "package.json"),
     `${JSON.stringify(
