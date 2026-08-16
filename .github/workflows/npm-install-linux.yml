@@ -28,6 +28,11 @@ jobs:
           node-version: "22.22.2"
           package-manager-cache: false
 
+      - name: Install Linux runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxdo3
+
       - name: npm 12 setup
         shell: bash
         run: |
