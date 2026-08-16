@@ -515,6 +515,22 @@ jobs:
           npm install --prefix $npmCliRoot "npm@${{ env.NPM_CLI_VERSION }}" --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           (Join-Path $npmCliRoot "node_modules/.bin") | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Report npm OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --silent --show-error --fail \
+            --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm%3Aregistry.npmjs.org")"
+          id_token="$(jq -er '.value' <<<"$response")"
+          OIDC_TOKEN="$id_token" node <<'NODE'
+          const payload = process.env.OIDC_TOKEN.split('.')[1]
+          const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+          const keys = ['aud', 'sub', 'repository', 'repository_owner', 'ref', 'sha', 'workflow', 'job_workflow_ref', 'environment']
+          for (const key of keys) {
+            if (claims[key] !== undefined) console.log(`${key}=${claims[key]}`)
+          }
+          NODE
       - name: Validate npm trusted publishing before artifact download
         shell: bash
         run: |
@@ -642,7 +658,7 @@ jobs:
             status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/$package/$RELEASE_VERSION")"
             case "$status" in
               200) echo "$package@$RELEASE_VERSION already exists on npm; skipping publish." ;;
-              404) npm publish "./$tarball" --access public ;;
+              404) npm publish "./$tarball" --access public --loglevel verbose ;;
               *) echo "Unexpected npm registry status $status for $package@$RELEASE_VERSION."; exit 1 ;;
             esac
             wait_for_public_package "$package"
@@ -699,7 +715,7 @@ jobs:
           status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "https://registry.npmjs.org/tura-ai/$RELEASE_VERSION")"
           case "$status" in
             200) echo "tura-ai@$RELEASE_VERSION already exists on npm; skipping publish." ;;
-            404) npm publish "./$package_file" --access public ;;
+            404) npm publish "./$package_file" --access public --loglevel verbose ;;
             *) echo "Unexpected npm registry status $status for tura-ai@$RELEASE_VERSION."; exit 1 ;;
           esac
           wait_for_public_package
