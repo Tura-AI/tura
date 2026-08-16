@@ -1,0 +1,70 @@
+name: NPM Install Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-install:
+    name: npm install Linux (${{ matrix.install-mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        install-mode:
+          - global
+          - local
+
+    steps:
+      - name: Node setup
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Record environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          uname -a
+          node --version
+          npm --version
+          npm view tura-ai version --registry https://registry.npmjs.org/
+
+      - name: Test npm install tura-ai -g
+        if: matrix.install-mode == 'global'
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/tura-global/npm-prefix"
+          export npm_config_prefix="$RUNNER_TEMP/tura-global/npm-prefix"
+          export PATH="$npm_config_prefix/bin:$PATH"
+          npm install tura-ai -g 2>&1 | tee "$RUNNER_TEMP/npm-install-global.log"
+          command -v tura
+          tura doctor-cli-path
+          npm list -g tura-ai --depth=1
+
+      - name: Test npm install tura-ai
+        if: matrix.install-mode == 'local'
+        shell: bash
+        run: |
+          set -o pipefail
+          install_dir="$RUNNER_TEMP/tura-local"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+          npm init -y >/dev/null
+          npm install tura-ai 2>&1 | tee "$RUNNER_TEMP/npm-install-local.log"
+          test -x ./node_modules/.bin/tura
+          ./node_modules/.bin/tura doctor-cli-path
+          npm list tura-ai --depth=1
+
+      - name: Upload npm install log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: npm-install-linux-${{ matrix.install-mode }}-log
+          path: ${{ runner.temp }}/npm-install-${{ matrix.install-mode }}.log
+          if-no-files-found: warn

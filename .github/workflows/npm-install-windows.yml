@@ -1,0 +1,82 @@
+name: NPM Install Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-install:
+    name: npm install Windows (${{ matrix.install-mode }})
+    runs-on: windows-2022
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        install-mode:
+          - global
+          - local
+
+    steps:
+      - name: Node setup
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Record environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsArchitecture
+          node --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm view tura-ai version --registry https://registry.npmjs.org/
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test npm install tura-ai -g
+        if: matrix.install-mode == 'global'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $prefix = Join-Path $env:RUNNER_TEMP "tura-global\npm-prefix"
+          New-Item -ItemType Directory -Path $prefix -Force | Out-Null
+          $env:npm_config_prefix = $prefix
+          $env:Path = "$prefix;$env:Path"
+          npm install tura-ai -g 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP "npm-install-global.log")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Command tura
+          tura doctor-cli-path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm list -g tura-ai --depth=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test npm install tura-ai
+        if: matrix.install-mode == 'local'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installDir = Join-Path $env:RUNNER_TEMP "tura-local"
+          New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+          Set-Location $installDir
+          npm init -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm install tura-ai 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP "npm-install-local.log")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tura = Join-Path $installDir "node_modules\.bin\tura.cmd"
+          if (-not (Test-Path -LiteralPath $tura)) { throw "Local tura command was not installed: $tura" }
+          & $tura doctor-cli-path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm list tura-ai --depth=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload npm install log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: npm-install-windows-${{ matrix.install-mode }}-log
+          path: ${{ runner.temp }}\npm-install-${{ matrix.install-mode }}.log
+          if-no-files-found: warn
