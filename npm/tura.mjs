@@ -6,6 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { platformPackageName } from "../scripts/npm/release-artifacts.mjs";
 import {
+  launchEnvironment,
+  missingRuntimeResources,
+} from "../scripts/npm/launcher-env.mjs";
+import {
   defaultReleaseDir,
   isCliPathRegistered,
   registerCliPath,
@@ -80,21 +84,23 @@ if (!releaseBin || !existsSync(releaseBin)) {
   process.exit(1);
 }
 
+const missingResources = missingRuntimeResources(releaseDir);
+if (missingResources.length > 0) {
+  console.error("Tura release runtime resources are incomplete.");
+  for (const missing of missingResources) {
+    console.error(`Missing: ${missing}`);
+  }
+  console.error(`Reinstall ${platformPackageName()} and tura-ai.`);
+  process.exit(1);
+}
+
 const providerConfig = firstExistingPath([
   path.join(packageRoot, "crates", "provider", "config", "provider_config.json"),
   path.join(releaseDir, "config", "provider_config.json"),
 ]);
 
 const result = spawnSync(releaseBin, process.argv.slice(2), {
-  env: {
-    ...process.env,
-    TURA_RELEASE_BIN_DIR:
-      process.env.TURA_RELEASE_BIN_DIR || path.dirname(releaseBin),
-    TURA_PROJECT_ROOT: process.env.TURA_PROJECT_ROOT || packageRoot,
-    ...(providerConfig
-      ? { TURA_PROVIDER_CONFIG: process.env.TURA_PROVIDER_CONFIG || providerConfig }
-      : {}),
-  },
+  env: launchEnvironment({ providerConfig, releaseBin, releaseDir }),
   stdio: "inherit",
   windowsHide: false,
 });

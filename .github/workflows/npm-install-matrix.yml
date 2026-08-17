@@ -55,12 +55,21 @@ jobs:
           - label: windows-2022
             runner: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Node setup
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "22.22.2"
+          package-manager-cache: false
+
+      - name: npm 12 setup
+        shell: pwsh
+        run: |
+          $npm12Root = Join-Path $env:RUNNER_TEMP "npm12"
+          npm install --prefix $npm12Root npm@12.0.2 --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $npm12Root "node_modules\.bin") | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Run npm installer regression tests
         id: npm_install
@@ -69,7 +78,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Continue"
           New-Item -ItemType Directory -Path .ci-results -Force | Out-Null
-          node --test scripts/npm/cli-path.test.mjs scripts/npm/install-release.test.mjs scripts/npm/release-artifacts.test.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log"
+          node --test scripts/npm/cli-path.test.mjs scripts/npm/install-release.test.mjs scripts/npm/launcher-env.test.mjs scripts/npm/release-artifacts.test.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log"
           $testExit = $LASTEXITCODE
           if ($testExit -eq 0) {
             node scripts/npm/verify-npm-install-fixture.mjs 2>&1 | Tee-Object -FilePath ".ci-results/npm-install-${{ matrix.label }}.log" -Append

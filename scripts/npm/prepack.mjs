@@ -31,6 +31,7 @@ const requiredFiles = [
   "apps/tauri/bun.lock",
   "npm/tura.mjs",
   "scripts/npm/cli-path.mjs",
+  "scripts/npm/launcher-env.mjs",
   "scripts/npm/release-artifacts.mjs",
   "scripts/npm/install-release.mjs",
   "scripts/npm/verify-npm-install-fixture.mjs",

@@ -11,6 +11,7 @@ import {
   missingPackageFiles,
   missingNpmPlatformFiles,
   missingReleaseRuntimeFiles,
+  npmPlatformRuntimeExcludedFiles,
   platformPackageName,
   releaseArchiveName,
   releaseConfigFiles,
@@ -31,12 +32,7 @@ const platformName = platformPackageName();
 const packageDir = path.join(outDir, platformName);
 const sourceRelease = releaseRoot(repoRoot);
 const stageRelease = path.join(packageDir, "target", "release");
-const npmPlatformRuntimeExcludedFiles = new Set([
-  "scripts/register-cli.ps1",
-  "scripts/register-cli.sh",
-  "scripts/unregister-cli.ps1",
-  "scripts/unregister-cli.sh"
-]);
+const npmPlatformExcludedFiles = new Set(npmPlatformRuntimeExcludedFiles);
 
 function fail(message) {
   console.error(`[tura package-platform] ${message}`);
@@ -124,7 +120,7 @@ for (const [sourceRelative, releaseRelative] of releaseConfigFiles) {
 
 if (!binaryOnly) {
   for (const [releaseRelative] of releaseRuntimeFiles) {
-    if (npmPlatformRuntimeExcludedFiles.has(releaseRelative)) {
+    if (npmPlatformExcludedFiles.has(releaseRelative)) {
       continue;
     }
     copyRuntimePath(
