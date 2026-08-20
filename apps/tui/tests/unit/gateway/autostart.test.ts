@@ -189,7 +189,7 @@ test("ensureGatewayAvailable terminates stale active gateway and relaunches once
     );
     const ownAddress = ownServer.address() as AddressInfo;
     const ownUrl = `http://127.0.0.1:${ownAddress.port}`;
-    restoreTimeout = _setGatewayStartTimeoutMsForTest(1);
+    restoreTimeout = _setGatewayStartTimeoutMsForTest(0);
     let launches = 0;
     restoreLauncher = _setGatewayLauncherForTest(async () => {
       launches += 1;

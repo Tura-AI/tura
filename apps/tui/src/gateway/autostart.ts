@@ -252,12 +252,16 @@ async function waitForSameHomeGateway(
   timeoutMs: number,
 ): Promise<GatewayIdentity | null> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  let firstAttempt = true;
+  while (firstAttempt || Date.now() < deadline) {
+    firstAttempt = false;
     const identity = await gatewayIdentityWithProbeTimeout(gatewayUrl);
     if (identity && gatewayMatchesInstance(identity, instanceHome, projectRoot, false)) {
       return identity;
     }
-    await delay(HEALTH_POLL_INTERVAL_MS);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await delay(Math.min(HEALTH_POLL_INTERVAL_MS, remainingMs));
   }
   return null;
 }
