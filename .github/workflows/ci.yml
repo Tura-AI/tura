@@ -3,6 +3,7 @@ name: CI
 on:
   pull_request:
     paths-ignore:
+      - "**/*.md"
       - "docs/**"
       - "outreach/**"
   push:
@@ -15,6 +16,7 @@ on:
       - "release*"
       - "release-v*"
     paths-ignore:
+      - "**/*.md"
       - "docs/**"
       - "outreach/**"
   workflow_dispatch:
