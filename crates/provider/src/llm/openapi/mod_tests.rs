@@ -224,6 +224,23 @@ fn provider_payload_keeps_max_reasoning_for_gpt_5_6_family() {
 }
 
 #[test]
+fn provider_responses_payload_supports_gpt_6_astra_without_temperature() {
+    let messages = vec![json!({"role": "user", "content": "ping"})];
+    let options = CallOptions {
+        reasoning_effort: Some("max".to_string()),
+        temperature: Some(0.2),
+        ..CallOptions::default()
+    };
+
+    let payload =
+        build_responses_payload_for_provider("openai", "gpt-6-astra", &messages, &options);
+
+    assert_eq!(payload["model"], "gpt-6-astra");
+    assert_eq!(payload["reasoning"]["effort"], "max");
+    assert!(payload.get("temperature").is_none());
+}
+
+#[test]
 fn provider_payload_maps_max_reasoning_to_xhigh_for_non_gpt_5_6_models() {
     let messages = vec![json!({"role": "user", "content": "ping"})];
     let options = CallOptions {

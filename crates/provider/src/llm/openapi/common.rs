@@ -53,7 +53,7 @@ fn model_supports_max_reasoning(model: &str) -> bool {
         .to_ascii_lowercase();
     matches!(
         model.as_str(),
-        "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+        "gpt-6-astra" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
     )
 }
 

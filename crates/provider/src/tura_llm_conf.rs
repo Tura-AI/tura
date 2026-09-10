@@ -108,6 +108,40 @@ mod tests {
             );
         }
         assert_eq!(settings.routes.len(), 4);
+
+        let thinking = settings
+            .route_by_name("thinking")
+            .expect("thinking route should be configured");
+        assert_eq!(thinking.providers[0].provider, "codex");
+        assert_eq!(thinking.providers[0].model, "gpt-5.6-sol");
+        assert_eq!(
+            thinking.provider("openai").expect("openai route").model,
+            "gpt-5.6-sol"
+        );
+
+        let openai = settings
+            .model_catalog
+            .providers
+            .get("openai")
+            .expect("openai provider catalog");
+        let astra = openai
+            .models
+            .get("thinking")
+            .expect("openai thinking models")
+            .iter()
+            .find(|model| model.id() == "gpt-6-astra")
+            .and_then(|model| model.detail())
+            .expect("gpt-6-astra metadata");
+        assert_eq!(astra.family, "gpt-6");
+        assert_eq!(astra.limit.context, 1_050_000);
+        assert_eq!(astra.limit.input, 922_000);
+        assert_eq!(astra.limit.output, 128_000);
+        assert_eq!(astra.modalities.input, ["text", "image"]);
+        assert_eq!(astra.modalities.output, ["text"]);
+        assert!(astra.reasoning);
+        assert!(!astra.temperature);
+        assert!(astra.tool_call);
+
         assert!(settings
             .configured_model_catalog()
             .contains_key("openrouter"));

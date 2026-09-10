@@ -158,6 +158,18 @@ const OPENAI_MODELS: &[&str] = &[
 ];
 const OPENAI_API_MODELS: &[&str] = &[
     "gpt-5.6-sol",
+    "gpt-6-astra",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5-pro",
+    "gpt-5.5",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "text-embedding-3-large",
+    "text-embedding-3-small",
+];
+const AZURE_OPENAI_MODELS: &[&str] = &[
+    "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.5-pro",
@@ -538,7 +550,7 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         "azure",
         "Azure AI Foundry",
         "AZURE_OPENAI_API_KEY",
-        OPENAI_API_MODELS,
+        AZURE_OPENAI_MODELS,
         "https://{resource}.openai.azure.com/openai/v1",
     ),
     simple_openai_compatible(
@@ -758,6 +770,16 @@ mod tests {
         assert!(entry.capabilities.supports_streaming);
         assert!(entry.capabilities.supports_tool_call_streaming);
         assert!(entry.capabilities.supports_model_validation);
+    }
+
+    #[test]
+    fn openai_api_registry_exposes_astra_without_changing_the_sol_default() {
+        let entry = provider_auth_registry_entry("openai").expect("openai registry entry");
+        let azure = provider_auth_registry_entry("azure").expect("azure registry entry");
+
+        assert_eq!(entry.supported_models.first(), Some(&"gpt-5.6-sol"));
+        assert!(entry.supported_models.contains(&"gpt-6-astra"));
+        assert!(!azure.supported_models.contains(&"gpt-6-astra"));
     }
 
     #[test]
