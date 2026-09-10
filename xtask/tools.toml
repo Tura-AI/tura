@@ -8,7 +8,7 @@ install = "cargo install cargo-audit --locked"
 install = "cargo install cargo-deny --locked"
 
 [cargo_bins.typos]
-install = "cargo install typos-cli --locked"
+install = "cargo install typos-cli --version 1.49.0 --locked"
 
 [checks]
 format = "cargo fmt --all --check"

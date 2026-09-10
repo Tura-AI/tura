@@ -77,7 +77,7 @@ require_rust_component rustfmt
 require npm "Install Node.js/npm to run TUI formatting checks."
 [ "$SKIP_AUDIT" -eq 1 ] || require cargo-audit "Install with: cargo install cargo-audit --locked"
 [ "$SKIP_DENY" -eq 1 ] || require cargo-deny "Install with: cargo install cargo-deny --locked"
-[ "$SKIP_TYPOS" -eq 1 ] || require typos "Install with: cargo install typos-cli --locked"
+[ "$SKIP_TYPOS" -eq 1 ] || require typos "Install with: cargo install typos-cli --version 1.49.0 --locked"
 
 step "Checking backend Rust test layout"
 run_python_script "$XTASK_ROOT/scripts/check-backend-test-layout.py"
