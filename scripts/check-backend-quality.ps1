@@ -84,7 +84,7 @@ if (-not $SkipDeny) {
   Require-Command "cargo-deny" "Install with: cargo install cargo-deny --locked"
 }
 if (-not $SkipTypos) {
-  Require-Command "typos" "Install with: cargo install typos-cli --locked"
+  Require-Command "typos" "Install with: cargo install typos-cli --version 1.49.0 --locked"
 }
 
 Write-Step "Checking backend Rust test layout"

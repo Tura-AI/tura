@@ -54,12 +54,20 @@ jobs:
             ~/.cargo/bin/cargo-audit
             ~/.cargo/bin/cargo-deny
             ~/.cargo/bin/typos
-          key: ${{ runner.os }}-quality-bins-cargo-audit-deny-0.19.8-typos
+          key: ${{ runner.os }}-quality-bins-cargo-audit-deny-0.19.8-typos-1.49.0
       - name: Install quality binaries
+        shell: bash
         run: |
-          command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
-          cargo-deny --version 2>/dev/null | grep -q ' 0\.19\.8$' || cargo install cargo-deny --version 0.19.8 --locked --force
-          command -v typos >/dev/null 2>&1 || cargo install typos-cli --locked
+          set +e
+          mkdir -p .ci-results
+          (
+            set -e
+            command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked
+            cargo-deny --version 2>/dev/null | grep -q ' 0\.19\.8$' || cargo install cargo-deny --version 0.19.8 --locked --force
+            typos --version 2>/dev/null | grep -q ' 1\.49\.0$' || cargo install typos-cli --version 1.49.0 --locked --force
+          ) 2>&1 | tee .ci-results/quality-smell-gate.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
       - name: Run quality smell gate
         shell: bash
         run: |
