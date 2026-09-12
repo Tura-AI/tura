@@ -284,6 +284,10 @@ pub fn session_db_owner_lock_path() -> PathBuf {
     session_db_owner_lock_path_for_build_kind(tura_path::build_kind())
 }
 
+pub fn session_db_owner_record_path() -> PathBuf {
+    session_db_owner_lock_path().with_extension("owner")
+}
+
 pub fn unreachable_owner_lock_message() -> Option<String> {
     if service_is_running() {
         return None;
@@ -502,33 +506,50 @@ fn has_io_error(error: &anyhow::Error, include_timeout: bool) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OwnerLockRecord {
     pid: Option<u32>,
+    process_start_time: Option<u64>,
     kind: Option<String>,
     build_kind: Option<String>,
     home: Option<String>,
+    parent_pid: Option<u32>,
+    parent_process_start_time: Option<u64>,
 }
 
 fn read_owner_lock_record(path: &std::path::Path) -> Option<OwnerLockRecord> {
-    let raw = fs::read_to_string(path).ok()?;
-    let mut record = OwnerLockRecord {
-        pid: None,
-        kind: None,
-        build_kind: None,
-        home: None,
-    };
-    for line in raw.lines() {
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let value = value.trim();
-        match key.trim() {
-            "pid" => record.pid = value.parse().ok(),
-            "kind" => record.kind = Some(value.to_string()),
-            "build_kind" => record.build_kind = Some(value.to_string()),
-            "home" => record.home = Some(value.to_string()),
-            _ => {}
+    for candidate in [path.to_path_buf(), session_db_owner_record_path()] {
+        if let Ok(raw) = fs::read_to_string(candidate) {
+            let mut record = OwnerLockRecord {
+                pid: None,
+                process_start_time: None,
+                kind: None,
+                build_kind: None,
+                home: None,
+                parent_pid: None,
+                parent_process_start_time: None,
+            };
+            for line in raw.lines() {
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                let value = value.trim();
+                match key.trim() {
+                    "pid" => record.pid = value.parse().ok(),
+                    "process_start_time" => record.process_start_time = value.parse().ok(),
+                    "kind" => record.kind = Some(value.to_string()),
+                    "build_kind" => record.build_kind = Some(value.to_string()),
+                    "home" => record.home = Some(value.to_string()),
+                    "parent_pid" => record.parent_pid = value.parse().ok(),
+                    "parent_process_start_time" => {
+                        record.parent_process_start_time = value.parse().ok()
+                    }
+                    _ => {}
+                }
+            }
+            if record.pid.is_some() || record.kind.is_some() || record.home.is_some() {
+                return Some(record);
+            }
         }
     }
-    Some(record)
+    None
 }
 
 fn format_owner_lock_message(
@@ -542,6 +563,9 @@ fn format_owner_lock_message(
             if let Some(pid) = record.pid {
                 parts.push(format!("pid {pid}"));
             }
+            if let Some(start_time) = record.process_start_time {
+                parts.push(format!("started {start_time}"));
+            }
             if let Some(kind) = record.kind.as_deref() {
                 parts.push(format!("kind {kind}"));
             }
@@ -550,6 +574,9 @@ fn format_owner_lock_message(
             }
             if let Some(home) = record.home.as_deref() {
                 parts.push(format!("home {home}"));
+            }
+            if let Some(parent_pid) = record.parent_pid {
+                parts.push(format!("router pid {parent_pid}"));
             }
             parts.join(", ")
         })
@@ -743,6 +770,9 @@ mod tests {
     fn owner_lock_message_names_pid_and_kill_command() {
         let record = OwnerLockRecord {
             pid: Some(29816),
+            parent_pid: None,
+            process_start_time: None,
+            parent_process_start_time: None,
             kind: Some("session_db".to_string()),
             build_kind: Some("release".to_string()),
             home: Some("C:/workspace/tura".to_string()),

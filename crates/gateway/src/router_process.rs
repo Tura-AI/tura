@@ -21,7 +21,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
+// This must exceed the session_db startup budget (30 seconds). Gateway may
+// perform two router attempts, while the TUI allows 120 seconds for the whole
+// process tree to become healthy.
+const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(45);
 const DEFAULT_ROUTER_EXECUTION_TIMEOUT: Duration = Duration::from_secs(35 * 60);
 const ROUTER_PROBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 const ROUTER_STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(200);

@@ -1,5 +1,13 @@
-import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, realpathSync } from "node:fs";
+import { execFile, spawn, spawnSync, type ChildProcess } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -19,7 +27,7 @@ import {
 type StartupStep = "checking";
 
 const HEALTH_POLL_INTERVAL_MS = 500;
-const GATEWAY_START_TIMEOUT_MS = 20_000;
+const GATEWAY_START_TIMEOUT_MS = 120_000;
 
 interface GatewayIdentity {
   root: string;
@@ -271,6 +279,8 @@ async function launchGatewayProcess(request: GatewayLaunchRequest): Promise<stri
   if (!executable) throw new Error(t("gatewayMissingBinary"));
   const targetUrl = stripTrailingSlash(request.targetUrl);
   let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  const stderrPath = gatewayAutostartLogPath(request.instanceHome, "stderr");
+  const stderrOffset = fileSize(stderrPath);
   const stdio = gatewayLogStdio(request.instanceHome);
   const child = spawn(executable, [], {
     detached: true,
@@ -283,10 +293,16 @@ async function launchGatewayProcess(request: GatewayLaunchRequest): Promise<stri
     exited = { code, signal };
   });
   child.unref();
-  const deadline = Date.now() + GATEWAY_START_TIMEOUT_MS;
+  const deadline = Date.now() + gatewayStartTimeoutMs;
   while (Date.now() < deadline) {
     if (exited) {
-      throw new Error(`Gateway exited before becoming healthy (${exitDescription(exited)}).`);
+      throw new Error(
+        gatewayLaunchError(
+          `Gateway exited before becoming healthy (${exitDescription(exited)}).`,
+          stderrPath,
+          stderrOffset,
+        ),
+      );
     }
     const activeUrl = readActiveGatewayUrl(request.instanceHome);
     const candidateUrl = activeUrl ? stripTrailingSlash(activeUrl) : targetUrl;
@@ -300,7 +316,7 @@ async function launchGatewayProcess(request: GatewayLaunchRequest): Promise<stri
     await delay(HEALTH_POLL_INTERVAL_MS);
   }
   stopUnreadyChild(child);
-  throw new Error(t("gatewayStartTimeout"));
+  throw new Error(gatewayLaunchError(t("gatewayStartTimeout"), stderrPath, stderrOffset));
 }
 
 function gatewayProcessEnv(request: GatewayLaunchRequest): NodeJS.ProcessEnv {
@@ -344,9 +360,54 @@ function exitDescription(exit: { code: number | null; signal: NodeJS.Signals | n
 
 function stopUnreadyChild(child: ChildProcess): void {
   try {
-    if (child.exitCode === null && child.signalCode === null) child.kill();
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    if (process.platform === "win32" && child.pid) {
+      const result = spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      if (!result.error && result.status === 0) return;
+    }
+    child.kill();
   } catch {
     // Best effort: the gateway may have already detached or exited.
+  }
+}
+
+function gatewayAutostartLogPath(instanceHome: string, stream: "stdout" | "stderr"): string {
+  return join(instanceHome, ".tura", "logs", `gateway-autostart.${stream}.log`);
+}
+
+function fileSize(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
+function gatewayLaunchError(message: string, stderrPath: string, offset: number): string {
+  try {
+    const size = fileSize(stderrPath);
+    if (size <= offset) return message;
+    const start = Math.max(offset, size - 8_192);
+    const buffer = Buffer.alloc(size - start);
+    const file = openSync(stderrPath, "r");
+    try {
+      readSync(file, buffer, 0, buffer.length, start);
+    } finally {
+      closeSync(file);
+    }
+    const detail = buffer
+      .toString("utf8")
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-8)
+      .join(" | ");
+    return detail ? `${message} Gateway stderr: ${detail}` : message;
+  } catch {
+    return message;
   }
 }
 
@@ -355,8 +416,8 @@ function gatewayLogStdio(instanceHome: string): ["ignore", number, number] {
   mkdirSync(logDir, { recursive: true });
   return [
     "ignore",
-    openSync(join(logDir, "gateway-autostart.stdout.log"), "a"),
-    openSync(join(logDir, "gateway-autostart.stderr.log"), "a"),
+    openSync(gatewayAutostartLogPath(instanceHome, "stdout"), "a"),
+    openSync(gatewayAutostartLogPath(instanceHome, "stderr"), "a"),
   ];
 }
 

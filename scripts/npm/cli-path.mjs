@@ -526,10 +526,9 @@ function registerWindows(releaseDir, packageRoot, { quiet = false } = {}) {
 $releaseDir = [System.IO.Path]::GetFullPath($env:TURA_CLI_RELEASE_DIR)
 $staleCliBin = [System.IO.Path]::GetFullPath($env:TURA_CLI_STALE_BIN)
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$entries = @(Filter-PathEntries $userPath $releaseDir $staleCliBin)
-$entries += $releaseDir
+$entries = @($releaseDir) + @(Filter-PathEntries $userPath $releaseDir $staleCliBin)
 [Environment]::SetEnvironmentVariable("Path", ($entries -join [IO.Path]::PathSeparator), "User")
-$env:Path = ((Filter-PathEntries $env:Path $releaseDir $staleCliBin) + $releaseDir) -join [IO.Path]::PathSeparator
+$env:Path = (@($releaseDir) + @(Filter-PathEntries $env:Path $releaseDir $staleCliBin)) -join [IO.Path]::PathSeparator
 Write-Output $releaseDir
 `;
   const registered = runPowerShell(script, {
