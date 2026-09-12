@@ -40,18 +40,20 @@ function Add-UserPathEntry {
   if ($cleanUserPath) {
     $entries = @($cleanUserPath -split [IO.Path]::PathSeparator | Where-Object { $_ -and $_.Trim() })
   }
-  $present = $entries | Where-Object { $_.TrimEnd('\') -ieq $PathEntry.TrimEnd('\') }
-  if (-not $present) {
-    $entries += $PathEntry
-    [Environment]::SetEnvironmentVariable("Path", ($entries -join [IO.Path]::PathSeparator), "User")
-  } elseif ($cleanUserPath -ne $userPath) {
-    [Environment]::SetEnvironmentVariable("Path", $cleanUserPath, "User")
+  $entries = @($entries | Where-Object { $_.TrimEnd('\') -ine $PathEntry.TrimEnd('\') })
+  $updatedUserPath = (@($PathEntry) + $entries) -join [IO.Path]::PathSeparator
+  $changed = $updatedUserPath -ne $userPath
+  if ($changed) {
+    [Environment]::SetEnvironmentVariable("Path", $updatedUserPath, "User")
   }
-  $env:Path = Remove-PathEntry $env:Path $StaleCliBin
-  if (($env:Path -split [IO.Path]::PathSeparator) -notcontains $PathEntry) {
-    $env:Path = "$PathEntry$([IO.Path]::PathSeparator)$env:Path"
+
+  $cleanProcessPath = Remove-PathEntry (Remove-PathEntry $env:Path $StaleCliBin) $PathEntry
+  $env:Path = if ($cleanProcessPath) {
+    "$PathEntry$([IO.Path]::PathSeparator)$cleanProcessPath"
+  } else {
+    $PathEntry
   }
-  return [bool](-not $present)
+  return $changed
 }
 
 if (-not (Test-Path (Join-Path $ReleaseDir "tura_exec.exe"))) {
@@ -81,8 +83,8 @@ foreach ($profilePath in $ProfilePaths) {
 }
 
 if (Add-UserPathEntry $ReleaseDir) {
-  Say "Added $ReleaseDir to your user PATH."
+  Say "Registered $ReleaseDir at the front of your user PATH."
 } else {
-  Say "$ReleaseDir is already on your user PATH."
+  Say "$ReleaseDir is already first on your user PATH."
 }
 Say "Registered release command: tura exec"
