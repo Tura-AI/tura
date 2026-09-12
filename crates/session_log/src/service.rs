@@ -82,6 +82,7 @@ impl Drop for FileQueueDrainThread {
 struct SessionDbOwnerLock {
     file: std::fs::File,
     path: PathBuf,
+    owner_path: PathBuf,
 }
 
 impl SessionDbOwnerLock {
@@ -103,17 +104,51 @@ impl SessionDbOwnerLock {
         })?;
         file.set_len(0)?;
         file.seek(SeekFrom::Start(0))?;
-        writeln!(file, "pid={}", std::process::id())?;
-        writeln!(file, "kind=session_db")?;
-        writeln!(file, "build_kind={}", tura_path::build_kind())?;
-        writeln!(file, "home={}", tura_path::instance_home().display())?;
-        Ok(Self { file, path })
+        let pid = std::process::id();
+        let process_start_time = current_process_start_time(pid);
+        let parent_pid = std::env::var("TURA_ROUTER_PARENT_PID")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok());
+        let parent_process_start_time = std::env::var("TURA_ROUTER_PARENT_START_TIME")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok());
+        let mut owner = format!(
+            "pid={pid}\nkind=session_db\nbuild_kind={}\nhome={}\n",
+            tura_path::build_kind(),
+            tura_path::instance_home().display()
+        );
+        if let Some(start_time) = process_start_time {
+            owner.push_str(&format!("process_start_time={start_time}\n"));
+        }
+        if let Some(parent_pid) = parent_pid {
+            owner.push_str(&format!("parent_pid={parent_pid}\n"));
+        }
+        if let Some(parent_start_time) = parent_process_start_time {
+            owner.push_str(&format!("parent_process_start_time={parent_start_time}\n"));
+        }
+        file.write_all(owner.as_bytes())?;
+        let owner_path = session_log_contract::client::session_db_owner_record_path();
+        std::fs::write(&owner_path, owner)?;
+        Ok(Self {
+            file,
+            path,
+            owner_path,
+        })
     }
 }
 
 impl Drop for SessionDbOwnerLock {
     fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.owner_path);
         let _ = self.file.unlock();
         let _ = std::fs::remove_file(&self.path);
     }
+}
+
+fn current_process_start_time(pid: u32) -> Option<u64> {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes();
+    system
+        .process(sysinfo::Pid::from_u32(pid))
+        .map(sysinfo::Process::start_time)
 }

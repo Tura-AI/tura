@@ -6,7 +6,8 @@
 use anyhow::{anyhow, Result};
 use serde_json::json;
 use session_log_contract::client::{
-    call_service, service_addr_path, service_is_running, unreachable_owner_lock_message,
+    call_service, service_addr_path, service_is_running, session_db_owner_record_path,
+    unreachable_owner_lock_message,
 };
 use std::{
     path::{Path, PathBuf},
@@ -57,7 +58,9 @@ impl SessionDbService {
             return Ok(self.status_payload("running"));
         }
         if let Some(message) = unreachable_owner_lock_message() {
-            return Err(anyhow!(message));
+            if !terminate_orphaned_session_db_owner()? {
+                return Err(anyhow!(message));
+            }
         }
         let service_bin = session_db_binary()
             .ok_or_else(|| anyhow!("session_db service executable tura_session_db not found"))?;
@@ -66,6 +69,13 @@ impl SessionDbService {
         let mut command = Command::new(&service_bin);
         command
             .env("TURA_HOME", tura_path::instance_home())
+            .env("TURA_ROUTER_PARENT_PID", std::process::id().to_string())
+            .env(
+                "TURA_ROUTER_PARENT_START_TIME",
+                current_process_start_time(std::process::id())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -197,6 +207,110 @@ impl SessionDbService {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+#[derive(Default)]
+struct SessionDbOwnerRecord {
+    pid: Option<u32>,
+    process_start_time: Option<u64>,
+    kind: Option<String>,
+    build_kind: Option<String>,
+    home: Option<String>,
+    parent_pid: Option<u32>,
+    parent_process_start_time: Option<u64>,
+}
+
+fn terminate_orphaned_session_db_owner() -> Result<bool> {
+    let raw = match std::fs::read_to_string(session_db_owner_record_path()) {
+        Ok(raw) => raw,
+        Err(_) => return Ok(false),
+    };
+    let mut record = SessionDbOwnerRecord::default();
+    for line in raw.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "pid" => record.pid = value.parse().ok(),
+            "process_start_time" => record.process_start_time = value.parse().ok(),
+            "kind" => record.kind = Some(value.to_string()),
+            "build_kind" => record.build_kind = Some(value.to_string()),
+            "home" => record.home = Some(value.to_string()),
+            "parent_pid" => record.parent_pid = value.parse().ok(),
+            "parent_process_start_time" => {
+                record.parent_process_start_time = value.parse().ok()
+            }
+            _ => {}
+        }
+    }
+    if record.kind.as_deref() != Some("session_db")
+        || record.build_kind.as_deref() != Some(tura_path::build_kind())
+        || !record
+            .home
+            .as_deref()
+            .is_some_and(|home| same_path(home, &tura_path::instance_home()))
+    {
+        return Ok(false);
+    }
+    let (Some(pid), Some(start_time), Some(parent_pid), Some(parent_start_time)) = (
+        record.pid,
+        record.process_start_time,
+        record.parent_pid,
+        record.parent_process_start_time,
+    ) else {
+        return Ok(false);
+    };
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes();
+    if system
+        .process(sysinfo::Pid::from_u32(parent_pid))
+        .is_some_and(|parent| parent.start_time() == parent_start_time)
+    {
+        return Ok(false);
+    }
+    let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) else {
+        return Ok(false);
+    };
+    if process.start_time() != start_time
+        || !process
+            .name()
+            .trim_end_matches(".exe")
+            .eq_ignore_ascii_case("tura_session_db")
+        || service_is_running()
+    {
+        return Ok(false);
+    }
+    if !process.kill() {
+        return Ok(false);
+    }
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(10) {
+        system.refresh_processes();
+        if system.process(sysinfo::Pid::from_u32(pid)).is_none() {
+            return Ok(true);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Ok(false)
+}
+
+fn current_process_start_time(pid: u32) -> Option<u64> {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes();
+    system
+        .process(sysinfo::Pid::from_u32(pid))
+        .map(sysinfo::Process::start_time)
+}
+
+fn same_path(left: &str, right: &Path) -> bool {
+    let left = tura_path::normalize_path(Path::new(left));
+    let right = tura_path::normalize_path(right);
+    if cfg!(windows) {
+        left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
+    } else {
+        left == right
     }
 }
 

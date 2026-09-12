@@ -80,7 +80,20 @@ pub fn start_session_feed_tailer() -> Result<(SessionFeedTailer, tokio::sync::on
                 match subscription.poll_next_entry(SUBSCRIPTION_POLL_INTERVAL) {
                     Ok(Poll::Ready(Some(entry))) => {
                         if let Err(error) = reducer.apply(entry) {
-                            break Err(error.context("failed to reduce durable Session feed"));
+                            if !is_session_feed_cursor_gap(&error) {
+                                break Err(error.context("failed to reduce durable Session feed"));
+                            }
+                            match reconnect_session_feed(
+                                &mut reducer,
+                                &thread_stopping,
+                                &thread_cancellation,
+                            ) {
+                                Ok(Some(reconnected)) => subscription = reconnected,
+                                Ok(None) => break Ok(()),
+                                Err(error) => break Err(
+                                    error.context("failed to resynchronize durable Session feed"),
+                                ),
+                            }
                         }
                     }
                     Ok(Poll::Ready(None)) if thread_stopping.load(Ordering::SeqCst) => break Ok(()),
@@ -185,6 +198,12 @@ fn reconnect_session_feed(
             }
         }
     }
+}
+
+fn is_session_feed_cursor_gap(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string().starts_with("session feed cursor gap for "))
 }
 
 fn replay_all_sessions(client: &SessionDbClient, reducer: &mut SessionFeedReducer) -> Result<()> {
