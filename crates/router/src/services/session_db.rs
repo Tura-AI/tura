@@ -239,9 +239,7 @@ fn terminate_orphaned_session_db_owner() -> Result<bool> {
             "build_kind" => record.build_kind = Some(value.to_string()),
             "home" => record.home = Some(value.to_string()),
             "parent_pid" => record.parent_pid = value.parse().ok(),
-            "parent_process_start_time" => {
-                record.parent_process_start_time = value.parse().ok()
-            }
+            "parent_process_start_time" => record.parent_process_start_time = value.parse().ok(),
             _ => {}
         }
     }

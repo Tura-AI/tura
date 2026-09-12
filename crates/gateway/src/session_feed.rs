@@ -90,9 +90,10 @@ pub fn start_session_feed_tailer() -> Result<(SessionFeedTailer, tokio::sync::on
                             ) {
                                 Ok(Some(reconnected)) => subscription = reconnected,
                                 Ok(None) => break Ok(()),
-                                Err(error) => break Err(
-                                    error.context("failed to resynchronize durable Session feed"),
-                                ),
+                        Err(error) => {
+                            break Err(error
+                                .context("failed to resynchronize durable Session feed"))
+                        }
                             }
                         }
                     }
@@ -201,9 +202,11 @@ fn reconnect_session_feed(
 }
 
 fn is_session_feed_cursor_gap(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.to_string().starts_with("session feed cursor gap for "))
+    error.chain().any(|cause| {
+        cause
+            .to_string()
+            .starts_with("session feed cursor gap for ")
+    })
 }
 
 fn replay_all_sessions(client: &SessionDbClient, reducer: &mut SessionFeedReducer) -> Result<()> {
