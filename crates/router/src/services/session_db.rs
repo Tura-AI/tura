@@ -57,10 +57,10 @@ impl SessionDbService {
         if service_is_running() {
             return Ok(self.status_payload("running"));
         }
-        if let Some(message) = unreachable_owner_lock_message() {
-            if !terminate_orphaned_session_db_owner()? {
-                return Err(anyhow!(message));
-            }
+        if let Some(message) = unreachable_owner_lock_message()
+            && !terminate_orphaned_session_db_owner()?
+        {
+            return Err(anyhow!(message));
         }
         let service_bin = session_db_binary()
             .ok_or_else(|| anyhow!("session_db service executable tura_session_db not found"))?;

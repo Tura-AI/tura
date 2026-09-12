@@ -770,6 +770,9 @@ mod tests {
     fn owner_lock_message_names_pid_and_kill_command() {
         let record = OwnerLockRecord {
             pid: Some(29816),
+            parent_pid: None,
+            process_start_time: None,
+            parent_process_start_time: None,
             kind: Some("session_db".to_string()),
             build_kind: Some("release".to_string()),
             home: Some("C:/workspace/tura".to_string()),
