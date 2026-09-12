@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - "fix/**"
+      - "hotfix/**"
       - "release/**"
       - "staging/runtime_session_refactor"
     tags:
