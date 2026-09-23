@@ -55,6 +55,7 @@ pub(super) fn provider_api_key_url(provider_id: &str) -> Option<String> {
         "anthropic" => "https://console.anthropic.com/settings/keys",
         "google" => "https://aistudio.google.com/app/apikey",
         "openrouter" => "https://openrouter.ai/settings/keys",
+        "yolo-auto" => "https://yolo-auto.com/app",
         "deepseek" => "https://platform.deepseek.com/api_keys",
         "moonshotai" => "https://platform.moonshot.ai/console/api-keys",
         "qwen" | "qwen_cn" => "https://bailian.console.aliyun.com/?tab=model#/api-key",
@@ -77,6 +78,7 @@ pub(super) fn provider_auth_docs_url(provider_id: &str) -> Option<String> {
         "claude-code" => "https://code.claude.com/docs/en/iam",
         "google" => "https://ai.google.dev/gemini-api/docs/oauth",
         "openrouter" => "https://openrouter.ai/docs/api-keys",
+        "yolo-auto" => "https://yolo-auto.com/docs",
         "mistral" => "https://docs.mistral.ai/admin/security-access/api-keys",
         "github-copilot" => {
             "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/authenticate-copilot-cli"

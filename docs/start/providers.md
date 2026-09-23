@@ -41,6 +41,7 @@ Common LLM credential names are:
 | Google API         | `google`      | API key or supported OAuth login              | `GOOGLE_API_KEY`                                                             |
 | Gemini API         | `gemini`      | API key or supported OAuth login              | `GEMINI_API_KEY`                                                             |
 | OpenRouter         | `openrouter`  | API key                                       | `OPENROUTER_API_KEY`                                                         |
+| Yolo-Auto          | `yolo-auto`   | API key                                       | `YOLO_AUTO_API_KEY`                                                          |
 | DeepSeek           | `deepseek`    | API key                                       | `DEEPSEEK_API_KEY`                                                           |
 
 The provider list is broader than this table. Use the TUI or GUI provider detail
