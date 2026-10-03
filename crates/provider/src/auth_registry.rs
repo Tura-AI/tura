@@ -232,6 +232,7 @@ const OPENROUTER_MODELS: &[&str] = &[
     "text-embedding-3-large",
     "text-embedding-3-small",
 ];
+const YOLO_AUTO_MODELS: &[&str] = &["yolo", "yolo-small"];
 const EMPTY_MODELS: &[&str] = &[];
 
 const fn openai_subscription_capabilities() -> ProviderCapabilityFlags {
@@ -495,6 +496,13 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         "https://openrouter.ai/api/v1",
     ),
     simple_openai_compatible(
+        "yolo-auto",
+        "Yolo-Auto",
+        "YOLO_AUTO_API_KEY",
+        YOLO_AUTO_MODELS,
+        "https://yolo-auto.com/v1",
+    ),
+    simple_openai_compatible(
         "deepseek",
         "DeepSeek",
         "DEEPSEEK_API_KEY",
@@ -740,6 +748,7 @@ mod tests {
             "antigravity",
             "antigravity-api",
             "openrouter",
+            "yolo-auto",
             "deepseek",
             "minimax",
             "moonshotai",

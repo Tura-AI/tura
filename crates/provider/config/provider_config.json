@@ -4226,6 +4226,84 @@
         "status": "configured",
         "token_env": "XAI_API_KEY"
       },
+      "yolo-auto": {
+        "api_docs": "https://yolo-auto.com/docs",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://yolo-auto.com/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.tool_call"
+        ],
+        "display_name": "Yolo-Auto",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "YOLO_AUTO_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": false,
+              "family": "yolo",
+              "id": "yolo-small",
+              "limit": {
+                "context": 262144,
+                "input": 262144,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "yolo-small",
+              "options": {},
+              "reasoning": false,
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": false,
+              "family": "yolo",
+              "id": "yolo",
+              "limit": {
+                "context": 262144,
+                "input": 262144,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "yolo",
+              "options": {},
+              "reasoning": true,
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "yolo-auto",
+        "status": "configured",
+        "token_env": "YOLO_AUTO_API_KEY"
+      },
       "zoom": {
         "api_docs": "https://developers.zoom.us/docs/api/rest/",
         "api_style": "rest",
@@ -4406,6 +4484,7 @@
     "wechat_pay": "https://api.mch.weixin.qq.com/v3",
     "wecom": "https://qyapi.weixin.qq.com/cgi-bin",
     "xai": "https://api.x.ai/v1",
+    "yolo-auto": "https://yolo-auto.com/v1",
     "zoom": "https://api.zoom.us/v2"
   },
   "provider_enums": {
