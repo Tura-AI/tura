@@ -200,8 +200,10 @@ pub(crate) fn build_chat_payload(
     let mut payload = json!({
         "model": request_model,
         "messages": normalized_messages,
-        "temperature": options.temperature.unwrap_or(0.2),
     });
+    if !matches!(model, "gpt-6-sol" | "gpt-6-astra" | "gpt-6-luna") {
+        payload["temperature"] = json!(options.temperature.unwrap_or(0.2));
+    }
 
     if let Some(tools) = &options.tools {
         payload["tools"] = Value::Array(tools.clone());

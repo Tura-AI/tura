@@ -207,19 +207,29 @@ fn provider_payload_maps_highest_reasoning_to_xhigh() {
 }
 
 #[test]
-fn provider_payload_keeps_max_reasoning_for_gpt_5_6_family() {
+fn provider_payload_keeps_max_reasoning_for_gpt_6_and_5_6_families() {
     let messages = vec![json!({"role": "user", "content": "ping"})];
     let options = CallOptions {
         reasoning_effort: Some("max".to_string()),
         ..CallOptions::default()
     };
 
-    for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+    for model in [
+        "gpt-6-sol",
+        "gpt-6-astra",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    ] {
         let chat_payload = build_chat_payload("openai", model, &messages, &options);
         let codex_payload = build_codex_oauth_payload(model, &messages, &options);
 
         assert_eq!(chat_payload["reasoning_effort"], "max", "chat {model}");
         assert_eq!(codex_payload["reasoning"]["effort"], "max", "codex {model}");
+        if model.starts_with("gpt-6-") {
+            assert!(chat_payload.get("temperature").is_none(), "chat {model}");
+        }
     }
 }
 

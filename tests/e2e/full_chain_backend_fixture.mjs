@@ -303,7 +303,7 @@ export class BackendStressHarness {
       "fast",
       "thinking",
       "codex/gpt-5.5",
-      "codex/gpt-5.6-sol",
+      "codex/gpt-6-sol",
       "codex/gpt-5.6-terra",
       "embedding_high",
       "embedding_low",

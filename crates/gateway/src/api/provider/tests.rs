@@ -382,6 +382,9 @@ fn catalog_provider_model_catalog_filters_hidden_claude_models() {
 #[test]
 fn catalog_model_supported_by_provider_matches_registry_exactly() {
     assert!(model_supported_by_provider("codex", "gpt-5.6-sol"));
+    assert!(model_supported_by_provider("codex", "gpt-6-sol"));
+    assert!(model_supported_by_provider("codex", "gpt-6-luna"));
+    assert!(model_supported_by_provider("codex", "gpt-6-astra"));
     assert!(!model_supported_by_provider("codex", "missing-model"));
     assert!(!model_supported_by_provider(
         "missing-provider",

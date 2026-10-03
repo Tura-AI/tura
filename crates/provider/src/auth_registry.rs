@@ -146,6 +146,9 @@ const GITHUB_COPILOT_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::
 )];
 
 const OPENAI_MODELS: &[&str] = &[
+    "gpt-6-sol",
+    "gpt-6-astra",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -157,8 +160,10 @@ const OPENAI_MODELS: &[&str] = &[
     "text-embedding-3-small",
 ];
 const OPENAI_API_MODELS: &[&str] = &[
-    "gpt-5.6-sol",
+    "gpt-6-sol",
     "gpt-6-astra",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.5-pro",
@@ -773,12 +778,14 @@ mod tests {
     }
 
     #[test]
-    fn openai_api_registry_exposes_astra_without_changing_the_sol_default() {
+    fn openai_registry_prioritizes_gpt_6_and_keeps_gpt_5_6() {
         let entry = provider_auth_registry_entry("openai").expect("openai registry entry");
         let azure = provider_auth_registry_entry("azure").expect("azure registry entry");
 
-        assert_eq!(entry.supported_models.first(), Some(&"gpt-5.6-sol"));
+        assert_eq!(entry.supported_models.first(), Some(&"gpt-6-sol"));
         assert!(entry.supported_models.contains(&"gpt-6-astra"));
+        assert!(entry.supported_models.contains(&"gpt-6-luna"));
+        assert!(entry.supported_models.contains(&"gpt-5.6-sol"));
         assert!(!azure.supported_models.contains(&"gpt-6-astra"));
     }
 
