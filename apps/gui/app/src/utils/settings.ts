@@ -15,9 +15,7 @@ export function defaultModel(providers: AppState["providers"]): string | undefin
   if (!providers) {
     return "openai/gpt-6-sol";
   }
-  if (
-    providers.all.some((provider) => provider.id === "openai" && provider.models["gpt-6-sol"])
-  ) {
+  if (providers.all.some((provider) => provider.id === "openai" && provider.models["gpt-6-sol"])) {
     return "openai/gpt-6-sol";
   }
   const firstConnected = providers.connected[0];
