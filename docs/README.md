@@ -12,6 +12,7 @@ give us two documents to keep honest.
 ## Main paths
 
 - [Start navigation](start/navigation.md) - the shortest path through user-facing docs.
+- [Dashboard product workflow](dashboard/agent-runtime-product-workflow.md) - the API to benchmark to runtime path, with approvals and evidence.
 - [GitBook summary](SUMMARY.md) - the full table of contents.
 - [Benchmark methodology](https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md) - scope, selection, scoring, and limitations.
 - [Current test-set evidence record](https://github.com/Tura-AI/benchmark/blob/main/doc/current-test-set-record.md) - acquisition, provenance, recomputed claims, anomalies, design observations, and missing ablations.

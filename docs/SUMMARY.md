@@ -17,6 +17,10 @@
 - [Sessions](start/sessions.md)
 - [Navigation](start/navigation.md)
 
+## Dashboard
+
+- [Agent Runtime product workflow](dashboard/agent-runtime-product-workflow.md)
+
 ## Core
 
 - [Task status](core/task-status.md)
