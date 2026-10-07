@@ -304,19 +304,28 @@ async function launchGatewayProcess(request: GatewayLaunchRequest): Promise<stri
         ),
       );
     }
-    const activeUrl = readActiveGatewayUrl(request.instanceHome);
-    const candidateUrl = activeUrl ? stripTrailingSlash(activeUrl) : targetUrl;
-    const identity = await gatewayIdentityWithProbeTimeout(candidateUrl);
-    if (
-      identity &&
-      gatewayMatchesInstance(identity, request.instanceHome, request.projectRoot, false)
-    ) {
-      return candidateUrl;
+    const candidateUrls = launchCandidateGatewayUrls(request.instanceHome, targetUrl);
+    for (const candidateUrl of candidateUrls) {
+      const identity = await gatewayIdentityWithProbeTimeout(candidateUrl);
+      if (
+        identity &&
+        gatewayMatchesInstance(identity, request.instanceHome, request.projectRoot, false)
+      ) {
+        return candidateUrl;
+      }
     }
     await delay(HEALTH_POLL_INTERVAL_MS);
   }
   stopUnreadyChild(child);
   throw new Error(gatewayLaunchError(t("gatewayStartTimeout"), stderrPath, stderrOffset));
+}
+
+function launchCandidateGatewayUrls(instanceHome: string, targetUrl: string): string[] {
+  const activeUrl = readActiveGatewayUrl(instanceHome);
+  const candidates = new Set<string>();
+  if (activeUrl) candidates.add(stripTrailingSlash(activeUrl));
+  candidates.add(targetUrl);
+  return Array.from(candidates);
 }
 
 function gatewayProcessEnv(request: GatewayLaunchRequest): NodeJS.ProcessEnv {
