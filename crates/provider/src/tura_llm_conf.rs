@@ -113,11 +113,49 @@ mod tests {
             .route_by_name("thinking")
             .expect("thinking route should be configured");
         assert_eq!(thinking.providers[0].provider, "codex");
-        assert_eq!(thinking.providers[0].model, "gpt-5.6-sol");
+        assert_eq!(thinking.providers[0].model, "gpt-6-sol");
         assert_eq!(
             thinking.provider("openai").expect("openai route").model,
-            "gpt-5.6-sol"
+            "gpt-6-sol"
         );
+
+        let fast = settings.route_by_name("fast").expect("fast route");
+        assert_eq!(fast.providers[0].model, "gpt-6-luna");
+        assert_eq!(
+            fast.provider("openai").expect("openai fast route").model,
+            "gpt-6-luna"
+        );
+        assert!(thinking
+            .providers
+            .iter()
+            .any(|candidate| candidate.model == "gpt-5.6-sol"));
+        assert!(fast
+            .providers
+            .iter()
+            .any(|candidate| candidate.model == "gpt-5.6-luna"));
+        for provider in ["codex", "openai"] {
+            let catalog = settings
+                .model_catalog
+                .providers
+                .get(provider)
+                .expect("provider catalog");
+            let ids: Vec<_> = catalog
+                .models
+                .values()
+                .flatten()
+                .map(|model| model.id())
+                .collect();
+            for model in [
+                "gpt-6-sol",
+                "gpt-6-luna",
+                "gpt-6-astra",
+                "gpt-5.6-sol",
+                "gpt-5.6-luna",
+                "gpt-5.6-terra",
+            ] {
+                assert!(ids.contains(&model), "missing {provider}/{model}");
+            }
+        }
 
         let openai = settings
             .model_catalog

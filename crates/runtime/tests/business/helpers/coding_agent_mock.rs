@@ -12,6 +12,9 @@ use tokio::net::TcpListener as TokioTcpListener;
 pub(crate) const ROUTES: &[&str] = &[
     "thinking",
     "fast",
+    "codex/gpt-6-sol",
+    "codex/gpt-6-astra",
+    "codex/gpt-6-luna",
     "codex/gpt-5.5",
     "codex/gpt-5.6",
     "codex/gpt-5.6-sol",

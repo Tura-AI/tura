@@ -992,6 +992,32 @@
           "fast": [
             {
               "attachment": true,
+              "family": "gpt-6",
+              "id": "gpt-6-luna",
+              "limit": {
+                "context": 1050000,
+                "input": 922000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-6-luna",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-09-22",
+              "status": null,
+              "temperature": false,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
               "family": "gpt-5.6",
               "id": "gpt-5.6-luna",
               "limit": {
@@ -1098,6 +1124,58 @@
             }
           ],
           "thinking": [
+            {
+              "attachment": true,
+              "family": "gpt-6",
+              "id": "gpt-6-sol",
+              "limit": {
+                "context": 1050000,
+                "input": 922000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-6-sol",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-09-22",
+              "status": null,
+              "temperature": false,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "gpt-6",
+              "id": "gpt-6-astra",
+              "limit": {
+                "context": 1050000,
+                "input": 922000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-6-astra",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-09-04",
+              "status": null,
+              "temperature": false,
+              "tool_call": true
+            },
             {
               "attachment": true,
               "family": "gpt-5.6",
@@ -2558,6 +2636,32 @@
           "fast": [
             {
               "attachment": true,
+              "family": "gpt-6",
+              "id": "gpt-6-luna",
+              "limit": {
+                "context": 1050000,
+                "input": 922000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-6-luna",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-09-22",
+              "status": null,
+              "temperature": false,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
               "family": "gpt-5.6",
               "id": "gpt-5.6-luna",
               "limit": {
@@ -2636,6 +2740,32 @@
             }
           ],
           "thinking": [
+            {
+              "attachment": true,
+              "family": "gpt-6",
+              "id": "gpt-6-sol",
+              "limit": {
+                "context": 1050000,
+                "input": 922000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-6-sol",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-09-22",
+              "status": null,
+              "temperature": false,
+              "tool_call": true
+            },
             {
               "attachment": true,
               "family": "gpt-5.6",
@@ -4603,6 +4733,14 @@
       "default_temperature": 0.2,
       "providers": [
         {
+          "model": "gpt-6-luna",
+          "provider": "codex"
+        },
+        {
+          "model": "gpt-6-luna",
+          "provider": "openai"
+        },
+        {
           "model": "gpt-5.6-luna",
           "provider": "codex"
         },
@@ -4643,6 +4781,22 @@
     "thinking": {
       "default_temperature": 0.2,
       "providers": [
+        {
+          "model": "gpt-6-sol",
+          "provider": "codex"
+        },
+        {
+          "model": "gpt-6-astra",
+          "provider": "codex"
+        },
+        {
+          "model": "gpt-6-sol",
+          "provider": "openai"
+        },
+        {
+          "model": "gpt-6-astra",
+          "provider": "openai"
+        },
         {
           "model": "gpt-5.6-sol",
           "provider": "codex"
